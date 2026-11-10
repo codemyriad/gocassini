@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { get } from "svelte/store";
+
+import { LL } from "../i18n";
 import type { MeetingCatalogEntry } from "./catalog";
 import {
   NO_ROOM_KEY,
-  NO_ROOM_LABEL,
-  UNDATED_MONTH_LABEL,
+  noRoomLabel,
+  undatedMonthLabel,
   buildRoomBuckets,
   filterMeetingsByRoom,
   hasRoom,
@@ -59,7 +62,7 @@ describe("roomLabelOf", () => {
   });
 
   it("distinguishes an unnamed room from no room at all", () => {
-    expect(roomLabelOf(meeting({ id: "a" }))).toBe(NO_ROOM_LABEL);
+    expect(roomLabelOf(meeting({ id: "a" }))).toBe(noRoomLabel());
   });
 });
 
@@ -84,7 +87,7 @@ describe("buildRoomBuckets", () => {
     ]);
     expect(buckets.at(-1)).toEqual({
       key: NO_ROOM_KEY,
-      name: NO_ROOM_LABEL,
+      name: noRoomLabel(),
       count: 2,
       hasRoom: false,
     });
@@ -164,8 +167,10 @@ describe("groupMeetingsByMonth", () => {
     ]);
     expect(groups.map((group) => group.label)).toEqual([
       "August 2026",
-      UNDATED_MONTH_LABEL,
+      undatedMonthLabel(),
     ]);
+    expect(undatedMonthLabel()).toBe(get(LL).viewer.browse.rooms.undated());
+    expect(noRoomLabel()).toBe("No room");
   });
 
   it("does not straddle a month boundary at the end of a day", () => {

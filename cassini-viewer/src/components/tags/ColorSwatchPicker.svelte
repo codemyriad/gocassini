@@ -1,11 +1,13 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from "svelte";
 
-  import { TAG_COLORS, styleName, type TagColorId } from "../../viewer/tagPalette";
+  import { LL } from "../../i18n";
+  import { TAG_COLORS, type TagColorId } from "../../viewer/tagPalette";
   import { popover, stepIndex } from "./popover";
 
   export let value: TagColorId;
-  export let label = "Tag colour";
+  // Empty means "Tag colour", in the reader's language.
+  export let label = "";
   // Focus returns here on Esc, and a click on it does not count as outside.
   export let anchor: HTMLElement | null = null;
 
@@ -29,7 +31,7 @@
   use:popover={{ anchor, close: () => dispatch("close") }}
   class="tag-popover swatch-picker"
   role="radiogroup"
-  aria-label={label}
+  aria-label={label || $LL.viewer.browse.tags.colour_picker()}
 >
   {#each TAG_COLORS as color, index (color)}
     <button
@@ -37,8 +39,8 @@
       type="button"
       role="radio"
       aria-checked={color === value}
-      aria-label={styleName(color)}
-      title={styleName(color)}
+      aria-label={$LL.viewer.browse.tags.colors[color]()}
+      title={$LL.viewer.browse.tags.colors[color]()}
       tabindex={index === focused ? 0 : -1}
       data-tag-color={color}
       on:click={() => dispatch("select", color)}

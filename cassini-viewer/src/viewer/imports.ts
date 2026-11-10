@@ -8,6 +8,9 @@
 // file arrived under, mirroring how the published routes tolerate a recipient's
 // rename.
 
+import { get } from "svelte/store";
+
+import { LL } from "../i18n";
 import { dateFormat } from "../i18n/format";
 import {
   extractPortableManifestFromArrayBuffer,
@@ -97,7 +100,7 @@ export interface ImportPreview {
 export async function parseImportPreview(file: File): Promise<ImportPreview> {
   const bytes = new Uint8Array(await file.arrayBuffer());
   if (bytes.length === 0) {
-    throw new Error("The file is empty.");
+    throw new Error(get(LL).viewer.browse.import.file_empty());
   }
   if (bytes[0] === 0x4f && bytes[1] === 0x67 && bytes[2] === 0x67 && bytes[3] === 0x53) {
     const { manifest } = await extractPortableManifestFromArrayBuffer(bytes);
@@ -107,7 +110,7 @@ export async function parseImportPreview(file: File): Promise<ImportPreview> {
   try {
     parsed = JSON.parse(stripUTF8BOM(new TextDecoder().decode(bytes)));
   } catch {
-    throw new Error("Not a portable meeting: neither an Ogg/Opus recording nor a transcription document.");
+    throw new Error(get(LL).viewer.browse.import.not_portable());
   }
   const { manifest } = await extractTranscriptionDocument(parsed);
   return describePortableManifest(manifest, "json");
@@ -120,7 +123,7 @@ function describePortableManifest(
   const annotations = readPortableAnnotations(manifest);
   return {
     format,
-    title: String(manifest.meeting?.title ?? "").trim() || "Untitled meeting",
+    title: String(manifest.meeting?.title ?? "").trim() || get(LL).viewer.browse.import.untitled(),
     dateLabel: meetingDateLabel(manifest),
     durationMs: Number(manifest.meeting?.durationMs ?? manifest.audio?.durationMs ?? 0) || 0,
     speakerCount: Array.isArray(manifest.speakers) ? manifest.speakers.length : 0,
@@ -161,31 +164,33 @@ export function formatImportDuration(durationMs: number): string {
   if (!Number.isFinite(durationMs) || durationMs <= 0) {
     return "";
   }
+  const text = get(LL).viewer.browse.import;
   const minutes = Math.round(durationMs / 60000);
   if (minutes < 1) {
-    return "under a minute";
+    return text.duration_under_minute();
   }
   if (minutes < 60) {
-    return `${minutes} min`;
+    return text.duration_minutes({ minutes });
   }
   const hours = Math.floor(minutes / 60);
   const rest = minutes % 60;
-  return rest === 0 ? `${hours} h` : `${hours} h ${rest} min`;
+  return rest === 0 ? text.duration_hours({ hours }) : text.duration_hours_minutes({ hours, minutes: rest });
 }
 
 // The sharing line a settled row shows, and the names behind it on hover. The
 // list is always the caller's own, so "you" is the importer.
 export function describeImportSharing(job: Pick<ImportJobRecord, "sharing">): { line: string; title: string } {
+  const text = get(LL).viewer.browse.import;
   if (!job.sharing.share) {
-    return { line: "Only you", title: "Only you can open this meeting." };
+    return { line: text.sharing_only_you(), title: text.sharing_only_you_title() };
   }
   const audience = job.sharing.audience ?? [];
   const names = audience.map((sharee) => {
     const name = (sharee.label ?? "").trim() || sharee.id;
-    return sharee.type === "group" ? `${name} (group)` : sharee.type === "circle" ? `${name} (team)` : name;
+    return sharee.type === "group" ? text.sharee_group({ name }) : sharee.type === "circle" ? text.sharee_team({ name }) : name;
   });
   return {
-    line: `Shared with ${audience.length + 1}`,
-    title: ["you", ...names].join(", "),
+    line: text.sharing_shared_with({ count: audience.length + 1 }),
+    title: [text.sharing_you(), ...names].join(", "),
   };
 }

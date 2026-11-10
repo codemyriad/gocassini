@@ -12,6 +12,7 @@
   import { createEventDispatcher, onDestroy, onMount } from "svelte";
   import { Check, ChevronDown, ChevronUp, CircleAlert, CloudUpload, FileAudio, FileText, Lock, Users, X } from "@lucide/svelte";
 
+  import { LL } from "../../i18n";
   import type { DataProvider } from "../../viewer/dataProvider";
   import {
     describeImportSharing,
@@ -259,11 +260,13 @@
     );
   }
 
-  const SHAREE_GROUPS: Array<{ type: ImportSharee["type"]; heading: string }> = [
-    { type: "user", heading: "People" },
-    { type: "group", heading: "Groups" },
-    { type: "circle", heading: "Teams" },
-  ];
+  $: text = $LL.viewer.browse.import;
+
+  $: shareeGroups = [
+    { type: "user", heading: text.group_people() },
+    { type: "group", heading: text.group_groups() },
+    { type: "circle", heading: text.group_teams() },
+  ] satisfies Array<{ type: ImportSharee["type"]; heading: string }>;
 
   // --- submit ---------------------------------------------------------------
 
@@ -389,30 +392,24 @@
 
   // What a running row says. The operator's stages after the upload are one
   // step to the person importing: their meeting is being added.
-  const RUNNING_LABELS: Partial<Record<ImportJobRecord["state"], string>> = {
-    uploading: "Uploading…",
-    queued: "Adding…",
-    fetching: "Adding…",
-    validating: "Adding…",
-    delivering: "Adding…",
-    sharing: "Adding…",
-    indexing: "Adding…",
-  };
+  function runningLabel(state: ImportJobRecord["state"]): string {
+    return state === "uploading" ? text.running_uploading() : text.running_adding();
+  }
 
   // One plain line per settled row. The operator's own error text is for
   // diagnosis, so it sits behind Details rather than in the row.
   function settledLine(job: ImportJobRecord): string {
     switch (job.state) {
       case "upload_failed":
-        return "Upload didn't finish";
+        return text.settled_upload_failed();
       case "failed":
-        return isCLI(job) ? "Import on the server didn't finish" : "Couldn't import this file";
+        return isCLI(job) ? text.settled_server_failed() : text.settled_failed();
       case "staged":
-        return "Uploaded, not started";
+        return text.settled_staged();
       case "canceled":
-        return "Canceled";
+        return text.settled_canceled();
       default:
-        return "Imported";
+        return text.settled_imported();
     }
   }
 
@@ -423,13 +420,15 @@
 
   function previewLine(preview: ImportPreview): string {
     const parts = [
-      preview.hasAudio ? "" : "Transcript only",
+      preview.hasAudio ? "" : text.preview_transcript_only(),
       formatImportDate(preview.dateLabel),
       formatImportDuration(preview.durationMs),
     ];
-    if (preview.speakerCount > 0) parts.push(`${preview.speakerCount} speaker${preview.speakerCount === 1 ? "" : "s"}`);
-    if (preview.tagCount > 0) parts.push(`${preview.tagCount} tag${preview.tagCount === 1 ? "" : "s"}`);
-    if (preview.hasSummary) parts.push("summary");
+    const speakers = preview.speakerCount;
+    if (speakers > 0) parts.push(speakers === 1 ? text.preview_speakers_one() : text.preview_speakers_other({ count: speakers }));
+    const tags = preview.tagCount;
+    if (tags > 0) parts.push(tags === 1 ? text.preview_tags_one() : text.preview_tags_other({ count: tags }));
+    if (preview.hasSummary) parts.push(text.preview_summary());
     return parts.filter(Boolean).join(" · ");
   }
 
@@ -440,16 +439,15 @@
 
 <div class="import-panel">
   <header class="import-head">
-    <h2 class="text-[17px] font-semibold">Import meetings</h2>
-    <button type="button" class="btn btn-ghost btn-square btn-sm" aria-label="Close import" on:click={() => dispatch("close")}>
+    <h2 class="text-[17px] font-semibold">{text.title()}</h2>
+    <button type="button" class="btn btn-ghost btn-square btn-sm" aria-label={text.close()} on:click={() => dispatch("close")}>
       <X size={18} aria-hidden="true" />
     </button>
   </header>
 
   {#if !compact}
     <p class="import-intro">
-      Add meetings downloaded from Cassini, here or on another Nextcloud: the recording (.opus), or just its
-      transcript (.json).
+      {text.intro()}
     </p>
   {/if}
 
@@ -458,14 +456,14 @@
     class:import-drop-compact={compact}
     class:drag-over={dragOver}
     role="region"
-    aria-label="Drop files to import"
+    aria-label={text.drop_label()}
     on:dragover|preventDefault={() => (dragOver = true)}
     on:dragleave={() => (dragOver = false)}
     on:drop={handleDrop}
   >
     <CloudUpload size={compact ? 20 : 32} aria-hidden="true" />
-    <span class="import-drop-label">{compact ? "Drop more files" : "Drop files here"}</span>
-    <button type="button" class="btn btn-sm" on:click={() => fileInput.click()}>Choose files</button>
+    <span class="import-drop-label">{compact ? text.drop_more() : text.drop_here()}</span>
+    <button type="button" class="btn btn-sm" on:click={() => fileInput.click()}>{text.choose_files()}</button>
     <input
       bind:this={fileInput}
       id="import-file-input"
@@ -482,7 +480,7 @@
 
   {#if !compact}
     <p class="import-note">
-      Speaker names, tags and the summary come with the file. You choose who can see each meeting before it is added.
+      {text.note()}
     </p>
   {/if}
 
@@ -490,12 +488,12 @@
     {#if pending.length > 0}
       {#if readyCount > 1 && canSearchSharees}
         <div class="import-bulk">
-          <span>Share all with</span>
-          <ShareePicker search={searchSharees} wide on:pick={(event) => addShareeToAll(event.detail)} placeholder="A person, group or team" />
+          <span>{text.share_all_with()}</span>
+          <ShareePicker search={searchSharees} wide on:pick={(event) => addShareeToAll(event.detail)} placeholder={text.share_all_placeholder()} />
         </div>
       {/if}
 
-      <ul class="import-list" aria-label="Files to import">
+      <ul class="import-list" aria-label={text.files_label()}>
         {#each pending as item (item.key)}
           {@const bad = item.status === "invalid" || item.status === "failed"}
           {@const expanded = expandedKey === item.key && item.status === "ready"}
@@ -513,13 +511,13 @@
                 {#if item.status === "invalid"}
                   <!-- The parser's sentence is precise but technical; it stays
                        on hover for whoever needs it. -->
-                  <span class="import-meta import-meta-error" title={item.reason}>Not a meeting file from Cassini, so it was skipped.</span>
+                  <span class="import-meta import-meta-error" title={item.reason}>{text.not_a_meeting()}</span>
                 {:else if bad}
                   <span class="import-meta import-meta-error">{item.reason}</span>
                 {:else if item.status === "parsing"}
-                  <span class="import-meta">Reading…</span>
+                  <span class="import-meta">{text.reading()}</span>
                 {:else if item.status === "staging"}
-                  <span class="import-meta">Uploading {stagingPercent(item)}%</span>
+                  <span class="import-meta">{text.uploading_percent({ percent: stagingPercent(item) })}</span>
                   <progress class="progress progress-primary import-bar" value={stagingPercent(item)} max="100"></progress>
                 {:else if item.preview}
                   <span class="import-meta">{previewLine(item.preview)}</span>
@@ -534,15 +532,15 @@
                   on:click={() => (expandedKey = expanded ? "" : item.key)}
                 >
                   {#if item.audience.length > 0}
-                    <Users size={12} aria-hidden="true" /> Shared
+                    <Users size={12} aria-hidden="true" /> {text.shared()}
                   {:else}
-                    <Lock size={12} aria-hidden="true" /> Only me
+                    <Lock size={12} aria-hidden="true" /> {text.only_me()}
                   {/if}
                   {#if expanded}<ChevronUp size={12} aria-hidden="true" />{:else}<ChevronDown size={12} aria-hidden="true" />{/if}
                 </button>
               {/if}
               {#if item.status !== "staging"}
-                <button type="button" class="btn btn-ghost btn-square btn-xs" aria-label={`Remove ${item.file.name}`} on:click={() => removePending(item.key)}>
+                <button type="button" class="btn btn-ghost btn-square btn-xs" aria-label={text.remove_named({ name: item.file.name })} on:click={() => removePending(item.key)}>
                   <X size={14} aria-hidden="true" />
                 </button>
               {/if}
@@ -551,19 +549,19 @@
             {#if expanded}
               <div class="import-share">
                 {#if canSearchSharees}
-                  <ShareePicker search={searchSharees} wide on:pick={(event) => addSharee(item.key, event.detail)} placeholder="Add a person, group or team" />
+                  <ShareePicker search={searchSharees} wide on:pick={(event) => addSharee(item.key, event.detail)} placeholder={text.add_sharee_placeholder()} />
                 {/if}
-                {#each SHAREE_GROUPS as group (group.type)}
+                {#each shareeGroups as group (group.type)}
                   {@const members = item.audience.filter((sharee) => sharee.type === group.type)}
                   {#if group.type === "user" || members.length > 0}
                     <div class="import-share-heading">{group.heading}</div>
                     {#if group.type === "user"}
-                      <div class="import-share-row"><span>You</span><span class="opacity-60 text-xs">importer</span></div>
+                      <div class="import-share-row"><span>{text.you()}</span><span class="opacity-60 text-xs">{text.importer()}</span></div>
                     {/if}
                     {#each members as sharee (sharee.type + sharee.id)}
                       <div class="import-share-row">
                         <span class="truncate">{sharee.label}</span>
-                        <button type="button" class="btn btn-ghost btn-square btn-xs" aria-label={`Remove ${sharee.label}`} on:click={() => removeSharee(item.key, sharee)}>
+                        <button type="button" class="btn btn-ghost btn-square btn-xs" aria-label={text.remove_named({ name: sharee.label })} on:click={() => removeSharee(item.key, sharee)}>
                           <X size={12} aria-hidden="true" />
                         </button>
                       </div>
@@ -585,11 +583,11 @@
     {/if}
 
     {#if jobsLoaded && shownJobs.length > 0}
-      <section aria-label="Recent imports" class="import-recent">
+      <section aria-label={text.recent_heading()} class="import-recent">
         <div class="import-recent-head">
-          <h3>Recent imports</h3>
+          <h3>{text.recent_heading()}</h3>
           {#if clearableCount > 0}
-            <button type="button" class="import-link import-link-quiet" on:click={clearFinished}>Clear finished</button>
+            <button type="button" class="import-link import-link-quiet" on:click={clearFinished}>{text.clear_finished()}</button>
           {/if}
         </div>
         <ul class="import-list">
@@ -607,14 +605,14 @@
                 <div class="import-text">
                   <span class="import-title">{job.sourceName}</span>
                   {#if running}
-                    <span class="import-meta">{RUNNING_LABELS[job.state] ?? "Adding…"}</span>
+                    <span class="import-meta">{runningLabel(job.state)}</span>
                     <progress class="progress progress-primary import-bar"></progress>
                   {:else if isFailure(job)}
                     <span class="import-meta">
                       <span class="text-error">{settledLine(job)}</span>
                       {#if job.error}
                         ·
-                        <button type="button" class="import-link import-link-quiet" aria-expanded={detailsOpen.has(job.id)} on:click={() => toggleDetails(job.id)}>Details</button>
+                        <button type="button" class="import-link import-link-quiet" aria-expanded={detailsOpen.has(job.id)} on:click={() => toggleDetails(job.id)}>{text.details()}</button>
                       {/if}
                     </span>
                   {:else}
@@ -622,28 +620,28 @@
                          who that means on hover — a retry imports with exactly this. -->
                     {@const sharing = describeImportSharing(job)}
                     <span class="import-meta">
-                      {settledLine(job)}{job.format === "json" ? " · transcript only" : ""} ·
+                      {settledLine(job)}{job.format === "json" ? ` · ${text.transcript_only_suffix()}` : ""} ·
                       <span class="import-sharing" title={sharing.title}>{sharing.line}</span>
                     </span>
                   {/if}
                 </div>
                 <span class="import-actions">
                   {#if running && !fromCLI && job.state !== "uploading"}
-                    <button type="button" class="btn btn-ghost btn-square btn-xs" aria-label={`Cancel ${job.sourceName}`} on:click={() => void cancelJob(job)}>
+                    <button type="button" class="btn btn-ghost btn-square btn-xs" aria-label={text.cancel_named({ name: job.sourceName })} on:click={() => void cancelJob(job)}>
                       <X size={14} aria-hidden="true" />
                     </button>
                   {/if}
                   {#if canRetry(job)}
-                    <button type="button" class="import-link" on:click={() => void retryJob(job)}>Retry</button>
+                    <button type="button" class="import-link" on:click={() => void retryJob(job)}>{text.retry()}</button>
                   {/if}
                   {#if canRemove(job)}
-                    <button type="button" class="import-link import-link-quiet" title="Delete the temporary upload and remove this attempt." on:click={() => void removeJob(job)}>Remove</button>
+                    <button type="button" class="import-link import-link-quiet" title={text.remove_title()} on:click={() => void removeJob(job)}>{text.remove()}</button>
                   {/if}
                   {#if canOpen}
-                    <button type="button" class="import-link" on:click={() => dispatch("openMeeting", job.contentId ?? "")}>Open</button>
+                    <button type="button" class="import-link" on:click={() => dispatch("openMeeting", job.contentId ?? "")}>{text.open()}</button>
                   {/if}
                   {#if dismissable(job)}
-                    <button type="button" class="import-link import-link-quiet" title="Hide this row. It stays in the server's import history." on:click={() => dismiss(job)}>Dismiss</button>
+                    <button type="button" class="import-link import-link-quiet" title={text.dismiss_title()} on:click={() => dismiss(job)}>{text.dismiss()}</button>
                   {/if}
                 </span>
               </div>
@@ -659,9 +657,9 @@
 
   {#if readyCount > 0}
     <footer class="import-foot">
-      <span>{readyCount} ready{skippedCount > 0 ? ` · ${skippedCount} skipped` : ""}</span>
+      <span>{skippedCount > 0 ? text.ready_skipped({ count: readyCount, skipped: skippedCount }) : text.ready({ count: readyCount })}</span>
       <button type="button" class="btn btn-primary" disabled={submitting} on:click={() => void submit()}>
-        {submitting ? "Importing…" : `Import ${readyCount} meeting${readyCount === 1 ? "" : "s"}`}
+        {submitting ? text.importing() : readyCount === 1 ? text.import_one() : text.import_other({ count: readyCount })}
       </button>
     </footer>
   {/if}

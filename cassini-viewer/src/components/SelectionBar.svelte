@@ -2,7 +2,8 @@
   import { createEventDispatcher } from "svelte";
   import { cubicOut } from "svelte/easing";
   import { ChevronDown, FileText, Tag, Trash2, TriangleAlert, X } from "@lucide/svelte";
-  import { plural, type TagPick, type VocabularyTag } from "../viewer/annotations";
+  import { LL } from "../i18n";
+  import type { TagPick, VocabularyTag } from "../viewer/annotations";
   import type { MeetingCatalogEntry } from "../viewer/catalog";
   import { formatMeetingStartWithDay } from "../viewer/meetingTime";
   import type { MeetingTags } from "../viewer/listTags";
@@ -63,6 +64,7 @@
   // refused, so the button says the number instead (D-749).
   $: overCap = count > MAX_SELECTED_MEETINGS;
   $: excess = count - MAX_SELECTED_MEETINGS;
+  $: text = $LL.viewer.browse.selection_bar;
 
   const dispatch = createEventDispatcher<{
     clear: void;
@@ -105,7 +107,7 @@
      build this renders inside a Nextcloud page, and a fixed bar would float
      over Nextcloud's own chrome and the shell's Browse/Operator nav. The
      meeting sheet is anchored the same way and for the same reason. -->
-<div class="selection-bar" role="region" aria-label="Selected meetings">
+<div class="selection-bar" role="region" aria-label={text.region_label()}>
   {#if count > 0}
     <div class="selbar-said">
       <div class="selbar-head">
@@ -113,23 +115,22 @@
           type="button"
           class="selbar-count"
           aria-expanded={listing}
-          aria-label={listing ? "Hide the selected meetings" : "Show the selected meetings"}
+          aria-label={listing ? text.hide_selected() : text.show_selected()}
           on:click={() => (listing = !listing)}
         >
-          {count}
-          {count === 1 ? "meeting selected" : "meetings selected"}
+          {count === 1 ? text.selected_one() : text.selected_other({ count })}
           <ChevronDown size={13} class="selbar-count-chev" aria-hidden="true" />
         </button>
         <button type="button" class="selbar-clear" on:click={() => dispatch("clear")}>
-          Clear selection
+          {text.clear_selection()}
           <X size={12} aria-hidden="true" />
         </button>
       </div>
       <p class="selbar-desc">
         {#if hiddenCount > 0}
-          {hiddenCount} not shown here.
+          {text.not_shown_count({ count: hiddenCount })}
         {/if}
-        Tag, download or get insights from them.
+        {text.what_next()}
       </p>
       <!-- Not a note among the others: over the cap, Prepare is refused, so it
            is the one thing in this bar standing between a selection and what it
@@ -138,15 +139,15 @@
         <p class="selbar-over" role="status">
           <TriangleAlert size={14} aria-hidden="true" />
           <span>
-            You can work with up to {MAX_SELECTED_MEETINGS} meetings at once. Unpick {excess === 1
-              ? "one"
-              : excess}.
+            {excess === 1
+              ? text.over_cap_one({ max: MAX_SELECTED_MEETINGS })
+              : text.over_cap_other({ max: MAX_SELECTED_MEETINGS, count: excess })}
           </span>
         </p>
       {/if}
       {#if tagReport}
         <p class="selbar-desc" role="status">{tagReport}</p>
-        {#if tagRetry}<button type="button" class="link text-xs" on:click={() => dispatch("retryTag")}>Retry tag update</button>{/if}
+        {#if tagRetry}<button type="button" class="link text-xs" on:click={() => dispatch("retryTag")}>{text.retry_tag_update()}</button>{/if}
       {/if}
     </div>
 
@@ -162,7 +163,7 @@
           on:click={() => (tagging = !tagging)}
         >
           <Tag size={14} aria-hidden="true" />
-          Tag
+          {text.tag()}
         </button>
       {/if}
       {#if deletable}
@@ -173,7 +174,7 @@
           on:click={() => dispatch("delete")}
         >
           <Trash2 size={14} aria-hidden="true" />
-          Delete
+          {text.delete()}
         </button>
       {/if}
       <button
@@ -183,13 +184,13 @@
         on:click={() => dispatch("prepare")}
       >
         <FileText size={14} aria-hidden="true" />
-        Prepare
+        {text.prepare()}
       </button>
     </div>
     {#if listing}
       <!-- Above the bar, not over the actions: this answers "which ones", and
            the row it belongs to is the count it opens from. -->
-      <div class="selbar-list" role="group" aria-label="Selected meetings" transition:riseUp={{}}>
+      <div class="selbar-list" role="group" aria-label={text.region_label()} transition:riseUp={{}}>
         <ul>
           {#each entries as entry (entry.id)}
             <li class="selbar-item">
@@ -204,14 +205,14 @@
                     <span class="selbar-item-more">+{wholeTags(entry.id).length - MAX_ROW_TAGS}</span>
                   {/if}
                   {#if hiddenIds.has(entry.id)}
-                    <span class="selbar-item-hidden">Not shown here</span>
+                    <span class="selbar-item-hidden">{text.item_not_shown()}</span>
                   {/if}
                 </span>
               </button>
               <button
                 type="button"
                 class="selbar-item-drop"
-                aria-label={`Unpick ${entry.title}`}
+                aria-label={text.unpick({ title: entry.title })}
                 on:click={() => dispatch("unpick", entry)}
               >
                 <X size={13} aria-hidden="true" />
@@ -225,7 +226,7 @@
     {#if tags && tagging}
       <TagPicker
         {tags}
-        label={`Tag ${plural(count, "meeting")}`}
+        label={count === 1 ? text.tag_meetings_one() : text.tag_meetings_other({ count })}
         multiple
         selected={tagSelected}
         mixed={tagMixed}
@@ -239,14 +240,12 @@
   {#if droppedCount > 0}
     <p class="selbar-dropped" role="status">
       <span>
-        {droppedCount === 1
-          ? "1 selected meeting is no longer in the archive and was removed."
-          : `${droppedCount} selected meetings are no longer in the archive and were removed.`}
+        {droppedCount === 1 ? text.dropped_one() : text.dropped_other({ count: droppedCount })}
       </span>
       <button
         type="button"
         on:click={() => dispatch("dismissDropped")}
-        aria-label="Dismiss the removal notice"
+        aria-label={text.dismiss_dropped()}
       >
         <X size={12} aria-hidden="true" />
       </button>

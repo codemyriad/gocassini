@@ -3,7 +3,7 @@ import { get } from "svelte/store";
 
 import { AnnotationError, type TagJob, type VocabularyTag } from "./annotations";
 import {
-  BUSY,
+  busyNotice,
   changedLine,
   confirmLine,
   countsLine,
@@ -225,7 +225,7 @@ describe("createJobTracker", () => {
     provider.loadTagJob.mockResolvedValueOnce(job({ id: "job_0", tagId: "tag_h", done: 2 }));
     await tracker.run({ kind: "delete", tagId: "tag_b" });
     await vi.advanceTimersByTimeAsync(0);
-    expect(get(tracker).notice).toBe(BUSY);
+    expect(get(tracker).notice).toBe(busyNotice());
     expect(jobStatus(get(tracker), "tag_h")?.text).toBe("Updating 2 of 9…");
   });
 

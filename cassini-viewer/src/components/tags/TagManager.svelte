@@ -5,7 +5,8 @@
   import { Ellipsis, History } from "@lucide/svelte";
   import CloseButton from "../ui/CloseButton.svelte";
 
-  import { plural, type TagPick, type TagUpdate, type VocabularyTag } from "../../viewer/annotations";
+  import { LL } from "../../i18n";
+  import type { TagPick, TagUpdate, VocabularyTag } from "../../viewer/annotations";
   import { changedLine, confirmLine, countsLine, createJobTracker, jobStatus, type TagAction, type TagProvider } from "../../viewer/tagManager";
   import { colorFor } from "../../viewer/tagPalette";
   import TagChip from "./TagChip.svelte";
@@ -17,7 +18,9 @@
   export let provider: TagProvider;
   export let open = false;
 
-  const MENU = [["rename", "Rename"], ["color", "Change colour"], ["merge", "Merge into…"], ["delete", "Delete…"]] as const;
+  $: text = $LL.viewer.browse.tags;
+  $: MENU = [["rename", text.menu_rename()], ["color", text.menu_colour()], ["merge", text.menu_merge()], ["delete", text.menu_delete()]] as const;
+  type MenuId = "rename" | "color" | "merge" | "delete";
   const dispatch = createEventDispatcher<{ close: void; changed: void }>();
   const jobs = createJobTracker(provider, () => dispatch("changed"));
   onDestroy(jobs.stop);
@@ -33,12 +36,12 @@
   $: if (open) void jobs.refresh();
   else menu = merging = editing = confirming = null;
 
-  function choose(id: (typeof MENU)[number][0]) {
+  function choose(id: MenuId) {
     if (!menu) return;
     const { tag, anchor } = menu;
     menu = null;
     if (id === "merge") merging = { tag, anchor };
-    else if (id === "delete") confirming = { action: { kind: "delete", tagId: tag.tagId }, title: `Delete “${tag.label}”?`, verb: "Delete" };
+    else if (id === "delete") confirming = { action: { kind: "delete", tagId: tag.tagId }, title: text.delete_title({ name: tag.label }), verb: text.delete() };
     else editing = { tagId: tag.tagId, choosing: id === "color" ? "color" : null, conflict: null };
   }
 
@@ -46,7 +49,7 @@
     if (!merging || !("tagId" in detail)) return;
     const { tag } = merging;
     merging = null;
-    confirming = { action: { kind: "merge", tagId: tag.tagId, into: detail.tagId }, title: `Merge “${tag.label}” into “${detail.label}”?`, verb: "Merge" };
+    confirming = { action: { kind: "merge", tagId: tag.tagId, into: detail.tagId }, title: text.merge_title({ name: tag.label, into: detail.label }), verb: text.merge() };
   }
 
   async function run(action: TagAction) {
@@ -134,20 +137,22 @@
 </script>
 
 {#if open}
-  <button type="button" tabindex="-1" class="absolute inset-0 z-41 cursor-pointer bg-black/55 backdrop-blur-[3px]" aria-label="Close Manage tags"
+  <button type="button" tabindex="-1" class="absolute inset-0 z-41 cursor-pointer bg-black/55 backdrop-blur-[3px]" aria-label={text.manager_close_scrim()}
     transition:fade={scrimFade()} on:click={() => dispatch("close")}></button>
   <div bind:this={sheet} use:modal role="dialog" aria-modal="true" aria-labelledby="tag-manager-title" tabindex="-1"
     transition:sheetSlide on:keydown={onKeydown}
     class="absolute inset-y-0 right-0 z-42 flex w-[min(560px,100%)] flex-col border-base-300 bg-base-100 shadow-2xl min-[721px]:border-l max-[720px]:top-auto max-[720px]:h-[92%] max-[720px]:w-full max-[720px]:rounded-t-box max-[720px]:border-t">
     <header class="tm-head flex items-center gap-2.5 border-b border-base-300 px-5 pb-3 pt-4 max-[720px]:px-4">
       <h2 id="tag-manager-title" class="flex flex-1 items-center gap-2.5 text-[17px] font-semibold">
-        Manage tags <span class="badge badge-outline badge-sm font-medium">{plural(tags.length, "tag")}</span>
+        {text.manager_title()} <span class="badge badge-outline badge-sm font-medium"
+          >{tags.length === 1 ? text.manager_count_one() : text.manager_count_other({ count: tags.length })}</span
+        >
       </h2>
-      <CloseButton label="Close" data-close on:click={() => dispatch("close")} />
+      <CloseButton label={text.close()} data-close on:click={() => dispatch("close")} />
     </header>
     <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-8 pt-1.5 max-[720px]:px-2">
       {#if $jobs.notice}<p role="alert" class="alert alert-warning alert-soft sticky top-0 z-10 my-1.5 py-2 text-sm">{$jobs.notice}</p>{/if}
-      {#if tags.length === 0}<p class="px-2.5 py-6 text-sm text-base-content/60">No tags yet.</p>{/if}
+      {#if tags.length === 0}<p class="px-2.5 py-6 text-sm text-base-content/60">{text.none_yet()}</p>{/if}
       <ul>
         {#each tags as tag (tag.tagId)}
           {@const status = jobStatus($jobs, tag.tagId)}
@@ -162,19 +167,19 @@
               <!-- The chip is the tag, so it is what opens the tag's own
                    colour, icon and name. The menu still holds the same Rename,
                    and everything else a chip cannot say. -->
-              <button type="button" class="tm-chip flex min-w-0 flex-1 cursor-pointer items-center" aria-label={`Edit ${tag.label}`}
+              <button type="button" class="tm-chip flex min-w-0 flex-1 cursor-pointer items-center" aria-label={text.edit_named({ name: tag.label })}
                 on:click={() => (editing = { tagId: tag.tagId, choosing: null, conflict: null })}>
                 <TagChip label={tag.label} color={colorFor(tag)} icon={tag.icon} />
               </button>
               <span class="whitespace-nowrap text-xs tabular-nums text-base-content/65">{countsLine(tag)}</span>
 				{#if changed}
-					<button type="button" class="btn btn-square btn-ghost btn-sm text-base-content/55" aria-label={`Last change to ${tag.label}`}
+					<button type="button" class="btn btn-square btn-ghost btn-sm text-base-content/55" aria-label={text.last_change({ name: tag.label })}
 						aria-haspopup="dialog" aria-expanded={history?.tag.tagId === tag.tagId}
 						on:click={(event) => (history = history?.anchor === event.currentTarget ? null : { tag, anchor: event.currentTarget, line: changed })}>
 						<History size={15} />
 					</button>
 				{/if}
-              <button type="button" data-tag-menu={tag.tagId} class="btn btn-square btn-ghost btn-sm" aria-label={`Actions for ${tag.label}`} aria-haspopup="menu"
+              <button type="button" data-tag-menu={tag.tagId} class="btn btn-square btn-ghost btn-sm" aria-label={text.actions_for({ name: tag.label })} aria-haspopup="menu"
                 aria-expanded={menu?.tag.tagId === tag.tagId} on:click={(event) => (menu = menu?.anchor === event.currentTarget ? null : { tag, anchor: event.currentTarget })}>
                 <Ellipsis size={16} />
               </button>
@@ -183,7 +188,7 @@
               {@const rerun = status.rerun}
               <p role="status" class="order-2 basis-full text-xs text-base-content/75">
                 {status.text}{#if status.failed.length > 0}: {status.failed.join(", ")}{/if}
-                {#if rerun}<button type="button" class="link ml-1 font-medium" on:click={() => run(rerun)}>Run again</button>{/if}
+                {#if rerun}<button type="button" class="link ml-1 font-medium" on:click={() => run(rerun)}>{text.run_again()}</button>{/if}
               </p>
             {/if}
             {#if confirming?.action.tagId === tag.tagId}
@@ -192,7 +197,7 @@
                 <p class="font-medium">{pending.title}</p>
                 <p class="text-xs text-base-content/65">{confirmLine(tag.meetings)}</p>
                 <div class="mt-1 flex justify-end gap-2">
-                  <button type="button" class="btn btn-ghost btn-sm" on:click={dismiss}>Cancel</button>
+                  <button type="button" class="btn btn-ghost btn-sm" on:click={dismiss}>{text.cancel()}</button>
                   <button type="button" use:focus class="btn btn-sm {pending.action.kind === 'delete' ? 'btn-error' : 'btn-neutral'}"
                     on:click={() => run(pending.action)}>{pending.verb}</button>
                 </div>
@@ -204,24 +209,24 @@
     </div>
     {#if menu}
       <div bind:this={menuEl} use:popover={{ anchor: menu.anchor, close: () => (menu = null) }} role="menu" tabindex="-1"
-        aria-label={`Actions for ${menu.tag.label}`} class="tag-popover grid w-44 p-1" on:keydown={onMenuKeydown}>
-        {#each MENU as [id, text], index (id)}
+        aria-label={text.actions_for({ name: menu.tag.label })} class="tag-popover grid w-44 p-1" on:keydown={onMenuKeydown}>
+        {#each MENU as [id, itemText], index (id)}
           <button type="button" role="menuitem" use:focus={index === 0} disabled={id === "merge" && tags.length < 2} class:text-error={id === "delete"}
             class="rounded-field px-2.5 py-1.5 text-left text-sm hover:bg-base-content/8 focus-visible:bg-base-content/8 focus-visible:outline-none disabled:opacity-40"
-            on:click={() => choose(id)}>{text}</button>
+            on:click={() => choose(id)}>{itemText}</button>
         {/each}
       </div>
     {/if}
 		{#if history}
 			{@const shown = history}
 			<div use:popover={{ anchor: shown.anchor, close: () => (history = null) }} role="dialog"
-				aria-label={`Last change to ${shown.tag.label}`} class="tag-popover w-56 p-2.5 text-xs">
+				aria-label={text.last_change({ name: shown.tag.label })} class="tag-popover w-56 p-2.5 text-xs">
 				{shown.line}
 			</div>
 		{/if}
     {#if merging}
       {@const from = merging.tag}
-      <TagPicker tags={tags.filter((tag) => tag.tagId !== from.tagId)} creatable={false} label={`Merge “${from.label}” into`}
+      <TagPicker tags={tags.filter((tag) => tag.tagId !== from.tagId)} creatable={false} label={text.merge_into({ name: from.label })}
         anchor={merging.anchor} on:pick={pickInto} on:close={() => (merging = null)} />
     {/if}
   </div>

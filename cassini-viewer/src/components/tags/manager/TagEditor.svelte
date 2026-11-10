@@ -2,9 +2,10 @@
   import { createEventDispatcher, onMount } from "svelte";
   import { Plus } from "@lucide/svelte";
 
+  import { LL } from "../../../i18n";
   import type { TagUpdate, VocabularyTag } from "../../../viewer/annotations";
   import { confirmLine, tagUpdate } from "../../../viewer/tagManager";
-  import { colorFor, styleName, type TagColorId, type TagIconId } from "../../../viewer/tagPalette";
+  import { colorFor, type TagColorId, type TagIconId } from "../../../viewer/tagPalette";
   import ColorSwatchPicker from "../ColorSwatchPicker.svelte";
   import TagIcon from "../TagIcon.svelte";
   import IconGrid from "./IconGrid.svelte";
@@ -23,6 +24,7 @@
   let input: HTMLInputElement;
 
   $: renamed = label.trim() !== "" && label.trim() !== tag.label;
+  $: text = $LL.viewer.browse.tags;
 
   onMount(() => {
     if (choosing) return;
@@ -47,28 +49,28 @@
 </script>
 
 <div class="tm-row flex flex-wrap items-center gap-1.5" data-tag-color={color}>
-  <input bind:this={input} bind:value={label} type="text" maxlength="64" autocomplete="off" spellcheck="false" aria-label="Tag name"
+  <input bind:this={input} bind:value={label} type="text" maxlength="64" autocomplete="off" spellcheck="false" aria-label={text.name_field()}
     class="input input-sm min-w-0 flex-[1_1_140px] text-[14px]" on:input={() => (conflict = null)} on:keydown={onKeydown} />
-  <button bind:this={swatch} type="button" class="tm-pick btn btn-square btn-ghost btn-sm" title="Colour"
-    aria-label={`Colour: ${styleName(color)}`} aria-haspopup="true" aria-expanded={choosing === "color"} on:click={() => toggle("color")}>
+  <button bind:this={swatch} type="button" class="tm-pick btn btn-square btn-ghost btn-sm" title={text.colour()}
+    aria-label={text.colour_named({ name: text.colors[color]() })} aria-haspopup="true" aria-expanded={choosing === "color"} on:click={() => toggle("color")}>
     <span class="size-3.5 rounded-full bg-(--tag)" aria-hidden="true"></span>
   </button>
   <button bind:this={iconButton} type="button" class="tm-pick btn btn-square btn-ghost btn-sm text-(--tag)"
-    title="Icon" aria-label={icon ? `Icon: ${styleName(icon)}` : "Add an icon"} aria-haspopup="true" aria-expanded={choosing === "icon"} on:click={() => toggle("icon")}>
+    title={text.icon()} aria-label={icon ? text.icon_named({ name: text.icons[icon]() }) : text.add_icon()} aria-haspopup="true" aria-expanded={choosing === "icon"} on:click={() => toggle("icon")}>
     {#if icon}<TagIcon {icon} size={15} />{:else}<Plus size={14} class="text-base-content/50" />{/if}
   </button>
-  <button type="button" class="tm-cancel cursor-pointer px-1" on:click={() => dispatch("cancel")}>Cancel</button>
-  <button type="button" class="tm-save btn btn-neutral btn-sm px-4 font-semibold" disabled={!label.trim()} on:click={save}>Save</button>
+  <button type="button" class="tm-cancel cursor-pointer px-1" on:click={() => dispatch("cancel")}>{text.cancel()}</button>
+  <button type="button" class="tm-save btn btn-neutral btn-sm px-4 font-semibold" disabled={!label.trim()} on:click={save}>{text.save()}</button>
   {#if conflict}
     {@const other = conflict}
     <p class="basis-full text-xs">
-      “{other.label}” already exists.
-      <button type="button" class="link font-medium" on:click={() => dispatch("merge", other.tagId)}>Merge into “{other.label}” instead</button>
+      {text.already_exists({ name: other.label })}
+      <button type="button" class="link font-medium" on:click={() => dispatch("merge", other.tagId)}>{text.merge_instead({ name: other.label })}</button>
     </p>
   {/if}
   {#if renamed}<p class="basis-full text-xs text-base-content/65">{confirmLine(tag.meetings)}</p>{/if}
   {#if choosing === "color"}
-    <ColorSwatchPicker value={color} anchor={swatch} label={`Colour for “${tag.label}”`} on:close={() => (choosing = null)}
+    <ColorSwatchPicker value={color} anchor={swatch} label={text.colour_for({ name: tag.label })} on:close={() => (choosing = null)}
       on:select={(event) => ((color = event.detail), (choosing = null), swatch.focus())} />
   {:else if choosing === "icon"}
     <IconGrid value={icon} anchor={iconButton} on:close={() => (choosing = null)}
