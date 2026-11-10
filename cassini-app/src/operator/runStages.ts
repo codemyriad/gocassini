@@ -4,7 +4,11 @@
 // one that failed last, shows over the steps it reached; the rest keep what
 // is live.
 import { buildTimeWithoutSummary, processesCapture, spanMs, stageTimes, stepTime, summaryTime } from "./processingSpeed";
+import { get } from "svelte/store";
+import { LL } from "cassini-viewer/i18n";
 import type { Job, JobAttempt, JobDetailResponse } from "./types";
+
+const copy = () => get(LL).app.operator.run_stages;
 
 // "skipped" is a step that was decided not to run, such as a summary with
 // summaries turned off: settled, unlike a step not reached yet.
@@ -54,10 +58,11 @@ const RUN_STEP_FOR: Record<string, Partial<Record<AttemptStep, string>>> = {
   refine: { build: "build", seal: "seal", publish: "publish" },
 };
 
+// Getters, so each read is in the reader's language.
 const SUMMARY_NOTES: Record<string, string> = {
-  completed: "In Build",
-  skipped: "Skipped",
-  failed: "Failed",
+  get completed() { return copy().summary_note.completed(); },
+  get skipped() { return copy().summary_note.skipped(); },
+  get failed() { return copy().summary_note.failed(); },
 };
 
 const SUMMARY_STATUSES: Record<string, StageStatus> = {
@@ -67,10 +72,10 @@ const SUMMARY_STATUSES: Record<string, StageStatus> = {
 };
 
 const SUMMARY_REASONS: Record<string, string> = {
-  disabled: "Summaries are turned off",
-  not_configured: "No summary model is configured",
-  no_transcript: "There was no transcript to summarize",
-  llm_failed: "The summary model failed; the build log says why",
+  get disabled() { return copy().summary_reason.disabled(); },
+  get not_configured() { return copy().summary_reason.not_configured(); },
+  get no_transcript() { return copy().summary_reason.no_transcript(); },
+  get llm_failed() { return copy().summary_reason.llm_failed(); },
 };
 
 function newest<T>(items: T[]): T | undefined {
@@ -102,36 +107,37 @@ export function runStages(detail: JobDetailResponse, recordingDeleted = false): 
   );
 
   const recordMs = spanMs(job.record_started_at, job.record_finished_at);
+  const t = copy();
   const stages: Record<string, StageView> = {
     record: recordingDeleted
-      ? { key: "record", label: "Record (deleted)", status: "pending", ms: null }
-      : { key: "record", label: "Record", status: stepStatuses(job).record, ms: recordMs },
+      ? { key: "record", label: t.record_deleted(), status: "pending", ms: null }
+      : { key: "record", label: t.stage.record(), status: stepStatuses(job).record, ms: recordMs },
     // Without the summary it wrote, which has a step of its own.
     build: capture
-      ? { ...fromAttempt("build", "Build", capture, "build"), ms: buildTimeWithoutSummary(capture) }
-      : { key: "build", label: "Build", status: "pending", ms: null },
-    summary: { key: "summary", label: "Summary", status: "pending", ms: null },
-    seal: published ? fromAttempt("seal", "Seal", published, "seal") : { key: "seal", label: "Seal", status: "pending", ms: null },
-    publish: published ? fromAttempt("publish", "Publish", published, "publish") : { key: "publish", label: "Publish", status: "pending", ms: null },
+      ? { ...fromAttempt("build", t.stage.build(), capture, "build"), ms: buildTimeWithoutSummary(capture) }
+      : { key: "build", label: t.stage.build(), status: "pending", ms: null },
+    summary: { key: "summary", label: t.stage.summary(), status: "pending", ms: null },
+    seal: published ? fromAttempt("seal", t.stage.seal(), published, "seal") : { key: "seal", label: t.stage.seal(), status: "pending", ms: null },
+    publish: published ? fromAttempt("publish", t.stage.publish(), published, "publish") : { key: "publish", label: t.stage.publish(), status: "pending", ms: null },
   };
   if (laterSummary) {
     // Timed on its own since D-899. Before, the build that wrote it stands
     // for it: a speaker rename replays in seconds, so the rest of that build
     // is the summary being written again.
-    stages.summary = fromAttempt("summary", "Summary", laterSummary, "build");
+    stages.summary = fromAttempt("summary", t.stage.summary(), laterSummary, "build");
     stages.summary.ms = summaryTime(laterSummary) ?? stages.summary.ms;
-    if (laterSummary.trigger_kind === "refine") stages.summary.hint = "Rewritten after speakers were renamed";
+    if (laterSummary.trigger_kind === "refine") stages.summary.hint = t.summary_rewritten_after_rename();
   } else if (capture?.summary_status) {
     // Written in the same build as the transcript: timed on its own since
     // D-899, before which the build was timed as one step.
     const ms = summaryTime(capture);
     stages.summary = {
       key: "summary",
-      label: "Summary",
+      label: t.stage.summary(),
       status: SUMMARY_STATUSES[capture.summary_status] ?? "pending",
       ms,
       note: ms !== null && capture.summary_status === "completed" ? undefined : SUMMARY_NOTES[capture.summary_status],
-      hint: capture.summary_reason ? SUMMARY_REASONS[capture.summary_reason] : ms !== null ? "Written during the build" : undefined,
+      hint: capture.summary_reason ? SUMMARY_REASONS[capture.summary_reason] : ms !== null ? t.summary_written_in_build() : undefined,
       attempt: capture.attempt_number,
     };
   }

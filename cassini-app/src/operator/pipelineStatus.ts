@@ -1,6 +1,8 @@
 // What each publish-pipeline step does with the SAVED settings, as the status
 // strip at the top of the Publishing card says it. Pure so the wording and the
 // warnings can be tested without mounting the panel.
+import { get } from "svelte/store";
+import { LL } from "cassini-viewer/i18n";
 import type { RetentionPolicy } from "./retention";
 import type { SettingsQuality, SpeechModel, SpeechModelInventory, SpeechModelJob } from "./types";
 
@@ -45,14 +47,20 @@ export interface PipelineInput {
   recordingsPolicy: RetentionPolicy | null;
 }
 
-const QUALITY_LABELS: Record<SettingsQuality, string> = { fast: "Fast", balanced: "Balanced", best: "Best" };
+const copy = () => get(LL).app.operator.pipeline_status;
+
+const QUALITY_LABELS: Record<SettingsQuality, () => string> = {
+  fast: () => copy().quality.fast(),
+  balanced: () => copy().quality.balanced(),
+  best: () => copy().quality.best(),
+};
 
 // The tier a speech model belongs to. Builds use the saved model, not the
 // quality setting, so the strip names what actually transcribes.
-const MODEL_TIERS: Record<string, string> = {
-  "parakeet-tdt-ctc-110m-en-int8": "Fast",
-  "parakeet-ultra-0.6b-int8": "Balanced",
-  "parakeet-ultra-0.6b": "Best",
+const MODEL_TIERS: Record<string, SettingsQuality> = {
+  "parakeet-tdt-ctc-110m-en-int8": "fast",
+  "parakeet-ultra-0.6b-int8": "balanced",
+  "parakeet-ultra-0.6b": "best",
 };
 
 // The model a quality tier runs on a device. On the GPU every tier runs the
@@ -95,18 +103,21 @@ export function inUseModelState(model: Pick<SpeechModel, "installed" | "stand_in
 /** "30 days", "1 day" or "forever"; null when the policy is unknown. */
 export function retentionSpan(policy: RetentionPolicy | null | undefined): string | null {
   if (!policy) return null;
-  if (policy.forever) return "forever";
+  const t = copy().retention;
+  if (policy.forever) return t.forever();
   if (!policy.count || policy.count <= 0) return null;
-  return policy.count === 1 ? "1 day" : `${policy.count} days`;
+  return policy.count === 1 ? t.days_one() : t.days_other({ count: policy.count });
 }
 
 export function pipelineStatus(input: PipelineInput): PipelineStatus {
+  const t = copy();
   const transcribing = input.transcriptionEnabled;
   const downloading = input.download !== null;
 
   let transcribe: StepStatus;
   if (transcribing) {
-    const state = `On · ${(input.activeModel && MODEL_TIERS[input.activeModel]) || QUALITY_LABELS[input.quality] || input.quality} · ${input.device === "cuda" ? "GPU" : "CPU"}`;
+    const tier = (input.activeModel && MODEL_TIERS[input.activeModel]) || input.quality;
+    const state = t.on_with({ detail: `${QUALITY_LABELS[tier]?.() || input.quality} · ${input.device === "cuda" ? "GPU" : "CPU"}` });
     // Switched on with a model that is not there: recordings publish without a
     // transcript, so the strip must not read as healthy. One being installed
     // is different: recordings wait for it. Either way, while the model it
@@ -116,57 +127,59 @@ export function pipelineStatus(input: PipelineInput): PipelineStatus {
     // names a stand-in for an installed model only then, not while its check
     // is still to run.
     const installing = input.activeModelDownload;
-    const meanwhile = input.activeModelInstalled != null && input.activeModelStandIn ? " · previous model transcribes meanwhile" : "";
+    const meanwhile = input.activeModelInstalled != null && input.activeModelStandIn ? ` · ${t.reason.previous_model_meanwhile()}` : "";
     if (input.activeModelInstalled === false && installing) {
-      const reason = installing.percent === null ? "downloading the model" : `downloading the model · ${installing.percent}%`;
+      const reason = installing.percent === null
+        ? t.reason.downloading_model()
+        : t.reason.downloading_model_percent({ percent: installing.percent });
       transcribe = { state, tone: "busy", reason: reason + meanwhile };
     } else if (meanwhile) {
-      const why = input.activeModelInstalled ? "model check failed" : "model not installed";
+      const why = input.activeModelInstalled ? t.reason.model_check_failed() : t.reason.model_not_installed();
       transcribe = { state, tone: "amber", reason: why + meanwhile };
     } else {
       transcribe = input.activeModelInstalled === false
-        ? { state, tone: "amber", reason: "model not installed" }
+        ? { state, tone: "amber", reason: t.reason.model_not_installed() }
         : { state, tone: "on" };
     }
   } else if (input.download) {
     const percent = input.download.percent;
-    transcribe = { state: percent === null ? "Off · downloading" : `Off · downloading ${percent}%`, tone: "busy" };
+    transcribe = { state: percent === null ? t.off_downloading() : t.off_downloading_percent({ percent }), tone: "busy" };
   } else {
-    transcribe = { state: "Off", tone: "off", ...(input.modelInstalled === false ? { badge: "download a model" } : {}) };
+    transcribe = { state: t.off(), tone: "off", ...(input.modelInstalled === false ? { badge: t.badge.download_model() } : {}) };
   }
 
   let summarise: StepStatus;
   if (input.hasProvider === null) {
-    summarise = { state: "Unknown", tone: "off" };
+    summarise = { state: t.unknown(), tone: "off" };
   } else if (input.summaryEnabled && input.hasProvider) {
-    const state = input.providerName ? `On · ${input.providerName}` : "On";
-    summarise = transcribing ? { state, tone: "on" } : { state, tone: "amber", reason: "needs a transcript" };
+    const state = input.providerName ? t.on_with({ detail: input.providerName }) : t.on();
+    summarise = transcribing ? { state, tone: "on" } : { state, tone: "amber", reason: t.reason.needs_transcript() };
   } else if (!transcribing) {
     // Nothing is wrong: the summary waits on a transcript before a provider.
-    summarise = { state: "Off", tone: "off", badge: "needs a transcript" };
+    summarise = { state: t.off(), tone: "off", badge: t.badge.needs_transcript() };
   } else {
-    summarise = { state: "Off", tone: "off", ...(input.hasProvider ? {} : { badge: "add a provider" }) };
+    summarise = { state: t.off(), tone: "off", ...(input.hasProvider ? {} : { badge: t.badge.add_provider() }) };
   }
 
   let publish: StepStatus;
   if (input.meetingFormat === "json") {
     publish = transcribing
-      ? { state: "Transcript only", tone: "on" }
-      : { state: "Transcript only", tone: "amber", reason: "needs Transcribe on" };
+      ? { state: t.publish.transcript_only(), tone: "on" }
+      : { state: t.publish.transcript_only(), tone: "amber", reason: t.reason.needs_transcribe_on() };
   } else {
     publish = {
-      state: transcribing ? "Audio + transcript" : "Audio, no transcript",
+      state: transcribing ? t.publish.audio_transcript() : t.publish.audio_no_transcript(),
       tone: "on",
-      ...(downloading && !transcribing ? { badge: "until the model is ready" } : {}),
+      ...(downloading && !transcribing ? { badge: t.badge.until_model_ready() } : {}),
     };
   }
 
   let keep: StepStatus;
   if (input.keep === "nothing") {
-    keep = { state: "Nothing", tone: "off", badge: "no reprocessing later" };
+    keep = { state: t.keep.nothing(), tone: "off", badge: t.badge.no_reprocessing() };
   } else {
     const span = retentionSpan(input.recordingsPolicy);
-    const media = input.keep === "audio-video" ? "Audio + video" : "Audio only";
+    const media = input.keep === "audio-video" ? t.keep.audio_video() : t.keep.audio_only();
     keep = { state: span ? `${media} · ${span}` : media, tone: "on" };
   }
 

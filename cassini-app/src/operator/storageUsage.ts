@@ -1,3 +1,4 @@
+import { numberFormat } from "cassini-viewer/i18n";
 import type { StorageUsageSource } from "./types";
 
 export interface StorageLoadSample {
@@ -29,7 +30,8 @@ export function formatStorageBytes(bytes: number): string {
     unit += 1;
   }
   const digits = unit > 0 && value < 10 ? 1 : 0;
-  return `${value.toFixed(digits)} ${units[unit]}`;
+  // Unit symbols are the same in every language we have; the number follows the locale.
+  return `${numberFormat({ minimumFractionDigits: digits, maximumFractionDigits: digits, useGrouping: false }).format(value)} ${units[unit]}`;
 }
 
 // A total is useful only when it covers every row. Returning null makes the
@@ -44,9 +46,10 @@ export function storageUsageTotal(sources: StorageUsageSource[]): number | null 
 export function formatStorageDuration(milliseconds: number): string {
   const duration = Number.isFinite(milliseconds) && milliseconds > 0 ? milliseconds : 0;
   if (duration < 1000) {
-    return `${Math.round(duration)} ms`;
+    return `${numberFormat({ maximumFractionDigits: 0, useGrouping: false }).format(Math.round(duration))} ms`;
   }
-  return `${(duration / 1000).toFixed(duration < 10_000 ? 2 : 1)} s`;
+  const digits = duration < 10_000 ? 2 : 1;
+  return `${numberFormat({ minimumFractionDigits: digits, maximumFractionDigits: digits, useGrouping: false }).format(duration / 1000)} s`;
 }
 
 export function summarizeStorageLoads(samples: StorageLoadSample[]): StorageLoadSummary | null {

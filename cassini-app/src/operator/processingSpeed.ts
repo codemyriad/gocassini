@@ -2,7 +2,11 @@
 // admin can tell whether their hardware keeps up. The multiplier reads the way
 // the transcription research does: 4.8× real time means a 58 minute meeting
 // took 12 minutes, and below 1× the server falls behind the meetings it records.
+import { get } from "svelte/store";
+import { LL, numberFormat } from "cassini-viewer/i18n";
 import type { Job, JobAttempt, JobDetailResponse } from "./types";
+
+const copy = () => get(LL).app.operator.processing_speed;
 
 type StageTimes = Job | JobAttempt;
 
@@ -32,28 +36,32 @@ export function spanMs(start: string | null | undefined, end: string | null | un
 }
 
 export function formatSpan(ms: number): string {
+  const t = copy().span;
   const totalSeconds = Math.round(ms / 1000);
-  if (totalSeconds < 60) return `${totalSeconds}s`;
+  if (totalSeconds < 60) return t.seconds({ seconds: totalSeconds });
   const totalMinutes = Math.floor(totalSeconds / 60);
   const remSeconds = totalSeconds % 60;
   if (totalMinutes < 60) {
-    return remSeconds > 0 ? `${totalMinutes}m ${remSeconds}s` : `${totalMinutes}m`;
+    return remSeconds > 0 ? t.minutes_seconds({ minutes: totalMinutes, seconds: remSeconds }) : t.minutes({ minutes: totalMinutes });
   }
   const hours = Math.floor(totalMinutes / 60);
   const remMinutes = totalMinutes % 60;
-  return remMinutes > 0 ? `${hours}h ${remMinutes}m` : `${hours}h`;
+  return remMinutes > 0 ? t.hours_minutes({ hours, minutes: remMinutes }) : t.hours({ hours });
 }
 
 export function formatMultiplier(factor: number): string {
   // Rounded before choosing the precision, or 9.97 would read "10.0×".
   const tenths = Math.round(factor * 10) / 10;
   // Far behind real time, one significant digit, so it never reads "0.0×".
-  if (tenths === 0) return `${Number(factor.toPrecision(1))}×`;
-  return `${tenths < 10 ? tenths.toFixed(1) : Math.round(factor).toLocaleString()}×`;
+  const multiplier = (value: string) => copy().multiplier({ factor: value });
+  if (tenths === 0) return multiplier(numberFormat({ maximumSignificantDigits: 1 }).format(factor));
+  return multiplier(tenths < 10
+    ? numberFormat({ minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(tenths)
+    : numberFormat({ maximumFractionDigits: 0 }).format(Math.round(factor)));
 }
 
 export function formatFactor(factor: number): string {
-  return `${formatMultiplier(factor)} real time`;
+  return copy().real_time({ multiplier: formatMultiplier(factor) });
 }
 
 // The meeting is as long as its recording ran. Reruns do not record, so this
@@ -140,5 +148,5 @@ export function describeProcessing(result: Speed): string {
 // Said on hover when the summary was left out of the figure.
 export function processingHint(result: Speed): string | undefined {
   if (result.summaryMs === undefined) return undefined;
-  return `Not counting ${formatSpan(result.summaryMs)} waiting on the summary model`;
+  return copy().not_counting_summary({ span: formatSpan(result.summaryMs) });
 }

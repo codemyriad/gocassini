@@ -1,13 +1,813 @@
 {
   "shell": {},
-  "operator": {},
+  "operator": {
+    "readiness": {
+      "title": {
+        "needs_action_one": "",
+        "needs_action_other": "",
+        "warn": "",
+        "not_verified": "",
+        "not_verified_archive_failed": "",
+        "not_verified_archive_attention": "",
+        "not_verified_archive_reindexing": "",
+        "passed": "",
+        "ready_archive_failed": "",
+        "ready_archive_attention": "",
+        "ready_archive_reindexing": ""
+      },
+      "check": {
+        "configuration": "",
+        "storage": "",
+        "storage_sharing": "",
+        "archive_search": "",
+        "talk_discovery": "",
+        "talk_hpb": "",
+        "talk_handoff": "",
+        "test": "",
+        "host": "",
+        "host_workdir": "",
+        "host_tmpdir_writable": ""
+      },
+      "state": {
+        "passed": "",
+        "warn": "",
+        "needs_action": "",
+        "not_verified": "",
+        "repair_failed": "",
+        "reindex_failed": "",
+        "previously_confirmed": ""
+      },
+      "action": {
+        "configure_talk": "",
+        "connect_talk": "",
+        "test_recording": "",
+        "recheck": "",
+        "setup_storage": "",
+        "repair_configuration": "",
+        "change_secret": "",
+        "show_steps": ""
+      },
+      "repair": {
+        "backfill_search": "",
+        "backfill_search_retry": ""
+      },
+      "guide": {
+        "talk_hpb": "",
+        "nextcloud": ""
+      },
+      "just_now": "",
+      "test_follow_up": {
+        "failed": "",
+        "play": "",
+        "waiting_for_talk": "",
+        "in_progress": ""
+      },
+      "refresh_failure": {
+        "signed_out": "",
+        "not_responding": "",
+        "unreachable": "",
+        "answered_with_error": "",
+        "unknown": ""
+      },
+      "unshared": {
+        "summary_one": "",
+        "summary_one_since": "",
+        "summary_other": "",
+        "summary_other_since": "",
+        "people_one": "",
+        "people_other": "",
+        "groups_one": "",
+        "groups_other": "",
+        "who_both": "",
+        "who_everyone": ""
+      },
+      "share_limited": {
+        "summary_one": "",
+        "summary_one_since": "",
+        "summary_other": "",
+        "summary_other_since": ""
+      }
+    },
+    "setup_notice": {
+      "try_again": "",
+      "checking": "",
+      "show_details": "",
+      "details_heading": "",
+      "open_publish_pipeline": "",
+      "title_failing": "",
+      "title_unchecked": "",
+      "summary_failing": "",
+      "summary_unchecked": "",
+      "share_label": "",
+      "step_rerun_setup": "",
+      "step_open_settings": "",
+      "step_create_account": "",
+      "step_set_admin_user": "",
+      "cause_unknown": "",
+      "detail_state": "",
+      "detail_state_at_step": "",
+      "note_occ": "",
+      "reference": ""
+    },
+    "feature_notice": {
+      "insights_title": "",
+      "summaries_title": "",
+      "insights_summary": "",
+      "insights_summary_ask_admin": "",
+      "summaries_summary": "",
+      "summaries_summary_ask_admin": "",
+      "action": "",
+      "action_short": "",
+      "insights_action_title": "",
+      "summaries_action_title": ""
+    },
+    "step_outcomes": {
+      "transcription": {
+        "disabled": "",
+        "model_unavailable": "",
+        "model_unavailable_hint": "",
+        "failed": "",
+        "insufficient_resources": "",
+        "other": "",
+        "rerun_hint": ""
+      },
+      "summary": {
+        "template_fallback": "",
+        "template_fallback_hint": "",
+        "failed": "",
+        "failed_hint": "",
+        "disabled": "",
+        "not_configured": "",
+        "not_configured_hint": "",
+        "other": ""
+      },
+      "principal": {
+        "person": "",
+        "group": "",
+        "team": ""
+      },
+      "recipients_one": "",
+      "recipients_other": "",
+      "refused": {
+        "entry_with_kind": "",
+        "entry_with_reason": "",
+        "list_more": ""
+      },
+      "reshare": {
+        "held_back": "",
+        "shared_again_held_back": "",
+        "shared_with_everyone": "",
+        "still_refused": "",
+        "two_sentences": ""
+      },
+      "share": {
+        "starter_refused": "",
+        "starter_refused_named": "",
+        "starter_refused_hint_rerun": "",
+        "starter_refused_hint_no_rerun": "",
+        "held_back": "",
+        "partial_of": "",
+        "partial": "",
+        "who_was_refused": "",
+        "partial_hint": "",
+        "also_held_back": "",
+        "reshare_button": "",
+        "reshare_note": ""
+      }
+    },
+    "run_stages": {
+      "stage": {
+        "record": "",
+        "build": "",
+        "summary": "",
+        "seal": "",
+        "publish": ""
+      },
+      "record_deleted": "",
+      "summary_note": {
+        "completed": "",
+        "skipped": "",
+        "failed": ""
+      },
+      "summary_reason": {
+        "disabled": "",
+        "not_configured": "",
+        "no_transcript": "",
+        "llm_failed": ""
+      },
+      "summary_rewritten_after_rename": "",
+      "summary_written_in_build": ""
+    },
+    "attempt_models": {
+      "model_on_device": "",
+      "reason": {
+        "recording_ended": "",
+        "recording": "",
+        "rerun": "",
+        "summarize": "",
+        "refine_rewrite": "",
+        "refine_keep": ""
+      },
+      "speech": {
+        "reused_from": "",
+        "reused": ""
+      },
+      "summary": {
+        "kept": "",
+        "skipped": "",
+        "skipped_disabled": "",
+        "skipped_not_configured": "",
+        "skipped_no_transcript": "",
+        "failed": "",
+        "failed_llm": "",
+        "written_unrecorded": ""
+      }
+    },
+    "processing_speed": {
+      "span": {
+        "seconds": "",
+        "minutes": "",
+        "minutes_seconds": "",
+        "hours": "",
+        "hours_minutes": ""
+      },
+      "multiplier": "",
+      "real_time": "",
+      "not_counting_summary": ""
+    },
+    "pipeline_status": {
+      "on": "",
+      "on_with": "",
+      "off": "",
+      "off_downloading": "",
+      "off_downloading_percent": "",
+      "unknown": "",
+      "quality": {
+        "fast": "",
+        "balanced": "",
+        "best": ""
+      },
+      "reason": {
+        "previous_model_meanwhile": "",
+        "downloading_model": "",
+        "downloading_model_percent": "",
+        "model_check_failed": "",
+        "model_not_installed": "",
+        "needs_transcript": "",
+        "needs_transcribe_on": ""
+      },
+      "badge": {
+        "download_model": "",
+        "needs_transcript": "",
+        "add_provider": "",
+        "until_model_ready": "",
+        "no_reprocessing": ""
+      },
+      "publish": {
+        "transcript_only": "",
+        "audio_transcript": "",
+        "audio_no_transcript": ""
+      },
+      "keep": {
+        "nothing": "",
+        "audio_video": "",
+        "audio_only": ""
+      },
+      "retention": {
+        "forever": "",
+        "days_one": "",
+        "days_other": ""
+      }
+    },
+    "recorded_at_migration": {
+      "recordings_one": "",
+      "recordings_other": "",
+      "refresh_failed": "",
+      "button": {
+        "write_one": "",
+        "write_other": "",
+        "pause": "",
+        "resume": "",
+        "retry_one": "",
+        "retry_other": ""
+      },
+      "summary": {
+        "needed_one": "",
+        "needed_other": "",
+        "still_counting": "",
+        "checking": "",
+        "running_one": "",
+        "running_one_done": "",
+        "running_other": "",
+        "running_other_done": "",
+        "pace_one": "",
+        "pace_many": "",
+        "pausing_one": "",
+        "pausing_other": "",
+        "paused": "",
+        "paused_done": "",
+        "blocked_one": "",
+        "blocked_one_done_one": "",
+        "blocked_one_done_other": "",
+        "blocked_other": "",
+        "blocked_other_done_one": "",
+        "blocked_other_done_other": "",
+        "done": "",
+        "unknown": ""
+      },
+      "facts": {
+        "versioning": "",
+        "activity_app": "",
+        "notifications_app": "",
+        "web_push": "",
+        "unknown": "",
+        "enabled": "",
+        "not_enabled": "",
+        "web_push_browsers": "",
+        "web_push_apps": "",
+        "web_push_off": ""
+      },
+      "panel": {
+        "title": "",
+        "state_done": "",
+        "state_blocked": "",
+        "state_pausing": "",
+        "state_running": "",
+        "state_paused": "",
+        "state_checking": "",
+        "state_needed": "",
+        "blocked_list_label": "",
+        "blocked_more": "",
+        "details_summary": "",
+        "facts_label": "",
+        "pause_note": ""
+      }
+    },
+    "storage": {
+      "category": {
+        "published": {
+          "label": "",
+          "description": ""
+        },
+        "recordings": {
+          "label": "",
+          "description": ""
+        },
+        "current": {
+          "label": "",
+          "description": ""
+        },
+        "history": {
+          "label": "",
+          "description": ""
+        },
+        "failed_capture": {
+          "label": "",
+          "description": ""
+        },
+        "failed_build": {
+          "label": "",
+          "description": ""
+        },
+        "superseded": {
+          "label": "",
+          "description": ""
+        },
+        "failed_publish": {
+          "label": "",
+          "description": ""
+        },
+        "logs": {
+          "label": "",
+          "description": ""
+        },
+        "other": {
+          "label": "",
+          "description": ""
+        }
+      },
+      "report": {
+        "title": "",
+        "last_calculated": "",
+        "just_now": "",
+        "calculating": "",
+        "recalculate": "",
+        "calculate": "",
+        "no_operator": "",
+        "load_failed": "",
+        "recalculate_failed": "",
+        "loading": "",
+        "never_title": "",
+        "never_line": "",
+        "local_heading": "",
+        "local_description": "",
+        "published_heading": "",
+        "published_description": "",
+        "partial_result": "",
+        "not_available": "",
+        "not_measured": "",
+        "partial_local": "",
+        "partial_published": "",
+        "published_dates_missing": "",
+        "errors_summary": "",
+        "categories_missing": "",
+        "by_type": "",
+        "by_date": "",
+        "row_aria": "",
+        "explore_aria": "",
+        "partial_prefix": "",
+        "partial_category": "",
+        "unknown_category_description": ""
+      },
+      "chart": {
+        "range_label": "",
+        "range_aria": "",
+        "range_all": "",
+        "range_last_days": "",
+        "range_last_year": "",
+        "range_custom": "",
+        "from": "",
+        "through": "",
+        "from_aria": "",
+        "through_aria": "",
+        "undated_one": "",
+        "undated_other": "",
+        "empty_no_files": "",
+        "empty_no_dated_files": "",
+        "in_selected_range": "",
+        "precision_daily": "",
+        "precision_days": "",
+        "dates_lifecycle": "",
+        "dates_published": "",
+        "empty_range": "",
+        "scroll_earlier": "",
+        "scroll_later": "",
+        "scroll_earlier_aria": "",
+        "scroll_later_aria": "",
+        "scroll_hint": "",
+        "plot_aria": "",
+        "cutoff_marker": "",
+        "cutoff_note": "",
+        "files_one": "",
+        "files_other": "",
+        "bar_aria": "",
+        "bar_hint": "",
+        "data_summary": "",
+        "data_caption_lifecycle": "",
+        "data_caption_published": "",
+        "column_range": "",
+        "column_bytes": "",
+        "column_files": "",
+        "error_invalid_dates": "",
+        "error_end_before_start": "",
+        "error_precision": ""
+      }
+    },
+    "nc_setup": {
+      "confirmation_unavailable": "",
+      "confirmation_cancelled": "",
+      "rejected": "",
+      "rejected_confirmation": "",
+      "setup_unavailable": "",
+      "password_unavailable": "",
+      "unknown_step": ""
+    },
+    "sharing_notice": {
+      "pending_title_one": "",
+      "pending_title_other": "",
+      "pending_label": "",
+      "pending_line": "",
+      "show_them": "",
+      "hide_them": "",
+      "accept": "",
+      "accept_all": "",
+      "accept_row_aria": "",
+      "why_accept": "",
+      "accept_refused": "",
+      "accept_failed": "",
+      "dismiss_failed": "",
+      "refused_title_one": "",
+      "refused_title_other": "",
+      "refused_line": "",
+      "refused_group_label": "",
+      "starter_refused_title_one": "",
+      "starter_refused_title_other": "",
+      "starter_refused_line_one": "",
+      "starter_refused_line_other": "",
+      "unpublished_group_label": "",
+      "refused_notice": {
+        "room_date": "",
+        "room": "",
+        "date": "",
+        "unknown": ""
+      },
+      "unpublished_notice": {
+        "room_date": "",
+        "room": "",
+        "date": "",
+        "unknown": ""
+      },
+      "refused_this": "",
+      "unpublished_this": "",
+      "waiting_title": "",
+      "a_recording": "",
+      "dismiss": "",
+      "dismiss_all": "",
+      "dismiss_row_aria": "",
+      "dismiss_notice_aria": "",
+      "admin_fix": "",
+      "send_link": "",
+      "send_link_title": "",
+      "admin_fix_plain": "",
+      "duration_minutes": "",
+      "duration_hours": ""
+    },
+    "doctor": {
+      "title": "",
+      "run_all": "",
+      "checking": "",
+      "intro": "",
+      "refresh_failed": "",
+      "trying": "",
+      "try_again": "",
+      "last_checked": "",
+      "checked": "",
+      "confirmed": "",
+      "verdict_and_follow_up": "",
+      "verdict_but_follow_up": "",
+      "waiting": "",
+      "reindexing": "",
+      "running": "",
+      "open_runs": "",
+      "raise_limit": "",
+      "raise_limit_body": "",
+      "what_to_do": "",
+      "open_test_room": "",
+      "see_why_stopped": "",
+      "prepare_test": "",
+      "prepare_new_test": "",
+      "play_recording": "",
+      "open_talk_settings": "",
+      "open_talk_admin": "",
+      "test_picks_up": "",
+      "reindex_updates": "",
+      "confirm_playback": "",
+      "close": "",
+      "secret": {
+        "title": "",
+        "intro": "",
+        "managed": "",
+        "saved": "",
+        "not_saved": "",
+        "label": "",
+        "save": "",
+        "why": ""
+      },
+      "backend": {
+        "title": "",
+        "intro": "",
+        "show_values": ""
+      },
+      "test": {
+        "title": "",
+        "intro": "",
+        "step_prepare": "",
+        "step_record": "",
+        "step_speak": "",
+        "step_play": "",
+        "step_done": "",
+        "note": "",
+        "status": "",
+        "stage_unknown": "",
+        "job": "",
+        "open_published": "",
+        "confirm_published": ""
+      },
+      "settings_note": "",
+      "repair_config": {
+        "title": "",
+        "body": ""
+      }
+    },
+    "console": {
+      "page_title": "",
+      "page_description": "",
+      "nav": {
+        "group_console": "",
+        "group_diagnostics": "",
+        "group_settings": "",
+        "group_support": "",
+        "recordings": "",
+        "doctor": "",
+        "endpoints": "",
+        "pipeline": "",
+        "templates": "",
+        "storage": "",
+        "support": "",
+        "open_label": "",
+        "close_label": "",
+        "label": ""
+      },
+      "title": "",
+      "connection": {
+        "live": "",
+        "connecting": "",
+        "reconnecting": "",
+        "offline": "",
+        "unknown": ""
+      },
+      "stream": {
+        "live": "",
+        "connecting": "",
+        "reconnecting": "",
+        "auto_refreshing": "",
+        "disconnected": "",
+        "idle": ""
+      },
+      "checking_every": "",
+      "retrying_every": "",
+      "record_meeting": "",
+      "meeting_link": "",
+      "starting": "",
+      "start_recording": "",
+      "meeting_url_required": "",
+      "list_title": "",
+      "refresh_jobs": "",
+      "loading_jobs": "",
+      "empty_title": "",
+      "empty_body": "",
+      "attempt_badge": "",
+      "next_retry_deferrals_one": "",
+      "next_retry_deferrals_other": "",
+      "cleanup_hint": "",
+      "source_expired_badge": "",
+      "source_expired_title": "",
+      "meeting_deleted_badge": "",
+      "meeting_deleted_title": "",
+      "not_shared_badge": "",
+      "not_shared_title_one": "",
+      "not_shared_title_other": "",
+      "call_label": "",
+      "recording_label": "",
+      "recording_unnamed": "",
+      "capture_mode": {
+        "audio_only": "",
+        "audio_video": "",
+        "unknown": ""
+      },
+      "stop_reason": {
+        "operator_requested": "",
+        "room_empty": "",
+        "duration_limit": "",
+        "signaling_connection_error": "",
+        "join_failed": "",
+        "record_process_exit_nonzero": ""
+      },
+      "status": {
+        "build_blocked": "",
+        "waiting_for_resources": "",
+        "failed": "",
+        "stopped": "",
+        "interrupted": "",
+        "published": "",
+        "queued": "",
+        "writing_summary": "",
+        "running": "",
+        "recording": "",
+        "building": "",
+        "sealing": "",
+        "publishing": ""
+      },
+      "cleanup": {
+        "waiting": "",
+        "pending": "",
+        "error": "",
+        "completed": "",
+        "body": "",
+        "completed_at": "",
+        "retry": "",
+        "retry_requested": ""
+      },
+      "summary_changed": "",
+      "rerun_blocked_expired": "",
+      "rerun_no_recording": "",
+      "build_includes_summary": "",
+      "from_attempt": "",
+      "unfinished": {
+        "active": "",
+        "queued": "",
+        "blocked": ""
+      },
+      "just_now": "",
+      "not_available": "",
+      "back_to_recordings": "",
+      "detail_title": "",
+      "detail_subtitle": "",
+      "stopping": "",
+      "stop": "",
+      "rerunning": "",
+      "rerun": "",
+      "no_selection_title": "",
+      "no_selection_body": "",
+      "updated_ago": "",
+      "cancel": "",
+      "next_retry": "",
+      "resource_deferrals": "",
+      "exit_code": "",
+      "reason": "",
+      "stop_requested": "",
+      "recording_stopped": "",
+      "field": {
+        "recorded": "",
+        "processing": "",
+        "completed": "",
+        "speech_model": "",
+        "summary_model": "",
+        "capture": "",
+        "stopped_because": "",
+        "conversation": "",
+        "recording": "",
+        "run_id": "",
+        "created": "",
+        "updated": "",
+        "interrupted": "",
+        "queued": ""
+      },
+      "open_in_talk": "",
+      "open_in_files": "",
+      "technical_details": "",
+      "attempt_history": "",
+      "attempt": "",
+      "trigger_kind": {
+        "initial": "",
+        "rerun": "",
+        "summarize": "",
+        "refine": ""
+      },
+      "processed_in": "",
+      "recorded_for": "",
+      "revision": "",
+      "log_name": {
+        "record": "",
+        "build": "",
+        "seal": "",
+        "publish": ""
+      },
+      "show_log": {
+        "record": "",
+        "build": "",
+        "seal": "",
+        "publish": ""
+      },
+      "log_gone": "",
+      "log_not_part": "",
+      "log_not_written": "",
+      "log_truncated": "",
+      "download": "",
+      "close_log": "",
+      "loading": "",
+      "log_empty": "",
+      "path": {
+        "run": "",
+        "meeting": "",
+        "opus": "",
+        "site": ""
+      },
+      "no_longer_on_disk": ""
+    },
+    "support_bundle": {
+      "region_label": "",
+      "download": "",
+      "preparing": "",
+      "scrub": "",
+      "explain_scrubbed": "",
+      "explain_original": "",
+      "downloaded_admin_scrubbed": "",
+      "downloaded_admin_original": "",
+      "downloaded_user_scrubbed": "",
+      "downloaded_user_original": "",
+      "error_timeout": "",
+      "error_unreachable": "",
+      "error_sign_in": "",
+      "error_forbidden": "",
+      "error_unavailable": "",
+      "error_busy": "",
+      "error_failed": "",
+      "error_not_a_bundle": "",
+      "error_incomplete": ""
+    },
+    "support_panel": {
+      "title": "",
+      "intro": "",
+      "fund_heading": "",
+      "fund_body": "",
+      "fund_button": "",
+      "fund_fine_print": "",
+      "setup_heading": "",
+      "setup_body": "",
+      "setup_button": ""
+    }
+  },
   "settings": {},
-  "insights": {},
-  "setup_notice": {
-    "try_again": "",
-    "checking": "",
-    "show_details": "",
-    "details_heading": "",
-    "open_publish_pipeline": ""
-  }
+  "insights": {}
 }

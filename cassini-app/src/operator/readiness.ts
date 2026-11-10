@@ -2,7 +2,11 @@
 // audio recording remains possible, such as a disk getting low on space or an
 // enabled optional transcription model being unavailable.
 
-import { dateFormat } from "cassini-viewer/i18n";
+import { get } from "svelte/store";
+import { dateFormat, LL, relativeTimeFormat } from "cassini-viewer/i18n";
+
+// The copy, read when it is needed so it follows the reader's language.
+const copy = () => get(LL).app.operator.readiness;
 
 export type CheckState = "passed" | "warn" | "needs_action" | "not_verified";
 // One thing to do about a check that is not ok. Mirrors SetupNoticeStep, which
@@ -74,9 +78,10 @@ export const shareLimitCommands = [
 // "Nextcloud's share limit held back recipients of 2 recordings since 6 Nov.
 // Re-share each from its run, or raise the limit."
 export function shareLimitedSummary(limited: ShareLimitedCount, now: Date = new Date()): string {
-  const count = limited.jobs === 1 ? "1 recording" : `${limited.jobs} recordings`;
+  const t = copy().share_limited;
   const since = formatSince(limited.since, now);
-  return `Nextcloud's share limit held back recipients of ${count}${since ? ` since ${since}` : ""}. Re-share each from its run, or raise the limit.`;
+  if (limited.jobs === 1) return since ? t.summary_one_since({ since }) : t.summary_one();
+  return since ? t.summary_other_since({ count: limited.jobs, since }) : t.summary_other({ count: limited.jobs });
 }
 
 export interface UnsharedCount {
@@ -94,14 +99,15 @@ export interface UnsharedCount {
 // en-GB form the viewer uses for its own dates, with the year only when it is
 // not this one.
 export function unsharedSummary(unshared: UnsharedCount, now: Date = new Date()): string {
-  const jobs = unshared.jobs === 1 ? "1 recording" : `${unshared.jobs} recordings`;
+  const t = copy().unshared;
   const since = formatSince(unshared.since, now);
-  const who = [
-    unshared.users === 0 ? "" : unshared.users === 1 ? "1 person" : `${unshared.users} people`,
-    unshared.groups === 0 ? "" : unshared.groups === 1 ? "1 group" : `${unshared.groups} groups`,
-  ].filter((part) => part !== "");
-  const verb = unshared.jobs === 1 ? "was" : "were";
-  return `${jobs}${since ? ` since ${since}` : ""} ${verb} not shared with ${who.length > 0 ? who.join(" and ") : "everyone"}.`;
+  const people = unshared.users === 0 ? "" : unshared.users === 1 ? t.people_one() : t.people_other({ count: unshared.users });
+  const groups = unshared.groups === 0 ? "" : unshared.groups === 1 ? t.groups_one() : t.groups_other({ count: unshared.groups });
+  const who = people && groups ? t.who_both({ people, groups }) : people || groups || t.who_everyone();
+  if (unshared.jobs === 1) return since ? t.summary_one_since({ since, who }) : t.summary_one({ who });
+  return since
+    ? t.summary_other_since({ count: unshared.jobs, since, who })
+    : t.summary_other({ count: unshared.jobs, who });
 }
 
 function formatSince(iso: string | undefined, now: Date): string {
@@ -158,25 +164,22 @@ export function testInFlight(report: RecordingReadiness | null, now: Date = new 
 export function testFollowUp(report: RecordingReadiness, now: Date = new Date()): string {
   const test = report.test;
   if (!test || test.playback_verified_at) return "";
-  if (test.state === "failed") return "your test recording did not finish";
-  if (test.published && test.viewer_url) return "play your test recording to finish it";
+  const t = copy().test_follow_up;
+  if (test.state === "failed") return t.failed();
+  if (test.published && test.viewer_url) return t.play();
   if (!testInFlight(report, now)) return "";
-  return test.state === "waiting_for_talk" ? "your test recording is waiting for you in Talk" : "your test recording is still in progress";
+  return test.state === "waiting_for_talk" ? t.waiting_for_talk() : t.in_progress();
 }
 
 export function describeRefreshFailure(error: unknown): string {
+  const t = copy().refresh_failure;
   const status = (error as { status?: unknown } | null)?.status;
-  if (status === 401 || status === 403) {
-    return "Your Nextcloud session may have expired, or this account is no longer an administrator. Reload the page and sign in again.";
-  }
-  if (status === 502 || status === 503 || status === 504) {
-    return "Cassini is not responding. It may be restarting, so wait a moment and try again. If it keeps happening, check that Cassini is enabled under Nextcloud's apps.";
-  }
-  if (error instanceof TypeError) {
-    return "Your browser could not reach Nextcloud. Check the connection, then try again.";
-  }
+  if (status === 401 || status === 403) return t.signed_out();
+  if (status === 502 || status === 503 || status === 504) return t.not_responding();
+  if (error instanceof TypeError) return t.unreachable();
+  // The operator's own sentence, which arrives in English.
   const message = error instanceof Error ? error.message.trim() : String(error ?? "").trim();
-  return message ? `Cassini answered with an error: ${message}` : "Something went wrong. Try again.";
+  return message ? t.answered_with_error({ message }) : t.unknown();
 }
 
 export interface RecordingSetupUpdate {
@@ -187,44 +190,51 @@ export interface RecordingSetupUpdate {
 }
 // What a repair button says. Offered only for actions the operator can itself
 // perform.
+// Getters, so each read is in the reader's language.
 export const repairLabels: Record<string, string> = {
-  backfill_search: "Re-index now",
+  get backfill_search() { return copy().repair.backfill_search(); },
 };
 
-const retryLabels: Record<string, string> = { backfill_search: "Try re-indexing again" };
+const retryLabels: Record<string, string> = {
+  get backfill_search() { return copy().repair.backfill_search_retry(); },
+};
 
 export function repairLabel(check: ReadinessCheck): string {
   const repair = check.repair ?? "";
   return (check.repair_failed && retryLabels[repair]) || repairLabels[repair] || "";
 }
 
+// Getters, so each read is in the reader's language.
 export const checkLabels: Record<string, string> = {
-  configuration: "Saved configuration",
-  storage: "Recording storage",
+  get configuration() { return copy().check.configuration(); },
+  get storage() { return copy().check.storage(); },
   // Whether Nextcloud's sharing settings let Cassini share recordings with the
   // people in a meeting (D-885). The same string the operator uses when a row
   // names this one as what it waits for.
-  "storage.sharing": "Recording sharing",
-  "archive.search": "Archive search",
-  "talk.discovery": "Talk connection",
+  get "storage.sharing"() { return copy().check.storage_sharing(); },
+  get "archive.search"() { return copy().check.archive_search(); },
+  get "talk.discovery"() { return copy().check.talk_discovery(); },
   // Nextcloud Talk's own term for it, capitalised the way its documentation
   // does — and the same string the operator uses when a blocked row names this
   // one as what it is waiting for. A message naming a row something the reader
   // cannot see on screen sends them hunting.
-  "talk.hpb": "High Performance Backend",
+  get "talk.hpb"() { return copy().check.talk_hpb(); },
   // Only appears when the credential could not be provisioned. The row used to
   // double as "has Talk called us lately", which was inherently historical and
   // could never legitimately read green, so that half is gone.
-  "talk.handoff": "Recording credential",
+  get "talk.handoff"() { return copy().check.talk_handoff(); },
   // Evidence rather than a check: it reports what a person confirmed by
   // playing a recording back, which is the one thing no probe can establish.
-  test: "Test recording",
-  host: "Recording host",
-  "host.workdir": "Recording volume",
-  "host.tmpdir.writable": "Temporary space",
+  get test() { return copy().check.test(); },
+  get host() { return copy().check.host(); },
+  get "host.workdir"() { return copy().check.host_workdir(); },
+  get "host.tmpdir.writable"() { return copy().check.host_tmpdir_writable(); },
 };
 export const stateLabels: Record<CheckState, string> = {
-  passed: "Passed", warn: "Needs attention", needs_action: "Needs action", not_verified: "Not verified",
+  get passed() { return copy().state.passed(); },
+  get warn() { return copy().state.warn(); },
+  get needs_action() { return copy().state.needs_action(); },
+  get not_verified() { return copy().state.not_verified(); },
 };
 // readinessTitle is the heading, derived from the verdict the OPERATOR reached.
 //
@@ -237,24 +247,31 @@ export const stateLabels: Record<CheckState, string> = {
 // Counting rows for the phrasing is presentation and stays here. Deciding what
 // the instance's verdict IS does not.
 export function readinessTitle(report: RecordingReadiness): string {
+  const t = copy().title;
   const verdict = report.recording_state ?? report.state;
   // Archive coverage is excluded from the recording verdict, so a shortfall
   // there would otherwise be invisible in the heading.
   const archiveRows = report.checks.filter(c => c.id.startsWith("archive.") && (c.state === "warn" || c.state === "needs_action"));
-  const archive = archiveRows.some(c => c.repair_failed && !c.running)
-    ? "archive search re-index failed"
+  const archive: "failed" | "attention" | "reindexing" | "" = archiveRows.some(c => c.repair_failed && !c.running)
+    ? "failed"
     : archiveRows.some(c => !c.running)
-      ? "archive search needs attention"
-      : archiveRows.length > 0 ? "archive search is re-indexing" : "";
+      ? "attention"
+      : archiveRows.length > 0 ? "reindexing" : "";
   if (verdict === "needs_action") {
     const count = report.checks.filter(c => c.state === "needs_action").length;
-    return count === 1 ? "One recording check needs attention" : `${count} recording checks need attention`;
+    return count === 1 ? t.needs_action_one() : t.needs_action_other({ count });
   }
-  if (verdict === "warn") return "Recording checks need attention";
+  if (verdict === "warn") return t.warn();
   if (verdict === "not_verified") {
-    return archive ? `Recording setup needs verification; ${archive}` : "Recording setup needs verification";
+    if (archive === "failed") return t.not_verified_archive_failed();
+    if (archive === "attention") return t.not_verified_archive_attention();
+    if (archive === "reindexing") return t.not_verified_archive_reindexing();
+    return t.not_verified();
   }
-  return archive ? `Recording ready; ${archive}` : "Recording checks passed";
+  if (archive === "failed") return t.ready_archive_failed();
+  if (archive === "attention") return t.ready_archive_attention();
+  if (archive === "reindexing") return t.ready_archive_reindexing();
+  return t.passed();
 }
 // Ignore check timestamps and job progress: the shell only needs health changes.
 export function readinessHealthKey(report: RecordingReadiness | null): string {
@@ -277,15 +294,15 @@ export function readinessRows(report: RecordingReadiness): ReadinessCheck[] {
 
 export const hpbGuideURL = "https://nextcloud-talk.readthedocs.io/en/stable/quick-install/";
 
-const guideLabels: Record<string, string> = {
-  "talk.hpb": "How to set up a High Performance Backend",
+const guideLabels: Record<string, () => string> = {
+  "talk.hpb": () => copy().guide.talk_hpb(),
 };
 
 export function rowGuide(check: ReadinessCheck): { href: string; label: string } | null {
   if (check.code === "check_blocked") return null;
   const href = check.docs ?? (check.action === "setup_hpb" ? hpbGuideURL : undefined);
   if (!href) return null;
-  return { href, label: guideLabels[check.id] ?? "Read Nextcloud's guide" };
+  return { href, label: guideLabels[check.id]?.() ?? copy().guide.nextcloud() };
 }
 
 export function rowActions(check: ReadinessCheck): { action: string; label: string }[] {
@@ -302,13 +319,14 @@ export function rowActions(check: ReadinessCheck): { action: string; label: stri
   // through to — which for setup_hpb, the row a backend-less install leads
   // with, meant a button labelled nothing in particular. repair_configuration
   // was the same.
+  const t = copy().action;
   const labels: Record<string, string> = {
-    configure_talk: "Set credential",
-    connect_talk: "Connect Talk",
-    test_recording: "Record a test",
-    recheck: "Check",
-    setup_storage: "Set up storage",
-    repair_configuration: "How to repair this",
+    configure_talk: t.configure_talk(),
+    connect_talk: t.connect_talk(),
+    test_recording: t.test_recording(),
+    recheck: t.recheck(),
+    setup_storage: t.setup_storage(),
+    repair_configuration: t.repair_configuration(),
   };
   const actions = check.action ? [check.action] : [];
   // The backend row is not here either: the operator withholds its credential
@@ -323,11 +341,11 @@ export function rowActions(check: ReadinessCheck): { action: string; label: stri
   // whose effect the panel cannot describe and whose drawer it does not have.
   // Same rule as the repair buttons: offering a control the panel cannot
   // explain is how a reader ends up reading an instruction for another fault.
-  const passedLabels: Record<string, string> = { configure_talk: "Change secret" };
+  const passedLabels: Record<string, string> = { configure_talk: t.change_secret() };
   const codeLabels: Record<string, Record<string, string>> = {
-    test_in_progress: { test_recording: "Show steps" },
-    test_awaiting_playback: { test_recording: "Show steps" },
-    test_failed: { test_recording: "Show steps" },
+    test_in_progress: { test_recording: t.show_steps() },
+    test_awaiting_playback: { test_recording: t.show_steps() },
+    test_failed: { test_recording: t.show_steps() },
   };
   return actions.filter(action => labels[action]).map(action => ({
     action,
@@ -423,25 +441,26 @@ export function formatAge(checkedAt: string, now: Date = new Date()): string {
   // A clock skewed forward should not produce "in 3 minutes"; the reader only
   // needs to know it is current.
   if (seconds < 60) {
-    return "just now";
+    return copy().just_now();
   }
+  // "always": "1 day ago" rather than "yesterday", which reads oddly beside
+  // a time that was measured, not remembered.
+  const relative = relativeTimeFormat({ numeric: "always" });
   const minutes = Math.round(seconds / 60);
   if (minutes < 60) {
-    return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
+    return relative.format(-minutes, "minute");
   }
   const hours = Math.round(minutes / 60);
   if (hours < 24) {
-    return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+    return relative.format(-hours, "hour");
   }
   const days = Math.round(hours / 24);
-  return `${days} day${days === 1 ? "" : "s"} ago`;
+  return relative.format(-days, "day");
 }
 
-const failedRepairNouns: Record<string, string> = { "archive.search": "Re-index" };
-
 export function checkStateLabel(check: ReadinessCheck): string {
-  if (check.repair_failed) return `${failedRepairNouns[check.id] ?? "Repair"} failed`;
-  if (check.code === "test_playback" && check.state === "passed") return "Previously confirmed";
+  if (check.repair_failed) return check.id === "archive.search" ? copy().state.reindex_failed() : copy().state.repair_failed();
+  if (check.code === "test_playback" && check.state === "passed") return copy().state.previously_confirmed();
   return stateLabels[check.state];
 }
 

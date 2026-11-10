@@ -11,13 +11,6 @@ const en_app = {
   operator,
   settings,
   insights,
-  setup_notice: {
-    try_again: "Try again",
-    checking: "Checking…",
-    show_details: "Show details",
-    details_heading: "Details for administrators",
-    open_publish_pipeline: "Open Operator › Publish pipeline",
-  },
 } satisfies BaseTranslation;
 
 export default en_app;

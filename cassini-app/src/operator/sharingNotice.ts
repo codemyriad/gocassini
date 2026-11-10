@@ -3,7 +3,8 @@
 // setting kept from them. The copy and the wire call live here, pure, for the
 // reason buildSetupNotice gives: the sentences are the part worth testing, and
 // SharingNotice.svelte renders what it is handed.
-import { formatLocale } from "cassini-viewer/i18n";
+import { get } from "svelte/store";
+import { formatLocale, LL } from "cassini-viewer/i18n";
 import { readServedMessage } from "../servedMessage";
 import { isRecord, readSharing, type PendingRecording, type RecordingNotice, type SharingStatus } from "./setupHealth";
 
@@ -62,44 +63,43 @@ function fileStem(ref: string | undefined): string {
   return base.replace(/\.(opus|json)$/i, "");
 }
 
-function recordings(count: number): string {
-  return count === 1 ? "1 recording" : `${count} recordings`;
-}
+// Every sentence here is read when it is shown, so it is in the reader's
+// language: functions, never constants.
+const copy = () => get(LL).app.operator.sharing_notice;
 
 // --- Pending (contract §5, revised in §8) ---
 
 export function pendingTitle(count: number): string {
-  return count === 1 ? "1 recording is waiting for you" : `${count} recordings are waiting for you`;
+  return count === 1 ? copy().pending_title_one() : copy().pending_title_other({ count });
 }
 
-export const PENDING_LINE = "Nextcloud holds files shared with you until you accept them.";
-export const SHOW_THEM = "Show them";
-export const HIDE_THEM = "Hide them";
+export const pendingLine = (): string => copy().pending_line();
+export const showThem = (): string => copy().show_them();
+export const hideThem = (): string => copy().hide_them();
 
 // The primary button on the first line. One recording has nothing to say
 // "all" about: the button accepts it.
 export function acceptAllLabel(count: number): string {
-  return count === 1 ? "Accept" : `Accept all ${count}`;
+  return count === 1 ? copy().accept() : copy().accept_all({ count });
 }
 
-export const WHY_ACCEPT =
-  "Why? Your account accepts shared files by hand (Personal settings › Sharing), or this server asks everyone to. Cassini never accepts for you.";
+export const whyAccept = (): string => copy().why_accept();
 
 // --- Refused: the fact in bold, the cause, then who can fix it — with the
 // link to hand on as the last words of the line ---
 
 export function refusedTitle(count: number): string {
-  return `${recordings(count)} could not be shared with you.`;
+  return count === 1 ? copy().refused_title_one() : copy().refused_title_other({ count });
 }
 
-export const REFUSED_LINE = "A Nextcloud sharing setting stops it.";
+export const refusedLine = (): string => copy().refused_line();
 
 export function starterRefusedTitle(count: number): string {
-  return `${recordings(count)} you started could not be published.`;
+  return count === 1 ? copy().starter_refused_title_one() : copy().starter_refused_title_other({ count });
 }
 
 export function starterRefusedLine(count: number): string {
-  return `Nextcloud refused to share ${count === 1 ? "it" : "them"} with you.`;
+  return count === 1 ? copy().starter_refused_line_one() : copy().starter_refused_line_other();
 }
 
 // Past this many, the recordings of one kind (refused, or unpublished) are
@@ -109,43 +109,77 @@ export const NOTICE_GROUP_AFTER = 2;
 
 // "in “Weekly sync” on Fri 30 Oct, 10:00": the room is what the person
 // recognises a meeting by; a title stands in for a room the operator does not
-// know, and each part is left out when it is unknown.
-function where(entry: RecordingNotice, options: DateFormatOptions): string {
-  const name = entry.roomName || entry.title;
-  const date = formatShareDate(entry.startedAt, options);
-  return `${name ? ` in “${name}”` : ""}${date ? ` on ${date}` : ""}`;
+// know, and each part is left out when it is unknown. Each combination is a
+// whole sentence of its own in the dictionary.
+function where(entry: RecordingNotice, options: DateFormatOptions): { name: string; date: string } {
+  return { name: entry.roomName || entry.title, date: formatShareDate(entry.startedAt, options) };
 }
 
 // One refused recording's notice, in bold: "The recording in “Weekly sync” on
 // Fri 30 Oct, 10:00 could not be shared with you."
 export function refusedNoticeTitle(entry: RecordingNotice, options: DateFormatOptions = {}): string {
-  const at = where(entry, options);
-  return at ? `The recording${at} could not be shared with you.` : "A recording could not be shared with you.";
+  const t = copy().refused_notice;
+  const { name, date } = where(entry, options);
+  if (name && date) return t.room_date({ name, date });
+  if (name) return t.room({ name });
+  if (date) return t.date({ date });
+  return t.unknown();
 }
 
 // One unpublished recording's notice, in bold: "Your recording in “Weekly
 // sync” on Fri 30 Oct, 10:00 could not be published."
 export function unpublishedTitle(entry: RecordingNotice, options: DateFormatOptions = {}): string {
-  const at = where(entry, options);
-  return at ? `Your recording${at} could not be published.` : "A recording you started could not be published.";
+  const t = copy().unpublished_notice;
+  const { name, date } = where(entry, options);
+  if (name && date) return t.room_date({ name, date });
+  if (name) return t.room({ name });
+  if (date) return t.date({ date });
+  return t.unknown();
 }
 
 // A row in a grouped list: "Weekly sync · Fri 30 Oct, 10:00".
 export function noticeRowLabel(entry: RecordingNotice, options: DateFormatOptions = {}): string {
-  const parts = [entry.roomName || entry.title || "A recording", formatShareDate(entry.startedAt, options)];
+  const parts = [entry.roomName || entry.title || copy().a_recording(), formatShareDate(entry.startedAt, options)];
   return parts.filter((part) => part !== "").join(" · ");
 }
 
-export const DISMISS = "Dismiss";
-export const DISMISS_ALL = "Dismiss all";
+export const dismissLabel = (): string => copy().dismiss();
+export const dismissAllLabel = (): string => copy().dismiss_all();
 
 // "An administrator can fix that: send them this link." The link is the app's
 // own address, as SetupNotice hands it on; opened by an administrator, Doctor
 // says what is stopping it. Without an address the sentence ends after "that".
-export const ADMIN_FIX_LEAD = "An administrator can fix that:";
-export const ADMIN_FIX_PLAIN = "An administrator can fix that.";
-export const SEND_LINK = "send them this link";
-export const SEND_LINK_TITLE = "Opening it as an administrator shows exactly what is stopping it";
+//
+// The sentence is translated whole, with the link where {link} is: split
+// around it so a component can draw the link without {@html}.
+export interface AdminFixParts {
+  before: string;
+  link: string;
+  after: string;
+  title: string;
+}
+
+export function adminFixParts(): AdminFixParts {
+  const t = copy();
+  const marker = "\u0000";
+  const [before, after = ""] = t.admin_fix({ link: marker }).split(marker);
+  return { before, link: t.send_link(), after, title: t.send_link_title() };
+}
+
+export const adminFixPlain = (): string => copy().admin_fix_plain();
+
+// Kept for MeetingAccessNotice.svelte until it reads the functions above.
+// Read once at import, so they are English whatever the reader's language.
+/** @deprecated Use adminFixParts(). */
+export const ADMIN_FIX_LEAD = adminFixParts().before.trimEnd();
+/** @deprecated Use adminFixPlain(). */
+export const ADMIN_FIX_PLAIN = adminFixPlain();
+/** @deprecated Use adminFixParts(). */
+export const SEND_LINK = adminFixParts().link;
+/** @deprecated Use adminFixParts(). */
+export const SEND_LINK_TITLE = adminFixParts().title;
+/** @deprecated Use whyAccept(). */
+export const WHY_ACCEPT = whyAccept();
 
 // --- Rows ---
 
@@ -171,15 +205,15 @@ export function formatShareDate(iso: string, options: DateFormatOptions = {}): s
 export function formatDuration(seconds: number): string {
   const minutes = Math.round(seconds / 60);
   if (!Number.isFinite(minutes) || minutes < 1) return "";
-  if (minutes < 60) return `${minutes} min`;
-  return `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, "0")}`;
+  if (minutes < 60) return copy().duration_minutes({ minutes });
+  return copy().duration_hours({ hours: Math.floor(minutes / 60), minutes: String(minutes % 60).padStart(2, "0") });
 }
 
 // The row's first line: the meeting's title; without one the date stands in,
 // and without a date it is "A recording" — the operator no longer knows the
 // job, and the share is still theirs to accept.
 export function pendingRowTitle(entry: PendingRecording, options: DateFormatOptions = {}): string {
-  return entry.title || formatShareDate(entry.startedAt, options) || "A recording";
+  return entry.title || formatShareDate(entry.startedAt, options) || copy().a_recording();
 }
 
 // The row's second line: "Fri 30 Oct, 10:00 · 42 min". The date is left out
@@ -227,7 +261,7 @@ export async function acceptShares(
     body: JSON.stringify(body),
   });
   if (response.status !== 200) {
-    throw new Error((await readServedMessage(response)) || `Could not accept the share (HTTP ${response.status}).`);
+    throw new Error((await readServedMessage(response)) || copy().accept_failed({ status: response.status }));
   }
   return readAcceptSharesResult(await response.json());
 }
@@ -260,7 +294,7 @@ export async function dismissNotices(
     body: JSON.stringify({ job_ids: jobIds }),
   });
   if (response.status !== 200) {
-    throw new Error((await readServedMessage(response)) || `Could not dismiss the notice (HTTP ${response.status}).`);
+    throw new Error((await readServedMessage(response)) || copy().dismiss_failed({ status: response.status }));
   }
 }
 
@@ -306,8 +340,11 @@ export function explainedMeetingIds(sharing: SharingStatus | null | undefined): 
   return [...ids];
 }
 
-export const WAITING_TITLE = "This recording is waiting for you";
-export const ACCEPT = "Accept";
+export const waitingTitle = (): string => copy().waiting_title();
+export const acceptLabel = (): string => copy().accept();
+
+/** @deprecated Use acceptLabel(); kept for MeetingAccessNotice.svelte, English only. */
+export const ACCEPT = acceptLabel();
 
 // The bold sentence for a refused or unpublished meeting opened from a link.
 // With the notice's room and time it is the list's own sentence; for one
@@ -315,11 +352,11 @@ export const ACCEPT = "Accept";
 export function accessTitle(access: MeetingAccess, options: DateFormatOptions = {}): string {
   switch (access.kind) {
     case "pending":
-      return WAITING_TITLE;
+      return waitingTitle();
     case "refused":
-      return access.entry ? refusedNoticeTitle(access.entry, options) : "This recording could not be shared with you.";
+      return access.entry ? refusedNoticeTitle(access.entry, options) : copy().refused_this();
     case "unpublished":
-      return access.entry ? unpublishedTitle(access.entry, options) : "This recording you started could not be published.";
+      return access.entry ? unpublishedTitle(access.entry, options) : copy().unpublished_this();
   }
 }
 
@@ -327,9 +364,9 @@ export function accessTitle(access: MeetingAccess, options: DateFormatOptions = 
 export function accessLine(access: MeetingAccess): string {
   switch (access.kind) {
     case "pending":
-      return PENDING_LINE;
+      return pendingLine();
     case "refused":
-      return REFUSED_LINE;
+      return refusedLine();
     case "unpublished":
       return starterRefusedLine(1);
   }
