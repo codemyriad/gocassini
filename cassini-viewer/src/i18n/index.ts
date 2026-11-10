@@ -67,6 +67,16 @@ export function nextcloudLanguage(win: Window = window): string | null {
   return win.document?.documentElement?.lang || null;
 }
 
+// A `?lang=pt-PT` on a standalone page's address, to see it in another
+// language without changing the browser's. Null when there is none.
+export function urlLanguage(loc: Location | undefined = globalThis.location): string | null {
+  try {
+    return loc ? new URLSearchParams(loc.search).get("lang") : null;
+  } catch {
+    return null;
+  }
+}
+
 // The reader's browser languages, most-preferred first.
 export function browserLanguages(nav: Navigator | undefined = globalThis.navigator): string[] {
   if (!nav) return [];

@@ -46,7 +46,7 @@ case and accepts `de_DE` or `de-DE`, and falls back to the base language
 | Surface | Asked in this order |
 |---|---|
 | Inside Nextcloud (`cassini-app/src/embedded.ts`) | The user's Nextcloud language (`OC.getLanguage()`, then `<html lang>`), then the browser |
-| The standalone viewer and the operator's `/viewer` page | The browser |
+| The standalone viewer and the operator's `/viewer` page | A `?lang=` on the address (e.g. `?lang=pt-PT`), then the browser |
 | The public embed (`cassini-viewer/src/public.ts`) | The element's `lang` attribute, then the nearest `lang` on the page around it, then the browser |
 
 Every language is bundled. The embedded entry points must stay a single file
@@ -62,7 +62,7 @@ on its own pages, and the app does the same.
 | Surface | Locale asked in this order |
 |---|---|
 | Inside Nextcloud | `OC.getLocale()`, then the Nextcloud language, then the browser |
-| Standalone viewer | The browser |
+| Standalone viewer | `?lang=`, then the browser |
 | Public embed | The same as its language: `lang`, the page's `lang`, the browser |
 
 Until an entry point chooses, and in unit tests, the locale is `en-GB`: day
