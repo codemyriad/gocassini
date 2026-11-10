@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher, tick } from "svelte";
+  import { around } from "./ui/richText";
   import { marked } from "marked";
   import DOMPurify from "dompurify";
   import { Calendar, ExternalLink, FileText, FileX, MessageSquare, Pencil } from "@lucide/svelte";
@@ -220,10 +221,7 @@
   // The sentence about a document that has gone keeps its path in code style:
   // the translation is cut where {path} goes, and the path is put back between
   // the two halves.
-  const PATH_MARK = "\uE000";
-  $: [missingBefore, missingAfter] = $LL.viewer.insights.document
-    .document_missing({ path: PATH_MARK })
-    .split(PATH_MARK);
+  $: [missingBefore, missingAfter] = around($LL.viewer.insights.document.document_missing, "path");
 
   // The offline copy (D-792) is offered only for an answer that is on screen:
   // copying a run that has not finished, or one whose file has gone, would

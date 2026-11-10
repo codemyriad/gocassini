@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
+  import { around } from "cassini-viewer/ui/richText";
   import { Check, Copy, KeyRound } from "@lucide/svelte";
   import { LL } from "cassini-viewer/i18n";
 
@@ -25,16 +26,11 @@
 
   const dispatch = createEventDispatcher<{ acknowledge: void }>();
 
-  // A sentence with the account name in it, cut where {user} goes so the name
-  // can be drawn as <code> without piecing the sentence together.
-  const MARK = "\u0000";
-  function around(sentence: (args: { user: string }) => string): [string, string] {
-    const [before, after = ""] = sentence({ user: MARK }).split(MARK);
-    return [before, after];
-  }
+  // Sentences with the account name in them, cut where {user} goes so the
+  // name can be drawn as <code> without piecing the sentence together.
   $: t = $LL.app.settings.password_reveal;
-  $: saveNow = around(t.save_now);
-  $: onlyTime = around(t.only_time);
+  $: saveNow = around(t.save_now, "user");
+  $: onlyTime = around(t.only_time, "user");
 
   let copied = false;
   let copyFailed = false;

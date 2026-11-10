@@ -13,6 +13,7 @@
   // page has one Save the way the design does, and a failure in one does not
   // silently roll back the other — each reports itself.
   import { createEventDispatcher, onDestroy, onMount, tick } from "svelte";
+  import { richText, slotMark, type RichPart } from "cassini-viewer/ui/richText";
   import { fly } from "svelte/transition";
   import { cancelLeave, confirmLeave, guardLeave, leavePrompt, unsavedChanges } from "./operator/unsaved";
   import { ChevronDown, TriangleAlert } from "@lucide/svelte";
@@ -103,20 +104,12 @@
   ];
 
   // Sentences with marked-up parts in them (a model name in bold, a command
-  // as code, a link to Storage). The sentence is translated whole, with a
-  // marker where each part goes, then cut at the markers so the parts can be
-  // drawn as elements without piecing the sentence together from fragments.
-  const MARK = "\u0000";
+  // as code, a link to Storage), translated whole and cut where each part goes
+  // (cassini-viewer/ui/richText).
   type Slot = "model" | "media" | "storage" | "pack" | "import";
-  function slot(name: Slot): string {
-    return `${MARK}${name}${MARK}`;
-  }
-  type Segment = { text: string; slot: "" | Slot };
-  function segments(sentence: string): Segment[] {
-    return sentence
-      .split(new RegExp(`${MARK}(\\w+)${MARK}`))
-      .map((bit, index) => (index % 2 === 1 ? { text: "", slot: bit as Slot } : { text: bit, slot: "" }));
-  }
+  const slot = (name: Slot): string => slotMark(name);
+  type Segment = RichPart<Slot>;
+  const segments = (sentence: string): Segment[] => richText<Slot>(sentence);
 
   let settings: Settings | null = null;
   let meetingFormat: "opus" | "json" = "opus";

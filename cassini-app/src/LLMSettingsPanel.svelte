@@ -25,6 +25,7 @@
   // removing one — because there is no coherent half-edited state of a list of
   // endpoints worth holding on to.
   import { onMount } from "svelte";
+  import { richText, slotMark, type RichPart } from "cassini-viewer/ui/richText";
   import {
     CircleCheck,
     FileText,
@@ -336,19 +337,11 @@
   }
 
   // Sentences with marked-up parts in them (a bold place name, a provider in
-  // medium weight, a model as code). The sentence is translated whole, with a
-  // marker where each part goes, then cut at the markers so the parts can be
-  // drawn as elements without piecing the sentence together from fragments.
-  const MARK = "\u0000";
-  function slot(name: "place" | "provider" | "model"): string {
-    return `${MARK}${name}${MARK}`;
-  }
-  type Segment = { text: string; slot: "" | "place" | "provider" | "model" };
-  function segments(sentence: string): Segment[] {
-    return sentence
-      .split(new RegExp(`${MARK}(\\w+)${MARK}`))
-      .map((bit, index) => (index % 2 === 1 ? { text: "", slot: bit as Segment["slot"] } : { text: bit, slot: "" }));
-  }
+  // medium weight, a model as code), translated whole and cut where each part
+  // goes (cassini-viewer/ui/richText).
+  type Slot = "place" | "provider" | "model";
+  const slot = (name: Slot): string => slotMark(name);
+  const segments = (sentence: string): RichPart<Slot>[] => richText<Slot>(sentence);
   $: firstSave = segments($LL.app.settings.llm.first_save_turns_on({ place: slot("place") }));
   $: summaryUsage = effectiveSummary
     ? segments(
