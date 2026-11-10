@@ -189,6 +189,9 @@ jobs:
         with:
           name: ui-failure-screenshots
           path: '*/node_modules/.cache/vitest-screenshots/'
+          # The screenshots sit under .cache, which upload-artifact skips
+          # unless told otherwise.
+          include-hidden-files: true
           retention-days: 7
           if-no-files-found: ignore
 
@@ -234,15 +237,6 @@ jobs:
       - name: Run unit tests
         working-directory: ${{ matrix.module }}
         run: go test -race ./...
-      # The harness's rotator used to be a matrix leg of its own; its tests
-      # take seconds, so it rides along with the recorder (D-906).
-      - name: Vet and test harness/go-talk-rotator
-        if: ${{ !cancelled() && matrix.module == 'cassini-go-recorder' }}
-        working-directory: harness/go-talk-rotator
-        run: |
-          go vet ./...
-          go test -race ./...
-
       # Real recognition belongs in ordinary PR CI. FP32 runs on the hosted
       # CPU runner; neither full-ci nor a self-hosted GPU is needed. The tag
       # keeps model loading out of fast local unit runs, not out of CI.
@@ -309,6 +303,18 @@ jobs:
           path: ${{ runner.temp }}/synthetic-asr.log
           if-no-files-found: ignore
           retention-days: 7
+
+      # The harness's rotator used to be a matrix leg of its own; its tests
+      # take seconds, so it rides along with the recorder (D-906). Last, so
+      # a rotator failure can't skip the recorder's own steps above. Go comes
+      # from the recorder's go.mod; harness/go-talk-rotator/go.mod pins the
+      # same version.
+      - name: Vet and test harness/go-talk-rotator
+        if: ${{ !cancelled() && matrix.module == 'cassini-go-recorder' }}
+        working-directory: harness/go-talk-rotator
+        run: |
+          go vet ./...
+          go test -race ./...
 
   integration:
     name: "Integration (${{ matrix.script }}${{ matrix.nextcloud_image && format(', {0}', matrix.nextcloud_image) || '' }})"

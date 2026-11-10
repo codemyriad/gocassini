@@ -503,7 +503,11 @@ jobs:
       - build-image-cuda
       - transcribe-smoke-cuda
       - e2e-talk-record-cuda
-      - e2e-summary-template-cuda
+    # Not e2e-summary-template-cuda: it was never required, and requiring it
+    # would hold every release on that GPU scenario (release-evidence needs
+    # this gate). Nor the D-403 control, which runs only on dispatch, or
+    # release-evidence, which needs this gate. test-ci-require-jobs.sh checks
+    # that every other job is listed.
     if: always()
     steps:
       - uses: actions/checkout@v4
@@ -584,7 +588,7 @@ jobs:
     name: D-403 manifest allow-list sensitivity control (CPU)
     runs-on: ubuntu-latest
     needs: [prepare, build-image-amd64, build-image]
-    if: ${{ github.event_name == 'workflow_dispatch' && !cancelled() && needs.build-image-amd64.result == 'success' && (needs.build-image.result == 'success' || github.event_name == 'pull_request') }}
+    if: ${{ github.event_name == 'workflow_dispatch' && !cancelled() && needs.build-image-amd64.result == 'success' && needs.build-image.result == 'success' }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -675,8 +679,10 @@ jobs:
 
   # The image's container-level checks in one job (D-906): each took under a
   # minute, so as three jobs they mostly waited for runners, and each loaded
-  # the image tarball again. Every check runs even if an earlier one fails;
-  # the scripts name their containers per process and remove them on exit.
+  # the image tarball again. Every check runs even if an earlier one fails,
+  # and each has its own timeout, so a hang in one can't use up the job's
+  # time; the scripts name their containers per process and remove them on
+  # exit.
   container-checks:
     name: Container checks (smoke, HTTP plane, real entrypoint)
     runs-on: ubuntu-latest
@@ -695,6 +701,7 @@ jobs:
 
       - name: Run smoke test
         if: ${{ !cancelled() && steps.load.outcome == 'success' }}
+        timeout-minutes: 10
         env:
           IMAGE_REF: ${{ steps.load.outputs.ref }}
         run: ./harness/bin/ci-smoke-exapp.sh
@@ -702,6 +709,7 @@ jobs:
       # Every image starts with an empty model store and an offline catalogue.
       - name: Assert model-free image and optional transcription
         if: ${{ !cancelled() && steps.load.outcome == 'success' }}
+        timeout-minutes: 10
         env:
           IMAGE_REF: ${{ steps.load.outputs.ref }}
           CASSINI_SMOKE_MODELS_ONLY: '1'
@@ -709,6 +717,7 @@ jobs:
 
       - name: Run container-level e2e
         if: ${{ !cancelled() && steps.load.outcome == 'success' }}
+        timeout-minutes: 15
         env:
           IMAGE_REF: ${{ steps.load.outputs.ref }}
         run: ./harness/bin/ci-e2e-exapp.sh
@@ -719,6 +728,7 @@ jobs:
       # healthy — the production boot contract a real install hits.
       - name: Run real-entrypoint e2e
         if: ${{ !cancelled() && steps.load.outcome == 'success' }}
+        timeout-minutes: 10
         env:
           IMAGE_REF: ${{ steps.load.outputs.ref }}
         run: ./harness/bin/ci-e2e-entrypoint-exapp.sh
