@@ -83,7 +83,7 @@
   import RoomsRail from "./components/RoomsRail.svelte";
   import SupportPanel from "./components/SupportPanel.svelte";
   import SelectionBar from "./components/SelectionBar.svelte";
-  import { focusLayer } from "./components/ui/focusLayer";
+  import { focusLayer, focusLayerWhile } from "./components/ui/focusLayer";
 
   // The shell (D-420, re-laid-out in D-654): owns the catalog/list, which room
   // is selected, which meeting is open, the `meeting` hash param, theme, and
@@ -1941,8 +1941,10 @@
     {/if}
 
     <!-- Help › Support (D-910), opened from the rail. Same sheet geometry and
-         clear scrim as Connect an agent; the body is the shell's. -->
-    {#if supportOpen && supportOffered}
+         clear scrim as Connect an agent; the body is the shell's. Hidden rather
+         than unmounted when closed, like Import: a download started before
+         closing must not be cancelled by closing. -->
+    {#if supportOpen}
       <button
         type="button"
         class="shell-scrim agent-scrim"
@@ -1951,9 +1953,17 @@
         aria-label="Close Support"
         on:click={() => (supportOpen = false)}
       ></button>
-      <aside class="agent-sheet" aria-label="Support" inert={topLayer > 2} use:focusLayer transition:sheetSlide={{}}>
+    {/if}
+    {#if supportOffered}
+      <aside
+        class="agent-sheet"
+        class:support-sheet-closed={!supportOpen}
+        aria-label="Support"
+        inert={!supportOpen || topLayer > 2}
+        use:focusLayerWhile={supportOpen}
+      >
         <SupportPanel on:close={() => (supportOpen = false)}>
-          <slot name="support" />
+          <slot name="support" close={() => (supportOpen = false)} />
         </SupportPanel>
       </aside>
     {/if}
@@ -2024,7 +2034,8 @@
     border-left: 1px solid var(--color-base-300);
     box-shadow: -8px 0 30px oklch(0% 0 0 / 0.22);
   }
-  .import-sheet-closed {
+  .import-sheet-closed,
+  .support-sheet-closed {
     display: none;
   }
 

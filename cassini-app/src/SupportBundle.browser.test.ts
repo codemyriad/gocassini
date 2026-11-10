@@ -31,7 +31,7 @@ it("downloads once, reports success, and releases its Blob URL on unmount", asyn
   await page.getByRole("button", { name: "Download support bundle" }).click();
   await expect.element(page.getByRole("button", { name: "Preparing support bundle…" })).toBeDisabled();
   complete(new Response(new Blob(["PK-test"]), { headers: { "Content-Type": "application/zip" } }));
-  await expect.element(page.getByRole("status")).toHaveTextContent("Your support bundle downloaded.");
+  await expect.element(page.getByRole("status")).toHaveTextContent("Support bundle downloaded.");
   expect(create).toHaveBeenCalledOnce(); expect(click).toHaveBeenCalledOnce(); expect(fetchMock).toHaveBeenCalledOnce();
   await unmount(component); component = undefined;
   expect(revoke).toHaveBeenCalledWith("blob:diagnostic-test");
@@ -60,8 +60,10 @@ it("keeps support reachable from Help for an ordinary user when the catalog fail
   vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 502 })));
   component = mount(App, { target: host });
   await expect.element(page.getByText("Load note", { exact: true })).toBeVisible();
-  // No strip above the list any more (D-910): the download lives in Help › Support.
-  expect(document.body.textContent).not.toContain("Download support bundle");
+  // No strip above the list any more (D-910): the download lives in Help › Support,
+  // whose sheet stays mounted but hidden until it is opened.
+  expect(document.querySelector(".cassini-support-bar")).toBeNull();
+  await expect.element(page.getByRole("button", { name: "Download support bundle" })).not.toBeInTheDocument();
   await page.getByRole("group", { name: "Help" }).getByRole("button", { name: "Support" }).click();
   await expect.element(page.getByRole("button", { name: "Download support bundle" })).toBeEnabled();
   // A reader's own bundle holds no logs: no scrub choice, no logs warning, no Doctor link.
@@ -91,4 +93,30 @@ it("points an administrator at Doctor from Help › Support", async () => {
   component = mount(SupportBundle, { target: host, props: { openDoctor } });
   await page.getByRole("button", { name: "Operator › Doctor" }).click();
   expect(openDoctor).toHaveBeenCalledOnce();
+});
+
+it("keeps a download running when the Support sheet is closed", async () => {
+  vi.stubGlobal("OC", { isUserAdmin: () => false });
+  let complete!: (response: Response) => void;
+  let signal: AbortSignal | undefined;
+  vi.stubGlobal("fetch", vi.fn((url: string, init?: RequestInit) => {
+    if (String(url).includes("support/bundle")) {
+      signal = init?.signal ?? undefined;
+      return new Promise<Response>(resolve => { complete = resolve; });
+    }
+    return Promise.resolve(new Response(null, { status: 502 }));
+  }));
+  vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:support-closed");
+  vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+  const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+  component = mount(App, { target: host });
+  await page.getByRole("group", { name: "Help" }).getByRole("button", { name: "Support" }).click();
+  await page.getByRole("button", { name: "Download support bundle" }).click();
+  await expect.element(page.getByRole("button", { name: "Preparing support bundle…" })).toBeDisabled();
+  await page.getByRole("button", { name: "Close Support" }).first().click();
+  expect(signal?.aborted).toBe(false);
+  complete(new Response(new Blob(["PK-test"]), { headers: { "Content-Type": "application/zip" } }));
+  await expect.poll(() => click.mock.calls.length).toBe(1);
+  await page.getByRole("group", { name: "Help" }).getByRole("button", { name: "Support" }).click();
+  await expect.element(page.getByText("Support bundle downloaded. Attach it to your support request.")).toBeVisible();
 });

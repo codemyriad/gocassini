@@ -717,7 +717,7 @@
         </svelte:fragment>
         <!-- Help › Support (D-910): every reader downloads their own bundle here;
              an administrator is pointed at Doctor for the installation one. -->
-        <SupportBundle slot="support" openDoctor={operatorAvailable ? openRecordingSetup : null} />
+        <SupportBundle slot="support" let:close openDoctor={operatorAvailable ? () => { close(); openRecordingSetup(); } : null} />
       </ViewerApp>
     </div>
     {#if surface === "operator" && operatorClient}

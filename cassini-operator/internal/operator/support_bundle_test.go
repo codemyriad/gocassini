@@ -826,3 +826,23 @@ func TestSupportRetentionSkipsWhenAFileIsUnreadable(t *testing.T) {
 		t.Fatalf("retention deleted unread history: %v", err)
 	}
 }
+
+// Readers are offered no scrub choice (D-910): their README must not send
+// them back for one, and must say what their bundle does hold.
+func TestSupportUserReadmeOffersNoScrubbing(t *testing.T) {
+	b, err := newSupportBundle(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := b.writeZIP(&out); err != nil {
+		t.Fatal(err)
+	}
+	readme := string(b.entries["README.txt"])
+	if strings.Contains(readme, "scrubbing enabled") || strings.Contains(readme, "filtering is OFF") {
+		t.Fatalf("reader README offers a choice readers do not have:\n%s", readme)
+	}
+	if !strings.Contains(readme, "Nextcloud user ID") || !strings.Contains(readme, "no server logs") {
+		t.Fatalf("reader README does not say what the bundle holds:\n%s", readme)
+	}
+}

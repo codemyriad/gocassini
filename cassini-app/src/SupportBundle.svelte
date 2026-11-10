@@ -46,8 +46,9 @@
       try { link.click(); } finally { link.remove(); }
       // Let the browser start reading the Blob before releasing it.
       cleanupTimer = setTimeout(cleanupURL, 1000);
-      result = bundle.administrator ? "Administrator support bundle downloaded." : "Your support bundle downloaded. An administrator can download additional server diagnostics.";
-      result += scrubSensitive ? " Privacy filtering was on." : " Privacy filtering was off.";
+      result = bundle.administrator
+        ? `Administrator support bundle downloaded. Privacy filtering was ${scrubSensitive ? "on" : "off"}.`
+        : "Support bundle downloaded. Attach it to your support request.";
     } catch (cause) {
       cleanupURL();
       if (alive) error = cause instanceof SupportDownloadError ? cause.message : request.signal.aborted
@@ -78,7 +79,7 @@
     {/if}
   </div>
   <p class="support-explanation">
-    {#if !administrator}It describes your browser and the recordings shared with you, without any meeting content.
+    {#if !administrator}It holds your Nextcloud user ID, details about your browser and the recordings shared with you. It holds no meeting content and no server logs.
     {:else if scrubSensitive}Downloads scrubbed diagnostics. Review before sharing.
     {:else}Original logs may contain names, URLs, credentials or meeting text. Review or edit the ZIP before sharing.{/if}
     Nothing is sent automatically.

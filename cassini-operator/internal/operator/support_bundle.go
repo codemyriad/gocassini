@@ -278,6 +278,10 @@ func (b *supportBundle) writeZIP(w io.Writer) error {
 	privacyNote := "Privacy filtering is OFF. Original diagnostic logs and error messages may contain\nnames, URLs, credentials or meeting text. Review and edit the files before sharing\nif needed, then create a new ZIP, or download again with scrubbing enabled.\n"
 	if b.scrubbed() {
 		privacyNote = "Privacy filtering is ON. This bundle uses projected diagnostics and pseudonymous\njob references; original log prose and error details are excluded. Review before sharing.\n"
+	} else if b.manifest.Scope == "user" {
+		// A reader's bundle holds no logs, and readers are offered no scrub
+		// choice (D-910), so do not send them back for one.
+		privacyNote = "This bundle holds your Nextcloud user ID, details about your browser and the\nrecordings shared with you, with any error messages exactly as received.\nIt holds no meeting content and no server logs. Review before sharing.\n"
 	}
 	// The initial byte reserve covers mandatory metadata and this explanation,
 	// so even a full original-log budget cannot omit the README.

@@ -12,7 +12,11 @@ Cassini downloads a ZIP named
 `cassini-support-<original|scrubbed>-<UTC time>-<id>.zip`. Review it before
 attaching it to your support request. Nothing is uploaded automatically.
 
-**Original diagnostics are the default.** They retain log text, unfamiliar error
+A reader's bundle holds their Nextcloud user ID, details about their browser and
+the recordings shared with them, with any error messages exactly as received. It
+holds no meeting content and no server logs, so it offers no scrubbing.
+
+**In Doctor, original diagnostics are the default.** They retain log text, unfamiliar error
 messages and diagnostic identifiers, which can contain names, URLs, credentials
 or meeting text. You can send the ZIP as downloaded, or extract it, edit/remove
 sensitive information and create a new ZIP yourself.
