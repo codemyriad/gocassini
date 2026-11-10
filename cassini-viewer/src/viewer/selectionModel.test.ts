@@ -365,7 +365,7 @@ describe("the meeting cap", () => {
     // The cap is the whole of the gap list here: a missing summary is a note
     // now, and the gaps are the sentences that stop Prepare.
     expect(describeSelectionGaps(over)).toEqual([
-      "You can work with up to 20 meetings at once. Unpick 2.",
+      "You can work with up to 20 meetings at once. Unpick 2 meetings.",
     ]);
   });
 });

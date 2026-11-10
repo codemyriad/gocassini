@@ -181,7 +181,7 @@
       "length_not_recorded": "Length not recorded",
       "words": "{count:number|num} {{word|words}}",
       "at_least_words": "At least {count:number|num} {{word|words}}",
-      "over_cap": "You can work with up to {max:number|num} {{max:meeting|meetings}} at once. Unpick {count:number|num}.",
+      "over_cap": "You can work with up to {max:number|num} {{max:meeting|meetings}} at once. Unpick {count:number|num} {{count:meeting|meetings}}.",
       "no_portable_audio": "{count:number|num} {{meeting predates|meetings predate}} the single-file format (marked in the list). Unpick {{it|them}} to prepare."
     },
     "room_name": {
@@ -329,7 +329,7 @@
       "counts_in": "Used in {count:number|num} {{meeting|meetings}}",
       "counts_times": "Used {times:number|num} {{times:time|times}} in {count:number|num} {{count:meeting|meetings}}",
       "confirm_none": "None of your meetings use it.",
-      "confirm": "Updates {count:number|num} {{meeting|meetings}} of yours. Meetings that are in rooms you can't access will keep the old tag.",
+      "confirm": "Updates {count:number|num} of your {{meetings|meetings}}. Meetings that are in rooms you can't access will keep the old tag.",
       "changed_by": "Changed by {name}",
       "changed_by_when": "Changed by {name} · {when}",
       "job_updating": "Updating {done} of {total}…",

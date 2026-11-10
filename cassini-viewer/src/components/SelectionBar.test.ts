@@ -73,7 +73,7 @@ describe("SelectionBar", () => {
     expect(selectionBarSource).toContain("disabled={overCap}");
     expect(selectionBarSource).toContain("$LL.viewer.browse.selection.over_cap({ max: MAX_SELECTED_MEETINGS, count: excess })");
     expect(get(LL).viewer.browse.selection.over_cap({ max: 100, count: 3 })).toBe(
-      "You can work with up to 100 meetings at once. Unpick 3.",
+      "You can work with up to 100 meetings at once. Unpick 3 meetings.",
     );
   });
 });

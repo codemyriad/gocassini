@@ -80,8 +80,8 @@ describe("row lines", () => {
   });
 
   it("confirms with one line about the caller's own meetings", () => {
-    expect(confirmLine(9)).toBe("Updates 9 meetings of yours. Meetings that are in rooms you can't access will keep the old tag.");
-    expect(confirmLine(1)).toMatch(/^Updates 1 meeting of yours\./);
+    expect(confirmLine(9)).toBe("Updates 9 of your meetings. Meetings that are in rooms you can't access will keep the old tag.");
+    expect(confirmLine(1)).toMatch(/^Updates 1 of your meetings\./);
     expect(confirmLine(0)).toBe("None of your meetings use it.");
   });
 });

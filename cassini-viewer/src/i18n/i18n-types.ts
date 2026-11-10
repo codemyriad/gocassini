@@ -5317,7 +5317,7 @@ export type NamespaceViewerTranslation = {
 			 */
 			at_least_words: RequiredParams<'count|num'>
 			/**
-			 * Y​o​u​ ​c​a​n​ ​w​o​r​k​ ​w​i​t​h​ ​u​p​ ​t​o​ ​{​m​a​x​|​n​u​m​}​ ​{​{​m​e​e​t​i​n​g​|​m​e​e​t​i​n​g​s​}​}​ ​a​t​ ​o​n​c​e​.​ ​U​n​p​i​c​k​ ​{​c​o​u​n​t​|​n​u​m​}​.
+			 * Y​o​u​ ​c​a​n​ ​w​o​r​k​ ​w​i​t​h​ ​u​p​ ​t​o​ ​{​m​a​x​|​n​u​m​}​ ​{​{​m​e​e​t​i​n​g​|​m​e​e​t​i​n​g​s​}​}​ ​a​t​ ​o​n​c​e​.​ ​U​n​p​i​c​k​ ​{​c​o​u​n​t​|​n​u​m​}​ ​{​{​m​e​e​t​i​n​g​|​m​e​e​t​i​n​g​s​}​}​.
 			 * @param {number} count
 			 * @param {number} max
 			 */
@@ -5927,7 +5927,7 @@ export type NamespaceViewerTranslation = {
 			 */
 			confirm_none: string
 			/**
-			 * U​p​d​a​t​e​s​ ​{​c​o​u​n​t​|​n​u​m​}​ ​{​{​m​e​e​t​i​n​g​|​m​e​e​t​i​n​g​s​}​}​ ​o​f​ ​y​o​u​r​s​.​ ​M​e​e​t​i​n​g​s​ ​t​h​a​t​ ​a​r​e​ ​i​n​ ​r​o​o​m​s​ ​y​o​u​ ​c​a​n​'​t​ ​a​c​c​e​s​s​ ​w​i​l​l​ ​k​e​e​p​ ​t​h​e​ ​o​l​d​ ​t​a​g​.
+			 * U​p​d​a​t​e​s​ ​{​c​o​u​n​t​|​n​u​m​}​ ​o​f​ ​y​o​u​r​ ​{​{​m​e​e​t​i​n​g​s​|​m​e​e​t​i​n​g​s​}​}​.​ ​M​e​e​t​i​n​g​s​ ​t​h​a​t​ ​a​r​e​ ​i​n​ ​r​o​o​m​s​ ​y​o​u​ ​c​a​n​'​t​ ​a​c​c​e​s​s​ ​w​i​l​l​ ​k​e​e​p​ ​t​h​e​ ​o​l​d​ ​t​a​g​.
 			 * @param {number} count
 			 */
 			confirm: RequiredParams<'count|num'>
@@ -12728,7 +12728,7 @@ export type TranslationFunctions = {
 				 */
 				at_least_words: (arg: { count: number }) => LocalizedString
 				/**
-				 * You can work with up to {max|num} {{meeting|meetings}} at once. Unpick {count|num}.
+				 * You can work with up to {max|num} {{meeting|meetings}} at once. Unpick {count|num} {{meeting|meetings}}.
 				 */
 				over_cap: (arg: { count: number, max: number }) => LocalizedString
 				/**
@@ -13290,7 +13290,7 @@ export type TranslationFunctions = {
 				 */
 				confirm_none: () => LocalizedString
 				/**
-				 * Updates {count|num} {{meeting|meetings}} of yours. Meetings that are in rooms you can't access will keep the old tag.
+				 * Updates {count|num} of your {{meetings|meetings}}. Meetings that are in rooms you can't access will keep the old tag.
 				 */
 				confirm: (arg: { count: number }) => LocalizedString
 				/**

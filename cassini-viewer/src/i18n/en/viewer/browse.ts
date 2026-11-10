@@ -246,7 +246,7 @@ const browse = {
     at_least_words: "At least {count:number|num} {{word|words}}",
     // In the selection bar and the Prepare panel.
     // Plural; see the translator guide. {max}: the most meetings one bundle can hold; {count}: how many to unpick.
-    over_cap: "You can work with up to {max:number|num} {{max:meeting|meetings}} at once. Unpick {count:number|num}.",
+    over_cap: "You can work with up to {max:number|num} {{max:meeting|meetings}} at once. Unpick {count:number|num} {{count:meeting|meetings}}.",
     // Plural; see the translator guide. {count}: picked meetings without a single meeting file.
     no_portable_audio: "{count:number|num} {{meeting predates|meetings predate}} the single-file format (marked in the list). Unpick {{it|them}} to prepare.",
   },
@@ -451,8 +451,9 @@ const browse = {
     // Plural; see the translator guide. {times}: places the tag is on, across {count} meetings.
     counts_times: "Used {times:number|num} {{times:time|times}} in {count:number|num} {{count:meeting|meetings}}",
     confirm_none: "None of your meetings use it.",
-    // Plural; see the translator guide. {count}: your meetings the change updates.
-    confirm: "Updates {count:number|num} {{meeting|meetings}} of yours. Meetings that are in rooms you can't access will keep the old tag.",
+    // Plural; see the translator guide. {count}: your meetings the change updates. English
+    // says "meetings" in both forms ("1 of your meetings"); use your language's forms.
+    confirm: "Updates {count:number|num} of your {{meetings|meetings}}. Meetings that are in rooms you can't access will keep the old tag.",
     // {name} is a person, {when} how long ago ("2 days ago").
     changed_by: "Changed by {name}",
     changed_by_when: "Changed by {name} · {when}",

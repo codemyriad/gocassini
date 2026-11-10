@@ -241,14 +241,19 @@ waiting for its daily pull.
 A new language starts with machine translations, so translators correct text
 rather than starting from nothing:
 
-1. Translate the English JSON with an LLM, file by file, using the glossary.
+1. Translate the English JSON with an LLM, file by file, using the
+   cross-app glossary (Silvio's `ux-draft/i18n/GLOSSARY.md`: it, fr, es, pt-PT;
+   other languages follow its rules and keep their own terms consistent).
 2. Upload each file in Weblate (the language's page › Files › Upload
    translation) with the method **"Add as translation needing edit"**.
 
-Never commit seeded text to the repository. The JSON has no place to mark a
-string as unchecked, so committed machine text would look finished and nobody
-would review it. Uploaded with "needing edit", it shows as unfinished in
-Weblate and in the coverage count until a person accepts or rewrites it.
+Weblate writes strings needing edit into the JSON like any other, so the seeds
+reach the repository with the next "Translations from Weblate" pull request
+and ship in the release after it. That is deliberate: machine German reads
+better to a German user than English does. In Weblate they stay marked as
+needing edit, and out of the translated count, until a person accepts or
+rewrites them. Don't commit seeds to the repository directly: they would skip
+Weblate, and nothing would mark them as unchecked.
 
 ### Checking progress
 

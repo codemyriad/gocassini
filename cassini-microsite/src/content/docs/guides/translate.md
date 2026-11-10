@@ -36,8 +36,8 @@ Cassini uses the language set in your Nextcloud account (**Personal settings ›
 Personal info › Language**). If yours isn't on the list, you see English.
 
 New languages start with a machine translation, marked in Weblate as needing
-editing. Until a person has checked a string, it may read oddly, and that is
-the most useful thing to fix.
+editing. People already see it in Cassini, so until someone has checked a
+string it may read oddly in the app, and that is the most useful thing to fix.
 
 ## Fix or finish a translation
 
