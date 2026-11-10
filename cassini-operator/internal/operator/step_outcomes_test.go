@@ -151,10 +151,8 @@ func TestRunBuildJobRecordsStepOutcomes(t *testing.T) {
 	defer cleanup()
 	const jobID = "job-outcomes"
 	runPath := seedReadyRunBundle(t, rt.cfg.WorkRoot, jobID)
-	insertJob(t, rt.store.db, jobID, nowUTCString())
-	if err := rt.store.MarkBuildQueued(context.Background(), jobID, runPath, runPath, nowUTCString()); err != nil {
-		t.Fatalf("MarkBuildQueued() error = %v", err)
-	}
+	// Replace buildJobFn before the build is queued: see
+	// TestRunBuildJobRecordsModels.
 	rt.buildJobFn = func(ctx context.Context, task buildTask) (string, error) {
 		meetingPath := attemptMeetingPath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber)
 		if err := writeReadyMeetingBundleFixture(meetingPath, task.ArtifactRunPath); err != nil {
@@ -167,6 +165,10 @@ func TestRunBuildJobRecordsStepOutcomes(t *testing.T) {
 			}
 		})
 		return meetingPath, nil
+	}
+	insertJob(t, rt.store.db, jobID, nowUTCString())
+	if err := rt.store.MarkBuildQueued(context.Background(), jobID, runPath, runPath, nowUTCString()); err != nil {
+		t.Fatalf("MarkBuildQueued() error = %v", err)
 	}
 
 	rt.runBuildJob(buildTask{JobID: jobID, AttemptNumber: 1, ArtifactRunPath: runPath}, 1)
@@ -303,10 +305,9 @@ func TestRunBuildJobRecordsModels(t *testing.T) {
 	defer cleanup()
 	const jobID = "job-models"
 	runPath := seedReadyRunBundle(t, rt.cfg.WorkRoot, jobID)
-	insertJob(t, rt.store.db, jobID, nowUTCString())
-	if err := rt.store.MarkBuildQueued(context.Background(), jobID, runPath, runPath, nowUTCString()); err != nil {
-		t.Fatalf("MarkBuildQueued() error = %v", err)
-	}
+	// Replace buildJobFn before the build is queued: from then on the requeue
+	// dispatcher can hand the job to the runtime's own build worker, which
+	// reads buildJobFn, so assigning it afterwards is a data race.
 	rt.buildJobFn = func(ctx context.Context, task buildTask) (string, error) {
 		meetingPath := attemptMeetingPath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber)
 		if err := writeReadyMeetingBundleFixture(meetingPath, task.ArtifactRunPath); err != nil {
@@ -321,7 +322,13 @@ func TestRunBuildJobRecordsModels(t *testing.T) {
 		})
 		return meetingPath, nil
 	}
+	insertJob(t, rt.store.db, jobID, nowUTCString())
+	if err := rt.store.MarkBuildQueued(context.Background(), jobID, runPath, runPath, nowUTCString()); err != nil {
+		t.Fatalf("MarkBuildQueued() error = %v", err)
+	}
 
+	// The worker may claim the build first; then this call skips it, and the
+	// same buildJobFn runs either way.
 	rt.runBuildJob(buildTask{JobID: jobID, AttemptNumber: 1, ArtifactRunPath: runPath}, 1)
 	waitForJobState(t, rt.store, jobID, "succeeded")
 
@@ -429,8 +436,15 @@ func TestRecordAttemptStepOutcomesClearsAFallbackTheRewriteDidNotHave(t *testing
 // this pass that rewrote the summary with the configured template must not
 // inherit the earlier pass's template_fallback.
 func TestABuildClaimedAgainForgetsTheEarlierPassesSummaryReason(t *testing.T) {
-	rt, cleanup := newTestRuntime(t)
-	defer cleanup()
+	// A bare store, not newTestRuntime: a runtime starts its own build worker,
+	// which races this test for the queued build and sometimes claims it first.
+	t.Setenv("CASSINI_REPO_ROOT", filepath.Clean(filepath.Join("..", "..", "..")))
+	store, err := OpenStore(filepath.Join(t.TempDir(), "jobs.sqlite3"))
+	if err != nil {
+		t.Fatalf("OpenStore() error = %v", err)
+	}
+	defer store.Close()
+	rt := &Runtime{store: store}
 	ctx := context.Background()
 	const jobID = "job-summary-reclaimed"
 	insertJob(t, rt.store.db, jobID, nowUTCString())
