@@ -1,6 +1,7 @@
 import { defineConfig } from "vite";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import tailwindcss from "@tailwindcss/vite";
+import { i18nBundle } from "./scripts/i18n-bundle-plugin.mjs";
 
 // Embedded-viewer build.
 //
@@ -19,7 +20,7 @@ import tailwindcss from "@tailwindcss/vite";
 // base is "./" so nothing is hardcoded at build time: the runtime proxy base
 // comes from window.__CASSINI_VIEWER_BASE__, captured by src/embedded.ts.
 export default defineConfig({
-  plugins: [tailwindcss(), svelte()],
+  plugins: [i18nBundle(), tailwindcss(), svelte()],
   base: "./",
   build: {
     // External maps keep production code minified and make installed builds debuggable.
