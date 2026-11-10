@@ -167,6 +167,10 @@ type RootTranslation = {
 			 * S​t​o​r​a​g​e
 			 */
 			storage: string
+			/**
+			 * H​e​l​p
+			 */
+			help: string
 		}
 		status: {
 			/**
@@ -2341,10 +2345,6 @@ export type NamespaceAppTranslation = {
 				 */
 				recordings: string
 				/**
-				 * H​e​l​p
-				 */
-				help: string
-				/**
 				 * S​u​p​p​o​r​t​ ​C​a​s​s​i​n​i
 				 */
 				support: string
@@ -2971,6 +2971,26 @@ export type NamespaceAppTranslation = {
 			 */
 			region_label: string
 			/**
+			 * T​h​e​ ​b​u​n​d​l​e​ ​c​o​v​e​r​s​ ​t​h​e​ ​w​h​o​l​e​ ​i​n​s​t​a​l​l​a​t​i​o​n​:​ ​v​e​r​s​i​o​n​s​ ​a​n​d​ ​s​e​t​t​i​n​g​s​,​ ​t​h​e​ ​l​a​s​t​ ​s​e​v​e​n​ ​d​a​y​s​ ​o​f​ ​j​o​b​s​,​ ​s​t​a​g​e​ ​l​o​g​s​ ​a​n​d​ ​s​h​a​r​i​n​g​ ​e​v​e​n​t​s​.​ ​I​t​ ​h​a​s​ ​n​o​ ​r​e​c​o​r​d​i​n​g​s​,​ ​t​r​a​n​s​c​r​i​p​t​s​ ​o​r​ ​s​u​m​m​a​r​i​e​s​.
+			 */
+			lede_admin: string
+			/**
+			 * T​h​e​ ​b​u​n​d​l​e​ ​i​n​c​l​u​d​e​s​ ​y​o​u​r​ ​N​e​x​t​c​l​o​u​d​ ​u​s​e​r​ ​I​D​,​ ​y​o​u​r​ ​b​r​o​w​s​e​r​ ​d​e​t​a​i​l​s​,​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​s​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​y​o​u​ ​a​n​d​ ​a​n​y​ ​e​r​r​o​r​ ​m​e​s​s​a​g​e​s​.​ ​I​t​ ​h​a​s​ ​n​o​ ​m​e​e​t​i​n​g​ ​c​o​n​t​e​n​t​ ​a​n​d​ ​n​o​ ​s​e​r​v​e​r​ ​l​o​g​s​.
+			 */
+			lede_user: string
+			/**
+			 * S​c​r​u​b​ ​s​e​n​s​i​t​i​v​e​ ​i​n​f​o​r​m​a​t​i​o​n
+			 */
+			scrub: string
+			/**
+			 * L​o​g​s​ ​c​a​n​ ​i​n​c​l​u​d​e​ ​n​a​m​e​s​,​ ​U​R​L​s​,​ ​p​a​s​s​w​o​r​d​s​ ​o​r​ ​m​e​e​t​i​n​g​ ​t​e​x​t​.​ ​S​c​r​u​b​b​i​n​g​ ​r​e​m​o​v​e​s​ ​t​h​e​m​,​ ​b​u​t​ ​m​a​y​ ​a​l​s​o​ ​r​e​m​o​v​e​ ​d​e​t​a​i​l​s​ ​n​e​e​d​e​d​ ​t​o​ ​f​i​n​d​ ​t​h​e​ ​p​r​o​b​l​e​m​.
+			 */
+			scrub_hint_admin: string
+			/**
+			 * L​e​a​v​e​s​ ​o​u​t​ ​y​o​u​r​ ​u​s​e​r​ ​I​D​ ​a​n​d​ ​t​h​e​ ​e​r​r​o​r​ ​m​e​s​s​a​g​e​s​.​ ​C​o​u​n​t​s​ ​a​n​d​ ​s​t​a​t​u​s​ ​c​o​d​e​s​ ​s​t​a​y​.
+			 */
+			scrub_hint_user: string
+			/**
 			 * D​o​w​n​l​o​a​d​ ​s​u​p​p​o​r​t​ ​b​u​n​d​l​e
 			 */
 			download: string
@@ -2979,17 +2999,9 @@ export type NamespaceAppTranslation = {
 			 */
 			preparing: string
 			/**
-			 * S​c​r​u​b​ ​s​e​n​s​i​t​i​v​e​ ​i​n​f​o​r​m​a​t​i​o​n
+			 * N​o​t​h​i​n​g​ ​i​s​ ​s​e​n​t​ ​a​u​t​o​m​a​t​i​c​a​l​l​y​.​ ​C​h​e​c​k​ ​t​h​e​ ​Z​I​P​ ​b​e​f​o​r​e​ ​y​o​u​ ​s​h​a​r​e​ ​i​t​.
 			 */
-			scrub: string
-			/**
-			 * D​o​w​n​l​o​a​d​s​ ​s​c​r​u​b​b​e​d​ ​d​i​a​g​n​o​s​t​i​c​s​.​ ​R​e​v​i​e​w​ ​b​e​f​o​r​e​ ​s​h​a​r​i​n​g​.​ ​N​o​t​h​i​n​g​ ​i​s​ ​s​e​n​t​ ​a​u​t​o​m​a​t​i​c​a​l​l​y​.
-			 */
-			explain_scrubbed: string
-			/**
-			 * O​r​i​g​i​n​a​l​ ​l​o​g​s​ ​m​a​y​ ​c​o​n​t​a​i​n​ ​n​a​m​e​s​,​ ​U​R​L​s​,​ ​c​r​e​d​e​n​t​i​a​l​s​ ​o​r​ ​m​e​e​t​i​n​g​ ​t​e​x​t​.​ ​R​e​v​i​e​w​ ​o​r​ ​e​d​i​t​ ​t​h​e​ ​Z​I​P​ ​b​e​f​o​r​e​ ​s​h​a​r​i​n​g​.​ ​N​o​t​h​i​n​g​ ​i​s​ ​s​e​n​t​ ​a​u​t​o​m​a​t​i​c​a​l​l​y​.
-			 */
-			explain_original: string
+			fine_print: string
 			/**
 			 * A​d​m​i​n​i​s​t​r​a​t​o​r​ ​s​u​p​p​o​r​t​ ​b​u​n​d​l​e​ ​d​o​w​n​l​o​a​d​e​d​.​ ​P​r​i​v​a​c​y​ ​f​i​l​t​e​r​i​n​g​ ​w​a​s​ ​o​n​.
 			 */
@@ -2999,13 +3011,26 @@ export type NamespaceAppTranslation = {
 			 */
 			downloaded_admin_original: string
 			/**
-			 * Y​o​u​r​ ​s​u​p​p​o​r​t​ ​b​u​n​d​l​e​ ​d​o​w​n​l​o​a​d​e​d​.​ ​A​n​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​ ​c​a​n​ ​d​o​w​n​l​o​a​d​ ​a​d​d​i​t​i​o​n​a​l​ ​s​e​r​v​e​r​ ​d​i​a​g​n​o​s​t​i​c​s​.​ ​P​r​i​v​a​c​y​ ​f​i​l​t​e​r​i​n​g​ ​w​a​s​ ​o​n​.
+			 * S​u​p​p​o​r​t​ ​b​u​n​d​l​e​ ​d​o​w​n​l​o​a​d​e​d​.​ ​P​r​i​v​a​c​y​ ​f​i​l​t​e​r​i​n​g​ ​w​a​s​ ​o​n​.
 			 */
 			downloaded_user_scrubbed: string
 			/**
-			 * Y​o​u​r​ ​s​u​p​p​o​r​t​ ​b​u​n​d​l​e​ ​d​o​w​n​l​o​a​d​e​d​.​ ​A​n​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​ ​c​a​n​ ​d​o​w​n​l​o​a​d​ ​a​d​d​i​t​i​o​n​a​l​ ​s​e​r​v​e​r​ ​d​i​a​g​n​o​s​t​i​c​s​.​ ​P​r​i​v​a​c​y​ ​f​i​l​t​e​r​i​n​g​ ​w​a​s​ ​o​f​f​.
+			 * S​u​p​p​o​r​t​ ​b​u​n​d​l​e​ ​d​o​w​n​l​o​a​d​e​d​.​ ​P​r​i​v​a​c​y​ ​f​i​l​t​e​r​i​n​g​ ​w​a​s​ ​o​f​f​.
 			 */
 			downloaded_user_original: string
+			/**
+			 * A​d​m​i​n​i​s​t​r​a​t​o​r​s
+			 */
+			admin_heading: string
+			/**
+			 * T​h​i​s​ ​b​u​n​d​l​e​ ​c​o​v​e​r​s​ ​o​n​l​y​ ​y​o​u​r​ ​o​w​n​ ​a​c​c​o​u​n​t​.​ ​F​o​r​ ​a​ ​p​r​o​b​l​e​m​ ​w​i​t​h​ ​r​e​c​o​r​d​i​n​g​ ​o​r​ ​p​r​o​c​e​s​s​i​n​g​,​ ​d​o​w​n​l​o​a​d​ ​t​h​e​ ​i​n​s​t​a​l​l​a​t​i​o​n​ ​b​u​n​d​l​e​ ​i​n​s​t​e​a​d​:​ ​i​t​ ​a​d​d​s​ ​s​e​r​v​e​r​ ​l​o​g​s​ ​a​n​d​ ​j​o​b​ ​h​i​s​t​o​r​y​.
+			 */
+			admin_body: string
+			/**
+			 * O​p​e​n​ ​{​p​l​a​c​e​}
+			 * @param {unknown} place
+			 */
+			admin_link: RequiredParams<'place'>
 			/**
 			 * T​h​e​ ​s​u​p​p​o​r​t​ ​d​o​w​n​l​o​a​d​ ​t​i​m​e​d​ ​o​u​t​.​ ​T​r​y​ ​a​g​a​i​n​.
 			 */
@@ -3042,6 +3067,20 @@ export type NamespaceAppTranslation = {
 			 * T​h​e​ ​s​u​p​p​o​r​t​ ​b​u​n​d​l​e​ ​d​o​w​n​l​o​a​d​ ​w​a​s​ ​i​n​c​o​m​p​l​e​t​e​.​ ​T​r​y​ ​a​g​a​i​n​.
 			 */
 			error_incomplete: string
+		}
+		help_panel: {
+			/**
+			 * H​e​l​p
+			 */
+			title: string
+			/**
+			 * R​e​c​o​r​d​i​n​g​ ​f​a​i​l​i​n​g​,​ ​o​r​ ​a​ ​m​e​e​t​i​n​g​ ​n​o​t​ ​s​h​o​w​i​n​g​ ​u​p​?​ ​D​o​w​n​l​o​a​d​ ​a​ ​s​u​p​p​o​r​t​ ​b​u​n​d​l​e​ ​a​n​d​ ​a​t​t​a​c​h​ ​i​t​ ​t​o​ ​y​o​u​r​ ​s​u​p​p​o​r​t​ ​r​e​q​u​e​s​t​.
+			 */
+			intro: string
+			/**
+			 * S​u​p​p​o​r​t​ ​b​u​n​d​l​e
+			 */
+			bundle_heading: string
 		}
 		support_panel: {
 			/**
@@ -4824,6 +4863,14 @@ export type NamespaceViewerTranslation = {
 			 */
 			close_connect_agent: string
 			/**
+			 * C​l​o​s​e​ ​H​e​l​p
+			 */
+			close_help: string
+			/**
+			 * H​e​l​p
+			 */
+			help_sheet_label: string
+			/**
 			 * I​m​p​o​r​t​ ​m​e​e​t​i​n​g​s
 			 */
 			import_sheet_label: string
@@ -5603,6 +5650,20 @@ export type NamespaceViewerTranslation = {
 			 * O​t​h​e​r​ ​a​g​e​n​t​s​ ​a​n​d​ ​t​h​e​ ​c​o​m​m​a​n​d​ ​l​i​n​e
 			 */
 			more: string
+		}
+		support_panel: {
+			/**
+			 * A​ ​r​e​c​o​r​d​i​n​g​ ​m​i​s​s​i​n​g​,​ ​o​r​ ​s​o​m​e​t​h​i​n​g​ ​n​o​t​ ​w​o​r​k​i​n​g​?
+			 */
+			title: string
+			/**
+			 * D​o​w​n​l​o​a​d​ ​a​ ​s​u​p​p​o​r​t​ ​b​u​n​d​l​e​ ​a​n​d​ ​s​e​n​d​ ​i​t​ ​t​o​ ​w​h​o​e​v​e​r​ ​r​u​n​s​ ​C​a​s​s​i​n​i​ ​f​o​r​ ​y​o​u​.
+			 */
+			intro: string
+			/**
+			 * C​l​o​s​e​ ​H​e​l​p
+			 */
+			close: string
 		}
 		'import': {
 			/**
@@ -8163,6 +8224,10 @@ export type TranslationFunctions = {
 			 * Storage
 			 */
 			storage: () => LocalizedString
+			/**
+			 * Help
+			 */
+			help: () => LocalizedString
 		}
 		status: {
 			/**
@@ -10182,10 +10247,6 @@ export type TranslationFunctions = {
 					 */
 					recordings: () => LocalizedString
 					/**
-					 * Help
-					 */
-					help: () => LocalizedString
-					/**
 					 * Support Cassini
 					 */
 					support: () => LocalizedString
@@ -10793,6 +10854,26 @@ export type TranslationFunctions = {
 				 */
 				region_label: () => LocalizedString
 				/**
+				 * The bundle covers the whole installation: versions and settings, the last seven days of jobs, stage logs and sharing events. It has no recordings, transcripts or summaries.
+				 */
+				lede_admin: () => LocalizedString
+				/**
+				 * The bundle includes your Nextcloud user ID, your browser details, the recordings shared with you and any error messages. It has no meeting content and no server logs.
+				 */
+				lede_user: () => LocalizedString
+				/**
+				 * Scrub sensitive information
+				 */
+				scrub: () => LocalizedString
+				/**
+				 * Logs can include names, URLs, passwords or meeting text. Scrubbing removes them, but may also remove details needed to find the problem.
+				 */
+				scrub_hint_admin: () => LocalizedString
+				/**
+				 * Leaves out your user ID and the error messages. Counts and status codes stay.
+				 */
+				scrub_hint_user: () => LocalizedString
+				/**
 				 * Download support bundle
 				 */
 				download: () => LocalizedString
@@ -10801,17 +10882,9 @@ export type TranslationFunctions = {
 				 */
 				preparing: () => LocalizedString
 				/**
-				 * Scrub sensitive information
+				 * Nothing is sent automatically. Check the ZIP before you share it.
 				 */
-				scrub: () => LocalizedString
-				/**
-				 * Downloads scrubbed diagnostics. Review before sharing. Nothing is sent automatically.
-				 */
-				explain_scrubbed: () => LocalizedString
-				/**
-				 * Original logs may contain names, URLs, credentials or meeting text. Review or edit the ZIP before sharing. Nothing is sent automatically.
-				 */
-				explain_original: () => LocalizedString
+				fine_print: () => LocalizedString
 				/**
 				 * Administrator support bundle downloaded. Privacy filtering was on.
 				 */
@@ -10821,13 +10894,25 @@ export type TranslationFunctions = {
 				 */
 				downloaded_admin_original: () => LocalizedString
 				/**
-				 * Your support bundle downloaded. An administrator can download additional server diagnostics. Privacy filtering was on.
+				 * Support bundle downloaded. Privacy filtering was on.
 				 */
 				downloaded_user_scrubbed: () => LocalizedString
 				/**
-				 * Your support bundle downloaded. An administrator can download additional server diagnostics. Privacy filtering was off.
+				 * Support bundle downloaded. Privacy filtering was off.
 				 */
 				downloaded_user_original: () => LocalizedString
+				/**
+				 * Administrators
+				 */
+				admin_heading: () => LocalizedString
+				/**
+				 * This bundle covers only your own account. For a problem with recording or processing, download the installation bundle instead: it adds server logs and job history.
+				 */
+				admin_body: () => LocalizedString
+				/**
+				 * Open {place}
+				 */
+				admin_link: (arg: { place: unknown }) => LocalizedString
 				/**
 				 * The support download timed out. Try again.
 				 */
@@ -10864,6 +10949,20 @@ export type TranslationFunctions = {
 				 * The support bundle download was incomplete. Try again.
 				 */
 				error_incomplete: () => LocalizedString
+			}
+			help_panel: {
+				/**
+				 * Help
+				 */
+				title: () => LocalizedString
+				/**
+				 * Recording failing, or a meeting not showing up? Download a support bundle and attach it to your support request.
+				 */
+				intro: () => LocalizedString
+				/**
+				 * Support bundle
+				 */
+				bundle_heading: () => LocalizedString
 			}
 			support_panel: {
 				/**
@@ -12532,6 +12631,14 @@ export type TranslationFunctions = {
 				 */
 				close_connect_agent: () => LocalizedString
 				/**
+				 * Close Help
+				 */
+				close_help: () => LocalizedString
+				/**
+				 * Help
+				 */
+				help_sheet_label: () => LocalizedString
+				/**
 				 * Import meetings
 				 */
 				import_sheet_label: () => LocalizedString
@@ -13253,6 +13360,20 @@ export type TranslationFunctions = {
 				 * Other agents and the command line
 				 */
 				more: () => LocalizedString
+			}
+			support_panel: {
+				/**
+				 * A recording missing, or something not working?
+				 */
+				title: () => LocalizedString
+				/**
+				 * Download a support bundle and send it to whoever runs Cassini for you.
+				 */
+				intro: () => LocalizedString
+				/**
+				 * Close Help
+				 */
+				close: () => LocalizedString
 			}
 			'import': {
 				/**

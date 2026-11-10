@@ -631,8 +631,6 @@ const operator = {
       group_settings: "Settings",
       group_support: "Support",
       recordings: "Recordings",
-      // Getting help with this installation, and its support bundle.
-      help: "Help",
       support: "Support Cassini",
       // On narrow screens the nav is a drawer behind a button.
       open_label: "Choose an Operator section",
@@ -844,22 +842,36 @@ const operator = {
     // After a path.
     no_longer_on_disk: "(no longer on disk)",
   },
-  // SupportBundle.svelte and support/client.ts: the "Download support bundle"
-  // control in Browse and Operator.
+  // SupportBundle.svelte and support/client.ts: the support bundle download in
+  // Browse › Help and Operator › Help.
   support_bundle: {
     region_label: "Cassini support",
+    // Above the scrub choice in Operator › Help: what the installation's bundle holds.
+    lede_admin:
+      "The bundle covers the whole installation: versions and settings, the last seven days of jobs, stage logs and sharing events. It has no recordings, transcripts or summaries.",
+    // Above the scrub choice in Browse › Help: what a reader's own bundle holds.
+    lede_user:
+      "The bundle includes your Nextcloud user ID, your browser details, the recordings shared with you and any error messages. It has no meeting content and no server logs.",
+    scrub: "Scrub sensitive information",
+    // Under the scrub choice, for the installation's bundle.
+    scrub_hint_admin:
+      "Logs can include names, URLs, passwords or meeting text. Scrubbing removes them, but may also remove details needed to find the problem.",
+    // Under the scrub choice, for a reader's own bundle.
+    scrub_hint_user: "Leaves out your user ID and the error messages. Counts and status codes stay.",
     download: "Download support bundle",
     preparing: "Preparing support bundle…",
-    scrub: "Scrub sensitive information",
-    explain_scrubbed: "Downloads scrubbed diagnostics. Review before sharing. Nothing is sent automatically.",
-    explain_original:
-      "Original logs may contain names, URLs, credentials or meeting text. Review or edit the ZIP before sharing. Nothing is sent automatically.",
+    // Small print under the download button.
+    fine_print: "Nothing is sent automatically. Check the ZIP before you share it.",
     downloaded_admin_scrubbed: "Administrator support bundle downloaded. Privacy filtering was on.",
     downloaded_admin_original: "Administrator support bundle downloaded. Privacy filtering was off.",
-    downloaded_user_scrubbed:
-      "Your support bundle downloaded. An administrator can download additional server diagnostics. Privacy filtering was on.",
-    downloaded_user_original:
-      "Your support bundle downloaded. An administrator can download additional server diagnostics. Privacy filtering was off.",
+    downloaded_user_scrubbed: "Support bundle downloaded. Privacy filtering was on.",
+    downloaded_user_original: "Support bundle downloaded. Privacy filtering was off.",
+    // A box under a reader's own bundle in Browse › Help, shown only to an administrator.
+    admin_heading: "Administrators",
+    admin_body:
+      "This bundle covers only your own account. For a problem with recording or processing, download the installation bundle instead: it adds server logs and job history.",
+    // {place} is where the installation bundle is, e.g. "Operator › Help".
+    admin_link: "Open {place}",
     error_timeout: "The support download timed out. Try again.",
     error_unreachable: "Couldn’t reach Cassini. Check your connection and try again.",
     error_sign_in: "Sign in again, then retry the download.",
@@ -869,6 +881,12 @@ const operator = {
     error_failed: "Couldn’t prepare the support bundle. Try again.",
     error_not_a_bundle: "Cassini didn’t return a support bundle. Sign in again and retry.",
     error_incomplete: "The support bundle download was incomplete. Try again.",
+  },
+  // HelpPanel.svelte: Operator › Help, the installation's support bundle.
+  help_panel: {
+    title: "Help",
+    intro: "Recording failing, or a meeting not showing up? Download a support bundle and attach it to your support request.",
+    bundle_heading: "Support bundle",
   },
   // SupportPanel.svelte: Operator › Support Cassini.
   support_panel: {

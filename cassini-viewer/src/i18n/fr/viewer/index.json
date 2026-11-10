@@ -16,6 +16,8 @@
       "close_meeting": "",
       "close_prepare": "",
       "close_connect_agent": "",
+      "close_help": "",
+      "help_sheet_label": "",
       "import_sheet_label": "",
       "delete_confirm_title_one": "",
       "delete_confirm_title_other": "",
@@ -222,6 +224,11 @@
       "step_ask_title": "",
       "step_ask_example": "",
       "more": ""
+    },
+    "support_panel": {
+      "title": "",
+      "intro": "",
+      "close": ""
     },
     "import": {
       "button": "",

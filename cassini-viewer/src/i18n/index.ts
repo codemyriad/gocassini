@@ -39,7 +39,7 @@ export type { Locales };
 
 // Where a section of the administrator's surface is, as a path: "Operator ›
 // Publish pipeline". Sentences that send someone there take it as {place}.
-export type OperatorPlace = "publish_pipeline" | "ai_providers" | "insight_templates" | "doctor" | "storage";
+export type OperatorPlace = "publish_pipeline" | "ai_providers" | "insight_templates" | "doctor" | "storage" | "help";
 export function operatorPlace(place: OperatorPlace): string {
   const names = get(LL).common.place;
   return `${names.operator()} › ${names[place]()}`;

@@ -1953,7 +1953,7 @@
         class="shell-scrim agent-scrim"
         tabindex="-1"
         inert={topLayer > 2}
-        aria-label="Close Help"
+        aria-label={appText.close_help()}
         on:click={() => (supportOpen = false)}
       ></button>
     {/if}
@@ -1961,7 +1961,7 @@
       <aside
         class="agent-sheet"
         class:support-sheet-closed={!supportOpen}
-        aria-label="Help"
+        aria-label={appText.help_sheet_label()}
         inert={!supportOpen || topLayer > 2}
         use:focusLayerWhile={supportOpen}
       >

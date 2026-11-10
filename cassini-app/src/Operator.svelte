@@ -65,7 +65,7 @@
       // (D-910); Browse's own Help links here for an administrator.
       get label() { return nav().group_support(); },
       items: [
-        { id: "help", get label() { return nav().help(); } },
+        { id: "help", get label() { return get(LL).common.place.help(); } },
         { id: "support", get label() { return nav().support(); } },
       ],
     },

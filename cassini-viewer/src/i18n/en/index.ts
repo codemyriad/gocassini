@@ -66,6 +66,8 @@ const en = {
       insight_templates: "Insight templates",
       doctor: "Doctor",
       storage: "Storage",
+      // Getting help with this installation, and its support bundle.
+      help: "Help",
     },
     status: {
       // Briefly, after something was copied to the clipboard.

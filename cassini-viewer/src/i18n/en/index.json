@@ -37,7 +37,8 @@
       "ai_providers": "AI providers",
       "insight_templates": "Insight templates",
       "doctor": "Doctor",
-      "storage": "Storage"
+      "storage": "Storage",
+      "help": "Help"
     },
     "status": {
       "copied": "Copied"

@@ -28,6 +28,9 @@ const browse = {
     close_meeting: "Close the meeting",
     close_prepare: "Close Prepare",
     close_connect_agent: "Close Connect an agent",
+    close_help: "Close Help",
+    // The Help sheet, opened from the rail's footer.
+    help_sheet_label: "Help",
     import_sheet_label: "Import meetings",
     // {title} is the meeting's title.
     delete_confirm_title_one: "Delete “{title}”?",
@@ -284,6 +287,14 @@ const browse = {
     step_ask_title: "Ask it something,",
     step_ask_example: "“What was decided in yesterday's standup?”",
     more: "Other agents and the command line",
+  },
+
+  // The Help sheet's header (SupportPanel.svelte). Its body, the support
+  // bundle download, comes from the Nextcloud app.
+  support_panel: {
+    title: "A recording missing, or something not working?",
+    intro: "Download a support bundle and send it to whoever runs Cassini for you.",
+    close: "Close Help",
   },
 
   // Importing meeting files.
