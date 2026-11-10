@@ -198,6 +198,9 @@ Component settings, all three the same:
 - **File format:** JSON nested structure file, monolingual. The base file is
   English, written by `i18n:sync`. English is not edited in Weblate.
 - **Language filter:** `^[^.]+$`. **Language code style:** BCP (`pt-PT`).
+  The project maps the `de-DE` folder to Weblate's formal German
+  (Project › Settings › Language aliases: `de-DE:de@formal`); without it
+  Weblate reads `de-DE` as a second copy of `de` and refuses the component.
 - **Adding new translation:** "Contact maintainers about new translation" (see
   Adding a language).
 - **Repository:** `codemyriad/gocassini`. Weblate pulls `main` and pushes to
@@ -220,6 +223,14 @@ Component settings, all three the same:
   commits" (one commit per language).
 - **Reviews:** on for the project. A string is approved only after a reviewer
   accepts it.
+
+**Translator context.** The `//` comments above English keys don't survive
+into the JSON, so `npm run i18n:explain -w cassini-viewer` copies each one
+(and its section's comment) onto the English string in Weblate as its
+explanation, which Weblate keeps in its own database and shows beside every
+translation. Run it after merging new or changed comments to `main`; it sends
+only what differs. `-- --dry-run` prints them. It needs a Weblate API token
+(`WEBLATE_TOKEN`, or `~/.config/weblate/codemyriad-token`).
 
 A GitHub webhook (`https://weblate.codemyriad.io/hooks/github/`, push events)
 tells Weblate when `main` changes, so new English strings show up without

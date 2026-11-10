@@ -135,8 +135,9 @@ async function api(path, init = {}) {
 }
 
 async function sourceUnits(component) {
-  // A component in a category is addressed as "category%2Fcomponent".
-  let next = `translations/${PROJECT}/${encodeURIComponent(component)}/en/units/?page_size=1000`;
+  // A component in a category is addressed as "category%252Fcomponent": the
+  // slash encoded twice, as Weblate's own API links write it.
+  let next = `translations/${PROJECT}/${encodeURIComponent(encodeURIComponent(component))}/en/units/?page_size=1000`;
   const units = [];
   while (next) {
     const page = await api(next);
