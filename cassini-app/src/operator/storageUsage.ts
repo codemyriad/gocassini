@@ -22,7 +22,7 @@ export interface StorageLoadSummary {
 // the panel stay declarative and makes boundary values independently testable.
 export function formatStorageBytes(bytes: number): string {
   const amount = Number.isFinite(bytes) && bytes > 0 ? bytes : 0;
-  const units = ["B", "KB", "MB", "GB", "TB", "PB"];
+  const units = ["byte", "kilobyte", "megabyte", "gigabyte", "terabyte", "petabyte"];
   let value = amount;
   let unit = 0;
   while (value >= 1024 && unit < units.length - 1) {
@@ -30,8 +30,11 @@ export function formatStorageBytes(bytes: number): string {
     unit += 1;
   }
   const digits = unit > 0 && value < 10 ? 1 : 0;
-  // Unit symbols are the same in every language we have; the number follows the locale.
-  return `${numberFormat({ minimumFractionDigits: digits, maximumFractionDigits: digits, useGrouping: false }).format(value)} ${units[unit]}`;
+  const options = { minimumFractionDigits: digits, maximumFractionDigits: digits, useGrouping: false };
+  // Bytes stay "B": Intl spells the byte unit out ("1023 byte", "bajtova").
+  // Larger units come from Intl in the reader's locale (French "Mo", "Go").
+  if (unit === 0) return `${numberFormat(options).format(value)} B`;
+  return numberFormat({ ...options, style: "unit", unit: units[unit], unitDisplay: "short" }).format(value);
 }
 
 // A total is useful only when it covers every row. Returning null makes the

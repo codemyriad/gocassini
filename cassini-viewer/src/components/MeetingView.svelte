@@ -1250,17 +1250,6 @@
     togglePlayback();
   }
 
-  // Tooltip fragment for a low-confidence word. Guarded against non-finite
-  // gaps (hosts can mount this published component with unvalidated data):
-  // never render "NaN dB" or "Infinity dB" — fall back to the unmeasured
-  // wording instead.
-  function describeAttributionGap(gapDb: number | undefined): string {
-    if (gapDb === undefined || !Number.isFinite(gapDb)) {
-      return "much louder";
-    }
-    return `${gapDb.toFixed(0)} dB louder`;
-  }
-
   // A row whose speaker just held the floor a moment ago does not repeat its
   // own name: the same rule as before, only asked of turns rather than of the
   // fragments a turn arrives in. A monologue the producer split at a two-second
@@ -1371,15 +1360,6 @@
   }
 
 
-  function describeTranscriptInteraction(): string {
-    if (!meeting && hasCatalog) {
-      return "Choose a meeting from the library to load its audio, transcript, and timing data.";
-    }
-    if (!transcriptIndex) {
-      return "Load a meeting artifact to inspect its transcript and timing.";
-    }
-    return "Select a word to seek to it.";
-  }
 
 
 
