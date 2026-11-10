@@ -74,7 +74,7 @@ describe("describeImportSharing", () => {
         ],
       },
     });
-    expect(got.line).toBe("Shared with 5");
+    expect(got.line).toBe("Shared with 5 recipients");
     expect(got.title).toBe("you, Bob Lee, Design (group), Core (team), nolabel");
   });
   it("says so when the meeting is private", () => {

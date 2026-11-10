@@ -12,7 +12,6 @@
 import { get } from "svelte/store";
 
 import { LL } from "../i18n";
-import { formatCompactCount, numberFormat } from "../i18n/format";
 
 export type SummaryRequestRunState = "idle" | "writing" | "failed";
 
@@ -93,21 +92,12 @@ export function summaryCostLine(
       ? t.cost_target({ model: state.model, provider: state.provider })
       : state.model
     : state.provider || t.cost_target_fallback();
-  const tokens = approxTokens(state.estimatedInputTokens);
-  const words = numberFormat().format(state.words);
-  return state.calls === 1
-    ? t.cost_one({ target, tokens, words })
-    : t.cost_other({ count: numberFormat().format(state.calls), target, tokens, words });
+  return t.cost({ count: state.calls, target, tokens: state.estimatedInputTokens, words: state.words });
 }
 
 export function summaryEndpointLine(state: Pick<SummaryRequestState, "external">): string {
   const t = get(LL).common.summary_request;
   return state.external ? t.endpoint_external() : t.endpoint_local();
-}
-
-// "850", "7.5K": the locale's short form for a large count.
-function approxTokens(tokens: number): string {
-  return formatCompactCount(tokens);
 }
 
 export function describeSummaryRequestError(error: unknown): string {

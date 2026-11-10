@@ -55,18 +55,17 @@ const insights = {
   default_name: {
     // Stands in for the template's name when the reader cannot see templates.
     template_fallback: "Insight",
-    // One meeting with no title.
-    untitled_meeting: "1 meeting",
-    // Several meetings. {count} is a number above one.
-    meetings_other: "{count} meetings",
+    // Stands in for the meetings' titles: one meeting with no title, or several.
+    // Plural; see the translator guide. {count}: meetings.
+    meetings: "{count:number|num} {{meeting|meetings}}",
   },
   // An insight's card in the meeting list.
   card: {
     // A small uppercase label above the card's title.
     kind: "Insight",
     // How many of the insight's meetings the reader can see.
-    meetings_one: "{count} meeting",
-    meetings_other: "{count} meetings",
+    // Plural; see the translator guide. {count}: meetings.
+    meetings: "{count:number|num} {{meeting|meetings}}",
   },
   // An insight open in the side sheet.
   document: {
@@ -77,8 +76,9 @@ const insights = {
     // Tooltip on the pencil button.
     rename_tooltip: "Rename",
     close_label: "Close the insight",
-    // The insight's meetings came from several rooms. {count} is above one.
-    rooms_other: "{count} rooms",
+    // The insight's meetings came from several rooms.
+    // Plural; see the translator guide. {count}: rooms, 2 or more.
+    rooms: "{count:number|num} {{room|rooms}}",
     export_label: "Export this insight",
     copy_markdown: "Copy as markdown",
     download_markdown: "Download markdown",
@@ -89,13 +89,13 @@ const insights = {
     // {file} is the downloaded file's name.
     downloaded: "Downloaded {file}.",
     // Heading over the list of meetings the insight read.
-    sources_heading_one: "Context from {count} meeting",
-    sources_heading_other: "Context from {count} meetings",
+    // Plural; see the translator guide. {count}: meetings.
+    sources_heading: "Context from {count:number|num} {{meeting|meetings}}",
     // The same heading when none of the meetings can be shown.
     sources_heading_none: "Context sources",
-    missing_sources_one: "1 source meeting is no longer available (deleted, or no longer shared with you).",
-    missing_sources_other:
-      "{count} source meetings are no longer available (deleted, or no longer shared with you).",
+    // Plural; see the translator guide. {count}: meetings.
+    missing_sources:
+      "{count:number|num} source {{meeting is|meetings are}} no longer available (deleted, or no longer shared with you).",
     // {status} is "Queued" or "Running".
     pending: "{status}. The answer appears here when it finishes.",
     cannot_load: "This build cannot fetch the document — the run and what it read are all it can show.",
@@ -173,8 +173,8 @@ const insights = {
     files_downloaded: "Meeting files downloaded.",
     earlier_files_downloaded: "Meeting files from the earlier selection downloaded.",
     preparing: "Preparing…",
-    // {count} is a formatted number.
-    copied_characters: "Copied {count} characters.",
+    // Plural; see the translator guide. {count}: characters copied.
+    copied_characters: "Copied {count:number|num} {{character|characters}}.",
     clipboard_blocked: "Clipboard blocked here — use Export to copy again or download.",
     // {file} is the downloaded file's name.
     downloaded: "Downloaded {file}.",

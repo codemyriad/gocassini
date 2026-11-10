@@ -5,6 +5,7 @@ import { LL, baseLocale, formatLocale, locales, matchLocale, nextcloudLanguage, 
 import { formatDateRange } from "../viewer/insightName";
 import { formatMeetingStartShort } from "../viewer/meetingTime";
 import { mergeTranslations } from "./translations";
+import { i18nString } from "./i18n-util";
 import en_viewer from "./en/viewer/index";
 
 afterEach(() => {
@@ -95,5 +96,44 @@ describe("dates and times in the reader's locale", () => {
     expect(formatDateRange(["2026-09-28", "2026-10-12"])).toBe("28 Sept – 12 Oct 2026");
     useFormatLocale(["en-US"]);
     expect(formatDateRange(["2026-10-01", "2026-10-12"])).toBe("Oct 1 – 12, 2026");
+  });
+});
+
+describe("counts", () => {
+  afterEach(() => {
+    useFormatLocale([]);
+  });
+
+  it("lets English pick its two forms from the number, written in the reader's locale", () => {
+    const words = get(LL).viewer.meeting.facts.words;
+    expect(words({ count: 1 })).toBe("1 word");
+    expect(words({ count: 0 })).toBe("0 words");
+    expect(words({ count: 12405 })).toBe("12,405 words");
+    useFormatLocale(["de-DE"]);
+    expect(words({ count: 12405 })).toBe("12.405 words");
+  });
+
+  it("ties each plural to its own number", () => {
+    const split = get(LL).viewer.meeting.people.split;
+    expect(split({ voices: 1, devices: 1 })).toBe("1 voice on 1 device");
+    expect(split({ voices: 3, devices: 1 })).toBe("3 voices on 1 device");
+    expect(split({ voices: 4, devices: 2 })).toBe("4 voices on 2 devices");
+  });
+
+  it("gives a Polish translator the few and many forms English does not have", () => {
+    // What a translator would write for `viewer.meeting.facts.words`: zero (left
+    // empty, so 0 follows Polish's own rule), one, two (unused), few, many, other.
+    const polish = mergeTranslations<typeof en_viewer>(en_viewer, {
+      meeting: { facts: { words: "{count:number|num} {{|słowo||słowa|słów|słowa}}" } },
+    });
+    const say = (count: number) => i18nString("pl")(polish.meeting.facts.words, { count });
+    expect(say(1)).toBe("1 słowo");
+    expect(say(3)).toBe("3 słowa");
+    expect(say(22)).toBe("22 słowa");
+    expect(say(5)).toBe("5 słów");
+    expect(say(12)).toBe("12 słów");
+    expect(say(0)).toBe("0 słów");
+    // The form comes from the number, the digits from the reader's locale.
+    expect(say(1234)).toBe("1,234 słowa");
   });
 });

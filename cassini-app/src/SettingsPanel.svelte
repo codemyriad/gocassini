@@ -17,7 +17,7 @@
   import { fly } from "svelte/transition";
   import { cancelLeave, confirmLeave, guardLeave, leavePrompt, unsavedChanges } from "./operator/unsaved";
   import { ChevronDown, TriangleAlert } from "@lucide/svelte";
-  import { formatCount, LL, numberFormat } from "cassini-viewer/i18n";
+  import { LL, numberFormat } from "cassini-viewer/i18n";
   import { OperatorClient, OperatorHttpError, runnableWorkflows } from "./operator/client";
   import SpeechModelCell from "./SpeechModelCell.svelte";
   import PublishedFormatSelect from "./PublishedFormatSelect.svelte";
@@ -660,8 +660,7 @@
     const m = slot("media");
     const sentence = span === null ? t.kept_plain({ media: m })
       : span === "forever" ? t.kept_forever({ media: m })
-      : days === 1 ? t.kept_days_one({ media: m })
-      : t.kept_days_other({ media: m, count: formatCount(days) });
+      : t.kept_days({ media: m, count: days });
     return segments(sentence).map((part) => (part.slot === "media" ? { ...part, text: media } : part));
   }
   $: keepVideoLine = keptLine($LL.app.keep.audio_video(), keptSpan, keptDays);
@@ -669,7 +668,7 @@
   $: keepNothingLine = segments(t.kept_plain({ media: slot("media") })).map((part) => (part.slot === "media" ? { ...part, text: $LL.app.keep.nothing() } : part));
   $: keepSource = segments(
     keptSpan === "forever" ? t.source_forever({ storage: slot("storage") })
-      : keptSpan ? keptDays === 1 ? t.source_days_one({ storage: slot("storage") }) : t.source_days_other({ storage: slot("storage"), count: formatCount(keptDays) })
+      : keptSpan ? t.source_days({ storage: slot("storage"), count: keptDays })
       : t.source_unset({ storage: slot("storage") }),
   );
   $: downloadsDisabled = segments(t.downloads_disabled({ pack: slot("pack"), import: slot("import") }));

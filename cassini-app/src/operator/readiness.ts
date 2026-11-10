@@ -3,7 +3,7 @@
 // enabled optional transcription model being unavailable.
 
 import { get } from "svelte/store";
-import { dateFormat, formatCount, LL, relativeNow, relativeTimeFormat } from "cassini-viewer/i18n";
+import { dateFormat, LL, relativeNow, relativeTimeFormat } from "cassini-viewer/i18n";
 
 // The copy, read when it is needed so it follows the reader's language.
 const copy = () => get(LL).app.operator.readiness;
@@ -80,8 +80,7 @@ export const shareLimitCommands = [
 export function shareLimitedSummary(limited: ShareLimitedCount, now: Date = new Date()): string {
   const t = copy().share_limited;
   const since = formatSince(limited.since, now);
-  if (limited.jobs === 1) return since ? t.summary_one_since({ since }) : t.summary_one();
-  return since ? t.summary_other_since({ count: formatCount(limited.jobs), since }) : t.summary_other({ count: formatCount(limited.jobs) });
+  return since ? t.summary_since({ count: limited.jobs, since }) : t.summary({ count: limited.jobs });
 }
 
 export interface UnsharedCount {
@@ -101,13 +100,11 @@ export interface UnsharedCount {
 export function unsharedSummary(unshared: UnsharedCount, now: Date = new Date()): string {
   const t = copy().unshared;
   const since = formatSince(unshared.since, now);
-  const people = unshared.users === 0 ? "" : unshared.users === 1 ? t.people_one() : t.people_other({ count: formatCount(unshared.users) });
-  const groups = unshared.groups === 0 ? "" : unshared.groups === 1 ? t.groups_one() : t.groups_other({ count: formatCount(unshared.groups) });
+  const people = unshared.users === 0 ? "" : t.people({ count: unshared.users });
+  const groups = unshared.groups === 0 ? "" : t.groups({ count: unshared.groups });
   const who = people && groups ? t.who_both({ people, groups }) : people || groups;
-  const count = formatCount(unshared.jobs);
-  const summary = unshared.jobs === 1
-    ? since ? t.summary_one_since({ since }) : t.summary_one()
-    : since ? t.summary_other_since({ count, since }) : t.summary_other({ count });
+  const count = unshared.jobs;
+  const summary = since ? t.summary_since({ count, since }) : t.summary({ count });
   return who ? `${summary} ${t.missing({ who })}` : summary;
 }
 
@@ -260,7 +257,7 @@ export function readinessTitle(report: RecordingReadiness): string {
       : archiveRows.length > 0 ? "reindexing" : "";
   if (verdict === "needs_action") {
     const count = report.checks.filter(c => c.state === "needs_action").length;
-    return count === 1 ? t.needs_action_one() : t.needs_action_other({ count: formatCount(count) });
+    return t.needs_action({ count });
   }
   if (verdict === "warn") return t.warn();
   if (verdict === "not_verified") {

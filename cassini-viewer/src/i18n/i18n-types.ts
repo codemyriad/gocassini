@@ -92,20 +92,13 @@ type RootTranslation = {
 			 */
 			confirm_replace_title: string
 			/**
-			 * 1​ ​c​a​l​l​ ​t​o​ ​{​t​a​r​g​e​t​}​ ​·​ ​a​b​o​u​t​ ​{​t​o​k​e​n​s​}​ ​i​n​p​u​t​ ​t​o​k​e​n​s​,​ ​{​w​o​r​d​s​}​ ​w​o​r​d​s
+			 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​c​a​l​l​|​c​a​l​l​s​}​}​ ​t​o​ ​{​t​a​r​g​e​t​}​ ​·​ ​a​b​o​u​t​ ​{​t​o​k​e​n​s​|​c​o​m​p​a​c​t​}​ ​i​n​p​u​t​ ​{​{​t​o​k​e​n​|​t​o​k​e​n​s​}​}​,​ ​{​w​o​r​d​s​|​n​u​m​}​ ​{​{​w​o​r​d​|​w​o​r​d​s​}​}
+			 * @param {number} count
 			 * @param {unknown} target
-			 * @param {unknown} tokens
-			 * @param {unknown} words
+			 * @param {number} tokens
+			 * @param {number} words
 			 */
-			cost_one: RequiredParams<'target' | 'tokens' | 'words'>
-			/**
-			 * {​c​o​u​n​t​}​ ​c​a​l​l​s​ ​t​o​ ​{​t​a​r​g​e​t​}​ ​·​ ​a​b​o​u​t​ ​{​t​o​k​e​n​s​}​ ​i​n​p​u​t​ ​t​o​k​e​n​s​,​ ​{​w​o​r​d​s​}​ ​w​o​r​d​s
-			 * @param {unknown} count
-			 * @param {unknown} target
-			 * @param {unknown} tokens
-			 * @param {unknown} words
-			 */
-			cost_other: RequiredParams<'count' | 'target' | 'tokens' | 'words'>
+			cost: RequiredParams<'count|num' | 'target' | 'tokens|compact' | 'words|num'>
 			/**
 			 * t​h​e​ ​s​u​m​m​a​r​y​ ​m​o​d​e​l
 			 */
@@ -432,14 +425,10 @@ export type NamespaceAppTranslation = {
 		}
 		sharing_notice: {
 			/**
-			 * 1​ ​r​e​c​o​r​d​i​n​g​ ​i​s​ ​w​a​i​t​i​n​g​ ​f​o​r​ ​y​o​u
+			 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​r​e​c​o​r​d​i​n​g​ ​i​s​|​r​e​c​o​r​d​i​n​g​s​ ​a​r​e​}​}​ ​w​a​i​t​i​n​g​ ​f​o​r​ ​y​o​u
+			 * @param {number} count
 			 */
-			pending_title_one: string
-			/**
-			 * {​c​o​u​n​t​}​ ​r​e​c​o​r​d​i​n​g​s​ ​a​r​e​ ​w​a​i​t​i​n​g​ ​f​o​r​ ​y​o​u
-			 * @param {unknown} count
-			 */
-			pending_title_other: RequiredParams<'count'>
+			pending_title: RequiredParams<'count|num'>
 			/**
 			 * R​e​c​o​r​d​i​n​g​s​ ​w​a​i​t​i​n​g​ ​f​o​r​ ​y​o​u
 			 */
@@ -461,10 +450,10 @@ export type NamespaceAppTranslation = {
 			 */
 			accept: string
 			/**
-			 * A​c​c​e​p​t​ ​a​l​l​ ​{​c​o​u​n​t​}
-			 * @param {unknown} count
+			 * A​c​c​e​p​t​ ​a​l​l​ ​{​c​o​u​n​t​|​n​u​m​}​ ​{​{​r​e​c​o​r​d​i​n​g​|​r​e​c​o​r​d​i​n​g​s​}​}
+			 * @param {number} count
 			 */
-			accept_all: RequiredParams<'count'>
+			accept_all: RequiredParams<'count|num'>
 			/**
 			 * A​c​c​e​p​t​ ​{​t​i​t​l​e​}
 			 * @param {unknown} title
@@ -489,14 +478,10 @@ export type NamespaceAppTranslation = {
 			 */
 			dismiss_failed: RequiredParams<'status'>
 			/**
-			 * 1​ ​r​e​c​o​r​d​i​n​g​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​y​o​u​.
+			 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​r​e​c​o​r​d​i​n​g​|​r​e​c​o​r​d​i​n​g​s​}​}​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​y​o​u​.
+			 * @param {number} count
 			 */
-			refused_title_one: string
-			/**
-			 * {​c​o​u​n​t​}​ ​r​e​c​o​r​d​i​n​g​s​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​y​o​u​.
-			 * @param {unknown} count
-			 */
-			refused_title_other: RequiredParams<'count'>
+			refused_title: RequiredParams<'count|num'>
 			/**
 			 * A​ ​N​e​x​t​c​l​o​u​d​ ​s​h​a​r​i​n​g​ ​s​e​t​t​i​n​g​ ​s​t​o​p​s​ ​i​t​.
 			 */
@@ -506,22 +491,14 @@ export type NamespaceAppTranslation = {
 			 */
 			refused_group_label: string
 			/**
-			 * 1​ ​r​e​c​o​r​d​i​n​g​ ​y​o​u​ ​s​t​a​r​t​e​d​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​p​u​b​l​i​s​h​e​d​.
+			 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​r​e​c​o​r​d​i​n​g​|​r​e​c​o​r​d​i​n​g​s​}​}​ ​y​o​u​ ​s​t​a​r​t​e​d​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​p​u​b​l​i​s​h​e​d​.
+			 * @param {number} count
 			 */
-			starter_refused_title_one: string
+			starter_refused_title: RequiredParams<'count|num'>
 			/**
-			 * {​c​o​u​n​t​}​ ​r​e​c​o​r​d​i​n​g​s​ ​y​o​u​ ​s​t​a​r​t​e​d​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​p​u​b​l​i​s​h​e​d​.
-			 * @param {unknown} count
+			 * N​e​x​t​c​l​o​u​d​ ​r​e​f​u​s​e​d​ ​t​o​ ​s​h​a​r​e​ ​{​{​i​t​|​t​h​e​m​}​}​ ​w​i​t​h​ ​y​o​u​.
 			 */
-			starter_refused_title_other: RequiredParams<'count'>
-			/**
-			 * N​e​x​t​c​l​o​u​d​ ​r​e​f​u​s​e​d​ ​t​o​ ​s​h​a​r​e​ ​i​t​ ​w​i​t​h​ ​y​o​u​.
-			 */
-			starter_refused_line_one: string
-			/**
-			 * N​e​x​t​c​l​o​u​d​ ​r​e​f​u​s​e​d​ ​t​o​ ​s​h​a​r​e​ ​t​h​e​m​ ​w​i​t​h​ ​y​o​u​.
-			 */
-			starter_refused_line_other: string
+			starter_refused_line: string
 			/**
 			 * R​e​c​o​r​d​i​n​g​s​ ​y​o​u​ ​s​t​a​r​t​e​d​ ​t​h​a​t​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​p​u​b​l​i​s​h​e​d
 			 */
@@ -623,14 +600,9 @@ export type NamespaceAppTranslation = {
 		readiness: {
 			title: {
 				/**
-				 * O​n​e​ ​r​e​c​o​r​d​i​n​g​ ​c​h​e​c​k​ ​n​e​e​d​s​ ​a​t​t​e​n​t​i​o​n
+				 * {​{​O​n​e​ ​r​e​c​o​r​d​i​n​g​ ​c​h​e​c​k​ ​n​e​e​d​s​ ​a​t​t​e​n​t​i​o​n​|​?​?​ ​r​e​c​o​r​d​i​n​g​ ​c​h​e​c​k​s​ ​n​e​e​d​ ​a​t​t​e​n​t​i​o​n​}​}
 				 */
-				needs_action_one: string
-				/**
-				 * {​c​o​u​n​t​}​ ​r​e​c​o​r​d​i​n​g​ ​c​h​e​c​k​s​ ​n​e​e​d​ ​a​t​t​e​n​t​i​o​n
-				 * @param {unknown} count
-				 */
-				needs_action_other: RequiredParams<'count'>
+				needs_action: string
 				/**
 				 * R​e​c​o​r​d​i​n​g​ ​c​h​e​c​k​s​ ​n​e​e​d​ ​a​t​t​e​n​t​i​o​n
 				 */
@@ -841,48 +813,31 @@ export type NamespaceAppTranslation = {
 			}
 			unshared: {
 				/**
-				 * 1​ ​r​e​c​o​r​d​i​n​g​ ​w​a​s​ ​n​o​t​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​e​v​e​r​y​o​n​e​.
+				 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​r​e​c​o​r​d​i​n​g​ ​w​a​s​|​r​e​c​o​r​d​i​n​g​s​ ​w​e​r​e​}​}​ ​n​o​t​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​e​v​e​r​y​o​n​e​.
+				 * @param {number} count
 				 */
-				summary_one: string
+				summary: RequiredParams<'count|num'>
 				/**
-				 * 1​ ​r​e​c​o​r​d​i​n​g​ ​s​i​n​c​e​ ​{​s​i​n​c​e​}​ ​w​a​s​ ​n​o​t​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​e​v​e​r​y​o​n​e​.
+				 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​r​e​c​o​r​d​i​n​g​|​r​e​c​o​r​d​i​n​g​s​}​}​ ​s​i​n​c​e​ ​{​s​i​n​c​e​}​ ​{​{​w​a​s​|​w​e​r​e​}​}​ ​n​o​t​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​e​v​e​r​y​o​n​e​.
+				 * @param {number} count
 				 * @param {unknown} since
 				 */
-				summary_one_since: RequiredParams<'since'>
-				/**
-				 * {​c​o​u​n​t​}​ ​r​e​c​o​r​d​i​n​g​s​ ​w​e​r​e​ ​n​o​t​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​e​v​e​r​y​o​n​e​.
-				 * @param {unknown} count
-				 */
-				summary_other: RequiredParams<'count'>
-				/**
-				 * {​c​o​u​n​t​}​ ​r​e​c​o​r​d​i​n​g​s​ ​s​i​n​c​e​ ​{​s​i​n​c​e​}​ ​w​e​r​e​ ​n​o​t​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​e​v​e​r​y​o​n​e​.
-				 * @param {unknown} count
-				 * @param {unknown} since
-				 */
-				summary_other_since: RequiredParams<'count' | 'since'>
+				summary_since: RequiredParams<'count|num' | 'since'>
 				/**
 				 * M​i​s​s​i​n​g​:​ ​{​w​h​o​}​.
 				 * @param {unknown} who
 				 */
 				missing: RequiredParams<'who'>
 				/**
-				 * 1​ ​p​e​r​s​o​n
+				 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​p​e​r​s​o​n​|​p​e​o​p​l​e​}​}
+				 * @param {number} count
 				 */
-				people_one: string
+				people: RequiredParams<'count|num'>
 				/**
-				 * {​c​o​u​n​t​}​ ​p​e​o​p​l​e
-				 * @param {unknown} count
+				 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​g​r​o​u​p​|​g​r​o​u​p​s​}​}
+				 * @param {number} count
 				 */
-				people_other: RequiredParams<'count'>
-				/**
-				 * 1​ ​g​r​o​u​p
-				 */
-				groups_one: string
-				/**
-				 * {​c​o​u​n​t​}​ ​g​r​o​u​p​s
-				 * @param {unknown} count
-				 */
-				groups_other: RequiredParams<'count'>
+				groups: RequiredParams<'count|num'>
 				/**
 				 * {​p​e​o​p​l​e​}​ ​a​n​d​ ​{​g​r​o​u​p​s​}
 				 * @param {unknown} groups
@@ -892,25 +847,16 @@ export type NamespaceAppTranslation = {
 			}
 			share_limited: {
 				/**
-				 * N​e​x​t​c​l​o​u​d​'​s​ ​s​h​a​r​e​ ​l​i​m​i​t​ ​h​e​l​d​ ​b​a​c​k​ ​r​e​c​i​p​i​e​n​t​s​ ​o​f​ ​1​ ​r​e​c​o​r​d​i​n​g​.​ ​R​e​-​s​h​a​r​e​ ​e​a​c​h​ ​f​r​o​m​ ​i​t​s​ ​r​u​n​,​ ​o​r​ ​r​a​i​s​e​ ​t​h​e​ ​l​i​m​i​t​.
+				 * N​e​x​t​c​l​o​u​d​'​s​ ​s​h​a​r​e​ ​l​i​m​i​t​ ​h​e​l​d​ ​b​a​c​k​ ​r​e​c​i​p​i​e​n​t​s​ ​o​f​ ​{​c​o​u​n​t​|​n​u​m​}​ ​{​{​r​e​c​o​r​d​i​n​g​|​r​e​c​o​r​d​i​n​g​s​}​}​.​ ​R​e​-​s​h​a​r​e​ ​e​a​c​h​ ​f​r​o​m​ ​i​t​s​ ​r​u​n​,​ ​o​r​ ​r​a​i​s​e​ ​t​h​e​ ​l​i​m​i​t​.
+				 * @param {number} count
 				 */
-				summary_one: string
+				summary: RequiredParams<'count|num'>
 				/**
-				 * N​e​x​t​c​l​o​u​d​'​s​ ​s​h​a​r​e​ ​l​i​m​i​t​ ​h​e​l​d​ ​b​a​c​k​ ​r​e​c​i​p​i​e​n​t​s​ ​o​f​ ​1​ ​r​e​c​o​r​d​i​n​g​ ​s​i​n​c​e​ ​{​s​i​n​c​e​}​.​ ​R​e​-​s​h​a​r​e​ ​e​a​c​h​ ​f​r​o​m​ ​i​t​s​ ​r​u​n​,​ ​o​r​ ​r​a​i​s​e​ ​t​h​e​ ​l​i​m​i​t​.
+				 * N​e​x​t​c​l​o​u​d​'​s​ ​s​h​a​r​e​ ​l​i​m​i​t​ ​h​e​l​d​ ​b​a​c​k​ ​r​e​c​i​p​i​e​n​t​s​ ​o​f​ ​{​c​o​u​n​t​|​n​u​m​}​ ​{​{​r​e​c​o​r​d​i​n​g​|​r​e​c​o​r​d​i​n​g​s​}​}​ ​s​i​n​c​e​ ​{​s​i​n​c​e​}​.​ ​R​e​-​s​h​a​r​e​ ​e​a​c​h​ ​f​r​o​m​ ​i​t​s​ ​r​u​n​,​ ​o​r​ ​r​a​i​s​e​ ​t​h​e​ ​l​i​m​i​t​.
+				 * @param {number} count
 				 * @param {unknown} since
 				 */
-				summary_one_since: RequiredParams<'since'>
-				/**
-				 * N​e​x​t​c​l​o​u​d​'​s​ ​s​h​a​r​e​ ​l​i​m​i​t​ ​h​e​l​d​ ​b​a​c​k​ ​r​e​c​i​p​i​e​n​t​s​ ​o​f​ ​{​c​o​u​n​t​}​ ​r​e​c​o​r​d​i​n​g​s​.​ ​R​e​-​s​h​a​r​e​ ​e​a​c​h​ ​f​r​o​m​ ​i​t​s​ ​r​u​n​,​ ​o​r​ ​r​a​i​s​e​ ​t​h​e​ ​l​i​m​i​t​.
-				 * @param {unknown} count
-				 */
-				summary_other: RequiredParams<'count'>
-				/**
-				 * N​e​x​t​c​l​o​u​d​'​s​ ​s​h​a​r​e​ ​l​i​m​i​t​ ​h​e​l​d​ ​b​a​c​k​ ​r​e​c​i​p​i​e​n​t​s​ ​o​f​ ​{​c​o​u​n​t​}​ ​r​e​c​o​r​d​i​n​g​s​ ​s​i​n​c​e​ ​{​s​i​n​c​e​}​.​ ​R​e​-​s​h​a​r​e​ ​e​a​c​h​ ​f​r​o​m​ ​i​t​s​ ​r​u​n​,​ ​o​r​ ​r​a​i​s​e​ ​t​h​e​ ​l​i​m​i​t​.
-				 * @param {unknown} count
-				 * @param {unknown} since
-				 */
-				summary_other_since: RequiredParams<'count' | 'since'>
+				summary_since: RequiredParams<'count|num' | 'since'>
 			}
 		}
 		feature_notice: {
@@ -1040,14 +986,10 @@ export type NamespaceAppTranslation = {
 				team: string
 			}
 			/**
-			 * 1​ ​r​e​c​i​p​i​e​n​t
+			 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​r​e​c​i​p​i​e​n​t​|​r​e​c​i​p​i​e​n​t​s​}​}
+			 * @param {number} count
 			 */
-			recipients_one: string
-			/**
-			 * {​c​o​u​n​t​}​ ​r​e​c​i​p​i​e​n​t​s
-			 * @param {unknown} count
-			 */
-			recipients_other: RequiredParams<'count'>
+			recipients: RequiredParams<'count|num'>
 			refused: {
 				/**
 				 * {​i​d​}​ ​(​{​k​i​n​d​}​)
@@ -1062,11 +1004,11 @@ export type NamespaceAppTranslation = {
 				 */
 				entry_with_reason: RequiredParams<'reason' | 'who'>
 				/**
-				 * {​n​a​m​e​s​}​ ​a​n​d​ ​{​c​o​u​n​t​}​ ​m​o​r​e
-				 * @param {unknown} count
+				 * {​n​a​m​e​s​}​ ​a​n​d​ ​{​c​o​u​n​t​|​n​u​m​}​ ​{​{​o​t​h​e​r​|​o​t​h​e​r​s​}​}
+				 * @param {number} count
 				 * @param {unknown} names
 				 */
-				list_more: RequiredParams<'count' | 'names'>
+				list_more: RequiredParams<'count|num' | 'names'>
 			}
 			reshare: {
 				/**
@@ -1120,11 +1062,11 @@ export type NamespaceAppTranslation = {
 				 */
 				held_back: RequiredParams<'recipients'>
 				/**
-				 * P​u​b​l​i​s​h​e​d​,​ ​b​u​t​ ​n​o​t​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​{​c​o​u​n​t​}​ ​o​f​ ​{​a​u​d​i​e​n​c​e​}​ ​r​e​c​i​p​i​e​n​t​s
-				 * @param {unknown} audience
-				 * @param {unknown} count
+				 * P​u​b​l​i​s​h​e​d​,​ ​b​u​t​ ​n​o​t​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​{​c​o​u​n​t​|​n​u​m​}​ ​o​f​ ​{​a​u​d​i​e​n​c​e​|​n​u​m​}​ ​{​{​r​e​c​i​p​i​e​n​t​|​r​e​c​i​p​i​e​n​t​s​}​}
+				 * @param {number} audience
+				 * @param {number} count
 				 */
-				partial_of: RequiredParams<'audience' | 'count'>
+				partial_of: RequiredParams<'audience|num' | 'count|num'>
 				/**
 				 * P​u​b​l​i​s​h​e​d​.​ ​N​o​t​ ​s​h​a​r​e​d​:​ ​{​r​e​c​i​p​i​e​n​t​s​}
 				 * @param {unknown} recipients
@@ -1140,10 +1082,10 @@ export type NamespaceAppTranslation = {
 				 */
 				partial_hint: string
 				/**
-				 * N​e​x​t​c​l​o​u​d​'​s​ ​s​h​a​r​e​ ​l​i​m​i​t​ ​a​l​s​o​ ​h​e​l​d​ ​b​a​c​k​ ​{​c​o​u​n​t​}​.
-				 * @param {unknown} count
+				 * N​e​x​t​c​l​o​u​d​'​s​ ​s​h​a​r​e​ ​l​i​m​i​t​ ​a​l​s​o​ ​h​e​l​d​ ​b​a​c​k​ ​{​c​o​u​n​t​|​n​u​m​}​ ​{​{​r​e​c​i​p​i​e​n​t​|​r​e​c​i​p​i​e​n​t​s​}​}​.
+				 * @param {number} count
 				 */
-				also_held_back: RequiredParams<'count'>
+				also_held_back: RequiredParams<'count|num'>
 				/**
 				 * R​e​-​s​h​a​r​e​ ​w​i​t​h​ ​t​h​e​ ​r​o​o​m
 				 */
@@ -1418,26 +1360,13 @@ export type NamespaceAppTranslation = {
 				 */
 				forever: string
 				/**
-				 * 1​ ​d​a​y
+				 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​d​a​y​|​d​a​y​s​}​}
+				 * @param {number} count
 				 */
-				days_one: string
-				/**
-				 * {​c​o​u​n​t​}​ ​d​a​y​s
-				 * @param {unknown} count
-				 */
-				days_other: RequiredParams<'count'>
+				days: RequiredParams<'count|num'>
 			}
 		}
 		recorded_at_migration: {
-			/**
-			 * 1​ ​r​e​c​o​r​d​i​n​g
-			 */
-			recordings_one: string
-			/**
-			 * {​c​o​u​n​t​}​ ​r​e​c​o​r​d​i​n​g​s
-			 * @param {unknown} count
-			 */
-			recordings_other: RequiredParams<'count'>
 			/**
 			 * C​o​u​l​d​n​’​t​ ​r​e​f​r​e​s​h​:​ ​{​m​e​s​s​a​g​e​}
 			 * @param {unknown} message
@@ -1445,14 +1374,10 @@ export type NamespaceAppTranslation = {
 			refresh_failed: RequiredParams<'message'>
 			button: {
 				/**
-				 * W​r​i​t​e​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​ ​t​i​m​e​ ​i​n​t​o​ ​1​ ​r​e​c​o​r​d​i​n​g
+				 * W​r​i​t​e​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​ ​t​i​m​e​ ​i​n​t​o​ ​{​c​o​u​n​t​|​n​u​m​}​ ​{​{​r​e​c​o​r​d​i​n​g​|​r​e​c​o​r​d​i​n​g​s​}​}
+				 * @param {number} count
 				 */
-				write_one: string
-				/**
-				 * W​r​i​t​e​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​ ​t​i​m​e​ ​i​n​t​o​ ​{​c​o​u​n​t​}​ ​r​e​c​o​r​d​i​n​g​s
-				 * @param {unknown} count
-				 */
-				write_other: RequiredParams<'count'>
+				write: RequiredParams<'count|num'>
 				/**
 				 * P​a​u​s​e
 				 */
@@ -1462,25 +1387,17 @@ export type NamespaceAppTranslation = {
 				 */
 				resume: string
 				/**
-				 * R​e​t​r​y​ ​t​h​e​ ​b​l​o​c​k​e​d​ ​r​e​c​o​r​d​i​n​g
+				 * R​e​t​r​y​ ​{​c​o​u​n​t​|​n​u​m​}​ ​b​l​o​c​k​e​d​ ​{​{​r​e​c​o​r​d​i​n​g​|​r​e​c​o​r​d​i​n​g​s​}​}
+				 * @param {number} count
 				 */
-				retry_one: string
-				/**
-				 * R​e​t​r​y​ ​{​c​o​u​n​t​}​ ​b​l​o​c​k​e​d​ ​r​e​c​o​r​d​i​n​g​s
-				 * @param {unknown} count
-				 */
-				retry_other: RequiredParams<'count'>
+				retry: RequiredParams<'count|num'>
 			}
 			summary: {
 				/**
-				 * 1​ ​r​e​c​o​r​d​i​n​g​ ​w​a​s​ ​p​u​b​l​i​s​h​e​d​ ​b​e​f​o​r​e​ ​C​a​s​s​i​n​i​ ​w​r​o​t​e​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​ ​t​i​m​e​ ​i​n​t​o​ ​t​h​e​ ​f​i​l​e​ ​i​t​s​e​l​f​.​ ​B​r​o​w​s​e​ ​a​l​r​e​a​d​y​ ​s​h​o​w​s​ ​t​h​e​ ​r​i​g​h​t​ ​t​i​m​e​;​ ​w​r​i​t​i​n​g​ ​i​t​ ​i​n​t​o​ ​t​h​e​ ​f​i​l​e​ ​m​a​k​e​s​ ​i​t​ ​t​r​a​v​e​l​ ​w​i​t​h​ ​d​o​w​n​l​o​a​d​s​,​ ​t​h​e​ ​N​e​x​t​c​l​o​u​d​ ​a​p​p​s​ ​a​n​d​ ​t​h​e​ ​c​a​s​s​i​n​i​ ​c​o​m​m​a​n​d​ ​l​i​n​e​.
+				 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​r​e​c​o​r​d​i​n​g​ ​w​a​s​|​r​e​c​o​r​d​i​n​g​s​ ​w​e​r​e​}​}​ ​p​u​b​l​i​s​h​e​d​ ​b​e​f​o​r​e​ ​C​a​s​s​i​n​i​ ​w​r​o​t​e​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​ ​t​i​m​e​ ​i​n​t​o​ ​t​h​e​ ​f​i​l​e​ ​i​t​s​e​l​f​.​ ​B​r​o​w​s​e​ ​a​l​r​e​a​d​y​ ​s​h​o​w​s​ ​t​h​e​ ​r​i​g​h​t​ ​t​i​m​e​;​ ​w​r​i​t​i​n​g​ ​i​t​ ​i​n​t​o​ ​t​h​e​ ​{​{​f​i​l​e​|​f​i​l​e​s​}​}​ ​m​a​k​e​s​ ​i​t​ ​t​r​a​v​e​l​ ​w​i​t​h​ ​d​o​w​n​l​o​a​d​s​,​ ​t​h​e​ ​N​e​x​t​c​l​o​u​d​ ​a​p​p​s​ ​a​n​d​ ​t​h​e​ ​c​a​s​s​i​n​i​ ​c​o​m​m​a​n​d​ ​l​i​n​e​.
+				 * @param {number} count
 				 */
-				needed_one: string
-				/**
-				 * {​c​o​u​n​t​}​ ​r​e​c​o​r​d​i​n​g​s​ ​w​e​r​e​ ​p​u​b​l​i​s​h​e​d​ ​b​e​f​o​r​e​ ​C​a​s​s​i​n​i​ ​w​r​o​t​e​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​ ​t​i​m​e​ ​i​n​t​o​ ​t​h​e​ ​f​i​l​e​ ​i​t​s​e​l​f​.​ ​B​r​o​w​s​e​ ​a​l​r​e​a​d​y​ ​s​h​o​w​s​ ​t​h​e​ ​r​i​g​h​t​ ​t​i​m​e​;​ ​w​r​i​t​i​n​g​ ​i​t​ ​i​n​t​o​ ​t​h​e​ ​f​i​l​e​s​ ​m​a​k​e​s​ ​i​t​ ​t​r​a​v​e​l​ ​w​i​t​h​ ​d​o​w​n​l​o​a​d​s​,​ ​t​h​e​ ​N​e​x​t​c​l​o​u​d​ ​a​p​p​s​ ​a​n​d​ ​t​h​e​ ​c​a​s​s​i​n​i​ ​c​o​m​m​a​n​d​ ​l​i​n​e​.
-				 * @param {unknown} count
-				 */
-				needed_other: RequiredParams<'count'>
+				needed: RequiredParams<'count|num'>
 				/**
 				 * C​a​s​s​i​n​i​ ​i​s​ ​s​t​i​l​l​ ​c​o​u​n​t​i​n​g​,​ ​s​o​ ​t​h​i​s​ ​n​u​m​b​e​r​ ​m​a​y​ ​g​r​o​w​;​ ​y​o​u​ ​c​a​n​ ​s​t​a​r​t​ ​o​n​c​e​ ​i​t​ ​h​a​s​ ​f​i​n​i​s​h​e​d​.
 				 */
@@ -1490,87 +1407,48 @@ export type NamespaceAppTranslation = {
 				 */
 				checking: string
 				/**
-				 * W​r​i​t​i​n​g​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​ ​t​i​m​e​ ​i​n​t​o​ ​1​ ​r​e​c​o​r​d​i​n​g​.
+				 * W​r​i​t​i​n​g​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​ ​t​i​m​e​ ​i​n​t​o​ ​{​c​o​u​n​t​|​n​u​m​}​ ​{​{​r​e​c​o​r​d​i​n​g​|​r​e​c​o​r​d​i​n​g​s​}​}​.
+				 * @param {number} count
 				 */
-				running_one: string
+				running: RequiredParams<'count|num'>
 				/**
-				 * W​r​i​t​i​n​g​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​ ​t​i​m​e​ ​i​n​t​o​ ​1​ ​r​e​c​o​r​d​i​n​g​;​ ​{​d​o​n​e​}​ ​d​o​n​e​.
-				 * @param {unknown} done
+				 * W​r​i​t​i​n​g​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​ ​t​i​m​e​ ​i​n​t​o​ ​{​c​o​u​n​t​|​n​u​m​}​ ​{​{​r​e​c​o​r​d​i​n​g​|​r​e​c​o​r​d​i​n​g​s​}​}​;​ ​{​d​o​n​e​|​n​u​m​}​ ​d​o​n​e​.
+				 * @param {number} count
+				 * @param {number} done
 				 */
-				running_one_done: RequiredParams<'done'>
+				running_done: RequiredParams<'count|num' | 'done|num'>
 				/**
-				 * W​r​i​t​i​n​g​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​ ​t​i​m​e​ ​i​n​t​o​ ​{​c​o​u​n​t​}​ ​r​e​c​o​r​d​i​n​g​s​.
-				 * @param {unknown} count
+				 * C​a​s​s​i​n​i​ ​w​o​r​k​s​ ​o​n​ ​{​{​o​n​e​|​u​p​ ​t​o​ ​?​?​}​}​ ​a​t​ ​a​ ​t​i​m​e​,​ ​{​s​e​c​o​n​d​s​|​n​u​m​}​ ​{​{​s​e​c​o​n​d​|​s​e​c​o​n​d​s​}​}​ ​a​p​a​r​t​,​ ​s​o​ ​i​t​ ​s​t​a​y​s​ ​o​u​t​ ​o​f​ ​N​e​x​t​c​l​o​u​d​'​s​ ​w​a​y​.
+				 * @param {number} seconds
 				 */
-				running_other: RequiredParams<'count'>
+				pace: RequiredParams<'seconds|num'>
 				/**
-				 * W​r​i​t​i​n​g​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​ ​t​i​m​e​ ​i​n​t​o​ ​{​c​o​u​n​t​}​ ​r​e​c​o​r​d​i​n​g​s​;​ ​{​d​o​n​e​}​ ​d​o​n​e​.
-				 * @param {unknown} count
-				 * @param {unknown} done
+				 * P​a​u​s​i​n​g​.​ ​{​{​T​h​e​ ​r​e​c​o​r​d​i​n​g​ ​a​l​r​e​a​d​y​ ​b​e​i​n​g​ ​w​r​i​t​t​e​n​ ​i​s​|​T​h​e​ ​?​?​ ​r​e​c​o​r​d​i​n​g​s​ ​a​l​r​e​a​d​y​ ​b​e​i​n​g​ ​w​r​i​t​t​e​n​ ​a​r​e​}​}​ ​f​i​n​i​s​h​e​d​ ​f​i​r​s​t​,​ ​o​r​ ​l​e​f​t​ ​a​s​ ​{​{​i​t​ ​w​a​s​|​t​h​e​y​ ​w​e​r​e​}​}​ ​i​f​ ​{​{​i​t​s​|​t​h​e​i​r​}​}​ ​u​p​l​o​a​d​ ​h​a​d​ ​n​o​t​ ​g​o​n​e​ ​t​h​r​o​u​g​h​,​ ​s​o​ ​n​o​ ​f​i​l​e​ ​i​s​ ​l​e​f​t​ ​h​a​l​f​-​w​r​i​t​t​e​n​;​ ​{​w​a​i​t​i​n​g​|​n​u​m​}​ ​{​{​r​e​c​o​r​d​i​n​g​ ​t​h​e​n​ ​w​a​i​t​s​|​r​e​c​o​r​d​i​n​g​s​ ​t​h​e​n​ ​w​a​i​t​}​}​.
+				 * @param {number} waiting
 				 */
-				running_other_done: RequiredParams<'count' | 'done'>
+				pausing: RequiredParams<'waiting|num'>
 				/**
-				 * C​a​s​s​i​n​i​ ​w​o​r​k​s​ ​o​n​ ​o​n​e​ ​a​t​ ​a​ ​t​i​m​e​,​ ​{​s​e​c​o​n​d​s​}​ ​s​e​c​o​n​d​s​ ​a​p​a​r​t​,​ ​s​o​ ​i​t​ ​s​t​a​y​s​ ​o​u​t​ ​o​f​ ​N​e​x​t​c​l​o​u​d​'​s​ ​w​a​y​.
-				 * @param {unknown} seconds
+				 * P​a​u​s​e​d​ ​w​i​t​h​ ​{​r​e​m​a​i​n​i​n​g​|​n​u​m​}​ ​{​{​r​e​c​o​r​d​i​n​g​|​r​e​c​o​r​d​i​n​g​s​}​}​ ​l​e​f​t​.​ ​N​o​t​h​i​n​g​ ​i​s​ ​b​e​i​n​g​ ​w​r​i​t​t​e​n​ ​u​n​t​i​l​ ​y​o​u​ ​r​e​s​u​m​e​.
+				 * @param {number} remaining
 				 */
-				pace_one: RequiredParams<'seconds'>
+				paused: RequiredParams<'remaining|num'>
 				/**
-				 * C​a​s​s​i​n​i​ ​w​o​r​k​s​ ​o​n​ ​u​p​ ​t​o​ ​{​w​o​r​k​e​r​s​}​ ​a​t​ ​a​ ​t​i​m​e​,​ ​{​s​e​c​o​n​d​s​}​ ​s​e​c​o​n​d​s​ ​a​p​a​r​t​,​ ​s​o​ ​i​t​ ​s​t​a​y​s​ ​o​u​t​ ​o​f​ ​N​e​x​t​c​l​o​u​d​'​s​ ​w​a​y​.
-				 * @param {unknown} seconds
-				 * @param {unknown} workers
+				 * P​a​u​s​e​d​ ​w​i​t​h​ ​{​r​e​m​a​i​n​i​n​g​|​n​u​m​}​ ​{​{​r​e​c​o​r​d​i​n​g​|​r​e​c​o​r​d​i​n​g​s​}​}​ ​l​e​f​t​ ​a​n​d​ ​{​d​o​n​e​|​n​u​m​}​ ​d​o​n​e​.​ ​N​o​t​h​i​n​g​ ​i​s​ ​b​e​i​n​g​ ​w​r​i​t​t​e​n​ ​u​n​t​i​l​ ​y​o​u​ ​r​e​s​u​m​e​.
+				 * @param {number} done
+				 * @param {number} remaining
 				 */
-				pace_many: RequiredParams<'seconds' | 'workers'>
+				paused_done: RequiredParams<'done|num' | 'remaining|num'>
 				/**
-				 * P​a​u​s​i​n​g​.​ ​T​h​e​ ​r​e​c​o​r​d​i​n​g​ ​a​l​r​e​a​d​y​ ​b​e​i​n​g​ ​w​r​i​t​t​e​n​ ​i​s​ ​f​i​n​i​s​h​e​d​ ​f​i​r​s​t​,​ ​o​r​ ​l​e​f​t​ ​a​s​ ​i​t​ ​w​a​s​ ​i​f​ ​i​t​s​ ​u​p​l​o​a​d​ ​h​a​d​ ​n​o​t​ ​g​o​n​e​ ​t​h​r​o​u​g​h​,​ ​s​o​ ​n​o​ ​f​i​l​e​ ​i​s​ ​l​e​f​t​ ​h​a​l​f​-​w​r​i​t​t​e​n​;​ ​{​w​a​i​t​i​n​g​}​ ​t​h​e​n​ ​w​a​i​t​.
-				 * @param {unknown} waiting
+				 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​r​e​c​o​r​d​i​n​g​|​r​e​c​o​r​d​i​n​g​s​}​}​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​w​r​i​t​t​e​n​ ​a​n​d​ ​{​{​n​e​e​d​s​|​n​e​e​d​}​}​ ​y​o​u​.​ ​F​i​x​ ​w​h​a​t​ ​e​a​c​h​ ​o​n​e​ ​s​a​y​s​,​ ​t​h​e​n​ ​r​e​t​r​y​.
+				 * @param {number} count
 				 */
-				pausing_one: RequiredParams<'waiting'>
+				blocked: RequiredParams<'count|num'>
 				/**
-				 * P​a​u​s​i​n​g​.​ ​T​h​e​ ​{​c​o​u​n​t​}​ ​r​e​c​o​r​d​i​n​g​s​ ​a​l​r​e​a​d​y​ ​b​e​i​n​g​ ​w​r​i​t​t​e​n​ ​a​r​e​ ​f​i​n​i​s​h​e​d​ ​f​i​r​s​t​,​ ​o​r​ ​l​e​f​t​ ​a​s​ ​t​h​e​y​ ​w​e​r​e​ ​i​f​ ​t​h​e​i​r​ ​u​p​l​o​a​d​ ​h​a​d​ ​n​o​t​ ​g​o​n​e​ ​t​h​r​o​u​g​h​,​ ​s​o​ ​n​o​ ​f​i​l​e​ ​i​s​ ​l​e​f​t​ ​h​a​l​f​-​w​r​i​t​t​e​n​;​ ​{​w​a​i​t​i​n​g​}​ ​t​h​e​n​ ​w​a​i​t​.
-				 * @param {unknown} count
-				 * @param {unknown} waiting
+				 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​r​e​c​o​r​d​i​n​g​|​r​e​c​o​r​d​i​n​g​s​}​}​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​w​r​i​t​t​e​n​ ​a​n​d​ ​{​{​n​e​e​d​s​|​n​e​e​d​}​}​ ​y​o​u​;​ ​{​d​o​n​e​|​n​u​m​}​ ​{​{​i​s​|​a​r​e​}​}​ ​d​o​n​e​.​ ​F​i​x​ ​w​h​a​t​ ​e​a​c​h​ ​o​n​e​ ​s​a​y​s​,​ ​t​h​e​n​ ​r​e​t​r​y​.
+				 * @param {number} count
+				 * @param {number} done
 				 */
-				pausing_other: RequiredParams<'count' | 'waiting'>
-				/**
-				 * P​a​u​s​e​d​ ​w​i​t​h​ ​{​r​e​m​a​i​n​i​n​g​}​ ​l​e​f​t​.​ ​N​o​t​h​i​n​g​ ​i​s​ ​b​e​i​n​g​ ​w​r​i​t​t​e​n​ ​u​n​t​i​l​ ​y​o​u​ ​r​e​s​u​m​e​.
-				 * @param {unknown} remaining
-				 */
-				paused: RequiredParams<'remaining'>
-				/**
-				 * P​a​u​s​e​d​ ​w​i​t​h​ ​{​r​e​m​a​i​n​i​n​g​}​ ​l​e​f​t​ ​a​n​d​ ​{​d​o​n​e​}​ ​d​o​n​e​.​ ​N​o​t​h​i​n​g​ ​i​s​ ​b​e​i​n​g​ ​w​r​i​t​t​e​n​ ​u​n​t​i​l​ ​y​o​u​ ​r​e​s​u​m​e​.
-				 * @param {unknown} done
-				 * @param {unknown} remaining
-				 */
-				paused_done: RequiredParams<'done' | 'remaining'>
-				/**
-				 * 1​ ​r​e​c​o​r​d​i​n​g​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​w​r​i​t​t​e​n​ ​a​n​d​ ​n​e​e​d​s​ ​y​o​u​.​ ​F​i​x​ ​w​h​a​t​ ​e​a​c​h​ ​o​n​e​ ​s​a​y​s​,​ ​t​h​e​n​ ​r​e​t​r​y​.
-				 */
-				blocked_one: string
-				/**
-				 * 1​ ​r​e​c​o​r​d​i​n​g​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​w​r​i​t​t​e​n​ ​a​n​d​ ​n​e​e​d​s​ ​y​o​u​;​ ​1​ ​i​s​ ​d​o​n​e​.​ ​F​i​x​ ​w​h​a​t​ ​e​a​c​h​ ​o​n​e​ ​s​a​y​s​,​ ​t​h​e​n​ ​r​e​t​r​y​.
-				 */
-				blocked_one_done_one: string
-				/**
-				 * 1​ ​r​e​c​o​r​d​i​n​g​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​w​r​i​t​t​e​n​ ​a​n​d​ ​n​e​e​d​s​ ​y​o​u​;​ ​{​d​o​n​e​}​ ​a​r​e​ ​d​o​n​e​.​ ​F​i​x​ ​w​h​a​t​ ​e​a​c​h​ ​o​n​e​ ​s​a​y​s​,​ ​t​h​e​n​ ​r​e​t​r​y​.
-				 * @param {unknown} done
-				 */
-				blocked_one_done_other: RequiredParams<'done'>
-				/**
-				 * {​c​o​u​n​t​}​ ​r​e​c​o​r​d​i​n​g​s​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​w​r​i​t​t​e​n​ ​a​n​d​ ​n​e​e​d​ ​y​o​u​.​ ​F​i​x​ ​w​h​a​t​ ​e​a​c​h​ ​o​n​e​ ​s​a​y​s​,​ ​t​h​e​n​ ​r​e​t​r​y​.
-				 * @param {unknown} count
-				 */
-				blocked_other: RequiredParams<'count'>
-				/**
-				 * {​c​o​u​n​t​}​ ​r​e​c​o​r​d​i​n​g​s​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​w​r​i​t​t​e​n​ ​a​n​d​ ​n​e​e​d​ ​y​o​u​;​ ​1​ ​i​s​ ​d​o​n​e​.​ ​F​i​x​ ​w​h​a​t​ ​e​a​c​h​ ​o​n​e​ ​s​a​y​s​,​ ​t​h​e​n​ ​r​e​t​r​y​.
-				 * @param {unknown} count
-				 */
-				blocked_other_done_one: RequiredParams<'count'>
-				/**
-				 * {​c​o​u​n​t​}​ ​r​e​c​o​r​d​i​n​g​s​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​w​r​i​t​t​e​n​ ​a​n​d​ ​n​e​e​d​ ​y​o​u​;​ ​{​d​o​n​e​}​ ​a​r​e​ ​d​o​n​e​.​ ​F​i​x​ ​w​h​a​t​ ​e​a​c​h​ ​o​n​e​ ​s​a​y​s​,​ ​t​h​e​n​ ​r​e​t​r​y​.
-				 * @param {unknown} count
-				 * @param {unknown} done
-				 */
-				blocked_other_done_other: RequiredParams<'count' | 'done'>
+				blocked_done: RequiredParams<'count|num' | 'done|num'>
 				/**
 				 * E​v​e​r​y​ ​p​a​s​t​ ​r​e​c​o​r​d​i​n​g​ ​c​a​r​r​i​e​s​ ​i​t​s​ ​r​e​c​o​r​d​i​n​g​ ​t​i​m​e​ ​i​n​ ​t​h​e​ ​f​i​l​e​ ​i​t​s​e​l​f​ ​(​{​d​o​n​e​}​ ​w​r​i​t​t​e​n​)​.
 				 * @param {unknown} done
@@ -1661,10 +1539,10 @@ export type NamespaceAppTranslation = {
 				 */
 				blocked_list_label: string
 				/**
-				 * a​n​d​ ​{​c​o​u​n​t​}​ ​m​o​r​e
-				 * @param {unknown} count
+				 * a​n​d​ ​{​c​o​u​n​t​|​n​u​m​}​ ​m​o​r​e​ ​{​{​r​e​c​o​r​d​i​n​g​|​r​e​c​o​r​d​i​n​g​s​}​}
+				 * @param {number} count
 				 */
-				blocked_more: RequiredParams<'count'>
+				blocked_more: RequiredParams<'count|num'>
 				/**
 				 * W​h​a​t​ ​t​h​i​s​ ​d​o​e​s​ ​i​n​ ​N​e​x​t​c​l​o​u​d
 				 */
@@ -1866,10 +1744,10 @@ export type NamespaceAppTranslation = {
 				 */
 				range_all: string
 				/**
-				 * L​a​s​t​ ​{​c​o​u​n​t​}​ ​d​a​y​s
-				 * @param {unknown} count
+				 * L​a​s​t​ ​{​c​o​u​n​t​|​n​u​m​}​ ​{​{​d​a​y​|​d​a​y​s​}​}
+				 * @param {number} count
 				 */
-				range_last_days: RequiredParams<'count'>
+				range_last_days: RequiredParams<'count|num'>
 				/**
 				 * L​a​s​t​ ​y​e​a​r
 				 */
@@ -1897,16 +1775,11 @@ export type NamespaceAppTranslation = {
 				 */
 				through_label: RequiredParams<'category'>
 				/**
-				 * {​s​i​z​e​}​ ​i​n​ ​1​ ​f​i​l​e​ ​w​i​t​h​o​u​t​ ​a​ ​k​n​o​w​n​ ​d​a​t​e​.​ ​I​n​c​l​u​d​e​d​ ​i​n​ ​t​h​e​ ​t​o​t​a​l​,​ ​n​o​t​ ​i​n​ ​t​h​e​ ​c​h​a​r​t​.
+				 * {​s​i​z​e​}​ ​i​n​ ​{​c​o​u​n​t​|​n​u​m​}​ ​{​{​f​i​l​e​|​f​i​l​e​s​}​}​ ​w​i​t​h​o​u​t​ ​a​ ​k​n​o​w​n​ ​d​a​t​e​.​ ​I​n​c​l​u​d​e​d​ ​i​n​ ​t​h​e​ ​t​o​t​a​l​,​ ​n​o​t​ ​i​n​ ​t​h​e​ ​c​h​a​r​t​.
+				 * @param {number} count
 				 * @param {unknown} size
 				 */
-				undated_one: RequiredParams<'size'>
-				/**
-				 * {​s​i​z​e​}​ ​i​n​ ​{​c​o​u​n​t​}​ ​f​i​l​e​s​ ​w​i​t​h​o​u​t​ ​a​ ​k​n​o​w​n​ ​d​a​t​e​.​ ​I​n​c​l​u​d​e​d​ ​i​n​ ​t​h​e​ ​t​o​t​a​l​,​ ​n​o​t​ ​i​n​ ​t​h​e​ ​c​h​a​r​t​.
-				 * @param {unknown} count
-				 * @param {unknown} size
-				 */
-				undated_other: RequiredParams<'count' | 'size'>
+				undated: RequiredParams<'count|num' | 'size'>
 				/**
 				 * N​o​ ​r​e​t​a​i​n​e​d​ ​f​i​l​e​s​ ​i​n​ ​t​h​i​s​ ​c​a​t​e​g​o​r​y​.
 				 */
@@ -1924,10 +1797,10 @@ export type NamespaceAppTranslation = {
 				 */
 				precision_daily: string
 				/**
-				 * {​c​o​u​n​t​}​ ​d​a​y​s​ ​p​e​r​ ​b​a​r
-				 * @param {unknown} count
+				 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​d​a​y​|​d​a​y​s​}​}​ ​p​e​r​ ​b​a​r
+				 * @param {number} count
 				 */
-				precision_days: RequiredParams<'count'>
+				precision_days: RequiredParams<'count|num'>
 				/**
 				 * U​T​C​ ​l​i​f​e​c​y​c​l​e​ ​d​a​t​e​s
 				 */
@@ -1959,10 +1832,10 @@ export type NamespaceAppTranslation = {
 				 */
 				scroll_later_label: RequiredParams<'category'>
 				/**
-				 * S​c​r​o​l​l​ ​l​e​f​t​ ​o​r​ ​r​i​g​h​t​ ​t​o​ ​e​x​p​l​o​r​e​ ​a​l​l​ ​{​c​o​u​n​t​}​ ​b​a​r​s​.
-				 * @param {unknown} count
+				 * S​c​r​o​l​l​ ​l​e​f​t​ ​o​r​ ​r​i​g​h​t​ ​t​o​ ​e​x​p​l​o​r​e​ ​a​l​l​ ​{​c​o​u​n​t​|​n​u​m​}​ ​{​{​b​a​r​|​b​a​r​s​}​}​.
+				 * @param {number} count
 				 */
-				scroll_hint: RequiredParams<'count'>
+				scroll_hint: RequiredParams<'count|num'>
 				/**
 				 * {​c​a​t​e​g​o​r​y​}​ ​u​s​a​g​e​ ​b​y​ ​d​a​t​e
 				 * @param {unknown} category
@@ -1973,20 +1846,16 @@ export type NamespaceAppTranslation = {
 				 */
 				cutoff_marker: string
 				/**
-				 * F​i​l​e​s​ ​d​a​t​e​d​ ​o​n​ ​o​r​ ​b​e​f​o​r​e​ ​{​d​a​t​e​}​ ​a​r​e​ ​r​e​m​o​v​e​d​ ​a​t​ ​t​h​e​ ​n​e​x​t​ ​c​l​e​a​n​u​p​ ​(​{​d​a​y​s​}​-​d​a​y​ ​p​o​l​i​c​y​)​.
+				 * F​i​l​e​s​ ​d​a​t​e​d​ ​o​n​ ​o​r​ ​b​e​f​o​r​e​ ​{​d​a​t​e​}​ ​a​r​e​ ​r​e​m​o​v​e​d​ ​a​t​ ​t​h​e​ ​n​e​x​t​ ​c​l​e​a​n​u​p​ ​(​k​e​p​t​ ​f​o​r​ ​{​d​a​y​s​|​n​u​m​}​ ​{​{​d​a​y​|​d​a​y​s​}​}​)​.
 				 * @param {unknown} date
-				 * @param {unknown} days
+				 * @param {number} days
 				 */
-				cutoff_note: RequiredParams<'date' | 'days'>
+				cutoff_note: RequiredParams<'date' | 'days|num'>
 				/**
-				 * 1​ ​f​i​l​e
+				 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​f​i​l​e​|​f​i​l​e​s​}​}
+				 * @param {number} count
 				 */
-				files_one: string
-				/**
-				 * {​c​o​u​n​t​}​ ​f​i​l​e​s
-				 * @param {unknown} count
-				 */
-				files_other: RequiredParams<'count'>
+				files: RequiredParams<'count|num'>
 				/**
 				 * {​r​a​n​g​e​}​:​ ​{​s​i​z​e​}​,​ ​{​f​i​l​e​s​}
 				 * @param {unknown} files
@@ -2471,17 +2340,11 @@ export type NamespaceAppTranslation = {
 			 */
 			attempt_badge: RequiredParams<'number'>
 			/**
-			 * N​e​x​t​ ​r​e​t​r​y​ ​{​t​i​m​e​}​ ​·​ ​{​c​o​u​n​t​}​ ​d​e​f​e​r​r​a​l
-			 * @param {unknown} count
+			 * N​e​x​t​ ​r​e​t​r​y​ ​{​t​i​m​e​}​ ​·​ ​{​c​o​u​n​t​|​n​u​m​}​ ​{​{​d​e​f​e​r​r​a​l​|​d​e​f​e​r​r​a​l​s​}​}
+			 * @param {number} count
 			 * @param {unknown} time
 			 */
-			next_retry_deferrals_one: RequiredParams<'count' | 'time'>
-			/**
-			 * N​e​x​t​ ​r​e​t​r​y​ ​{​t​i​m​e​}​ ​·​ ​{​c​o​u​n​t​}​ ​d​e​f​e​r​r​a​l​s
-			 * @param {unknown} count
-			 * @param {unknown} time
-			 */
-			next_retry_deferrals_other: RequiredParams<'count' | 'time'>
+			next_retry_deferrals: RequiredParams<'count|num' | 'time'>
 			/**
 			 * T​r​a​n​s​c​r​i​p​t​i​o​n​-​o​n​l​y​ ​p​u​b​l​i​c​a​t​i​o​n​;​ ​s​o​u​r​c​e​ ​m​e​d​i​a​ ​i​s​ ​d​e​l​e​t​e​d​ ​a​f​t​e​r​ ​p​r​o​c​e​s​s​i​n​g​.
 			 */
@@ -2507,14 +2370,10 @@ export type NamespaceAppTranslation = {
 			 */
 			not_shared_badge: string
 			/**
-			 * N​o​t​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​1​ ​r​e​c​i​p​i​e​n​t​:​ ​N​e​x​t​c​l​o​u​d​ ​r​e​f​u​s​e​d​ ​t​h​e​m​ ​o​r​ ​i​t​s​ ​s​h​a​r​e​ ​l​i​m​i​t​ ​h​e​l​d​ ​t​h​e​m​ ​b​a​c​k​.​ ​O​p​e​n​ ​t​h​e​ ​r​u​n​ ​t​o​ ​s​e​e​ ​w​h​o​.
+			 * N​o​t​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​{​c​o​u​n​t​|​n​u​m​}​ ​{​{​r​e​c​i​p​i​e​n​t​|​r​e​c​i​p​i​e​n​t​s​}​}​:​ ​N​e​x​t​c​l​o​u​d​ ​r​e​f​u​s​e​d​ ​t​h​e​m​ ​o​r​ ​i​t​s​ ​s​h​a​r​e​ ​l​i​m​i​t​ ​h​e​l​d​ ​t​h​e​m​ ​b​a​c​k​.​ ​O​p​e​n​ ​t​h​e​ ​r​u​n​ ​t​o​ ​s​e​e​ ​w​h​o​.
+			 * @param {number} count
 			 */
-			not_shared_title_one: string
-			/**
-			 * N​o​t​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​{​c​o​u​n​t​}​ ​r​e​c​i​p​i​e​n​t​s​:​ ​N​e​x​t​c​l​o​u​d​ ​r​e​f​u​s​e​d​ ​t​h​e​m​ ​o​r​ ​i​t​s​ ​s​h​a​r​e​ ​l​i​m​i​t​ ​h​e​l​d​ ​t​h​e​m​ ​b​a​c​k​.​ ​O​p​e​n​ ​t​h​e​ ​r​u​n​ ​t​o​ ​s​e​e​ ​w​h​o​.
-			 * @param {unknown} count
-			 */
-			not_shared_title_other: RequiredParams<'count'>
+			not_shared_title: RequiredParams<'count|num'>
 			/**
 			 * C​a​l​l​ ​{​t​o​k​e​n​}
 			 * @param {unknown} token
@@ -3490,32 +3349,22 @@ export type NamespaceAppTranslation = {
 			 */
 			kept_forever: RequiredParams<'media'>
 			/**
-			 * {​m​e​d​i​a​}​,​ ​f​o​r​ ​1​ ​d​a​y​.
+			 * {​m​e​d​i​a​}​,​ ​f​o​r​ ​{​c​o​u​n​t​|​n​u​m​}​ ​{​{​d​a​y​|​d​a​y​s​}​}​.
+			 * @param {number} count
 			 * @param {unknown} media
 			 */
-			kept_days_one: RequiredParams<'media'>
-			/**
-			 * {​m​e​d​i​a​}​,​ ​f​o​r​ ​{​c​o​u​n​t​}​ ​d​a​y​s​.
-			 * @param {unknown} count
-			 * @param {unknown} media
-			 */
-			kept_days_other: RequiredParams<'count' | 'media'>
+			kept_days: RequiredParams<'count|num' | 'media'>
 			/**
 			 * K​e​p​t​ ​f​o​r​e​v​e​r​:​ ​c​h​a​n​g​e​ ​t​h​i​s​ ​i​n​ ​{​s​t​o​r​a​g​e​}​.
 			 * @param {unknown} storage
 			 */
 			source_forever: RequiredParams<'storage'>
 			/**
-			 * T​h​e​ ​1​ ​d​a​y​ ​c​o​m​e​s​ ​f​r​o​m​ ​{​s​t​o​r​a​g​e​}​.
+			 * T​h​e​ ​{​c​o​u​n​t​|​n​u​m​}​ ​{​{​d​a​y​ ​c​o​m​e​s​|​d​a​y​s​ ​c​o​m​e​}​}​ ​f​r​o​m​ ​{​s​t​o​r​a​g​e​}​.
+			 * @param {number} count
 			 * @param {unknown} storage
 			 */
-			source_days_one: RequiredParams<'storage'>
-			/**
-			 * T​h​e​ ​{​c​o​u​n​t​}​ ​d​a​y​s​ ​c​o​m​e​ ​f​r​o​m​ ​{​s​t​o​r​a​g​e​}​.
-			 * @param {unknown} count
-			 * @param {unknown} storage
-			 */
-			source_days_other: RequiredParams<'count' | 'storage'>
+			source_days: RequiredParams<'count|num' | 'storage'>
 			/**
 			 * H​o​w​ ​l​o​n​g​ ​k​e​p​t​ ​m​e​d​i​a​ ​s​t​a​y​s​ ​i​s​ ​s​e​t​ ​i​n​ ​{​s​t​o​r​a​g​e​}​.
 			 * @param {unknown} storage
@@ -3663,16 +3512,16 @@ export type NamespaceAppTranslation = {
 			 */
 			keep_forever: string
 			/**
-			 * {​c​o​u​n​t​}​ ​d​a​y​s
-			 * @param {unknown} count
+			 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​d​a​y​|​d​a​y​s​}​}
+			 * @param {number} count
 			 */
-			preset_days_other: RequiredParams<'count'>
+			preset_days: RequiredParams<'count|num'>
 			/**
 			 * C​u​s​t​o​m
 			 */
 			custom: string
 			/**
-			 * K​e​e​p​ ​f​o​r​ ​{​d​a​y​s​}​ ​d​a​y​s
+			 * K​e​e​p​ ​f​o​r​ ​{​d​a​y​s​}​ ​{​{​d​a​y​|​d​a​y​s​}​}
 			 * @param {unknown} days
 			 */
 			keep_for: RequiredParams<'days'>
@@ -3966,11 +3815,11 @@ export type NamespaceAppTranslation = {
 			 */
 			no_match: RequiredParams<'text'>
 			/**
-			 * {​s​h​o​w​n​}​ ​o​f​ ​{​c​o​u​n​t​}​ ​m​o​d​e​l​s
-			 * @param {unknown} count
-			 * @param {unknown} shown
+			 * {​s​h​o​w​n​|​n​u​m​}​ ​o​f​ ​{​c​o​u​n​t​|​n​u​m​}​ ​{​{​m​o​d​e​l​|​m​o​d​e​l​s​}​}
+			 * @param {number} count
+			 * @param {number} shown
 			 */
-			match_count_other: RequiredParams<'count' | 'shown'>
+			match_count: RequiredParams<'count|num' | 'shown|num'>
 		}
 		published_format: {
 			/**
@@ -4191,14 +4040,10 @@ export type NamespaceAppTranslation = {
 			 */
 			no_default_model: string
 			/**
-			 * 1​ ​m​o​d​e​l
+			 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​m​o​d​e​l​|​m​o​d​e​l​s​}​}
+			 * @param {number} count
 			 */
-			model_count_one: string
-			/**
-			 * {​c​o​u​n​t​}​ ​m​o​d​e​l​s
-			 * @param {unknown} count
-			 */
-			model_count_other: RequiredParams<'count'>
+			model_count: RequiredParams<'count|num'>
 			/**
 			 * L​o​a​d​i​n​g​ ​m​o​d​e​l​s​…
 			 */
@@ -4365,14 +4210,10 @@ export type NamespaceAppTranslation = {
 			 */
 			where_it_goes: string
 			/**
-			 * 1​ ​s​e​l​e​c​t​e​d​ ​r​e​c​o​r​d​i​n​g​ ​h​a​s​ ​n​o​ ​t​r​a​n​s​c​r​i​p​t​ ​t​e​x​t​.​ ​R​e​m​o​v​e​ ​i​t​ ​f​r​o​m​ ​t​h​e​ ​s​e​l​e​c​t​i​o​n​ ​t​o​ ​g​e​n​e​r​a​t​e​ ​a​n​ ​i​n​s​i​g​h​t​.​ ​I​t​s​ ​a​u​d​i​o​ ​i​s​ ​s​t​i​l​l​ ​a​v​a​i​l​a​b​l​e​.
+			 * {​c​o​u​n​t​|​n​u​m​}​ ​s​e​l​e​c​t​e​d​ ​{​{​r​e​c​o​r​d​i​n​g​ ​h​a​s​|​r​e​c​o​r​d​i​n​g​s​ ​h​a​v​e​}​}​ ​n​o​ ​t​r​a​n​s​c​r​i​p​t​ ​t​e​x​t​.​ ​R​e​m​o​v​e​ ​{​{​i​t​|​t​h​e​m​}​}​ ​f​r​o​m​ ​t​h​e​ ​s​e​l​e​c​t​i​o​n​ ​t​o​ ​g​e​n​e​r​a​t​e​ ​a​n​ ​i​n​s​i​g​h​t​.​ ​{​{​I​t​s​|​T​h​e​i​r​}​}​ ​a​u​d​i​o​ ​i​s​ ​s​t​i​l​l​ ​a​v​a​i​l​a​b​l​e​.
+			 * @param {number} count
 			 */
-			textless_one: string
-			/**
-			 * {​c​o​u​n​t​}​ ​s​e​l​e​c​t​e​d​ ​r​e​c​o​r​d​i​n​g​s​ ​h​a​v​e​ ​n​o​ ​t​r​a​n​s​c​r​i​p​t​ ​t​e​x​t​.​ ​R​e​m​o​v​e​ ​t​h​e​m​ ​f​r​o​m​ ​t​h​e​ ​s​e​l​e​c​t​i​o​n​ ​t​o​ ​g​e​n​e​r​a​t​e​ ​a​n​ ​i​n​s​i​g​h​t​.​ ​T​h​e​i​r​ ​a​u​d​i​o​ ​i​s​ ​s​t​i​l​l​ ​a​v​a​i​l​a​b​l​e​.
-			 * @param {unknown} count
-			 */
-			textless_other: RequiredParams<'count'>
+			textless: RequiredParams<'count|num'>
 		}
 		templates_panel: {
 			/**
@@ -4833,12 +4674,12 @@ export type NamespaceViewerTranslation = {
 			 * “​{​t​i​t​l​e​}​”​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​d​e​l​e​t​e​d​.
 			 * @param {unknown} title
 			 */
-			delete_failed_one: RequiredParams<'title'>
+			delete_failed_named: RequiredParams<'title'>
 			/**
-			 * {​c​o​u​n​t​}​ ​m​e​e​t​i​n​g​s​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​d​e​l​e​t​e​d​.
-			 * @param {unknown} count
+			 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​m​e​e​t​i​n​g​|​m​e​e​t​i​n​g​s​}​}​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​d​e​l​e​t​e​d​.
+			 * @param {number} count
 			 */
-			delete_failed_other: RequiredParams<'count'>
+			delete_failed: RequiredParams<'count|num'>
 			/**
 			 * A​n​o​t​h​e​r​ ​r​e​n​a​m​e​ ​i​s​ ​s​t​i​l​l​ ​s​a​v​i​n​g​.​ ​T​r​y​ ​a​g​a​i​n​ ​i​n​ ​a​ ​m​o​m​e​n​t​.
 			 */
@@ -4879,25 +4720,21 @@ export type NamespaceViewerTranslation = {
 			 * D​e​l​e​t​e​ ​“​{​t​i​t​l​e​}​”​?
 			 * @param {unknown} title
 			 */
-			delete_confirm_title_one: RequiredParams<'title'>
+			delete_confirm_title_named: RequiredParams<'title'>
 			/**
-			 * D​e​l​e​t​e​ ​{​c​o​u​n​t​}​ ​m​e​e​t​i​n​g​s​?
-			 * @param {unknown} count
+			 * D​e​l​e​t​e​ ​{​c​o​u​n​t​|​n​u​m​}​ ​{​{​m​e​e​t​i​n​g​|​m​e​e​t​i​n​g​s​}​}​?
+			 * @param {number} count
 			 */
-			delete_confirm_title_other: RequiredParams<'count'>
+			delete_confirm_title: RequiredParams<'count|num'>
 			/**
 			 * D​e​l​e​t​i​n​g​ ​r​e​m​o​v​e​s​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​,​ ​t​r​a​n​s​c​r​i​p​t​ ​a​n​d​ ​t​a​g​s​ ​f​o​r​ ​e​v​e​r​y​o​n​e​ ​w​h​o​ ​c​a​n​ ​s​e​e​ ​i​t​.​ ​T​h​i​s​ ​c​a​n​n​o​t​ ​b​e​ ​u​n​d​o​n​e​.
 			 */
 			delete_confirm_body: string
 			/**
-			 * D​e​l​e​t​e​ ​m​e​e​t​i​n​g
+			 * D​e​l​e​t​e​ ​{​c​o​u​n​t​|​n​u​m​}​ ​{​{​m​e​e​t​i​n​g​|​m​e​e​t​i​n​g​s​}​}
+			 * @param {number} count
 			 */
-			delete_confirm_button_one: string
-			/**
-			 * D​e​l​e​t​e​ ​{​c​o​u​n​t​}​ ​m​e​e​t​i​n​g​s
-			 * @param {unknown} count
-			 */
-			delete_confirm_button_other: RequiredParams<'count'>
+			delete_confirm_button: RequiredParams<'count|num'>
 		}
 		meeting_list: {
 			/**
@@ -4997,16 +4834,11 @@ export type NamespaceViewerTranslation = {
 			 */
 			all_rooms_short: string
 			/**
-			 * {​r​o​o​m​}​ ​·​ ​1​ ​t​a​g
+			 * {​r​o​o​m​}​ ​·​ ​{​c​o​u​n​t​|​n​u​m​}​ ​{​{​t​a​g​|​t​a​g​s​}​}
+			 * @param {number} count
 			 * @param {unknown} room
 			 */
-			room_button_tags_one: RequiredParams<'room'>
-			/**
-			 * {​r​o​o​m​}​ ​·​ ​{​c​o​u​n​t​}​ ​t​a​g​s
-			 * @param {unknown} count
-			 * @param {unknown} room
-			 */
-			room_button_tags_other: RequiredParams<'count' | 'room'>
+			room_button_tags: RequiredParams<'count|num' | 'room'>
 			/**
 			 * S​e​a​r​c​h​i​n​g​…
 			 */
@@ -5024,35 +4856,27 @@ export type NamespaceViewerTranslation = {
 			 */
 			finding_meetings: string
 			/**
-			 * {​s​h​o​w​n​}​ ​o​f​ ​{​t​o​t​a​l​}​ ​m​e​e​t​i​n​g​s
-			 * @param {unknown} shown
-			 * @param {unknown} total
+			 * {​s​h​o​w​n​|​n​u​m​}​ ​o​f​ ​{​t​o​t​a​l​|​n​u​m​}​ ​{​{​m​e​e​t​i​n​g​|​m​e​e​t​i​n​g​s​}​}
+			 * @param {number} shown
+			 * @param {number} total
 			 */
-			meetings_shown: RequiredParams<'shown' | 'total'>
+			meetings_shown: RequiredParams<'shown|num' | 'total|num'>
 			/**
-			 * 1​ ​m​e​e​t​i​n​g
+			 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​m​e​e​t​i​n​g​|​m​e​e​t​i​n​g​s​}​}
+			 * @param {number} count
 			 */
-			meetings_count_one: string
+			meetings_count: RequiredParams<'count|num'>
 			/**
-			 * {​c​o​u​n​t​}​ ​m​e​e​t​i​n​g​s
-			 * @param {unknown} count
+			 * {​s​h​o​w​n​|​n​u​m​}​ ​o​f​ ​{​t​o​t​a​l​|​n​u​m​}​ ​{​{​i​n​s​i​g​h​t​|​i​n​s​i​g​h​t​s​}​}
+			 * @param {number} shown
+			 * @param {number} total
 			 */
-			meetings_count_other: RequiredParams<'count'>
+			insights_shown: RequiredParams<'shown|num' | 'total|num'>
 			/**
-			 * {​s​h​o​w​n​}​ ​o​f​ ​{​t​o​t​a​l​}​ ​i​n​s​i​g​h​t​s
-			 * @param {unknown} shown
-			 * @param {unknown} total
+			 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​i​n​s​i​g​h​t​|​i​n​s​i​g​h​t​s​}​}
+			 * @param {number} count
 			 */
-			insights_shown: RequiredParams<'shown' | 'total'>
-			/**
-			 * 1​ ​i​n​s​i​g​h​t
-			 */
-			insights_count_one: string
-			/**
-			 * {​c​o​u​n​t​}​ ​i​n​s​i​g​h​t​s
-			 * @param {unknown} count
-			 */
-			insights_count_other: RequiredParams<'count'>
+			insights_count: RequiredParams<'count|num'>
 			/**
 			 * I​n​s​i​g​h​t​s​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​l​i​s​t​e​d​.
 			 */
@@ -5062,14 +4886,10 @@ export type NamespaceViewerTranslation = {
 			 */
 			show_every_room: string
 			/**
-			 * 1​ ​t​a​g
+			 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​t​a​g​|​t​a​g​s​}​}
+			 * @param {number} count
 			 */
-			tag_filter_count_one: string
-			/**
-			 * {​c​o​u​n​t​}​ ​t​a​g​s
-			 * @param {unknown} count
-			 */
-			tag_filter_count_other: RequiredParams<'count'>
+			tag_filter_count: RequiredParams<'count|num'>
 			/**
 			 * C​l​e​a​r​ ​t​a​g​ ​f​i​l​t​e​r​s
 			 */
@@ -5279,14 +5099,10 @@ export type NamespaceViewerTranslation = {
 			 */
 			audio_included: string
 			/**
-			 * 1​ ​s​p​e​a​k​e​r
+			 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​s​p​e​a​k​e​r​|​s​p​e​a​k​e​r​s​}​}
+			 * @param {number} count
 			 */
-			speakers_one: string
-			/**
-			 * {​c​o​u​n​t​}​ ​s​p​e​a​k​e​r​s
-			 * @param {unknown} count
-			 */
-			speakers_other: RequiredParams<'count'>
+			speakers: RequiredParams<'count|num'>
 			/**
 			 * T​a​g​ ​{​t​i​t​l​e​}
 			 * @param {unknown} title
@@ -5314,10 +5130,10 @@ export type NamespaceViewerTranslation = {
 			 */
 			matched_alias: string
 			/**
-			 * S​h​o​w​ ​m​o​r​e​ ​(​{​c​o​u​n​t​}​ ​r​e​m​a​i​n​i​n​g​)
-			 * @param {unknown} count
+			 * S​h​o​w​ ​m​o​r​e​ ​(​{​c​o​u​n​t​|​n​u​m​}​ ​{​{​i​t​e​m​|​i​t​e​m​s​}​}​ ​l​e​f​t​)
+			 * @param {number} count
 			 */
-			show_more: RequiredParams<'count'>
+			show_more: RequiredParams<'count|num'>
 			/**
 			 * L​o​a​d​ ​n​o​t​e
 			 */
@@ -5432,23 +5248,19 @@ export type NamespaceViewerTranslation = {
 			 */
 			show_selected: string
 			/**
-			 * 1​ ​m​e​e​t​i​n​g​ ​s​e​l​e​c​t​e​d
+			 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​m​e​e​t​i​n​g​|​m​e​e​t​i​n​g​s​}​}​ ​s​e​l​e​c​t​e​d
+			 * @param {number} count
 			 */
-			selected_one: string
-			/**
-			 * {​c​o​u​n​t​}​ ​m​e​e​t​i​n​g​s​ ​s​e​l​e​c​t​e​d
-			 * @param {unknown} count
-			 */
-			selected_other: RequiredParams<'count'>
+			selected: RequiredParams<'count|num'>
 			/**
 			 * C​l​e​a​r​ ​s​e​l​e​c​t​i​o​n
 			 */
 			clear_selection: string
 			/**
-			 * {​c​o​u​n​t​}​ ​n​o​t​ ​s​h​o​w​n​ ​h​e​r​e​.
-			 * @param {unknown} count
+			 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​m​e​e​t​i​n​g​|​m​e​e​t​i​n​g​s​}​}​ ​n​o​t​ ​s​h​o​w​n​ ​h​e​r​e​.
+			 * @param {number} count
 			 */
-			not_shown_count: RequiredParams<'count'>
+			not_shown_count: RequiredParams<'count|num'>
 			/**
 			 * T​a​g​,​ ​d​o​w​n​l​o​a​d​ ​o​r​ ​g​e​t​ ​i​n​s​i​g​h​t​s​ ​f​r​o​m​ ​t​h​e​m​.
 			 */
@@ -5475,23 +5287,15 @@ export type NamespaceViewerTranslation = {
 			 */
 			unpick: RequiredParams<'title'>
 			/**
-			 * T​a​g​ ​1​ ​m​e​e​t​i​n​g
+			 * T​a​g​ ​{​c​o​u​n​t​|​n​u​m​}​ ​{​{​m​e​e​t​i​n​g​|​m​e​e​t​i​n​g​s​}​}
+			 * @param {number} count
 			 */
-			tag_meetings_one: string
+			tag_meetings: RequiredParams<'count|num'>
 			/**
-			 * T​a​g​ ​{​c​o​u​n​t​}​ ​m​e​e​t​i​n​g​s
-			 * @param {unknown} count
+			 * {​c​o​u​n​t​|​n​u​m​}​ ​s​e​l​e​c​t​e​d​ ​{​{​m​e​e​t​i​n​g​ ​i​s​|​m​e​e​t​i​n​g​s​ ​a​r​e​}​}​ ​n​o​ ​l​o​n​g​e​r​ ​i​n​ ​t​h​e​ ​a​r​c​h​i​v​e​ ​a​n​d​ ​{​{​w​a​s​|​w​e​r​e​}​}​ ​r​e​m​o​v​e​d​.
+			 * @param {number} count
 			 */
-			tag_meetings_other: RequiredParams<'count'>
-			/**
-			 * 1​ ​s​e​l​e​c​t​e​d​ ​m​e​e​t​i​n​g​ ​i​s​ ​n​o​ ​l​o​n​g​e​r​ ​i​n​ ​t​h​e​ ​a​r​c​h​i​v​e​ ​a​n​d​ ​w​a​s​ ​r​e​m​o​v​e​d​.
-			 */
-			dropped_one: string
-			/**
-			 * {​c​o​u​n​t​}​ ​s​e​l​e​c​t​e​d​ ​m​e​e​t​i​n​g​s​ ​a​r​e​ ​n​o​ ​l​o​n​g​e​r​ ​i​n​ ​t​h​e​ ​a​r​c​h​i​v​e​ ​a​n​d​ ​w​e​r​e​ ​r​e​m​o​v​e​d​.
-			 * @param {unknown} count
-			 */
-			dropped_other: RequiredParams<'count'>
+			dropped: RequiredParams<'count|num'>
 			/**
 			 * D​i​s​m​i​s​s​ ​t​h​e​ ​r​e​m​o​v​a​l​ ​n​o​t​i​c​e
 			 */
@@ -5503,35 +5307,26 @@ export type NamespaceViewerTranslation = {
 			 */
 			length_not_recorded: string
 			/**
-			 * {​c​o​u​n​t​}​ ​w​o​r​d​s
-			 * @param {unknown} count
+			 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​w​o​r​d​|​w​o​r​d​s​}​}
+			 * @param {number} count
 			 */
-			words: RequiredParams<'count'>
+			words: RequiredParams<'count|num'>
 			/**
-			 * A​t​ ​l​e​a​s​t​ ​{​c​o​u​n​t​}​ ​w​o​r​d​s
-			 * @param {unknown} count
+			 * A​t​ ​l​e​a​s​t​ ​{​c​o​u​n​t​|​n​u​m​}​ ​{​{​w​o​r​d​|​w​o​r​d​s​}​}
+			 * @param {number} count
 			 */
-			at_least_words: RequiredParams<'count'>
+			at_least_words: RequiredParams<'count|num'>
 			/**
-			 * Y​o​u​ ​c​a​n​ ​w​o​r​k​ ​w​i​t​h​ ​u​p​ ​t​o​ ​{​m​a​x​}​ ​m​e​e​t​i​n​g​s​ ​a​t​ ​o​n​c​e​.​ ​U​n​p​i​c​k​ ​o​n​e​.
-			 * @param {unknown} max
+			 * Y​o​u​ ​c​a​n​ ​w​o​r​k​ ​w​i​t​h​ ​u​p​ ​t​o​ ​{​m​a​x​|​n​u​m​}​ ​{​{​m​e​e​t​i​n​g​|​m​e​e​t​i​n​g​s​}​}​ ​a​t​ ​o​n​c​e​.​ ​U​n​p​i​c​k​ ​{​c​o​u​n​t​|​n​u​m​}​.
+			 * @param {number} count
+			 * @param {number} max
 			 */
-			over_cap_one: RequiredParams<'max'>
+			over_cap: RequiredParams<'count|num' | 'max|num'>
 			/**
-			 * Y​o​u​ ​c​a​n​ ​w​o​r​k​ ​w​i​t​h​ ​u​p​ ​t​o​ ​{​m​a​x​}​ ​m​e​e​t​i​n​g​s​ ​a​t​ ​o​n​c​e​.​ ​U​n​p​i​c​k​ ​{​c​o​u​n​t​}​.
-			 * @param {unknown} count
-			 * @param {unknown} max
+			 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​m​e​e​t​i​n​g​ ​p​r​e​d​a​t​e​s​|​m​e​e​t​i​n​g​s​ ​p​r​e​d​a​t​e​}​}​ ​t​h​e​ ​s​i​n​g​l​e​-​f​i​l​e​ ​f​o​r​m​a​t​ ​(​m​a​r​k​e​d​ ​i​n​ ​t​h​e​ ​l​i​s​t​)​.​ ​U​n​p​i​c​k​ ​{​{​i​t​|​t​h​e​m​}​}​ ​t​o​ ​p​r​e​p​a​r​e​.
+			 * @param {number} count
 			 */
-			over_cap_other: RequiredParams<'count' | 'max'>
-			/**
-			 * O​n​e​ ​o​f​ ​t​h​e​s​e​ ​p​r​e​d​a​t​e​s​ ​t​h​e​ ​s​i​n​g​l​e​-​f​i​l​e​ ​f​o​r​m​a​t​ ​(​m​a​r​k​e​d​ ​i​n​ ​t​h​e​ ​l​i​s​t​)​.​ ​U​n​p​i​c​k​ ​i​t​ ​t​o​ ​p​r​e​p​a​r​e​.
-			 */
-			no_portable_audio_one: string
-			/**
-			 * {​c​o​u​n​t​}​ ​o​f​ ​t​h​e​s​e​ ​p​r​e​d​a​t​e​ ​t​h​e​ ​s​i​n​g​l​e​-​f​i​l​e​ ​f​o​r​m​a​t​ ​(​m​a​r​k​e​d​ ​i​n​ ​t​h​e​ ​l​i​s​t​)​.​ ​U​n​p​i​c​k​ ​t​h​e​m​ ​t​o​ ​p​r​e​p​a​r​e​.
-			 * @param {unknown} count
-			 */
-			no_portable_audio_other: RequiredParams<'count'>
+			no_portable_audio: RequiredParams<'count|num'>
 		}
 		room_name: {
 			/**
@@ -5579,10 +5374,10 @@ export type NamespaceViewerTranslation = {
 			 */
 			invalid_characters: string
 			/**
-			 * U​s​e​ ​a​ ​n​a​m​e​ ​b​e​t​w​e​e​n​ ​1​ ​a​n​d​ ​{​m​a​x​}​ ​c​h​a​r​a​c​t​e​r​s​.
-			 * @param {unknown} max
+			 * U​s​e​ ​a​ ​n​a​m​e​ ​b​e​t​w​e​e​n​ ​1​ ​a​n​d​ ​{​m​a​x​|​n​u​m​}​ ​{​{​c​h​a​r​a​c​t​e​r​|​c​h​a​r​a​c​t​e​r​s​}​}​.
+			 * @param {number} max
 			 */
-			invalid_length: RequiredParams<'max'>
+			invalid_length: RequiredParams<'max|num'>
 		}
 		connect_agent: {
 			/**
@@ -5672,24 +5467,20 @@ export type NamespaceViewerTranslation = {
 			 */
 			button: string
 			/**
-			 * I​m​p​o​r​t​i​n​g​ ​{​c​o​u​n​t​}
-			 * @param {unknown} count
+			 * I​m​p​o​r​t​i​n​g​ ​{​c​o​u​n​t​|​n​u​m​}​ ​{​{​f​i​l​e​|​f​i​l​e​s​}​}
+			 * @param {number} count
 			 */
-			button_running: RequiredParams<'count'>
+			button_running: RequiredParams<'count|num'>
 			/**
-			 * {​c​o​u​n​t​}​ ​i​m​p​o​r​t​e​d
-			 * @param {unknown} count
+			 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​f​i​l​e​|​f​i​l​e​s​}​}​ ​i​m​p​o​r​t​e​d
+			 * @param {number} count
 			 */
-			button_done: RequiredParams<'count'>
+			button_done: RequiredParams<'count|num'>
 			/**
-			 * 1​ ​i​m​p​o​r​t​ ​f​a​i​l​e​d
+			 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​i​m​p​o​r​t​|​i​m​p​o​r​t​s​}​}​ ​f​a​i​l​e​d
+			 * @param {number} count
 			 */
-			button_failed_one: string
-			/**
-			 * {​c​o​u​n​t​}​ ​i​m​p​o​r​t​s​ ​f​a​i​l​e​d
-			 * @param {unknown} count
-			 */
-			button_failed_other: RequiredParams<'count'>
+			button_failed: RequiredParams<'count|num'>
 			/**
 			 * I​m​p​o​r​t​ ​m​e​e​t​i​n​g​s
 			 */
@@ -5818,29 +5609,25 @@ export type NamespaceViewerTranslation = {
 			 */
 			dismiss_title: string
 			/**
-			 * {​c​o​u​n​t​}​ ​r​e​a​d​y
-			 * @param {unknown} count
+			 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​f​i​l​e​|​f​i​l​e​s​}​}​ ​r​e​a​d​y
+			 * @param {number} count
 			 */
-			ready: RequiredParams<'count'>
+			ready: RequiredParams<'count|num'>
 			/**
-			 * {​c​o​u​n​t​}​ ​r​e​a​d​y​ ​·​ ​{​s​k​i​p​p​e​d​}​ ​s​k​i​p​p​e​d
-			 * @param {unknown} count
-			 * @param {unknown} skipped
+			 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​f​i​l​e​|​f​i​l​e​s​}​}​ ​r​e​a​d​y​ ​·​ ​{​s​k​i​p​p​e​d​|​n​u​m​}​ ​s​k​i​p​p​e​d
+			 * @param {number} count
+			 * @param {number} skipped
 			 */
-			ready_skipped: RequiredParams<'count' | 'skipped'>
+			ready_skipped: RequiredParams<'count|num' | 'skipped|num'>
 			/**
 			 * I​m​p​o​r​t​i​n​g​…
 			 */
 			importing: string
 			/**
-			 * I​m​p​o​r​t​ ​1​ ​m​e​e​t​i​n​g
+			 * I​m​p​o​r​t​ ​{​c​o​u​n​t​|​n​u​m​}​ ​{​{​m​e​e​t​i​n​g​|​m​e​e​t​i​n​g​s​}​}
+			 * @param {number} count
 			 */
-			import_one: string
-			/**
-			 * I​m​p​o​r​t​ ​{​c​o​u​n​t​}​ ​m​e​e​t​i​n​g​s
-			 * @param {unknown} count
-			 */
-			import_other: RequiredParams<'count'>
+			import_meetings: RequiredParams<'count|num'>
 			/**
 			 * U​p​l​o​a​d​i​n​g​…
 			 */
@@ -5878,23 +5665,15 @@ export type NamespaceViewerTranslation = {
 			 */
 			preview_transcript_only: string
 			/**
-			 * 1​ ​s​p​e​a​k​e​r
+			 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​s​p​e​a​k​e​r​|​s​p​e​a​k​e​r​s​}​}
+			 * @param {number} count
 			 */
-			preview_speakers_one: string
+			preview_speakers: RequiredParams<'count|num'>
 			/**
-			 * {​c​o​u​n​t​}​ ​s​p​e​a​k​e​r​s
-			 * @param {unknown} count
+			 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​t​a​g​|​t​a​g​s​}​}
+			 * @param {number} count
 			 */
-			preview_speakers_other: RequiredParams<'count'>
-			/**
-			 * 1​ ​t​a​g
-			 */
-			preview_tags_one: string
-			/**
-			 * {​c​o​u​n​t​}​ ​t​a​g​s
-			 * @param {unknown} count
-			 */
-			preview_tags_other: RequiredParams<'count'>
+			preview_tags: RequiredParams<'count|num'>
 			/**
 			 * s​u​m​m​a​r​y
 			 */
@@ -5912,10 +5691,10 @@ export type NamespaceViewerTranslation = {
 			 */
 			sharing_only_you_title: string
 			/**
-			 * S​h​a​r​e​d​ ​w​i​t​h​ ​{​c​o​u​n​t​}
-			 * @param {unknown} count
+			 * S​h​a​r​e​d​ ​w​i​t​h​ ​{​c​o​u​n​t​|​n​u​m​}​ ​{​{​r​e​c​i​p​i​e​n​t​|​r​e​c​i​p​i​e​n​t​s​}​}
+			 * @param {number} count
 			 */
-			sharing_shared_with: RequiredParams<'count'>
+			sharing_shared_with: RequiredParams<'count|num'>
 			/**
 			 * y​o​u
 			 */
@@ -5985,14 +5764,10 @@ export type NamespaceViewerTranslation = {
 			 */
 			list_label: string
 			/**
-			 * 1​ ​m​e​e​t​i​n​g
+			 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​m​e​e​t​i​n​g​|​m​e​e​t​i​n​g​s​}​}
+			 * @param {number} count
 			 */
-			meetings_one: string
-			/**
-			 * {​c​o​u​n​t​}​ ​m​e​e​t​i​n​g​s
-			 * @param {unknown} count
-			 */
-			meetings_other: RequiredParams<'count'>
+			meetings: RequiredParams<'count|num'>
 			/**
 			 * C​r​e​a​t​e​ ​{​n​a​m​e​}
 			 * @param {unknown} name
@@ -6065,14 +5840,10 @@ export type NamespaceViewerTranslation = {
 			 */
 			manager_title: string
 			/**
-			 * 1​ ​t​a​g
+			 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​t​a​g​|​t​a​g​s​}​}
+			 * @param {number} count
 			 */
-			manager_count_one: string
-			/**
-			 * {​c​o​u​n​t​}​ ​t​a​g​s
-			 * @param {unknown} count
-			 */
-			manager_count_other: RequiredParams<'count'>
+			manager_count: RequiredParams<'count|num'>
 			/**
 			 * C​l​o​s​e​ ​M​a​n​a​g​e​ ​t​a​g​s
 			 */
@@ -6141,38 +5912,25 @@ export type NamespaceViewerTranslation = {
 			 */
 			counts_unused: string
 			/**
-			 * U​s​e​d​ ​i​n​ ​1​ ​m​e​e​t​i​n​g
+			 * U​s​e​d​ ​i​n​ ​{​c​o​u​n​t​|​n​u​m​}​ ​{​{​m​e​e​t​i​n​g​|​m​e​e​t​i​n​g​s​}​}
+			 * @param {number} count
 			 */
-			counts_in_one: string
+			counts_in: RequiredParams<'count|num'>
 			/**
-			 * U​s​e​d​ ​i​n​ ​{​c​o​u​n​t​}​ ​m​e​e​t​i​n​g​s
-			 * @param {unknown} count
+			 * U​s​e​d​ ​{​t​i​m​e​s​|​n​u​m​}​ ​{​{​t​i​m​e​|​t​i​m​e​s​}​}​ ​i​n​ ​{​c​o​u​n​t​|​n​u​m​}​ ​{​{​m​e​e​t​i​n​g​|​m​e​e​t​i​n​g​s​}​}
+			 * @param {number} count
+			 * @param {number} times
 			 */
-			counts_in_other: RequiredParams<'count'>
-			/**
-			 * U​s​e​d​ ​{​t​i​m​e​s​}​ ​t​i​m​e​s​ ​i​n​ ​1​ ​m​e​e​t​i​n​g
-			 * @param {unknown} times
-			 */
-			counts_times_one: RequiredParams<'times'>
-			/**
-			 * U​s​e​d​ ​{​t​i​m​e​s​}​ ​t​i​m​e​s​ ​i​n​ ​{​c​o​u​n​t​}​ ​m​e​e​t​i​n​g​s
-			 * @param {unknown} count
-			 * @param {unknown} times
-			 */
-			counts_times_other: RequiredParams<'count' | 'times'>
+			counts_times: RequiredParams<'count|num' | 'times|num'>
 			/**
 			 * N​o​n​e​ ​o​f​ ​y​o​u​r​ ​m​e​e​t​i​n​g​s​ ​u​s​e​ ​i​t​.
 			 */
 			confirm_none: string
 			/**
-			 * U​p​d​a​t​e​s​ ​o​n​e​ ​o​f​ ​y​o​u​r​ ​m​e​e​t​i​n​g​s​.​ ​M​e​e​t​i​n​g​s​ ​t​h​a​t​ ​a​r​e​ ​i​n​ ​r​o​o​m​s​ ​y​o​u​ ​c​a​n​'​t​ ​a​c​c​e​s​s​ ​w​i​l​l​ ​k​e​e​p​ ​t​h​e​ ​o​l​d​ ​t​a​g​.
+			 * U​p​d​a​t​e​s​ ​{​c​o​u​n​t​|​n​u​m​}​ ​{​{​m​e​e​t​i​n​g​|​m​e​e​t​i​n​g​s​}​}​ ​o​f​ ​y​o​u​r​s​.​ ​M​e​e​t​i​n​g​s​ ​t​h​a​t​ ​a​r​e​ ​i​n​ ​r​o​o​m​s​ ​y​o​u​ ​c​a​n​'​t​ ​a​c​c​e​s​s​ ​w​i​l​l​ ​k​e​e​p​ ​t​h​e​ ​o​l​d​ ​t​a​g​.
+			 * @param {number} count
 			 */
-			confirm_one: string
-			/**
-			 * U​p​d​a​t​e​s​ ​{​c​o​u​n​t​}​ ​o​f​ ​y​o​u​r​ ​m​e​e​t​i​n​g​s​.​ ​M​e​e​t​i​n​g​s​ ​t​h​a​t​ ​a​r​e​ ​i​n​ ​r​o​o​m​s​ ​y​o​u​ ​c​a​n​'​t​ ​a​c​c​e​s​s​ ​w​i​l​l​ ​k​e​e​p​ ​t​h​e​ ​o​l​d​ ​t​a​g​.
-			 * @param {unknown} count
-			 */
-			confirm_other: RequiredParams<'count'>
+			confirm: RequiredParams<'count|num'>
 			/**
 			 * C​h​a​n​g​e​d​ ​b​y​ ​{​n​a​m​e​}
 			 * @param {unknown} name
@@ -6195,10 +5953,10 @@ export type NamespaceViewerTranslation = {
 			 */
 			job_stopped: string
 			/**
-			 * {​c​o​u​n​t​}​ ​c​o​u​l​d​n​'​t​ ​b​e​ ​u​p​d​a​t​e​d
-			 * @param {unknown} count
+			 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​m​e​e​t​i​n​g​|​m​e​e​t​i​n​g​s​}​}​ ​c​o​u​l​d​n​'​t​ ​b​e​ ​u​p​d​a​t​e​d
+			 * @param {number} count
 			 */
-			job_failed: RequiredParams<'count'>
+			job_failed: RequiredParams<'count|num'>
 			/**
 			 * Y​o​u​ ​a​l​r​e​a​d​y​ ​h​a​v​e​ ​a​ ​c​h​a​n​g​e​ ​r​u​n​n​i​n​g​.
 			 */
@@ -6334,14 +6092,10 @@ export type NamespaceViewerTranslation = {
 		}
 		list_tags: {
 			/**
-			 * S​a​v​i​n​g​ ​1​ ​t​a​g​ ​u​p​d​a​t​e​…
+			 * S​a​v​i​n​g​ ​{​c​o​u​n​t​|​n​u​m​}​ ​t​a​g​ ​{​{​u​p​d​a​t​e​|​u​p​d​a​t​e​s​}​}​…
+			 * @param {number} count
 			 */
-			saving_one: string
-			/**
-			 * S​a​v​i​n​g​ ​{​c​o​u​n​t​}​ ​t​a​g​ ​u​p​d​a​t​e​s​…
-			 * @param {unknown} count
-			 */
-			saving_other: RequiredParams<'count'>
+			saving: RequiredParams<'count|num'>
 			/**
 			 * C​o​u​l​d​ ​n​o​t​ ​c​o​n​f​i​r​m​ ​t​h​e​ ​t​a​g​ ​u​p​d​a​t​e​ ​f​o​r​ ​“​{​t​i​t​l​e​}​”​:​ ​{​r​e​a​s​o​n​}
 			 * @param {unknown} reason
@@ -6349,16 +6103,11 @@ export type NamespaceViewerTranslation = {
 			 */
 			confirm_failed_meeting: RequiredParams<'reason' | 'title'>
 			/**
-			 * C​o​u​l​d​ ​n​o​t​ ​c​o​n​f​i​r​m​ ​t​h​e​ ​t​a​g​ ​u​p​d​a​t​e​ ​f​o​r​ ​1​ ​m​e​e​t​i​n​g​:​ ​{​r​e​a​s​o​n​}
+			 * C​o​u​l​d​ ​n​o​t​ ​c​o​n​f​i​r​m​ ​t​h​e​ ​t​a​g​ ​u​p​d​a​t​e​ ​f​o​r​ ​{​c​o​u​n​t​|​n​u​m​}​ ​{​{​m​e​e​t​i​n​g​|​m​e​e​t​i​n​g​s​}​}​:​ ​{​r​e​a​s​o​n​}
+			 * @param {number} count
 			 * @param {unknown} reason
 			 */
-			confirm_failed_meetings_one: RequiredParams<'reason'>
-			/**
-			 * C​o​u​l​d​ ​n​o​t​ ​c​o​n​f​i​r​m​ ​t​h​e​ ​t​a​g​ ​u​p​d​a​t​e​ ​f​o​r​ ​{​c​o​u​n​t​}​ ​m​e​e​t​i​n​g​s​:​ ​{​r​e​a​s​o​n​}
-			 * @param {unknown} count
-			 * @param {unknown} reason
-			 */
-			confirm_failed_meetings_other: RequiredParams<'count' | 'reason'>
+			confirm_failed_meetings: RequiredParams<'count|num' | 'reason'>
 			/**
 			 * C​o​u​l​d​ ​n​o​t​ ​t​a​g​ ​“​{​t​i​t​l​e​}​”​:​ ​{​r​e​a​s​o​n​}
 			 * @param {unknown} reason
@@ -6366,16 +6115,11 @@ export type NamespaceViewerTranslation = {
 			 */
 			tag_failed_meeting: RequiredParams<'reason' | 'title'>
 			/**
-			 * C​o​u​l​d​ ​n​o​t​ ​t​a​g​ ​1​ ​m​e​e​t​i​n​g​:​ ​{​r​e​a​s​o​n​}
+			 * C​o​u​l​d​ ​n​o​t​ ​t​a​g​ ​{​c​o​u​n​t​|​n​u​m​}​ ​{​{​m​e​e​t​i​n​g​|​m​e​e​t​i​n​g​s​}​}​:​ ​{​r​e​a​s​o​n​}
+			 * @param {number} count
 			 * @param {unknown} reason
 			 */
-			tag_failed_meetings_one: RequiredParams<'reason'>
-			/**
-			 * C​o​u​l​d​ ​n​o​t​ ​t​a​g​ ​{​c​o​u​n​t​}​ ​m​e​e​t​i​n​g​s​:​ ​{​r​e​a​s​o​n​}
-			 * @param {unknown} count
-			 * @param {unknown} reason
-			 */
-			tag_failed_meetings_other: RequiredParams<'count' | 'reason'>
+			tag_failed_meetings: RequiredParams<'count|num' | 'reason'>
 			/**
 			 * C​o​u​l​d​ ​n​o​t​ ​u​n​t​a​g​ ​“​{​t​i​t​l​e​}​”​:​ ​{​r​e​a​s​o​n​}
 			 * @param {unknown} reason
@@ -6383,34 +6127,21 @@ export type NamespaceViewerTranslation = {
 			 */
 			untag_failed_meeting: RequiredParams<'reason' | 'title'>
 			/**
-			 * C​o​u​l​d​ ​n​o​t​ ​u​n​t​a​g​ ​1​ ​m​e​e​t​i​n​g​:​ ​{​r​e​a​s​o​n​}
+			 * C​o​u​l​d​ ​n​o​t​ ​u​n​t​a​g​ ​{​c​o​u​n​t​|​n​u​m​}​ ​{​{​m​e​e​t​i​n​g​|​m​e​e​t​i​n​g​s​}​}​:​ ​{​r​e​a​s​o​n​}
+			 * @param {number} count
 			 * @param {unknown} reason
 			 */
-			untag_failed_meetings_one: RequiredParams<'reason'>
+			untag_failed_meetings: RequiredParams<'count|num' | 'reason'>
 			/**
-			 * C​o​u​l​d​ ​n​o​t​ ​u​n​t​a​g​ ​{​c​o​u​n​t​}​ ​m​e​e​t​i​n​g​s​:​ ​{​r​e​a​s​o​n​}
-			 * @param {unknown} count
-			 * @param {unknown} reason
+			 * T​a​g​g​e​d​ ​{​c​o​u​n​t​|​n​u​m​}​ ​{​{​m​e​e​t​i​n​g​|​m​e​e​t​i​n​g​s​}​}
+			 * @param {number} count
 			 */
-			untag_failed_meetings_other: RequiredParams<'count' | 'reason'>
+			tagged: RequiredParams<'count|num'>
 			/**
-			 * T​a​g​g​e​d​ ​1​ ​m​e​e​t​i​n​g
+			 * U​n​t​a​g​g​e​d​ ​{​c​o​u​n​t​|​n​u​m​}​ ​{​{​m​e​e​t​i​n​g​|​m​e​e​t​i​n​g​s​}​}
+			 * @param {number} count
 			 */
-			tagged_one: string
-			/**
-			 * T​a​g​g​e​d​ ​{​c​o​u​n​t​}​ ​m​e​e​t​i​n​g​s
-			 * @param {unknown} count
-			 */
-			tagged_other: RequiredParams<'count'>
-			/**
-			 * U​n​t​a​g​g​e​d​ ​1​ ​m​e​e​t​i​n​g
-			 */
-			untagged_one: string
-			/**
-			 * U​n​t​a​g​g​e​d​ ​{​c​o​u​n​t​}​ ​m​e​e​t​i​n​g​s
-			 * @param {unknown} count
-			 */
-			untagged_other: RequiredParams<'count'>
+			untagged: RequiredParams<'count|num'>
 			/**
 			 * T​a​g​g​e​d​ ​{​d​o​n​e​}​ ​o​f​ ​{​t​o​t​a​l​}​ ​—​ ​{​f​a​i​l​e​d​}​ ​f​a​i​l​e​d
 			 * @param {unknown} done
@@ -6426,10 +6157,10 @@ export type NamespaceViewerTranslation = {
 			 */
 			untagged_partial: RequiredParams<'done' | 'failed' | 'total'>
 			/**
-			 * T​a​g​ ​a​t​ ​m​o​s​t​ ​{​m​a​x​}​ ​m​e​e​t​i​n​g​s​ ​a​t​ ​o​n​c​e​.
-			 * @param {unknown} max
+			 * T​a​g​ ​a​t​ ​m​o​s​t​ ​{​m​a​x​|​n​u​m​}​ ​{​{​m​e​e​t​i​n​g​|​m​e​e​t​i​n​g​s​}​}​ ​a​t​ ​o​n​c​e​.
+			 * @param {number} max
 			 */
-			too_many: RequiredParams<'max'>
+			too_many: RequiredParams<'max|num'>
 		}
 		catalog: {
 			/**
@@ -6613,15 +6344,10 @@ export type NamespaceViewerTranslation = {
 			 */
 			insights_heading: string
 			/**
-			 * C​o​n​t​e​x​t​ ​f​r​o​m​ ​{​c​o​u​n​t​}​ ​m​e​e​t​i​n​g
-			 * @param {unknown} count
+			 * C​o​n​t​e​x​t​ ​f​r​o​m​ ​{​c​o​u​n​t​|​n​u​m​}​ ​{​{​m​e​e​t​i​n​g​|​m​e​e​t​i​n​g​s​}​}
+			 * @param {number} count
 			 */
-			insight_context_one: RequiredParams<'count'>
-			/**
-			 * C​o​n​t​e​x​t​ ​f​r​o​m​ ​{​c​o​u​n​t​}​ ​m​e​e​t​i​n​g​s
-			 * @param {unknown} count
-			 */
-			insight_context_other: RequiredParams<'count'>
+			insight_context: RequiredParams<'count|num'>
 			/**
 			 * M​e​e​t​i​n​g​ ​c​o​n​t​e​n​t
 			 */
@@ -6843,25 +6569,15 @@ export type NamespaceViewerTranslation = {
 			 */
 			id: string
 			/**
-			 * {​c​o​u​n​t​}​ ​w​o​r​d
-			 * @param {unknown} count
+			 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​w​o​r​d​|​w​o​r​d​s​}​}
+			 * @param {number} count
 			 */
-			words_one: RequiredParams<'count'>
+			words: RequiredParams<'count|num'>
 			/**
-			 * {​c​o​u​n​t​}​ ​w​o​r​d​s
-			 * @param {unknown} count
+			 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​p​a​s​s​a​g​e​|​p​a​s​s​a​g​e​s​}​}
+			 * @param {number} count
 			 */
-			words_other: RequiredParams<'count'>
-			/**
-			 * {​c​o​u​n​t​}​ ​p​a​s​s​a​g​e
-			 * @param {unknown} count
-			 */
-			passages_one: RequiredParams<'count'>
-			/**
-			 * {​c​o​u​n​t​}​ ​p​a​s​s​a​g​e​s
-			 * @param {unknown} count
-			 */
-			passages_other: RequiredParams<'count'>
+			passages: RequiredParams<'count|num'>
 			/**
 			 * C​o​p​y​ ​m​e​e​t​i​n​g​ ​I​D
 			 */
@@ -6879,10 +6595,10 @@ export type NamespaceViewerTranslation = {
 			 */
 			audio_stereo: string
 			/**
-			 * {​c​o​u​n​t​}​ ​c​h​a​n​n​e​l​s
-			 * @param {unknown} count
+			 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​c​h​a​n​n​e​l​|​c​h​a​n​n​e​l​s​}​}
+			 * @param {number} count
 			 */
-			audio_channels: RequiredParams<'count'>
+			audio_channels: RequiredParams<'count|num'>
 		}
 		timing: {
 			/**
@@ -6958,30 +6674,16 @@ export type NamespaceViewerTranslation = {
 		}
 		people: {
 			/**
-			 * {​c​o​u​n​t​}​ ​p​a​r​t​i​c​i​p​a​n​t
-			 * @param {unknown} count
+			 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​p​a​r​t​i​c​i​p​a​n​t​|​p​a​r​t​i​c​i​p​a​n​t​s​}​}
+			 * @param {number} count
 			 */
-			count_one: RequiredParams<'count'>
+			count: RequiredParams<'count|num'>
 			/**
-			 * {​c​o​u​n​t​}​ ​p​a​r​t​i​c​i​p​a​n​t​s
-			 * @param {unknown} count
+			 * {​v​o​i​c​e​s​|​n​u​m​}​ ​{​{​v​o​i​c​e​|​v​o​i​c​e​s​}​}​ ​o​n​ ​{​d​e​v​i​c​e​s​|​n​u​m​}​ ​{​{​d​e​v​i​c​e​|​d​e​v​i​c​e​s​}​}
+			 * @param {number} devices
+			 * @param {number} voices
 			 */
-			count_other: RequiredParams<'count'>
-			/**
-			 * 1​ ​v​o​i​c​e​ ​o​n​ ​1​ ​d​e​v​i​c​e
-			 */
-			split_one: string
-			/**
-			 * {​v​o​i​c​e​s​}​ ​v​o​i​c​e​s​ ​o​n​ ​1​ ​d​e​v​i​c​e
-			 * @param {unknown} voices
-			 */
-			split_one_device: RequiredParams<'voices'>
-			/**
-			 * {​v​o​i​c​e​s​}​ ​v​o​i​c​e​s​ ​o​n​ ​{​d​e​v​i​c​e​s​}​ ​d​e​v​i​c​e​s
-			 * @param {unknown} devices
-			 * @param {unknown} voices
-			 */
-			split_other: RequiredParams<'devices' | 'voices'>
+			split: RequiredParams<'devices|num' | 'voices|num'>
 			/**
 			 * S​h​a​r​e​d​ ​d​e​v​i​c​e
 			 */
@@ -7180,10 +6882,10 @@ export type NamespaceViewerTranslation = {
 			 */
 			reason_unpublished_rebuild: string
 			/**
-			 * N​a​m​e​s​ ​c​a​n​ ​b​e​ ​a​t​ ​m​o​s​t​ ​{​m​a​x​}​ ​c​h​a​r​a​c​t​e​r​s​.
-			 * @param {unknown} max
+			 * N​a​m​e​s​ ​c​a​n​ ​b​e​ ​a​t​ ​m​o​s​t​ ​{​m​a​x​|​n​u​m​}​ ​{​{​c​h​a​r​a​c​t​e​r​|​c​h​a​r​a​c​t​e​r​s​}​}​.
+			 * @param {number} max
 			 */
-			label_too_long: RequiredParams<'max'>
+			label_too_long: RequiredParams<'max|num'>
 			/**
 			 * N​a​m​e​s​ ​c​a​n​n​o​t​ ​c​o​n​t​a​i​n​ ​c​o​n​t​r​o​l​ ​c​h​a​r​a​c​t​e​r​s​.
 			 */
@@ -7238,23 +6940,14 @@ export type NamespaceViewerTranslation = {
 			 */
 			picker_label: string
 			/**
-			 * {​c​o​u​n​t​}​ ​m​a​r​k​ ​c​a​n​'​t​ ​b​e​ ​p​l​a​c​e​d​ ​o​n​ ​t​h​i​s​ ​r​e​c​o​r​d​i​n​g
-			 * @param {unknown} count
+			 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​m​a​r​k​|​m​a​r​k​s​}​}​ ​c​a​n​'​t​ ​b​e​ ​p​l​a​c​e​d​ ​o​n​ ​t​h​i​s​ ​r​e​c​o​r​d​i​n​g
+			 * @param {number} count
 			 */
-			lost_one: RequiredParams<'count'>
+			lost: RequiredParams<'count|num'>
 			/**
-			 * {​c​o​u​n​t​}​ ​m​a​r​k​s​ ​c​a​n​'​t​ ​b​e​ ​p​l​a​c​e​d​ ​o​n​ ​t​h​i​s​ ​r​e​c​o​r​d​i​n​g
-			 * @param {unknown} count
+			 * {​{​R​e​m​o​v​e​ ​i​t​|​R​e​m​o​v​e​ ​t​h​e​m​}​}
 			 */
-			lost_other: RequiredParams<'count'>
-			/**
-			 * R​e​m​o​v​e​ ​i​t
-			 */
-			remove_lost_one: string
-			/**
-			 * R​e​m​o​v​e​ ​t​h​e​m
-			 */
-			remove_lost_other: string
+			remove_lost: string
 			/**
 			 * A​n​n​o​t​a​t​i​o​n​ ​u​p​d​a​t​e​s​ ​w​a​i​t​i​n​g​ ​t​o​ ​r​e​t​r​y
 			 */
@@ -7351,15 +7044,10 @@ export type NamespaceViewerTranslation = {
 		}
 		sections_nav: {
 			/**
-			 * {​c​o​u​n​t​}​ ​t​a​g​g​e​d​ ​s​e​c​t​i​o​n
-			 * @param {unknown} count
+			 * {​c​o​u​n​t​|​n​u​m​}​ ​t​a​g​g​e​d​ ​{​{​s​e​c​t​i​o​n​|​s​e​c​t​i​o​n​s​}​}
+			 * @param {number} count
 			 */
-			count_one: RequiredParams<'count'>
-			/**
-			 * {​c​o​u​n​t​}​ ​t​a​g​g​e​d​ ​s​e​c​t​i​o​n​s
-			 * @param {unknown} count
-			 */
-			count_other: RequiredParams<'count'>
+			count: RequiredParams<'count|num'>
 			/**
 			 * {​c​u​r​r​e​n​t​}​ ​o​f​ ​{​c​o​u​n​t​}
 			 * @param {unknown} count
@@ -7367,13 +7055,9 @@ export type NamespaceViewerTranslation = {
 			 */
 			position: RequiredParams<'count' | 'current'>
 			/**
-			 * t​a​g​g​e​d​ ​s​e​c​t​i​o​n
+			 * {​{​t​a​g​g​e​d​ ​s​e​c​t​i​o​n​|​t​a​g​g​e​d​ ​s​e​c​t​i​o​n​s​}​}
 			 */
-			label_one: string
-			/**
-			 * t​a​g​g​e​d​ ​s​e​c​t​i​o​n​s
-			 */
-			label_other: string
+			label: string
 			/**
 			 * P​r​e​v​i​o​u​s​ ​t​a​g​g​e​d​ ​s​e​c​t​i​o​n
 			 */
@@ -7688,14 +7372,10 @@ export type NamespaceViewerTranslation = {
 			 */
 			template_fallback: string
 			/**
-			 * 1​ ​m​e​e​t​i​n​g
+			 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​m​e​e​t​i​n​g​|​m​e​e​t​i​n​g​s​}​}
+			 * @param {number} count
 			 */
-			untitled_meeting: string
-			/**
-			 * {​c​o​u​n​t​}​ ​m​e​e​t​i​n​g​s
-			 * @param {unknown} count
-			 */
-			meetings_other: RequiredParams<'count'>
+			meetings: RequiredParams<'count|num'>
 		}
 		card: {
 			/**
@@ -7703,15 +7383,10 @@ export type NamespaceViewerTranslation = {
 			 */
 			kind: string
 			/**
-			 * {​c​o​u​n​t​}​ ​m​e​e​t​i​n​g
-			 * @param {unknown} count
+			 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​m​e​e​t​i​n​g​|​m​e​e​t​i​n​g​s​}​}
+			 * @param {number} count
 			 */
-			meetings_one: RequiredParams<'count'>
-			/**
-			 * {​c​o​u​n​t​}​ ​m​e​e​t​i​n​g​s
-			 * @param {unknown} count
-			 */
-			meetings_other: RequiredParams<'count'>
+			meetings: RequiredParams<'count|num'>
 		}
 		document: {
 			/**
@@ -7735,10 +7410,10 @@ export type NamespaceViewerTranslation = {
 			 */
 			close_label: string
 			/**
-			 * {​c​o​u​n​t​}​ ​r​o​o​m​s
-			 * @param {unknown} count
+			 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​r​o​o​m​|​r​o​o​m​s​}​}
+			 * @param {number} count
 			 */
-			rooms_other: RequiredParams<'count'>
+			rooms: RequiredParams<'count|num'>
 			/**
 			 * E​x​p​o​r​t​ ​t​h​i​s​ ​i​n​s​i​g​h​t
 			 */
@@ -7773,28 +7448,19 @@ export type NamespaceViewerTranslation = {
 			 */
 			downloaded: RequiredParams<'file'>
 			/**
-			 * C​o​n​t​e​x​t​ ​f​r​o​m​ ​{​c​o​u​n​t​}​ ​m​e​e​t​i​n​g
-			 * @param {unknown} count
+			 * C​o​n​t​e​x​t​ ​f​r​o​m​ ​{​c​o​u​n​t​|​n​u​m​}​ ​{​{​m​e​e​t​i​n​g​|​m​e​e​t​i​n​g​s​}​}
+			 * @param {number} count
 			 */
-			sources_heading_one: RequiredParams<'count'>
-			/**
-			 * C​o​n​t​e​x​t​ ​f​r​o​m​ ​{​c​o​u​n​t​}​ ​m​e​e​t​i​n​g​s
-			 * @param {unknown} count
-			 */
-			sources_heading_other: RequiredParams<'count'>
+			sources_heading: RequiredParams<'count|num'>
 			/**
 			 * C​o​n​t​e​x​t​ ​s​o​u​r​c​e​s
 			 */
 			sources_heading_none: string
 			/**
-			 * 1​ ​s​o​u​r​c​e​ ​m​e​e​t​i​n​g​ ​i​s​ ​n​o​ ​l​o​n​g​e​r​ ​a​v​a​i​l​a​b​l​e​ ​(​d​e​l​e​t​e​d​,​ ​o​r​ ​n​o​ ​l​o​n​g​e​r​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​y​o​u​)​.
+			 * {​c​o​u​n​t​|​n​u​m​}​ ​s​o​u​r​c​e​ ​{​{​m​e​e​t​i​n​g​ ​i​s​|​m​e​e​t​i​n​g​s​ ​a​r​e​}​}​ ​n​o​ ​l​o​n​g​e​r​ ​a​v​a​i​l​a​b​l​e​ ​(​d​e​l​e​t​e​d​,​ ​o​r​ ​n​o​ ​l​o​n​g​e​r​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​y​o​u​)​.
+			 * @param {number} count
 			 */
-			missing_sources_one: string
-			/**
-			 * {​c​o​u​n​t​}​ ​s​o​u​r​c​e​ ​m​e​e​t​i​n​g​s​ ​a​r​e​ ​n​o​ ​l​o​n​g​e​r​ ​a​v​a​i​l​a​b​l​e​ ​(​d​e​l​e​t​e​d​,​ ​o​r​ ​n​o​ ​l​o​n​g​e​r​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​y​o​u​)​.
-			 * @param {unknown} count
-			 */
-			missing_sources_other: RequiredParams<'count'>
+			missing_sources: RequiredParams<'count|num'>
 			/**
 			 * {​s​t​a​t​u​s​}​.​ ​T​h​e​ ​a​n​s​w​e​r​ ​a​p​p​e​a​r​s​ ​h​e​r​e​ ​w​h​e​n​ ​i​t​ ​f​i​n​i​s​h​e​s​.
 			 * @param {unknown} status
@@ -8013,10 +7679,10 @@ export type NamespaceViewerTranslation = {
 			 */
 			preparing: string
 			/**
-			 * C​o​p​i​e​d​ ​{​c​o​u​n​t​}​ ​c​h​a​r​a​c​t​e​r​s​.
-			 * @param {unknown} count
+			 * C​o​p​i​e​d​ ​{​c​o​u​n​t​|​n​u​m​}​ ​{​{​c​h​a​r​a​c​t​e​r​|​c​h​a​r​a​c​t​e​r​s​}​}​.
+			 * @param {number} count
 			 */
-			copied_characters: RequiredParams<'count'>
+			copied_characters: RequiredParams<'count|num'>
 			/**
 			 * C​l​i​p​b​o​a​r​d​ ​b​l​o​c​k​e​d​ ​h​e​r​e​ ​—​ ​u​s​e​ ​E​x​p​o​r​t​ ​t​o​ ​c​o​p​y​ ​a​g​a​i​n​ ​o​r​ ​d​o​w​n​l​o​a​d​.
 			 */
@@ -8158,13 +7824,9 @@ export type TranslationFunctions = {
 			 */
 			confirm_replace_title: () => LocalizedString
 			/**
-			 * 1 call to {target} · about {tokens} input tokens, {words} words
+			 * {count|num} {{call|calls}} to {target} · about {tokens|compact} input {{token|tokens}}, {words|num} {{word|words}}
 			 */
-			cost_one: (arg: { target: unknown, tokens: unknown, words: unknown }) => LocalizedString
-			/**
-			 * {count} calls to {target} · about {tokens} input tokens, {words} words
-			 */
-			cost_other: (arg: { count: unknown, target: unknown, tokens: unknown, words: unknown }) => LocalizedString
+			cost: (arg: { count: number, target: unknown, tokens: number, words: number }) => LocalizedString
 			/**
 			 * the summary model
 			 */
@@ -8471,13 +8133,9 @@ export type TranslationFunctions = {
 			}
 			sharing_notice: {
 				/**
-				 * 1 recording is waiting for you
+				 * {count|num} {{recording is|recordings are}} waiting for you
 				 */
-				pending_title_one: () => LocalizedString
-				/**
-				 * {count} recordings are waiting for you
-				 */
-				pending_title_other: (arg: { count: unknown }) => LocalizedString
+				pending_title: (arg: { count: number }) => LocalizedString
 				/**
 				 * Recordings waiting for you
 				 */
@@ -8499,9 +8157,9 @@ export type TranslationFunctions = {
 				 */
 				accept: () => LocalizedString
 				/**
-				 * Accept all {count}
+				 * Accept all {count|num} {{recording|recordings}}
 				 */
-				accept_all: (arg: { count: unknown }) => LocalizedString
+				accept_all: (arg: { count: number }) => LocalizedString
 				/**
 				 * Accept {title}
 				 */
@@ -8523,13 +8181,9 @@ export type TranslationFunctions = {
 				 */
 				dismiss_failed: (arg: { status: unknown }) => LocalizedString
 				/**
-				 * 1 recording could not be shared with you.
+				 * {count|num} {{recording|recordings}} could not be shared with you.
 				 */
-				refused_title_one: () => LocalizedString
-				/**
-				 * {count} recordings could not be shared with you.
-				 */
-				refused_title_other: (arg: { count: unknown }) => LocalizedString
+				refused_title: (arg: { count: number }) => LocalizedString
 				/**
 				 * A Nextcloud sharing setting stops it.
 				 */
@@ -8539,21 +8193,13 @@ export type TranslationFunctions = {
 				 */
 				refused_group_label: () => LocalizedString
 				/**
-				 * 1 recording you started could not be published.
+				 * {count|num} {{recording|recordings}} you started could not be published.
 				 */
-				starter_refused_title_one: () => LocalizedString
+				starter_refused_title: (arg: { count: number }) => LocalizedString
 				/**
-				 * {count} recordings you started could not be published.
+				 * Nextcloud refused to share {{it|them}} with you.
 				 */
-				starter_refused_title_other: (arg: { count: unknown }) => LocalizedString
-				/**
-				 * Nextcloud refused to share it with you.
-				 */
-				starter_refused_line_one: () => LocalizedString
-				/**
-				 * Nextcloud refused to share them with you.
-				 */
-				starter_refused_line_other: () => LocalizedString
+				starter_refused_line: (arg: { count: number | string | boolean }) => LocalizedString
 				/**
 				 * Recordings you started that could not be published
 				 */
@@ -8644,13 +8290,9 @@ export type TranslationFunctions = {
 			readiness: {
 				title: {
 					/**
-					 * One recording check needs attention
+					 * {{One recording check needs attention|?? recording checks need attention}}
 					 */
-					needs_action_one: () => LocalizedString
-					/**
-					 * {count} recording checks need attention
-					 */
-					needs_action_other: (arg: { count: unknown }) => LocalizedString
+					needs_action: (arg: { count: number | string | boolean }) => LocalizedString
 					/**
 					 * Recording checks need attention
 					 */
@@ -8860,41 +8502,25 @@ export type TranslationFunctions = {
 				}
 				unshared: {
 					/**
-					 * 1 recording was not shared with everyone.
+					 * {count|num} {{recording was|recordings were}} not shared with everyone.
 					 */
-					summary_one: () => LocalizedString
+					summary: (arg: { count: number }) => LocalizedString
 					/**
-					 * 1 recording since {since} was not shared with everyone.
+					 * {count|num} {{recording|recordings}} since {since} {{was|were}} not shared with everyone.
 					 */
-					summary_one_since: (arg: { since: unknown }) => LocalizedString
-					/**
-					 * {count} recordings were not shared with everyone.
-					 */
-					summary_other: (arg: { count: unknown }) => LocalizedString
-					/**
-					 * {count} recordings since {since} were not shared with everyone.
-					 */
-					summary_other_since: (arg: { count: unknown, since: unknown }) => LocalizedString
+					summary_since: (arg: { count: number, since: unknown }) => LocalizedString
 					/**
 					 * Missing: {who}.
 					 */
 					missing: (arg: { who: unknown }) => LocalizedString
 					/**
-					 * 1 person
+					 * {count|num} {{person|people}}
 					 */
-					people_one: () => LocalizedString
+					people: (arg: { count: number }) => LocalizedString
 					/**
-					 * {count} people
+					 * {count|num} {{group|groups}}
 					 */
-					people_other: (arg: { count: unknown }) => LocalizedString
-					/**
-					 * 1 group
-					 */
-					groups_one: () => LocalizedString
-					/**
-					 * {count} groups
-					 */
-					groups_other: (arg: { count: unknown }) => LocalizedString
+					groups: (arg: { count: number }) => LocalizedString
 					/**
 					 * {people} and {groups}
 					 */
@@ -8902,21 +8528,13 @@ export type TranslationFunctions = {
 				}
 				share_limited: {
 					/**
-					 * Nextcloud's share limit held back recipients of 1 recording. Re-share each from its run, or raise the limit.
+					 * Nextcloud's share limit held back recipients of {count|num} {{recording|recordings}}. Re-share each from its run, or raise the limit.
 					 */
-					summary_one: () => LocalizedString
+					summary: (arg: { count: number }) => LocalizedString
 					/**
-					 * Nextcloud's share limit held back recipients of 1 recording since {since}. Re-share each from its run, or raise the limit.
+					 * Nextcloud's share limit held back recipients of {count|num} {{recording|recordings}} since {since}. Re-share each from its run, or raise the limit.
 					 */
-					summary_one_since: (arg: { since: unknown }) => LocalizedString
-					/**
-					 * Nextcloud's share limit held back recipients of {count} recordings. Re-share each from its run, or raise the limit.
-					 */
-					summary_other: (arg: { count: unknown }) => LocalizedString
-					/**
-					 * Nextcloud's share limit held back recipients of {count} recordings since {since}. Re-share each from its run, or raise the limit.
-					 */
-					summary_other_since: (arg: { count: unknown, since: unknown }) => LocalizedString
+					summary_since: (arg: { count: number, since: unknown }) => LocalizedString
 				}
 			}
 			feature_notice: {
@@ -9041,13 +8659,9 @@ export type TranslationFunctions = {
 					team: () => LocalizedString
 				}
 				/**
-				 * 1 recipient
+				 * {count|num} {{recipient|recipients}}
 				 */
-				recipients_one: () => LocalizedString
-				/**
-				 * {count} recipients
-				 */
-				recipients_other: (arg: { count: unknown }) => LocalizedString
+				recipients: (arg: { count: number }) => LocalizedString
 				refused: {
 					/**
 					 * {id} ({kind})
@@ -9058,9 +8672,9 @@ export type TranslationFunctions = {
 					 */
 					entry_with_reason: (arg: { reason: unknown, who: unknown }) => LocalizedString
 					/**
-					 * {names} and {count} more
+					 * {names} and {count|num} {{other|others}}
 					 */
-					list_more: (arg: { count: unknown, names: unknown }) => LocalizedString
+					list_more: (arg: { count: number, names: unknown }) => LocalizedString
 				}
 				reshare: {
 					/**
@@ -9106,9 +8720,9 @@ export type TranslationFunctions = {
 					 */
 					held_back: (arg: { recipients: unknown }) => LocalizedString
 					/**
-					 * Published, but not shared with {count} of {audience} recipients
+					 * Published, but not shared with {count|num} of {audience|num} {{recipient|recipients}}
 					 */
-					partial_of: (arg: { audience: unknown, count: unknown }) => LocalizedString
+					partial_of: (arg: { audience: number, count: number }) => LocalizedString
 					/**
 					 * Published. Not shared: {recipients}
 					 */
@@ -9122,9 +8736,9 @@ export type TranslationFunctions = {
 					 */
 					partial_hint: () => LocalizedString
 					/**
-					 * Nextcloud's share limit also held back {count}.
+					 * Nextcloud's share limit also held back {count|num} {{recipient|recipients}}.
 					 */
-					also_held_back: (arg: { count: unknown }) => LocalizedString
+					also_held_back: (arg: { count: number }) => LocalizedString
 					/**
 					 * Re-share with the room
 					 */
@@ -9390,37 +9004,21 @@ export type TranslationFunctions = {
 					 */
 					forever: () => LocalizedString
 					/**
-					 * 1 day
+					 * {count|num} {{day|days}}
 					 */
-					days_one: () => LocalizedString
-					/**
-					 * {count} days
-					 */
-					days_other: (arg: { count: unknown }) => LocalizedString
+					days: (arg: { count: number }) => LocalizedString
 				}
 			}
 			recorded_at_migration: {
-				/**
-				 * 1 recording
-				 */
-				recordings_one: () => LocalizedString
-				/**
-				 * {count} recordings
-				 */
-				recordings_other: (arg: { count: unknown }) => LocalizedString
 				/**
 				 * Couldn’t refresh: {message}
 				 */
 				refresh_failed: (arg: { message: unknown }) => LocalizedString
 				button: {
 					/**
-					 * Write the recording time into 1 recording
+					 * Write the recording time into {count|num} {{recording|recordings}}
 					 */
-					write_one: () => LocalizedString
-					/**
-					 * Write the recording time into {count} recordings
-					 */
-					write_other: (arg: { count: unknown }) => LocalizedString
+					write: (arg: { count: number }) => LocalizedString
 					/**
 					 * Pause
 					 */
@@ -9430,23 +9028,15 @@ export type TranslationFunctions = {
 					 */
 					resume: () => LocalizedString
 					/**
-					 * Retry the blocked recording
+					 * Retry {count|num} blocked {{recording|recordings}}
 					 */
-					retry_one: () => LocalizedString
-					/**
-					 * Retry {count} blocked recordings
-					 */
-					retry_other: (arg: { count: unknown }) => LocalizedString
+					retry: (arg: { count: number }) => LocalizedString
 				}
 				summary: {
 					/**
-					 * 1 recording was published before Cassini wrote the recording time into the file itself. Browse already shows the right time; writing it into the file makes it travel with downloads, the Nextcloud apps and the cassini command line.
+					 * {count|num} {{recording was|recordings were}} published before Cassini wrote the recording time into the file itself. Browse already shows the right time; writing it into the {{file|files}} makes it travel with downloads, the Nextcloud apps and the cassini command line.
 					 */
-					needed_one: () => LocalizedString
-					/**
-					 * {count} recordings were published before Cassini wrote the recording time into the file itself. Browse already shows the right time; writing it into the files makes it travel with downloads, the Nextcloud apps and the cassini command line.
-					 */
-					needed_other: (arg: { count: unknown }) => LocalizedString
+					needed: (arg: { count: number }) => LocalizedString
 					/**
 					 * Cassini is still counting, so this number may grow; you can start once it has finished.
 					 */
@@ -9456,69 +9046,37 @@ export type TranslationFunctions = {
 					 */
 					checking: () => LocalizedString
 					/**
-					 * Writing the recording time into 1 recording.
+					 * Writing the recording time into {count|num} {{recording|recordings}}.
 					 */
-					running_one: () => LocalizedString
+					running: (arg: { count: number }) => LocalizedString
 					/**
-					 * Writing the recording time into 1 recording; {done} done.
+					 * Writing the recording time into {count|num} {{recording|recordings}}; {done|num} done.
 					 */
-					running_one_done: (arg: { done: unknown }) => LocalizedString
+					running_done: (arg: { count: number, done: number }) => LocalizedString
 					/**
-					 * Writing the recording time into {count} recordings.
+					 * Cassini works on {{one|up to ??}} at a time, {seconds|num} {{second|seconds}} apart, so it stays out of Nextcloud's way.
 					 */
-					running_other: (arg: { count: unknown }) => LocalizedString
+					pace: (arg: { seconds: number, workers: number | string | boolean }) => LocalizedString
 					/**
-					 * Writing the recording time into {count} recordings; {done} done.
+					 * Pausing. {{The recording already being written is|The ?? recordings already being written are}} finished first, or left as {{it was|they were}} if {{its|their}} upload had not gone through, so no file is left half-written; {waiting|num} {{recording then waits|recordings then wait}}.
 					 */
-					running_other_done: (arg: { count: unknown, done: unknown }) => LocalizedString
+					pausing: (arg: { count: number | string | boolean, waiting: number }) => LocalizedString
 					/**
-					 * Cassini works on one at a time, {seconds} seconds apart, so it stays out of Nextcloud's way.
+					 * Paused with {remaining|num} {{recording|recordings}} left. Nothing is being written until you resume.
 					 */
-					pace_one: (arg: { seconds: unknown }) => LocalizedString
+					paused: (arg: { remaining: number }) => LocalizedString
 					/**
-					 * Cassini works on up to {workers} at a time, {seconds} seconds apart, so it stays out of Nextcloud's way.
+					 * Paused with {remaining|num} {{recording|recordings}} left and {done|num} done. Nothing is being written until you resume.
 					 */
-					pace_many: (arg: { seconds: unknown, workers: unknown }) => LocalizedString
+					paused_done: (arg: { done: number, remaining: number }) => LocalizedString
 					/**
-					 * Pausing. The recording already being written is finished first, or left as it was if its upload had not gone through, so no file is left half-written; {waiting} then wait.
+					 * {count|num} {{recording|recordings}} could not be written and {{needs|need}} you. Fix what each one says, then retry.
 					 */
-					pausing_one: (arg: { waiting: unknown }) => LocalizedString
+					blocked: (arg: { count: number }) => LocalizedString
 					/**
-					 * Pausing. The {count} recordings already being written are finished first, or left as they were if their upload had not gone through, so no file is left half-written; {waiting} then wait.
+					 * {count|num} {{recording|recordings}} could not be written and {{needs|need}} you; {done|num} {{is|are}} done. Fix what each one says, then retry.
 					 */
-					pausing_other: (arg: { count: unknown, waiting: unknown }) => LocalizedString
-					/**
-					 * Paused with {remaining} left. Nothing is being written until you resume.
-					 */
-					paused: (arg: { remaining: unknown }) => LocalizedString
-					/**
-					 * Paused with {remaining} left and {done} done. Nothing is being written until you resume.
-					 */
-					paused_done: (arg: { done: unknown, remaining: unknown }) => LocalizedString
-					/**
-					 * 1 recording could not be written and needs you. Fix what each one says, then retry.
-					 */
-					blocked_one: () => LocalizedString
-					/**
-					 * 1 recording could not be written and needs you; 1 is done. Fix what each one says, then retry.
-					 */
-					blocked_one_done_one: () => LocalizedString
-					/**
-					 * 1 recording could not be written and needs you; {done} are done. Fix what each one says, then retry.
-					 */
-					blocked_one_done_other: (arg: { done: unknown }) => LocalizedString
-					/**
-					 * {count} recordings could not be written and need you. Fix what each one says, then retry.
-					 */
-					blocked_other: (arg: { count: unknown }) => LocalizedString
-					/**
-					 * {count} recordings could not be written and need you; 1 is done. Fix what each one says, then retry.
-					 */
-					blocked_other_done_one: (arg: { count: unknown }) => LocalizedString
-					/**
-					 * {count} recordings could not be written and need you; {done} are done. Fix what each one says, then retry.
-					 */
-					blocked_other_done_other: (arg: { count: unknown, done: unknown }) => LocalizedString
+					blocked_done: (arg: { count: number, done: number }) => LocalizedString
 					/**
 					 * Every past recording carries its recording time in the file itself ({done} written).
 					 */
@@ -9608,9 +9166,9 @@ export type TranslationFunctions = {
 					 */
 					blocked_list_label: () => LocalizedString
 					/**
-					 * and {count} more
+					 * and {count|num} more {{recording|recordings}}
 					 */
-					blocked_more: (arg: { count: unknown }) => LocalizedString
+					blocked_more: (arg: { count: number }) => LocalizedString
 					/**
 					 * What this does in Nextcloud
 					 */
@@ -9804,9 +9362,9 @@ export type TranslationFunctions = {
 					 */
 					range_all: () => LocalizedString
 					/**
-					 * Last {count} days
+					 * Last {count|num} {{day|days}}
 					 */
-					range_last_days: (arg: { count: unknown }) => LocalizedString
+					range_last_days: (arg: { count: number }) => LocalizedString
 					/**
 					 * Last year
 					 */
@@ -9832,13 +9390,9 @@ export type TranslationFunctions = {
 					 */
 					through_label: (arg: { category: unknown }) => LocalizedString
 					/**
-					 * {size} in 1 file without a known date. Included in the total, not in the chart.
+					 * {size} in {count|num} {{file|files}} without a known date. Included in the total, not in the chart.
 					 */
-					undated_one: (arg: { size: unknown }) => LocalizedString
-					/**
-					 * {size} in {count} files without a known date. Included in the total, not in the chart.
-					 */
-					undated_other: (arg: { count: unknown, size: unknown }) => LocalizedString
+					undated: (arg: { count: number, size: unknown }) => LocalizedString
 					/**
 					 * No retained files in this category.
 					 */
@@ -9856,9 +9410,9 @@ export type TranslationFunctions = {
 					 */
 					precision_daily: () => LocalizedString
 					/**
-					 * {count} days per bar
+					 * {count|num} {{day|days}} per bar
 					 */
-					precision_days: (arg: { count: unknown }) => LocalizedString
+					precision_days: (arg: { count: number }) => LocalizedString
 					/**
 					 * UTC lifecycle dates
 					 */
@@ -9888,9 +9442,9 @@ export type TranslationFunctions = {
 					 */
 					scroll_later_label: (arg: { category: unknown }) => LocalizedString
 					/**
-					 * Scroll left or right to explore all {count} bars.
+					 * Scroll left or right to explore all {count|num} {{bar|bars}}.
 					 */
-					scroll_hint: (arg: { count: unknown }) => LocalizedString
+					scroll_hint: (arg: { count: number }) => LocalizedString
 					/**
 					 * {category} usage by date
 					 */
@@ -9900,17 +9454,13 @@ export type TranslationFunctions = {
 					 */
 					cutoff_marker: () => LocalizedString
 					/**
-					 * Files dated on or before {date} are removed at the next cleanup ({days}-day policy).
+					 * Files dated on or before {date} are removed at the next cleanup (kept for {days|num} {{day|days}}).
 					 */
-					cutoff_note: (arg: { date: unknown, days: unknown }) => LocalizedString
+					cutoff_note: (arg: { date: unknown, days: number }) => LocalizedString
 					/**
-					 * 1 file
+					 * {count|num} {{file|files}}
 					 */
-					files_one: () => LocalizedString
-					/**
-					 * {count} files
-					 */
-					files_other: (arg: { count: unknown }) => LocalizedString
+					files: (arg: { count: number }) => LocalizedString
 					/**
 					 * {range}: {size}, {files}
 					 */
@@ -10369,13 +9919,9 @@ export type TranslationFunctions = {
 				 */
 				attempt_badge: (arg: { number: unknown }) => LocalizedString
 				/**
-				 * Next retry {time} · {count} deferral
+				 * Next retry {time} · {count|num} {{deferral|deferrals}}
 				 */
-				next_retry_deferrals_one: (arg: { count: unknown, time: unknown }) => LocalizedString
-				/**
-				 * Next retry {time} · {count} deferrals
-				 */
-				next_retry_deferrals_other: (arg: { count: unknown, time: unknown }) => LocalizedString
+				next_retry_deferrals: (arg: { count: number, time: unknown }) => LocalizedString
 				/**
 				 * Transcription-only publication; source media is deleted after processing.
 				 */
@@ -10401,13 +9947,9 @@ export type TranslationFunctions = {
 				 */
 				not_shared_badge: () => LocalizedString
 				/**
-				 * Not shared with 1 recipient: Nextcloud refused them or its share limit held them back. Open the run to see who.
+				 * Not shared with {count|num} {{recipient|recipients}}: Nextcloud refused them or its share limit held them back. Open the run to see who.
 				 */
-				not_shared_title_one: () => LocalizedString
-				/**
-				 * Not shared with {count} recipients: Nextcloud refused them or its share limit held them back. Open the run to see who.
-				 */
-				not_shared_title_other: (arg: { count: unknown }) => LocalizedString
+				not_shared_title: (arg: { count: number }) => LocalizedString
 				/**
 				 * Call {token}
 				 */
@@ -11339,25 +10881,17 @@ export type TranslationFunctions = {
 				 */
 				kept_forever: (arg: { media: unknown }) => LocalizedString
 				/**
-				 * {media}, for 1 day.
+				 * {media}, for {count|num} {{day|days}}.
 				 */
-				kept_days_one: (arg: { media: unknown }) => LocalizedString
-				/**
-				 * {media}, for {count} days.
-				 */
-				kept_days_other: (arg: { count: unknown, media: unknown }) => LocalizedString
+				kept_days: (arg: { count: number, media: unknown }) => LocalizedString
 				/**
 				 * Kept forever: change this in {storage}.
 				 */
 				source_forever: (arg: { storage: unknown }) => LocalizedString
 				/**
-				 * The 1 day comes from {storage}.
+				 * The {count|num} {{day comes|days come}} from {storage}.
 				 */
-				source_days_one: (arg: { storage: unknown }) => LocalizedString
-				/**
-				 * The {count} days come from {storage}.
-				 */
-				source_days_other: (arg: { count: unknown, storage: unknown }) => LocalizedString
+				source_days: (arg: { count: number, storage: unknown }) => LocalizedString
 				/**
 				 * How long kept media stays is set in {storage}.
 				 */
@@ -11504,17 +11038,17 @@ export type TranslationFunctions = {
 				 */
 				keep_forever: () => LocalizedString
 				/**
-				 * {count} days
+				 * {count|num} {{day|days}}
 				 */
-				preset_days_other: (arg: { count: unknown }) => LocalizedString
+				preset_days: (arg: { count: number }) => LocalizedString
 				/**
 				 * Custom
 				 */
 				custom: () => LocalizedString
 				/**
-				 * Keep for {days} days
+				 * Keep for {days} {{day|days}}
 				 */
-				keep_for: (arg: { days: unknown }) => LocalizedString
+				keep_for: (arg: { count: number | string | boolean, days: unknown }) => LocalizedString
 				/**
 				 * Days to keep: {label}
 				 */
@@ -11794,9 +11328,9 @@ export type TranslationFunctions = {
 				 */
 				no_match: (arg: { text: unknown }) => LocalizedString
 				/**
-				 * {shown} of {count} models
+				 * {shown|num} of {count|num} {{model|models}}
 				 */
-				match_count_other: (arg: { count: unknown, shown: unknown }) => LocalizedString
+				match_count: (arg: { count: number, shown: number }) => LocalizedString
 			}
 			published_format: {
 				/**
@@ -12010,13 +11544,9 @@ export type TranslationFunctions = {
 				 */
 				no_default_model: () => LocalizedString
 				/**
-				 * 1 model
+				 * {count|num} {{model|models}}
 				 */
-				model_count_one: () => LocalizedString
-				/**
-				 * {count} models
-				 */
-				model_count_other: (arg: { count: unknown }) => LocalizedString
+				model_count: (arg: { count: number }) => LocalizedString
 				/**
 				 * Loading models…
 				 */
@@ -12170,13 +11700,9 @@ export type TranslationFunctions = {
 				 */
 				where_it_goes: () => LocalizedString
 				/**
-				 * 1 selected recording has no transcript text. Remove it from the selection to generate an insight. Its audio is still available.
+				 * {count|num} selected {{recording has|recordings have}} no transcript text. Remove {{it|them}} from the selection to generate an insight. {{Its|Their}} audio is still available.
 				 */
-				textless_one: () => LocalizedString
-				/**
-				 * {count} selected recordings have no transcript text. Remove them from the selection to generate an insight. Their audio is still available.
-				 */
-				textless_other: (arg: { count: unknown }) => LocalizedString
+				textless: (arg: { count: number }) => LocalizedString
 			}
 			templates_panel: {
 				/**
@@ -12602,11 +12128,11 @@ export type TranslationFunctions = {
 				/**
 				 * “{title}” could not be deleted.
 				 */
-				delete_failed_one: (arg: { title: unknown }) => LocalizedString
+				delete_failed_named: (arg: { title: unknown }) => LocalizedString
 				/**
-				 * {count} meetings could not be deleted.
+				 * {count|num} {{meeting|meetings}} could not be deleted.
 				 */
-				delete_failed_other: (arg: { count: unknown }) => LocalizedString
+				delete_failed: (arg: { count: number }) => LocalizedString
 				/**
 				 * Another rename is still saving. Try again in a moment.
 				 */
@@ -12646,23 +12172,19 @@ export type TranslationFunctions = {
 				/**
 				 * Delete “{title}”?
 				 */
-				delete_confirm_title_one: (arg: { title: unknown }) => LocalizedString
+				delete_confirm_title_named: (arg: { title: unknown }) => LocalizedString
 				/**
-				 * Delete {count} meetings?
+				 * Delete {count|num} {{meeting|meetings}}?
 				 */
-				delete_confirm_title_other: (arg: { count: unknown }) => LocalizedString
+				delete_confirm_title: (arg: { count: number }) => LocalizedString
 				/**
 				 * Deleting removes the recording, transcript and tags for everyone who can see it. This cannot be undone.
 				 */
 				delete_confirm_body: () => LocalizedString
 				/**
-				 * Delete meeting
+				 * Delete {count|num} {{meeting|meetings}}
 				 */
-				delete_confirm_button_one: () => LocalizedString
-				/**
-				 * Delete {count} meetings
-				 */
-				delete_confirm_button_other: (arg: { count: unknown }) => LocalizedString
+				delete_confirm_button: (arg: { count: number }) => LocalizedString
 			}
 			meeting_list: {
 				/**
@@ -12758,13 +12280,9 @@ export type TranslationFunctions = {
 				 */
 				all_rooms_short: () => LocalizedString
 				/**
-				 * {room} · 1 tag
+				 * {room} · {count|num} {{tag|tags}}
 				 */
-				room_button_tags_one: (arg: { room: unknown }) => LocalizedString
-				/**
-				 * {room} · {count} tags
-				 */
-				room_button_tags_other: (arg: { count: unknown, room: unknown }) => LocalizedString
+				room_button_tags: (arg: { count: number, room: unknown }) => LocalizedString
 				/**
 				 * Searching…
 				 */
@@ -12782,29 +12300,21 @@ export type TranslationFunctions = {
 				 */
 				finding_meetings: () => LocalizedString
 				/**
-				 * {shown} of {total} meetings
+				 * {shown|num} of {total|num} {{meeting|meetings}}
 				 */
-				meetings_shown: (arg: { shown: unknown, total: unknown }) => LocalizedString
+				meetings_shown: (arg: { shown: number, total: number }) => LocalizedString
 				/**
-				 * 1 meeting
+				 * {count|num} {{meeting|meetings}}
 				 */
-				meetings_count_one: () => LocalizedString
+				meetings_count: (arg: { count: number }) => LocalizedString
 				/**
-				 * {count} meetings
+				 * {shown|num} of {total|num} {{insight|insights}}
 				 */
-				meetings_count_other: (arg: { count: unknown }) => LocalizedString
+				insights_shown: (arg: { shown: number, total: number }) => LocalizedString
 				/**
-				 * {shown} of {total} insights
+				 * {count|num} {{insight|insights}}
 				 */
-				insights_shown: (arg: { shown: unknown, total: unknown }) => LocalizedString
-				/**
-				 * 1 insight
-				 */
-				insights_count_one: () => LocalizedString
-				/**
-				 * {count} insights
-				 */
-				insights_count_other: (arg: { count: unknown }) => LocalizedString
+				insights_count: (arg: { count: number }) => LocalizedString
 				/**
 				 * Insights could not be listed.
 				 */
@@ -12814,13 +12324,9 @@ export type TranslationFunctions = {
 				 */
 				show_every_room: () => LocalizedString
 				/**
-				 * 1 tag
+				 * {count|num} {{tag|tags}}
 				 */
-				tag_filter_count_one: () => LocalizedString
-				/**
-				 * {count} tags
-				 */
-				tag_filter_count_other: (arg: { count: unknown }) => LocalizedString
+				tag_filter_count: (arg: { count: number }) => LocalizedString
 				/**
 				 * Clear tag filters
 				 */
@@ -13016,13 +12522,9 @@ export type TranslationFunctions = {
 				 */
 				audio_included: () => LocalizedString
 				/**
-				 * 1 speaker
+				 * {count|num} {{speaker|speakers}}
 				 */
-				speakers_one: () => LocalizedString
-				/**
-				 * {count} speakers
-				 */
-				speakers_other: (arg: { count: unknown }) => LocalizedString
+				speakers: (arg: { count: number }) => LocalizedString
 				/**
 				 * Tag {title}
 				 */
@@ -13048,9 +12550,9 @@ export type TranslationFunctions = {
 				 */
 				matched_alias: () => LocalizedString
 				/**
-				 * Show more ({count} remaining)
+				 * Show more ({count|num} {{item|items}} left)
 				 */
-				show_more: (arg: { count: unknown }) => LocalizedString
+				show_more: (arg: { count: number }) => LocalizedString
 				/**
 				 * Load note
 				 */
@@ -13164,21 +12666,17 @@ export type TranslationFunctions = {
 				 */
 				show_selected: () => LocalizedString
 				/**
-				 * 1 meeting selected
+				 * {count|num} {{meeting|meetings}} selected
 				 */
-				selected_one: () => LocalizedString
-				/**
-				 * {count} meetings selected
-				 */
-				selected_other: (arg: { count: unknown }) => LocalizedString
+				selected: (arg: { count: number }) => LocalizedString
 				/**
 				 * Clear selection
 				 */
 				clear_selection: () => LocalizedString
 				/**
-				 * {count} not shown here.
+				 * {count|num} {{meeting|meetings}} not shown here.
 				 */
-				not_shown_count: (arg: { count: unknown }) => LocalizedString
+				not_shown_count: (arg: { count: number }) => LocalizedString
 				/**
 				 * Tag, download or get insights from them.
 				 */
@@ -13204,21 +12702,13 @@ export type TranslationFunctions = {
 				 */
 				unpick: (arg: { title: unknown }) => LocalizedString
 				/**
-				 * Tag 1 meeting
+				 * Tag {count|num} {{meeting|meetings}}
 				 */
-				tag_meetings_one: () => LocalizedString
+				tag_meetings: (arg: { count: number }) => LocalizedString
 				/**
-				 * Tag {count} meetings
+				 * {count|num} selected {{meeting is|meetings are}} no longer in the archive and {{was|were}} removed.
 				 */
-				tag_meetings_other: (arg: { count: unknown }) => LocalizedString
-				/**
-				 * 1 selected meeting is no longer in the archive and was removed.
-				 */
-				dropped_one: () => LocalizedString
-				/**
-				 * {count} selected meetings are no longer in the archive and were removed.
-				 */
-				dropped_other: (arg: { count: unknown }) => LocalizedString
+				dropped: (arg: { count: number }) => LocalizedString
 				/**
 				 * Dismiss the removal notice
 				 */
@@ -13230,29 +12720,21 @@ export type TranslationFunctions = {
 				 */
 				length_not_recorded: () => LocalizedString
 				/**
-				 * {count} words
+				 * {count|num} {{word|words}}
 				 */
-				words: (arg: { count: unknown }) => LocalizedString
+				words: (arg: { count: number }) => LocalizedString
 				/**
-				 * At least {count} words
+				 * At least {count|num} {{word|words}}
 				 */
-				at_least_words: (arg: { count: unknown }) => LocalizedString
+				at_least_words: (arg: { count: number }) => LocalizedString
 				/**
-				 * You can work with up to {max} meetings at once. Unpick one.
+				 * You can work with up to {max|num} {{meeting|meetings}} at once. Unpick {count|num}.
 				 */
-				over_cap_one: (arg: { max: unknown }) => LocalizedString
+				over_cap: (arg: { count: number, max: number }) => LocalizedString
 				/**
-				 * You can work with up to {max} meetings at once. Unpick {count}.
+				 * {count|num} {{meeting predates|meetings predate}} the single-file format (marked in the list). Unpick {{it|them}} to prepare.
 				 */
-				over_cap_other: (arg: { count: unknown, max: unknown }) => LocalizedString
-				/**
-				 * One of these predates the single-file format (marked in the list). Unpick it to prepare.
-				 */
-				no_portable_audio_one: () => LocalizedString
-				/**
-				 * {count} of these predate the single-file format (marked in the list). Unpick them to prepare.
-				 */
-				no_portable_audio_other: (arg: { count: unknown }) => LocalizedString
+				no_portable_audio: (arg: { count: number }) => LocalizedString
 			}
 			room_name: {
 				/**
@@ -13296,9 +12778,9 @@ export type TranslationFunctions = {
 				 */
 				invalid_characters: () => LocalizedString
 				/**
-				 * Use a name between 1 and {max} characters.
+				 * Use a name between 1 and {max|num} {{character|characters}}.
 				 */
-				invalid_length: (arg: { max: unknown }) => LocalizedString
+				invalid_length: (arg: { max: number }) => LocalizedString
 			}
 			connect_agent: {
 				/**
@@ -13382,21 +12864,17 @@ export type TranslationFunctions = {
 				 */
 				button: () => LocalizedString
 				/**
-				 * Importing {count}
+				 * Importing {count|num} {{file|files}}
 				 */
-				button_running: (arg: { count: unknown }) => LocalizedString
+				button_running: (arg: { count: number }) => LocalizedString
 				/**
-				 * {count} imported
+				 * {count|num} {{file|files}} imported
 				 */
-				button_done: (arg: { count: unknown }) => LocalizedString
+				button_done: (arg: { count: number }) => LocalizedString
 				/**
-				 * 1 import failed
+				 * {count|num} {{import|imports}} failed
 				 */
-				button_failed_one: () => LocalizedString
-				/**
-				 * {count} imports failed
-				 */
-				button_failed_other: (arg: { count: unknown }) => LocalizedString
+				button_failed: (arg: { count: number }) => LocalizedString
 				/**
 				 * Import meetings
 				 */
@@ -13522,25 +13000,21 @@ export type TranslationFunctions = {
 				 */
 				dismiss_title: () => LocalizedString
 				/**
-				 * {count} ready
+				 * {count|num} {{file|files}} ready
 				 */
-				ready: (arg: { count: unknown }) => LocalizedString
+				ready: (arg: { count: number }) => LocalizedString
 				/**
-				 * {count} ready · {skipped} skipped
+				 * {count|num} {{file|files}} ready · {skipped|num} skipped
 				 */
-				ready_skipped: (arg: { count: unknown, skipped: unknown }) => LocalizedString
+				ready_skipped: (arg: { count: number, skipped: number }) => LocalizedString
 				/**
 				 * Importing…
 				 */
 				importing: () => LocalizedString
 				/**
-				 * Import 1 meeting
+				 * Import {count|num} {{meeting|meetings}}
 				 */
-				import_one: () => LocalizedString
-				/**
-				 * Import {count} meetings
-				 */
-				import_other: (arg: { count: unknown }) => LocalizedString
+				import_meetings: (arg: { count: number }) => LocalizedString
 				/**
 				 * Uploading…
 				 */
@@ -13578,21 +13052,13 @@ export type TranslationFunctions = {
 				 */
 				preview_transcript_only: () => LocalizedString
 				/**
-				 * 1 speaker
+				 * {count|num} {{speaker|speakers}}
 				 */
-				preview_speakers_one: () => LocalizedString
+				preview_speakers: (arg: { count: number }) => LocalizedString
 				/**
-				 * {count} speakers
+				 * {count|num} {{tag|tags}}
 				 */
-				preview_speakers_other: (arg: { count: unknown }) => LocalizedString
-				/**
-				 * 1 tag
-				 */
-				preview_tags_one: () => LocalizedString
-				/**
-				 * {count} tags
-				 */
-				preview_tags_other: (arg: { count: unknown }) => LocalizedString
+				preview_tags: (arg: { count: number }) => LocalizedString
 				/**
 				 * summary
 				 */
@@ -13610,9 +13076,9 @@ export type TranslationFunctions = {
 				 */
 				sharing_only_you_title: () => LocalizedString
 				/**
-				 * Shared with {count}
+				 * Shared with {count|num} {{recipient|recipients}}
 				 */
-				sharing_shared_with: (arg: { count: unknown }) => LocalizedString
+				sharing_shared_with: (arg: { count: number }) => LocalizedString
 				/**
 				 * you
 				 */
@@ -13680,13 +13146,9 @@ export type TranslationFunctions = {
 				 */
 				list_label: () => LocalizedString
 				/**
-				 * 1 meeting
+				 * {count|num} {{meeting|meetings}}
 				 */
-				meetings_one: () => LocalizedString
-				/**
-				 * {count} meetings
-				 */
-				meetings_other: (arg: { count: unknown }) => LocalizedString
+				meetings: (arg: { count: number }) => LocalizedString
 				/**
 				 * Create {name}
 				 */
@@ -13752,13 +13214,9 @@ export type TranslationFunctions = {
 				 */
 				manager_title: () => LocalizedString
 				/**
-				 * 1 tag
+				 * {count|num} {{tag|tags}}
 				 */
-				manager_count_one: () => LocalizedString
-				/**
-				 * {count} tags
-				 */
-				manager_count_other: (arg: { count: unknown }) => LocalizedString
+				manager_count: (arg: { count: number }) => LocalizedString
 				/**
 				 * Close Manage tags
 				 */
@@ -13820,33 +13278,21 @@ export type TranslationFunctions = {
 				 */
 				counts_unused: () => LocalizedString
 				/**
-				 * Used in 1 meeting
+				 * Used in {count|num} {{meeting|meetings}}
 				 */
-				counts_in_one: () => LocalizedString
+				counts_in: (arg: { count: number }) => LocalizedString
 				/**
-				 * Used in {count} meetings
+				 * Used {times|num} {{time|times}} in {count|num} {{meeting|meetings}}
 				 */
-				counts_in_other: (arg: { count: unknown }) => LocalizedString
-				/**
-				 * Used {times} times in 1 meeting
-				 */
-				counts_times_one: (arg: { times: unknown }) => LocalizedString
-				/**
-				 * Used {times} times in {count} meetings
-				 */
-				counts_times_other: (arg: { count: unknown, times: unknown }) => LocalizedString
+				counts_times: (arg: { count: number, times: number }) => LocalizedString
 				/**
 				 * None of your meetings use it.
 				 */
 				confirm_none: () => LocalizedString
 				/**
-				 * Updates one of your meetings. Meetings that are in rooms you can't access will keep the old tag.
+				 * Updates {count|num} {{meeting|meetings}} of yours. Meetings that are in rooms you can't access will keep the old tag.
 				 */
-				confirm_one: () => LocalizedString
-				/**
-				 * Updates {count} of your meetings. Meetings that are in rooms you can't access will keep the old tag.
-				 */
-				confirm_other: (arg: { count: unknown }) => LocalizedString
+				confirm: (arg: { count: number }) => LocalizedString
 				/**
 				 * Changed by {name}
 				 */
@@ -13864,9 +13310,9 @@ export type TranslationFunctions = {
 				 */
 				job_stopped: () => LocalizedString
 				/**
-				 * {count} couldn't be updated
+				 * {count|num} {{meeting|meetings}} couldn't be updated
 				 */
-				job_failed: (arg: { count: unknown }) => LocalizedString
+				job_failed: (arg: { count: number }) => LocalizedString
 				/**
 				 * You already have a change running.
 				 */
@@ -14002,65 +13448,41 @@ export type TranslationFunctions = {
 			}
 			list_tags: {
 				/**
-				 * Saving 1 tag update…
+				 * Saving {count|num} tag {{update|updates}}…
 				 */
-				saving_one: () => LocalizedString
-				/**
-				 * Saving {count} tag updates…
-				 */
-				saving_other: (arg: { count: unknown }) => LocalizedString
+				saving: (arg: { count: number }) => LocalizedString
 				/**
 				 * Could not confirm the tag update for “{title}”: {reason}
 				 */
 				confirm_failed_meeting: (arg: { reason: unknown, title: unknown }) => LocalizedString
 				/**
-				 * Could not confirm the tag update for 1 meeting: {reason}
+				 * Could not confirm the tag update for {count|num} {{meeting|meetings}}: {reason}
 				 */
-				confirm_failed_meetings_one: (arg: { reason: unknown }) => LocalizedString
-				/**
-				 * Could not confirm the tag update for {count} meetings: {reason}
-				 */
-				confirm_failed_meetings_other: (arg: { count: unknown, reason: unknown }) => LocalizedString
+				confirm_failed_meetings: (arg: { count: number, reason: unknown }) => LocalizedString
 				/**
 				 * Could not tag “{title}”: {reason}
 				 */
 				tag_failed_meeting: (arg: { reason: unknown, title: unknown }) => LocalizedString
 				/**
-				 * Could not tag 1 meeting: {reason}
+				 * Could not tag {count|num} {{meeting|meetings}}: {reason}
 				 */
-				tag_failed_meetings_one: (arg: { reason: unknown }) => LocalizedString
-				/**
-				 * Could not tag {count} meetings: {reason}
-				 */
-				tag_failed_meetings_other: (arg: { count: unknown, reason: unknown }) => LocalizedString
+				tag_failed_meetings: (arg: { count: number, reason: unknown }) => LocalizedString
 				/**
 				 * Could not untag “{title}”: {reason}
 				 */
 				untag_failed_meeting: (arg: { reason: unknown, title: unknown }) => LocalizedString
 				/**
-				 * Could not untag 1 meeting: {reason}
+				 * Could not untag {count|num} {{meeting|meetings}}: {reason}
 				 */
-				untag_failed_meetings_one: (arg: { reason: unknown }) => LocalizedString
+				untag_failed_meetings: (arg: { count: number, reason: unknown }) => LocalizedString
 				/**
-				 * Could not untag {count} meetings: {reason}
+				 * Tagged {count|num} {{meeting|meetings}}
 				 */
-				untag_failed_meetings_other: (arg: { count: unknown, reason: unknown }) => LocalizedString
+				tagged: (arg: { count: number }) => LocalizedString
 				/**
-				 * Tagged 1 meeting
+				 * Untagged {count|num} {{meeting|meetings}}
 				 */
-				tagged_one: () => LocalizedString
-				/**
-				 * Tagged {count} meetings
-				 */
-				tagged_other: (arg: { count: unknown }) => LocalizedString
-				/**
-				 * Untagged 1 meeting
-				 */
-				untagged_one: () => LocalizedString
-				/**
-				 * Untagged {count} meetings
-				 */
-				untagged_other: (arg: { count: unknown }) => LocalizedString
+				untagged: (arg: { count: number }) => LocalizedString
 				/**
 				 * Tagged {done} of {total} — {failed} failed
 				 */
@@ -14070,9 +13492,9 @@ export type TranslationFunctions = {
 				 */
 				untagged_partial: (arg: { done: unknown, failed: unknown, total: unknown }) => LocalizedString
 				/**
-				 * Tag at most {max} meetings at once.
+				 * Tag at most {max|num} {{meeting|meetings}} at once.
 				 */
-				too_many: (arg: { max: unknown }) => LocalizedString
+				too_many: (arg: { max: number }) => LocalizedString
 			}
 			catalog: {
 				/**
@@ -14248,13 +13670,9 @@ export type TranslationFunctions = {
 				 */
 				insights_heading: () => LocalizedString
 				/**
-				 * Context from {count} meeting
+				 * Context from {count|num} {{meeting|meetings}}
 				 */
-				insight_context_one: (arg: { count: unknown }) => LocalizedString
-				/**
-				 * Context from {count} meetings
-				 */
-				insight_context_other: (arg: { count: unknown }) => LocalizedString
+				insight_context: (arg: { count: number }) => LocalizedString
 				/**
 				 * Meeting content
 				 */
@@ -14466,21 +13884,13 @@ export type TranslationFunctions = {
 				 */
 				id: () => LocalizedString
 				/**
-				 * {count} word
+				 * {count|num} {{word|words}}
 				 */
-				words_one: (arg: { count: unknown }) => LocalizedString
+				words: (arg: { count: number }) => LocalizedString
 				/**
-				 * {count} words
+				 * {count|num} {{passage|passages}}
 				 */
-				words_other: (arg: { count: unknown }) => LocalizedString
-				/**
-				 * {count} passage
-				 */
-				passages_one: (arg: { count: unknown }) => LocalizedString
-				/**
-				 * {count} passages
-				 */
-				passages_other: (arg: { count: unknown }) => LocalizedString
+				passages: (arg: { count: number }) => LocalizedString
 				/**
 				 * Copy meeting ID
 				 */
@@ -14498,9 +13908,9 @@ export type TranslationFunctions = {
 				 */
 				audio_stereo: () => LocalizedString
 				/**
-				 * {count} channels
+				 * {count|num} {{channel|channels}}
 				 */
-				audio_channels: (arg: { count: unknown }) => LocalizedString
+				audio_channels: (arg: { count: number }) => LocalizedString
 			}
 			timing: {
 				/**
@@ -14574,25 +13984,13 @@ export type TranslationFunctions = {
 			}
 			people: {
 				/**
-				 * {count} participant
+				 * {count|num} {{participant|participants}}
 				 */
-				count_one: (arg: { count: unknown }) => LocalizedString
+				count: (arg: { count: number }) => LocalizedString
 				/**
-				 * {count} participants
+				 * {voices|num} {{voice|voices}} on {devices|num} {{device|devices}}
 				 */
-				count_other: (arg: { count: unknown }) => LocalizedString
-				/**
-				 * 1 voice on 1 device
-				 */
-				split_one: () => LocalizedString
-				/**
-				 * {voices} voices on 1 device
-				 */
-				split_one_device: (arg: { voices: unknown }) => LocalizedString
-				/**
-				 * {voices} voices on {devices} devices
-				 */
-				split_other: (arg: { devices: unknown, voices: unknown }) => LocalizedString
+				split: (arg: { devices: number, voices: number }) => LocalizedString
 				/**
 				 * Shared device
 				 */
@@ -14776,9 +14174,9 @@ export type TranslationFunctions = {
 				 */
 				reason_unpublished_rebuild: () => LocalizedString
 				/**
-				 * Names can be at most {max} characters.
+				 * Names can be at most {max|num} {{character|characters}}.
 				 */
-				label_too_long: (arg: { max: unknown }) => LocalizedString
+				label_too_long: (arg: { max: number }) => LocalizedString
 				/**
 				 * Names cannot contain control characters.
 				 */
@@ -14830,21 +14228,13 @@ export type TranslationFunctions = {
 				 */
 				picker_label: () => LocalizedString
 				/**
-				 * {count} mark can't be placed on this recording
+				 * {count|num} {{mark|marks}} can't be placed on this recording
 				 */
-				lost_one: (arg: { count: unknown }) => LocalizedString
+				lost: (arg: { count: number }) => LocalizedString
 				/**
-				 * {count} marks can't be placed on this recording
+				 * {{Remove it|Remove them}}
 				 */
-				lost_other: (arg: { count: unknown }) => LocalizedString
-				/**
-				 * Remove it
-				 */
-				remove_lost_one: () => LocalizedString
-				/**
-				 * Remove them
-				 */
-				remove_lost_other: () => LocalizedString
+				remove_lost: (arg: { count: number | string | boolean }) => LocalizedString
 				/**
 				 * Annotation updates waiting to retry
 				 */
@@ -14934,25 +14324,17 @@ export type TranslationFunctions = {
 			}
 			sections_nav: {
 				/**
-				 * {count} tagged section
+				 * {count|num} tagged {{section|sections}}
 				 */
-				count_one: (arg: { count: unknown }) => LocalizedString
-				/**
-				 * {count} tagged sections
-				 */
-				count_other: (arg: { count: unknown }) => LocalizedString
+				count: (arg: { count: number }) => LocalizedString
 				/**
 				 * {current} of {count}
 				 */
 				position: (arg: { count: unknown, current: unknown }) => LocalizedString
 				/**
-				 * tagged section
+				 * {{tagged section|tagged sections}}
 				 */
-				label_one: () => LocalizedString
-				/**
-				 * tagged sections
-				 */
-				label_other: () => LocalizedString
+				label: (arg: { count: number | string | boolean }) => LocalizedString
 				/**
 				 * Previous tagged section
 				 */
@@ -15260,13 +14642,9 @@ export type TranslationFunctions = {
 				 */
 				template_fallback: () => LocalizedString
 				/**
-				 * 1 meeting
+				 * {count|num} {{meeting|meetings}}
 				 */
-				untitled_meeting: () => LocalizedString
-				/**
-				 * {count} meetings
-				 */
-				meetings_other: (arg: { count: unknown }) => LocalizedString
+				meetings: (arg: { count: number }) => LocalizedString
 			}
 			card: {
 				/**
@@ -15274,13 +14652,9 @@ export type TranslationFunctions = {
 				 */
 				kind: () => LocalizedString
 				/**
-				 * {count} meeting
+				 * {count|num} {{meeting|meetings}}
 				 */
-				meetings_one: (arg: { count: unknown }) => LocalizedString
-				/**
-				 * {count} meetings
-				 */
-				meetings_other: (arg: { count: unknown }) => LocalizedString
+				meetings: (arg: { count: number }) => LocalizedString
 			}
 			document: {
 				/**
@@ -15304,9 +14678,9 @@ export type TranslationFunctions = {
 				 */
 				close_label: () => LocalizedString
 				/**
-				 * {count} rooms
+				 * {count|num} {{room|rooms}}
 				 */
-				rooms_other: (arg: { count: unknown }) => LocalizedString
+				rooms: (arg: { count: number }) => LocalizedString
 				/**
 				 * Export this insight
 				 */
@@ -15340,25 +14714,17 @@ export type TranslationFunctions = {
 				 */
 				downloaded: (arg: { file: unknown }) => LocalizedString
 				/**
-				 * Context from {count} meeting
+				 * Context from {count|num} {{meeting|meetings}}
 				 */
-				sources_heading_one: (arg: { count: unknown }) => LocalizedString
-				/**
-				 * Context from {count} meetings
-				 */
-				sources_heading_other: (arg: { count: unknown }) => LocalizedString
+				sources_heading: (arg: { count: number }) => LocalizedString
 				/**
 				 * Context sources
 				 */
 				sources_heading_none: () => LocalizedString
 				/**
-				 * 1 source meeting is no longer available (deleted, or no longer shared with you).
+				 * {count|num} source {{meeting is|meetings are}} no longer available (deleted, or no longer shared with you).
 				 */
-				missing_sources_one: () => LocalizedString
-				/**
-				 * {count} source meetings are no longer available (deleted, or no longer shared with you).
-				 */
-				missing_sources_other: (arg: { count: unknown }) => LocalizedString
+				missing_sources: (arg: { count: number }) => LocalizedString
 				/**
 				 * {status}. The answer appears here when it finishes.
 				 */
@@ -15568,9 +14934,9 @@ export type TranslationFunctions = {
 				 */
 				preparing: () => LocalizedString
 				/**
-				 * Copied {count} characters.
+				 * Copied {count|num} {{character|characters}}.
 				 */
-				copied_characters: (arg: { count: unknown }) => LocalizedString
+				copied_characters: (arg: { count: number }) => LocalizedString
 				/**
 				 * Clipboard blocked here — use Export to copy again or download.
 				 */
@@ -15628,4 +14994,7 @@ export type TranslationFunctions = {
 	}
 }
 
-export type Formatters = {}
+export type Formatters = {
+	compact: (value: number) => unknown
+	num: (value: number) => unknown
+}

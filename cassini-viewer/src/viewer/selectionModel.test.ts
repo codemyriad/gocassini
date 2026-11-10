@@ -325,10 +325,10 @@ describe("describeSelectionGaps", () => {
       }),
     ]);
     expect(describeSelectionGaps(totals)).toEqual([
-      "One of these predates the single-file format (marked in the list). Unpick it to prepare.",
+      "1 meeting predates the single-file format (marked in the list). Unpick it to prepare.",
     ]);
-    expect(describeSelectionGaps({ ...totals, withoutPortableAudio: 2 })[0]).toContain(
-      "Unpick them to prepare.",
+    expect(describeSelectionGaps({ ...totals, withoutPortableAudio: 2 })[0]).toBe(
+      "2 meetings predate the single-file format (marked in the list). Unpick them to prepare.",
     );
   });
 

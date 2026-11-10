@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { LL, dateFormat, numberFormat } from "../i18n";
+  import { LL, dateFormat } from "../i18n";
   import { tick } from "svelte";
   import { get } from "svelte/store";
   import { slide } from "svelte/transition";
@@ -78,9 +78,7 @@
 
   function countText(n: number, what: "words" | "passages"): string {
     const t = get(LL).viewer.meeting.facts;
-    const count = numberFormat().format(n);
-    if (what === "words") return n === 1 ? t.words_one({ count }) : t.words_other({ count });
-    return n === 1 ? t.passages_one({ count }) : t.passages_other({ count });
+    return what === "words" ? t.words({ count: n }) : t.passages({ count: n });
   }
 
   function shortId(id: string): string {

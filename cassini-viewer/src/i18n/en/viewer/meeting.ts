@@ -2,9 +2,9 @@
 //
 // Keys are grouped by component or module, in snake_case. See docs/translations.md.
 //
-// Counts come as `_one` / `_other` pairs, picked in code. Every {count},
-// {seconds}, {minutes} and {max} arrives already written as a number in the
-// reader's locale.
+// A count is one key with typesafe-i18n's plural syntax ({{meeting|meetings}});
+// the code passes the raw number and `|num` writes it in the reader's locale
+// (docs/translations.md). {minutes} arrives already written as a number.
 const meeting = {
   // The meeting page itself (MeetingView.svelte).
   view: {
@@ -42,8 +42,8 @@ const meeting = {
     // Heading over the list of insights made from this meeting, on its Summary tab.
     insights_heading: "Insights",
     // After an insight's date: how many meetings it was made from.
-    insight_context_one: "Context from {count} meeting",
-    insight_context_other: "Context from {count} meetings",
+    // Plural; see the translator guide. {count}: meetings.
+    insight_context: "Context from {count:number|num} {{meeting|meetings}}",
     tabs_label: "Meeting content",
     tab_summary: "Summary",
     tab_transcript: "Transcript",
@@ -123,10 +123,10 @@ const meeting = {
     timing: "Timing",
     // Short for the meeting's identifier.
     id: "ID",
-    words_one: "{count} word",
-    words_other: "{count} words",
-    passages_one: "{count} passage",
-    passages_other: "{count} passages",
+    // Plural; see the translator guide. {count}: words in the transcript.
+    words: "{count:number|num} {{word|words}}",
+    // Plural; see the translator guide. {count}: passages in the transcript.
+    passages: "{count:number|num} {{passage|passages}}",
     copy_id: "Copy meeting ID",
     id_copied: "Meeting ID copied",
     // The audio's channels, in the recording's details after the codec and
@@ -134,8 +134,8 @@ const meeting = {
     // capitalisation.
     audio_mono: "mono",
     audio_stereo: "stereo",
-    // {count} is 3 or more.
-    audio_channels: "{count} channels",
+    // Plural; see the translator guide. {count}: audio channels, 3 or more.
+    audio_channels: "{count:number|num} {{channel|channels}}",
   },
   // How precisely the words are timed, under "Timing" in the details.
   timing: {
@@ -168,12 +168,11 @@ const meeting = {
   },
   // The People section of the details popover (PeoplePanel.svelte).
   people: {
-    count_one: "{count} participant",
-    count_other: "{count} participants",
+    // Plural; see the translator guide. {count}: people in the meeting.
+    count: "{count:number|num} {{participant|participants}}",
     // When a shared device was separated into voices.
-    split_one: "1 voice on 1 device",
-    split_one_device: "{voices} voices on 1 device",
-    split_other: "{voices} voices on {devices} devices",
+    // Plural; see the translator guide. {voices}: voices; {devices}: devices they were recorded on.
+    split: "{voices:number|num} {{voices:voice|voices}} on {devices:number|num} {{devices:device|devices}}",
     // A device whose voices were separated but which has no name of its own.
     shared_device: "Shared device",
     // A voice inside its device's group. {number} is 1, 2, 3…
@@ -233,7 +232,8 @@ const meeting = {
       "Voice separation is not installed on this server. An administrator can download it in Cassini's Settings.",
     reason_unpublished_rebuild:
       "This recording was processed again and the new version was not published. An administrator can run it again from Cassini Admin.",
-    label_too_long: "Names can be at most {max} characters.",
+    // Plural; see the translator guide. {max}: the longest a name can be.
+    label_too_long: "Names can be at most {max:number|num} {{character|characters}}.",
     label_control_characters: "Names cannot contain control characters.",
     // Time left on an update, beside a progress bar.
     almost_done: "almost done",
@@ -252,10 +252,10 @@ const meeting = {
     remove_tag: "Remove {tag}",
     picker_label: "Tag the whole meeting",
     // Marks made on another version of the recording.
-    lost_one: "{count} mark can't be placed on this recording",
-    lost_other: "{count} marks can't be placed on this recording",
-    remove_lost_one: "Remove it",
-    remove_lost_other: "Remove them",
+    // Plural; see the translator guide. {count}: marks.
+    lost: "{count:number|num} {{mark|marks}} can't be placed on this recording",
+    // A button after `lost`. Plural; see the translator guide. {count}: the same marks.
+    remove_lost: "{{count:Remove it|Remove them}}",
     waiting_to_retry: "Annotation updates waiting to retry",
     saving: "Saving annotations…",
     sync_pending: "Tags saved · updating recording…",
@@ -290,12 +290,12 @@ const meeting = {
   },
   // How many sections are tagged, with arrows between them (SectionsNav.svelte).
   sections_nav: {
-    count_one: "{count} tagged section",
-    count_other: "{count} tagged sections",
-    // Shown in a small pill, followed by sections_label: "2 of 5" "tagged sections".
+    // Plural; see the translator guide. {count}: tagged sections.
+    count: "{count:number|num} tagged {{section|sections}}",
+    // Shown in a small pill, followed by `label`: "2 of 5" "tagged sections".
     position: "{current} of {count}",
-    label_one: "tagged section",
-    label_other: "tagged sections",
+    // Plural; see the translator guide. {count}: tagged sections; the number itself is in `position`.
+    label: "{{count:tagged section|tagged sections}}",
     previous: "Previous tagged section",
     next: "Next tagged section",
   },

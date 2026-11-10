@@ -115,12 +115,12 @@ const settings = {
     // An option and how long it is kept. {media} is one of app.keep, in bold.
     kept_plain: "{media}.",
     kept_forever: "{media}, kept forever.",
-    kept_days_one: "{media}, for 1 day.",
-    kept_days_other: "{media}, for {count} days.",
+    // Plural; see the translator guide. {count}: days.
+    kept_days: "{media}, for {count:number|num} {{count:day|days}}.",
     // Where the retention comes from. {storage} is a link to the Storage page (storage_link).
     source_forever: "Kept forever: change this in {storage}.",
-    source_days_one: "The 1 day comes from {storage}.",
-    source_days_other: "The {count} days come from {storage}.",
+    // Plural; see the translator guide. {count}: days.
+    source_days: "The {count:number|num} {{count:day comes|days come}} from {storage}.",
     source_unset: "How long kept media stays is set in {storage}.",
     storage_link: "Storage",
     must_transcribe: "Transcription must be on to keep nothing.",
@@ -170,11 +170,13 @@ const settings = {
   // One retention policy: keep forever, a preset number of days, or a custom number.
   retention_policy: {
     keep_forever: "Keep forever",
-    // A preset button. {count} is 7, 30, 60 or 90, never 1.
-    preset_days_other: "{count} days",
+    // A preset button.
+    // Plural; see the translator guide. {count}: days, 7, 30, 60 or 90.
+    preset_days: "{count:number|num} {{day|days}}",
     custom: "Custom",
     // {days} is where a number input goes: "Keep for [ 45 ] days".
-    keep_for: "Keep for {days} days",
+    // Plural; see the translator guide. {count}: the number typed in that input; it is not shown again.
+    keep_for: "Keep for {days} {{count:day|days}}",
     // Screen-reader label of the number input. {label} is the kind of file, e.g. "Recordings".
     custom_days_label: "Days to keep: {label}",
   },
@@ -287,8 +289,9 @@ const settings = {
     no_models: "This endpoint listed no models. Type a model ID.",
     // {text} is what was typed.
     no_match: "No match for “{text}”. It will be used as typed.",
-    // Under a filtered list. {shown} models of {count}; {count} is always 2 or more here.
-    match_count_other: "{shown} of {count} models",
+    // Under a filtered list.
+    // Plural; see the translator guide. {count}: models, 2 or more; {shown}: how many of them the list shows.
+    match_count: "{shown:number|num} of {count:number|num} {{count:model|models}}",
   },
   // What participants receive after a meeting: audio and transcript, or the transcript alone.
   published_format: {
@@ -365,8 +368,8 @@ const settings = {
     // {model} is a model ID.
     model_named: "Model {model}",
     no_default_model: "No default model",
-    model_count_one: "1 model",
-    model_count_other: "{count} models",
+    // Plural; see the translator guide. {count}: models.
+    model_count: "{count:number|num} {{model|models}}",
     loading_models: "Loading models…",
     // {seconds} is a number of seconds.
     timeout_fact: "{seconds}s timeout",

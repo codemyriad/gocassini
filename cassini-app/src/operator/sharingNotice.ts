@@ -4,7 +4,7 @@
 // reason buildSetupNotice gives: the sentences are the part worth testing, and
 // SharingNotice.svelte renders what it is handed.
 import { get } from "svelte/store";
-import { durationFormat, formatCount, formatLocale, LL } from "cassini-viewer/i18n";
+import { durationFormat, formatLocale, LL } from "cassini-viewer/i18n";
 import { readServedMessage } from "../servedMessage";
 import { isRecord, readSharing, type PendingRecording, type RecordingNotice, type SharingStatus } from "./setupHealth";
 
@@ -70,7 +70,7 @@ const copy = () => get(LL).app.shell.sharing_notice;
 // --- Pending (contract §5, revised in §8) ---
 
 export function pendingTitle(count: number): string {
-  return count === 1 ? copy().pending_title_one() : copy().pending_title_other({ count: formatCount(count) });
+  return copy().pending_title({ count });
 }
 
 export const pendingLine = (): string => copy().pending_line();
@@ -80,7 +80,7 @@ export const hideThem = (): string => copy().hide_them();
 // The primary button on the first line. One recording has nothing to say
 // "all" about: the button accepts it.
 export function acceptAllLabel(count: number): string {
-  return count === 1 ? copy().accept() : copy().accept_all({ count: formatCount(count) });
+  return count === 1 ? copy().accept() : copy().accept_all({ count });
 }
 
 export const whyAccept = (): string => copy().why_accept();
@@ -89,17 +89,17 @@ export const whyAccept = (): string => copy().why_accept();
 // link to hand on as the last words of the line ---
 
 export function refusedTitle(count: number): string {
-  return count === 1 ? copy().refused_title_one() : copy().refused_title_other({ count: formatCount(count) });
+  return copy().refused_title({ count });
 }
 
 export const refusedLine = (): string => copy().refused_line();
 
 export function starterRefusedTitle(count: number): string {
-  return count === 1 ? copy().starter_refused_title_one() : copy().starter_refused_title_other({ count: formatCount(count) });
+  return copy().starter_refused_title({ count });
 }
 
 export function starterRefusedLine(count: number): string {
-  return count === 1 ? copy().starter_refused_line_one() : copy().starter_refused_line_other();
+  return copy().starter_refused_line({ count });
 }
 
 // Past this many, the recordings of one kind (refused, or unpublished) are

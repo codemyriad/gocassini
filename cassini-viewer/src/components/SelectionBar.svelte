@@ -2,7 +2,7 @@
   import { createEventDispatcher } from "svelte";
   import { cubicOut } from "svelte/easing";
   import { ChevronDown, FileText, Tag, Trash2, TriangleAlert, X } from "@lucide/svelte";
-  import { formatCount, LL } from "../i18n";
+  import { LL } from "../i18n";
   import type { TagPick, VocabularyTag } from "../viewer/annotations";
   import type { MeetingCatalogEntry } from "../viewer/catalog";
   import { formatMeetingStartWithDay } from "../viewer/meetingTime";
@@ -118,7 +118,7 @@
           aria-label={listing ? text.hide_selected() : text.show_selected()}
           on:click={() => (listing = !listing)}
         >
-          {count === 1 ? text.selected_one() : text.selected_other({ count: formatCount(count) })}
+          {text.selected({ count })}
           <ChevronDown size={13} class="selbar-count-chev" aria-hidden="true" />
         </button>
         <button type="button" class="selbar-clear" on:click={() => dispatch("clear")}>
@@ -128,7 +128,7 @@
       </div>
       <p class="selbar-desc">
         {#if hiddenCount > 0}
-          {text.not_shown_count({ count: formatCount(hiddenCount) })}
+          {text.not_shown_count({ count: hiddenCount })}
         {/if}
         {text.what_next()}
       </p>
@@ -139,9 +139,7 @@
         <p class="selbar-over" role="status">
           <TriangleAlert size={14} aria-hidden="true" />
           <span>
-            {excess === 1
-              ? $LL.viewer.browse.selection.over_cap_one({ max: formatCount(MAX_SELECTED_MEETINGS) })
-              : $LL.viewer.browse.selection.over_cap_other({ max: formatCount(MAX_SELECTED_MEETINGS), count: formatCount(excess) })}
+            {$LL.viewer.browse.selection.over_cap({ max: MAX_SELECTED_MEETINGS, count: excess })}
           </span>
         </p>
       {/if}
@@ -226,7 +224,7 @@
     {#if tags && tagging}
       <TagPicker
         {tags}
-        label={count === 1 ? text.tag_meetings_one() : text.tag_meetings_other({ count: formatCount(count) })}
+        label={text.tag_meetings({ count })}
         multiple
         selected={tagSelected}
         mixed={tagMixed}
@@ -240,7 +238,7 @@
   {#if droppedCount > 0}
     <p class="selbar-dropped" role="status">
       <span>
-        {droppedCount === 1 ? text.dropped_one() : text.dropped_other({ count: formatCount(droppedCount) })}
+        {text.dropped({ count: droppedCount })}
       </span>
       <button
         type="button"

@@ -33,7 +33,7 @@ import {
 } from "./portable";
 import { get } from "svelte/store";
 
-import { LL, numberFormat } from "../i18n";
+import { LL } from "../i18n";
 import { readViewerBase, resolveAppBaseUrl } from "./appBase";
 import { formatMeetingStartWithDay, parseRecordedAtUtc } from "./meetingTime";
 import { portableRecordedAtUtc } from "../../scripts/meeting-start.mjs";
@@ -1119,7 +1119,7 @@ function formatAudioSummary(audio: Record<string, unknown> | null): string {
   } else if (channels === 2) {
     parts.push(t.audio_stereo());
   } else if (channels !== null) {
-    parts.push(t.audio_channels({ count: numberFormat().format(channels) }));
+    parts.push(t.audio_channels({ count: channels }));
   }
   return parts.join(" · ");
 }

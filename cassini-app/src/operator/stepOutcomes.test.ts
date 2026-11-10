@@ -138,7 +138,7 @@ describe("shareNotice", () => {
     const both = shareNotice({ status: "partial", skipped: [{ type: "user", id: "bob" }], deferred: held });
     expect(both?.title).toBe("Published. Not shared: 1 recipient");
     expect(both?.items?.summary).toBe("Who was refused (1)");
-    expect(both?.heldBack).toBe("Nextcloud's share limit also held back 2.");
+    expect(both?.heldBack).toBe("Nextcloud's share limit also held back 2 recipients.");
     expect(both?.action?.kind).toBe("reshare");
     expect(shareNotice({ status: "partial", skipped: [{ type: "user", id: "bob" }] })?.heldBack).toBeUndefined();
   });
@@ -165,7 +165,7 @@ describe("after a re-share", () => {
     expect(reshareOutcome(["bob", "carol"])).toBe("Shared again. Nextcloud still refused 2 recipients (bob and carol). Check Doctor › Recording sharing.");
     // The list follows the language ("en"), so English gets its serial comma.
     expect(reshareOutcome(["bob", "carol", "dave"])).toBe("Shared again. Nextcloud still refused 3 recipients (bob, carol, and dave). Check Doctor › Recording sharing.");
-    expect(reshareOutcome(["bob", "carol", "dave", "erin", "frank"])).toBe("Shared again. Nextcloud still refused 5 recipients (bob, carol, dave and 2 more). Check Doctor › Recording sharing.");
+    expect(reshareOutcome(["bob", "carol", "dave", "erin", "frank"])).toBe("Shared again. Nextcloud still refused 5 recipients (bob, carol, dave and 2 others). Check Doctor › Recording sharing.");
     expect(listRefusedIds([])).toBe("");
   });
 

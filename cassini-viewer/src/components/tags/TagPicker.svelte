@@ -2,7 +2,7 @@
   import { createEventDispatcher, onMount } from "svelte";
   import { Check, Minus } from "@lucide/svelte";
 
-  import { formatCount, LL } from "../../i18n";
+  import { LL } from "../../i18n";
   import { findByLabel, matchTags, type TagPick, type VocabularyTag } from "../../viewer/annotations";
   import { colorFor, leastUsedColor, type TagColorId } from "../../viewer/tagPalette";
   import { richText, slotArgs } from "../ui/richText";
@@ -134,7 +134,7 @@
         <!-- The mark is in the name's line so vertical-align: middle centres
              it on the name's x-height; as a flex item it sat on the box centre. -->
         <span class="name"><span class="mark"><TagIcon icon={tag.icon} /></span>{tag.label}</span>
-        <span class="uses">{tag.meetings === 1 ? text.meetings_one() : text.meetings_other({ count: formatCount(tag.meetings) })}</span>
+        <span class="uses">{text.meetings({ count: tag.meetings })}</span>
       </li>
     {/each}
   </ul>

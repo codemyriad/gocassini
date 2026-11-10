@@ -26,13 +26,18 @@ describe("SelectionBar", () => {
     // A selection spans rooms and survives every filter change, so a bar that
     // reported only the total would read as a claim about the visible list.
     expect(selectionBarSource).toContain("hiddenCount");
-    expect(selectionBarSource).toContain("text.not_shown_count({ count: formatCount(hiddenCount) })");
-    expect(get(LL).viewer.browse.selection_bar.not_shown_count({ count: 2 })).toBe("2 not shown here.");
+    expect(selectionBarSource).toContain("text.not_shown_count({ count: hiddenCount })");
+    expect(get(LL).viewer.browse.selection_bar.not_shown_count({ count: 2 })).toBe("2 meetings not shown here.");
   });
 
   it("reports meetings that left the archive rather than dropping them quietly", () => {
-    expect(selectionBarSource).toContain("text.dropped_other({ count: formatCount(droppedCount) })");
-    expect(get(LL).viewer.browse.selection_bar.dropped_other({ count: 2 })).toContain("no longer in the archive");
+    expect(selectionBarSource).toContain("text.dropped({ count: droppedCount })");
+    expect(get(LL).viewer.browse.selection_bar.dropped({ count: 1 })).toBe(
+      "1 selected meeting is no longer in the archive and was removed.",
+    );
+    expect(get(LL).viewer.browse.selection_bar.dropped({ count: 2 })).toBe(
+      "2 selected meetings are no longer in the archive and were removed.",
+    );
     expect(selectionBarSource).toContain("dismissDropped");
   });
 
@@ -48,8 +53,8 @@ describe("SelectionBar", () => {
     expect(droppedGate).toBeGreaterThan(countGate);
     const gated = selectionBarSource.slice(countGate, droppedGate);
     expect(gated).toContain('dispatch("prepare")');
-    expect(gated).toContain("text.selected_other({ count: formatCount(count) })");
-    expect(selectionBarSource.slice(droppedGate)).toContain("text.dropped_one()");
+    expect(gated).toContain("text.selected({ count })");
+    expect(selectionBarSource.slice(droppedGate)).toContain("text.dropped({ count: droppedCount })");
   });
 
   it("offers clearing and Prepare, and decides neither itself", () => {
@@ -66,8 +71,8 @@ describe("SelectionBar", () => {
     expect(selectionBarSource).toContain('import { MAX_SELECTED_MEETINGS } from "../viewer/selectionModel";');
     expect(selectionBarSource).toContain("$: overCap = count > MAX_SELECTED_MEETINGS;");
     expect(selectionBarSource).toContain("disabled={overCap}");
-    expect(selectionBarSource).toContain("$LL.viewer.browse.selection.over_cap_other({ max: formatCount(MAX_SELECTED_MEETINGS), count: formatCount(excess) })");
-    expect(get(LL).viewer.browse.selection.over_cap_other({ max: 100, count: 3 })).toBe(
+    expect(selectionBarSource).toContain("$LL.viewer.browse.selection.over_cap({ max: MAX_SELECTED_MEETINGS, count: excess })");
+    expect(get(LL).viewer.browse.selection.over_cap({ max: 100, count: 3 })).toBe(
       "You can work with up to 100 meetings at once. Unpick 3.",
     );
   });

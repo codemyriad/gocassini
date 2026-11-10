@@ -352,5 +352,5 @@ export function describeAnnotationError(error: unknown): string {
 }
 
 // English only. Kept for callers outside the browse area that have not moved
-// to the dictionaries yet; new text uses `_one` / `_other` keys instead.
+// to the dictionaries yet; new text uses a plural key ({{meeting|meetings}}).
 export const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;

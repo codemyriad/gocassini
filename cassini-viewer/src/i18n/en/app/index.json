@@ -69,27 +69,23 @@
       "reference": "See {endpoint} for the full recordings access report."
     },
     "sharing_notice": {
-      "pending_title_one": "1 recording is waiting for you",
-      "pending_title_other": "{count} recordings are waiting for you",
+      "pending_title": "{count:number|num} {{recording is|recordings are}} waiting for you",
       "pending_label": "Recordings waiting for you",
       "pending_line": "Nextcloud holds files shared with you until you accept them.",
       "show_them": "Show them",
       "hide_them": "Hide them",
       "accept": "Accept",
-      "accept_all": "Accept all {count}",
+      "accept_all": "Accept all {count:number|num} {{recording|recordings}}",
       "accept_row_label": "Accept {title}",
       "why_accept": "Why? Your account accepts shared files by hand (Personal settings › Sharing), or this server asks everyone to. Cassini never accepts for you.",
       "accept_refused": "Nextcloud did not accept this share.",
       "accept_failed": "Could not accept the share (HTTP {status}).",
       "dismiss_failed": "Could not dismiss the notice (HTTP {status}).",
-      "refused_title_one": "1 recording could not be shared with you.",
-      "refused_title_other": "{count} recordings could not be shared with you.",
+      "refused_title": "{count:number|num} {{recording|recordings}} could not be shared with you.",
       "refused_line": "A Nextcloud sharing setting stops it.",
       "refused_group_label": "Recordings that could not be shared with you",
-      "starter_refused_title_one": "1 recording you started could not be published.",
-      "starter_refused_title_other": "{count} recordings you started could not be published.",
-      "starter_refused_line_one": "Nextcloud refused to share it with you.",
-      "starter_refused_line_other": "Nextcloud refused to share them with you.",
+      "starter_refused_title": "{count:number|num} {{recording|recordings}} you started could not be published.",
+      "starter_refused_line": "Nextcloud refused to share {{count:it|them}} with you.",
       "unpublished_group_label": "Recordings you started that could not be published",
       "refused_notice": {
         "room_date": "The recording in “{name}” on {date} could not be shared with you.",
@@ -119,8 +115,7 @@
   "operator": {
     "readiness": {
       "title": {
-        "needs_action_one": "One recording check needs attention",
-        "needs_action_other": "{count} recording checks need attention",
+        "needs_action": "{{count:One recording check needs attention|?? recording checks need attention}}",
         "warn": "Recording checks need attention",
         "not_verified": "Recording setup needs verification",
         "not_verified_archive_failed": "Recording setup needs verification; archive search re-index failed",
@@ -185,22 +180,16 @@
         "unknown": "Something went wrong. Try again."
       },
       "unshared": {
-        "summary_one": "1 recording was not shared with everyone.",
-        "summary_one_since": "1 recording since {since} was not shared with everyone.",
-        "summary_other": "{count} recordings were not shared with everyone.",
-        "summary_other_since": "{count} recordings since {since} were not shared with everyone.",
+        "summary": "{count:number|num} {{recording was|recordings were}} not shared with everyone.",
+        "summary_since": "{count:number|num} {{count:recording|recordings}} since {since} {{count:was|were}} not shared with everyone.",
         "missing": "Missing: {who}.",
-        "people_one": "1 person",
-        "people_other": "{count} people",
-        "groups_one": "1 group",
-        "groups_other": "{count} groups",
+        "people": "{count:number|num} {{person|people}}",
+        "groups": "{count:number|num} {{group|groups}}",
         "who_both": "{people} and {groups}"
       },
       "share_limited": {
-        "summary_one": "Nextcloud's share limit held back recipients of 1 recording. Re-share each from its run, or raise the limit.",
-        "summary_one_since": "Nextcloud's share limit held back recipients of 1 recording since {since}. Re-share each from its run, or raise the limit.",
-        "summary_other": "Nextcloud's share limit held back recipients of {count} recordings. Re-share each from its run, or raise the limit.",
-        "summary_other_since": "Nextcloud's share limit held back recipients of {count} recordings since {since}. Re-share each from its run, or raise the limit."
+        "summary": "Nextcloud's share limit held back recipients of {count:number|num} {{recording|recordings}}. Re-share each from its run, or raise the limit.",
+        "summary_since": "Nextcloud's share limit held back recipients of {count:number|num} {{count:recording|recordings}} since {since}. Re-share each from its run, or raise the limit."
       }
     },
     "feature_notice": {
@@ -240,12 +229,11 @@
         "group": "group",
         "team": "Team"
       },
-      "recipients_one": "1 recipient",
-      "recipients_other": "{count} recipients",
+      "recipients": "{count:number|num} {{recipient|recipients}}",
       "refused": {
         "entry_with_kind": "{id} ({kind})",
         "entry_with_reason": "{who}: {reason}",
-        "list_more": "{names} and {count} more"
+        "list_more": "{names} and {count:number|num} {{count:other|others}}"
       },
       "reshare": {
         "held_back": "Still held back by Nextcloud's share limit: {recipients}. Re-share in 10 minutes.",
@@ -260,11 +248,11 @@
         "starter_refused_hint_rerun": "Fix the setting Doctor › Recording sharing names, then Rerun. Rerun publishes it and shares it with the whole room.",
         "starter_refused_hint_no_rerun": "Fix the setting Doctor › Recording sharing names so later recordings publish. This run cannot be rerun.",
         "held_back": "Published. Held back by Nextcloud's share limit: {recipients}. Re-share in 10 minutes, or raise the limit (Doctor › Recording sharing).",
-        "partial_of": "Published, but not shared with {count} of {audience} recipients",
+        "partial_of": "Published, but not shared with {count:number|num} of {audience:number|num} {{audience:recipient|recipients}}",
         "partial": "Published. Not shared: {recipients}",
         "who_was_refused": "Who was refused ({count})",
         "partial_hint": "Nextcloud refused them because of a sharing setting. Doctor › Recording sharing names it and the fix.",
-        "also_held_back": "Nextcloud's share limit also held back {count}.",
+        "also_held_back": "Nextcloud's share limit also held back {count:number|num} {{recipient|recipients}}.",
         "reshare_button": "Re-share with the room",
         "reshare_note": "Adds whoever is missing, including anyone removed by hand. People who accept shares by hand will find it waiting in Browse."
       }
@@ -352,43 +340,29 @@
       },
       "retention": {
         "forever": "forever",
-        "days_one": "1 day",
-        "days_other": "{count} days"
+        "days": "{count:number|num} {{day|days}}"
       }
     },
     "recorded_at_migration": {
-      "recordings_one": "1 recording",
-      "recordings_other": "{count} recordings",
       "refresh_failed": "Couldn’t refresh: {message}",
       "button": {
-        "write_one": "Write the recording time into 1 recording",
-        "write_other": "Write the recording time into {count} recordings",
+        "write": "Write the recording time into {count:number|num} {{recording|recordings}}",
         "pause": "Pause",
         "resume": "Resume",
-        "retry_one": "Retry the blocked recording",
-        "retry_other": "Retry {count} blocked recordings"
+        "retry": "Retry {count:number|num} blocked {{recording|recordings}}"
       },
       "summary": {
-        "needed_one": "1 recording was published before Cassini wrote the recording time into the file itself. Browse already shows the right time; writing it into the file makes it travel with downloads, the Nextcloud apps and the cassini command line.",
-        "needed_other": "{count} recordings were published before Cassini wrote the recording time into the file itself. Browse already shows the right time; writing it into the files makes it travel with downloads, the Nextcloud apps and the cassini command line.",
+        "needed": "{count:number|num} {{recording was|recordings were}} published before Cassini wrote the recording time into the file itself. Browse already shows the right time; writing it into the {{file|files}} makes it travel with downloads, the Nextcloud apps and the cassini command line.",
         "still_counting": "Cassini is still counting, so this number may grow; you can start once it has finished.",
         "checking": "Cassini is checking which past recordings were published before it wrote the recording time into the file itself.",
-        "running_one": "Writing the recording time into 1 recording.",
-        "running_one_done": "Writing the recording time into 1 recording; {done} done.",
-        "running_other": "Writing the recording time into {count} recordings.",
-        "running_other_done": "Writing the recording time into {count} recordings; {done} done.",
-        "pace_one": "Cassini works on one at a time, {seconds} seconds apart, so it stays out of Nextcloud's way.",
-        "pace_many": "Cassini works on up to {workers} at a time, {seconds} seconds apart, so it stays out of Nextcloud's way.",
-        "pausing_one": "Pausing. The recording already being written is finished first, or left as it was if its upload had not gone through, so no file is left half-written; {waiting} then wait.",
-        "pausing_other": "Pausing. The {count} recordings already being written are finished first, or left as they were if their upload had not gone through, so no file is left half-written; {waiting} then wait.",
-        "paused": "Paused with {remaining} left. Nothing is being written until you resume.",
-        "paused_done": "Paused with {remaining} left and {done} done. Nothing is being written until you resume.",
-        "blocked_one": "1 recording could not be written and needs you. Fix what each one says, then retry.",
-        "blocked_one_done_one": "1 recording could not be written and needs you; 1 is done. Fix what each one says, then retry.",
-        "blocked_one_done_other": "1 recording could not be written and needs you; {done} are done. Fix what each one says, then retry.",
-        "blocked_other": "{count} recordings could not be written and need you. Fix what each one says, then retry.",
-        "blocked_other_done_one": "{count} recordings could not be written and need you; 1 is done. Fix what each one says, then retry.",
-        "blocked_other_done_other": "{count} recordings could not be written and need you; {done} are done. Fix what each one says, then retry.",
+        "running": "Writing the recording time into {count:number|num} {{recording|recordings}}.",
+        "running_done": "Writing the recording time into {count:number|num} {{count:recording|recordings}}; {done:number|num} done.",
+        "pace": "Cassini works on {{workers:one|up to ??}} at a time, {seconds:number|num} {{seconds:second|seconds}} apart, so it stays out of Nextcloud's way.",
+        "pausing": "Pausing. {{count:The recording already being written is|The ?? recordings already being written are}} finished first, or left as {{count:it was|they were}} if {{count:its|their}} upload had not gone through, so no file is left half-written; {waiting:number|num} {{waiting:recording then waits|recordings then wait}}.",
+        "paused": "Paused with {remaining:number|num} {{recording|recordings}} left. Nothing is being written until you resume.",
+        "paused_done": "Paused with {remaining:number|num} {{remaining:recording|recordings}} left and {done:number|num} done. Nothing is being written until you resume.",
+        "blocked": "{count:number|num} {{recording|recordings}} could not be written and {{needs|need}} you. Fix what each one says, then retry.",
+        "blocked_done": "{count:number|num} {{count:recording|recordings}} could not be written and {{count:needs|need}} you; {done:number|num} {{done:is|are}} done. Fix what each one says, then retry.",
         "done": "Every past recording carries its recording time in the file itself ({done} written).",
         "unknown": "Cassini could not read the migration's progress."
       },
@@ -414,7 +388,7 @@
         "state_checking": "Checking",
         "state_needed": "Not started",
         "blocked_list_label": "Blocked recordings",
-        "blocked_more": "and {count} more",
+        "blocked_more": "and {count:number|num} more {{recording|recordings}}",
         "details_summary": "What this does in Nextcloud",
         "facts_label": "What Nextcloud reports",
         "pause_note": "You can pause at any time. A file whose upload was already sent is finished first, and one not yet uploaded is left as it was, so none is left half-written."
@@ -469,20 +443,19 @@
         "range_label": "Time range",
         "range_select_label": "{category} time range",
         "range_all": "All time",
-        "range_last_days": "Last {count} days",
+        "range_last_days": "Last {count:number|num} {{day|days}}",
         "range_last_year": "Last year",
         "range_custom": "Custom range",
         "from": "From",
         "through": "Through",
         "from_label": "{category} from date",
         "through_label": "{category} through date",
-        "undated_one": "{size} in 1 file without a known date. Included in the total, not in the chart.",
-        "undated_other": "{size} in {count} files without a known date. Included in the total, not in the chart.",
+        "undated": "{size} in {count:number|num} {{count:file|files}} without a known date. Included in the total, not in the chart.",
         "empty_no_files": "No retained files in this category.",
         "empty_no_dated_files": "No dated files to plot in this category.",
         "in_selected_range": "in selected range",
         "precision_daily": "Daily",
-        "precision_days": "{count} days per bar",
+        "precision_days": "{count:number|num} {{day|days}} per bar",
         "dates_lifecycle": "UTC lifecycle dates",
         "dates_published": "publication or recording dates",
         "empty_range": "No retained bytes in this date range. Try a wider range.",
@@ -490,12 +463,11 @@
         "scroll_later": "Later",
         "scroll_earlier_label": "Scroll {category} earlier",
         "scroll_later_label": "Scroll {category} later",
-        "scroll_hint": "Scroll left or right to explore all {count} bars.",
+        "scroll_hint": "Scroll left or right to explore all {count:number|num} {{bar|bars}}.",
         "plot_label": "{category} usage by date",
         "cutoff_marker": "removed at next cleanup",
-        "cutoff_note": "Files dated on or before {date} are removed at the next cleanup ({days}-day policy).",
-        "files_one": "1 file",
-        "files_other": "{count} files",
+        "cutoff_note": "Files dated on or before {date} are removed at the next cleanup (kept for {days:number|num} {{days:day|days}}).",
+        "files": "{count:number|num} {{file|files}}",
         "bar_label": "{range}: {size}, {files}",
         "bar_hint": "Hover, focus or tap a bar for its dates and exact usage.",
         "data_summary": "View chart data",
@@ -626,16 +598,14 @@
       "empty_title": "No recordings yet",
       "empty_body": "Start one with “Record a meeting”.",
       "attempt_badge": "Attempt {number}",
-      "next_retry_deferrals_one": "Next retry {time} · {count} deferral",
-      "next_retry_deferrals_other": "Next retry {time} · {count} deferrals",
+      "next_retry_deferrals": "Next retry {time} · {count:number|num} {{count:deferral|deferrals}}",
       "cleanup_hint": "Transcription-only publication; source media is deleted after processing.",
       "source_expired_badge": "Recording deleted",
       "source_expired_title": "The source recording was deleted by retention. This job can no longer be rerun.",
       "meeting_deleted_badge": "Meeting deleted",
       "meeting_deleted_title": "The published meeting was deleted by a user. Its local artifacts are reclaimed and this job can no longer be rerun.",
       "not_shared_badge": "Not shared with everyone",
-      "not_shared_title_one": "Not shared with 1 recipient: Nextcloud refused them or its share limit held them back. Open the run to see who.",
-      "not_shared_title_other": "Not shared with {count} recipients: Nextcloud refused them or its share limit held them back. Open the run to see who.",
+      "not_shared_title": "Not shared with {count:number|num} {{recipient|recipients}}: Nextcloud refused them or its share limit held them back. Open the run to see who.",
       "call_label": "Call {token}",
       "recording_label": "Recording {id}",
       "recording_unnamed": "Recording",
@@ -891,11 +861,9 @@
       "keep_video_help": "Uses the most space.",
       "kept_plain": "{media}.",
       "kept_forever": "{media}, kept forever.",
-      "kept_days_one": "{media}, for 1 day.",
-      "kept_days_other": "{media}, for {count} days.",
+      "kept_days": "{media}, for {count:number|num} {{count:day|days}}.",
       "source_forever": "Kept forever: change this in {storage}.",
-      "source_days_one": "The 1 day comes from {storage}.",
-      "source_days_other": "The {count} days come from {storage}.",
+      "source_days": "The {count:number|num} {{count:day comes|days come}} from {storage}.",
       "source_unset": "How long kept media stays is set in {storage}.",
       "storage_link": "Storage",
       "must_transcribe": "Transcription must be on to keep nothing.",
@@ -935,9 +903,9 @@
     },
     "retention_policy": {
       "keep_forever": "Keep forever",
-      "preset_days_other": "{count} days",
+      "preset_days": "{count:number|num} {{day|days}}",
       "custom": "Custom",
-      "keep_for": "Keep for {days} days",
+      "keep_for": "Keep for {days} {{count:day|days}}",
       "custom_days_label": "Days to keep: {label}"
     },
     "retention_actions": {
@@ -1024,7 +992,7 @@
       "list_failed": "{error} You can still type a model ID.",
       "no_models": "This endpoint listed no models. Type a model ID.",
       "no_match": "No match for “{text}”. It will be used as typed.",
-      "match_count_other": "{shown} of {count} models"
+      "match_count": "{shown:number|num} of {count:number|num} {{count:model|models}}"
     },
     "published_format": {
       "field_label": "Published meeting",
@@ -1081,8 +1049,7 @@
       "no_key": "No key",
       "model_named": "Model {model}",
       "no_default_model": "No default model",
-      "model_count_one": "1 model",
-      "model_count_other": "{count} models",
+      "model_count": "{count:number|num} {{model|models}}",
       "loading_models": "Loading models…",
       "timeout_fact": "{seconds}s timeout",
       "token_limit_fact": "{tokens} token limit",
@@ -1124,8 +1091,7 @@
       "starting": "Starting…",
       "question_missing": "This template asks whatever you type above, so it needs a question.",
       "where_it_goes": "These meetings' transcripts are sent to the AI provider to be read. The insight comes back as a document in your Nextcloud files.",
-      "textless_one": "1 selected recording has no transcript text. Remove it from the selection to generate an insight. Its audio is still available.",
-      "textless_other": "{count} selected recordings have no transcript text. Remove them from the selection to generate an insight. Their audio is still available."
+      "textless": "{count:number|num} selected {{recording has|recordings have}} no transcript text. Remove {{it|them}} from the selection to generate an insight. {{Its|Their}} audio is still available."
     },
     "templates_panel": {
       "title": "Insight templates",

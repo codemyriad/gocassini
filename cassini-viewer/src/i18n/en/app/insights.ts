@@ -28,11 +28,9 @@ const insights = {
     question_missing: "This template asks whatever you type above, so it needs a question.",
     where_it_goes:
       "These meetings' transcripts are sent to the AI provider to be read. The insight comes back as a document in your Nextcloud files.",
-    // {count} is how many picked recordings have no words.
-    textless_one:
-      "1 selected recording has no transcript text. Remove it from the selection to generate an insight. Its audio is still available.",
-    textless_other:
-      "{count} selected recordings have no transcript text. Remove them from the selection to generate an insight. Their audio is still available.",
+    // Plural; see the translator guide. {count}: picked recordings with no words.
+    textless:
+      "{count:number|num} selected {{recording has|recordings have}} no transcript text. Remove {{it|them}} from the selection to generate an insight. {{Its|Their}} audio is still available.",
   },
   // Operator › Insight templates.
   templates_panel: {

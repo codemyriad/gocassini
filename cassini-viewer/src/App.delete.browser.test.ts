@@ -110,7 +110,7 @@ for (const width of [1440, 390]) {
       await expect.poll(() => host.querySelector(".confirm-dialog")).toBeNull();
       expect(provider.deleteMeeting).not.toHaveBeenCalled();
       await openDelete();
-      await page.getByRole("alertdialog").getByRole("button", { name: "Delete meeting", exact: true }).click();
+      await page.getByRole("alertdialog").getByRole("button", { name: "Delete 1 meeting", exact: true }).click();
       await expect.poll(() => provider.deleteMeeting.mock.calls.length).toBe(1);
       await expect.poll(() => host.querySelectorAll(".meeting-row").length).toBe(2);
     });

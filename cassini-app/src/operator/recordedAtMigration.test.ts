@@ -60,7 +60,7 @@ describe("what the panel offers", () => {
     expect(migrationButton(status({ state: "running", queued: 3 }))).toEqual({ action: "pause", label: "Pause", disabled: false });
     expect(migrationButton(status({ state: "pausing", in_progress: 1 }))).toBeNull();
     expect(migrationButton(status({ state: "paused", queued: 3 }))).toEqual({ action: "start", label: "Resume", disabled: false });
-    expect(migrationButton(status({ state: "blocked", blocked: 1 }))?.label).toBe("Retry the blocked recording");
+    expect(migrationButton(status({ state: "blocked", blocked: 1 }))?.label).toBe("Retry 1 blocked recording");
     expect(migrationButton(status({ state: "done", done: 4 }))).toBeNull();
   });
 

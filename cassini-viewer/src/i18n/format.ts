@@ -78,9 +78,10 @@ export function relativeTimeFormat(options: Intl.RelativeTimeFormatOptions = {})
   return cached(relativeFormats, options, (locale) => new Intl.RelativeTimeFormat(locale, options));
 }
 
-// A count put into a message ("{count} meetings"), with the locale's digit
-// grouping: 1,234 in English, 1.234 in German. Every number passed into a
-// translated string goes through here or another formatter in this file.
+// A number with the locale's digit grouping: 1,234 in English, 1.234 in
+// German. A count key formats its own ("{count:number|num}", formatters.ts) and
+// takes the raw number for its plural; this is for a number in any other
+// string ("{done} of {total}").
 export function formatCount(value: number): string {
   return numberFormat().format(value);
 }

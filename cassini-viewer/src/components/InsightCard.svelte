@@ -1,6 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
-  import { formatCount, LL } from "../i18n";
+  import { LL } from "../i18n";
   import {
     formatInsightCreated,
     formatInsightStatus,
@@ -73,7 +73,7 @@
              this caller cannot see does not report how many there were. -->
           {#if sourceCount > 0}
             <span class="rule" aria-hidden="true"></span>
-            <span>{sourceCount === 1 ? $LL.viewer.insights.card.meetings_one({ count: formatCount(sourceCount) }) : $LL.viewer.insights.card.meetings_other({ count: formatCount(sourceCount) })}</span>
+            <span>{$LL.viewer.insights.card.meetings({ count: sourceCount })}</span>
           {/if}
         </span>
       </span>

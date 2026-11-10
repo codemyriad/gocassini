@@ -30,15 +30,15 @@ export const countsLine = (tag: VocabularyTag) => {
     return text.counts_unused();
   }
   if (tag.marks <= count) {
-    return count === 1 ? text.counts_in_one() : text.counts_in_other({ count: formatCount(count) });
+    return text.counts_in({ count });
   }
-  return count === 1 ? text.counts_times_one({ times: formatCount(tag.marks) }) : text.counts_times_other({ times: formatCount(tag.marks), count: formatCount(count) });
+  return text.counts_times({ times: tag.marks, count });
 };
 
 export function confirmLine(meetings: number): string {
   const text = get(LL).viewer.browse.tags;
   if (meetings === 0) return text.confirm_none();
-  return meetings === 1 ? text.confirm_one() : text.confirm_other({ count: formatCount(meetings) });
+  return text.confirm({ count: meetings });
 }
 
 const DAY = 864e5;
@@ -82,7 +82,7 @@ export function jobStatus({ job, action, lost }: JobState, tagId: string): JobSt
   const failed = job.failed.map((failure) => failure.meeting);
   const stopped = lost || job.state === "interrupted";
   if (!stopped && failed.length === 0) return null;
-  return { text: stopped ? text.job_stopped() : text.job_failed({ count: formatCount(failed.length) }), failed, rerun: action ?? actionOf(job) };
+  return { text: stopped ? text.job_stopped() : text.job_failed({ count: failed.length }), failed, rerun: action ?? actionOf(job) };
 }
 
 async function send(provider: TagProvider, action: TagAction): Promise<TagJob | null> {

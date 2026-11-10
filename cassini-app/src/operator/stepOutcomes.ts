@@ -136,10 +136,10 @@ export function describeRefused(entry: RefusedEntry): string {
 }
 
 export function recipients(count: number): string {
-  return count === 1 ? copy().recipients_one() : copy().recipients_other({ count: formatCount(count) });
+  return copy().recipients({ count });
 }
 
-// "bob", "bob and carol", "bob, carol and dave", "bob, carol, dave and 2 more".
+// "bob", "bob and carol", "bob, carol and dave", "bob, carol, dave and 2 others".
 // The list itself is in the reader's language (Intl.ListFormat): "and" is a word,
 // so it follows the language, not the date-and-number locale.
 export function listRefusedIds(ids: string[], shown = 3): string {
@@ -147,7 +147,7 @@ export function listRefusedIds(ids: string[], shown = 3): string {
   const rest = ids.length - named.length;
   if (rest > 0) {
     const names = new Intl.ListFormat(get(locale), { type: "unit", style: "short" }).format(named);
-    return copy().refused.list_more({ names, count: formatCount(rest) });
+    return copy().refused.list_more({ names, count: rest });
   }
   if (named.length <= 1) return named.join("");
   return new Intl.ListFormat(get(locale), { type: "conjunction" }).format(named);
@@ -199,11 +199,11 @@ export function shareNotice(sharing: JobShareOutcome | null | undefined, rerunAv
   return {
     tone: "warning",
     title: audience
-      ? t.partial_of({ count: formatCount(skipped.length), audience })
+      ? t.partial_of({ count: skipped.length, audience })
       : t.partial({ recipients: recipients(skipped.length) }),
     items: { summary: t.who_was_refused({ count: formatCount(skipped.length) }), entries: skipped.map(refusedEntry) },
     hint: t.partial_hint(),
-    heldBack: deferred.length > 0 ? t.also_held_back({ count: formatCount(deferred.length) }) : undefined,
+    heldBack: deferred.length > 0 ? t.also_held_back({ count: deferred.length }) : undefined,
     // Offered only where the operator would do it: not while the meeting is
     // being processed again.
     action: reshareAction(),

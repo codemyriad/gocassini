@@ -2,7 +2,7 @@ import { MAX_TAG_BATCH_MEETINGS, withAnnotationBatch } from "./bulkTags";
 import type { MeetingCatalogEntry } from "./catalog";
 import { get, writable } from "svelte/store";
 
-import { formatCount, LL } from "../i18n";
+import { LL } from "../i18n";
 import {
   AnnotationError,
   WHOLE_MEETING,
@@ -434,7 +434,7 @@ export function createListTagSession(
       const current = visible();
       if (!current || !applyBatch || !meetings.length) return false;
       if (meetings.length > MAX_TAG_BATCH_MEETINGS) {
-        bulkReport = get(LL).viewer.browse.list_tags.too_many({ max: formatCount(MAX_TAG_BATCH_MEETINGS) });
+        bulkReport = get(LL).viewer.browse.list_tags.too_many({ max: MAX_TAG_BATCH_MEETINGS });
         publish();
         return false;
       }
@@ -500,27 +500,25 @@ export function bulkReport(remove: boolean, done: number, total: number): string
 // "Tagged 3 meetings", "Untagged 1 meeting".
 function taggedLine(remove: boolean, count: number): string {
   const text = get(LL).viewer.browse.list_tags;
-  if (remove) return count === 1 ? text.untagged_one() : text.untagged_other({ count: formatCount(count) });
-  return count === 1 ? text.tagged_one() : text.tagged_other({ count: formatCount(count) });
+  return remove ? text.untagged({ count }) : text.tagged({ count });
 }
 
 function savingLine(count: number): string {
   const text = get(LL).viewer.browse.list_tags;
-  return count === 1 ? text.saving_one() : text.saving_other({ count: formatCount(count) });
+  return text.saving({ count });
 }
 
 // Why a tag write failed, for one meeting (by title) or a bulk action (by count).
 function failureLine(kind: "confirm" | "tag" | "untag", action: { bulk: boolean; meetings: readonly MeetingCatalogEntry[] }, reason: string): string {
   const text = get(LL).viewer.browse.list_tags;
   const keys = {
-    confirm: [text.confirm_failed_meeting, text.confirm_failed_meetings_one, text.confirm_failed_meetings_other],
-    tag: [text.tag_failed_meeting, text.tag_failed_meetings_one, text.tag_failed_meetings_other],
-    untag: [text.untag_failed_meeting, text.untag_failed_meetings_one, text.untag_failed_meetings_other],
+    confirm: [text.confirm_failed_meeting, text.confirm_failed_meetings],
+    tag: [text.tag_failed_meeting, text.tag_failed_meetings],
+    untag: [text.untag_failed_meeting, text.untag_failed_meetings],
   } as const;
-  const [single, one, other] = keys[kind];
+  const [single, several] = keys[kind];
   if (!action.bulk) return single({ title: action.meetings[0].title, reason });
-  const count = action.meetings.length;
-  return count === 1 ? one({ reason }) : other({ count: formatCount(count), reason });
+  return several({ count: action.meetings.length, reason });
 }
 
 // Writes run in the order they were picked, never two at once and never dropped;

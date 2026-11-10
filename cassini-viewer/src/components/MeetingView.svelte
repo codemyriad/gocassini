@@ -17,7 +17,7 @@
   } from "@lucide/svelte";
   import { get } from "svelte/store";
 
-  import { LL, numberFormat } from "../i18n";
+  import { LL } from "../i18n";
   import CloseButton from "./ui/CloseButton.svelte";
   import {
     formatClockTime,
@@ -1868,9 +1868,7 @@
                       {formatInsightCreated(record)}
                       {#if (insightSourceCounts.get(record.id) ?? 0) > 0}
                         {@const sources = insightSourceCounts.get(record.id) ?? 0}
-                        &middot; {sources === 1
-                          ? $LL.viewer.meeting.view.insight_context_one({ count: numberFormat().format(sources) })
-                          : $LL.viewer.meeting.view.insight_context_other({ count: numberFormat().format(sources) })}
+                        &middot; {$LL.viewer.meeting.view.insight_context({ count: sources })}
                       {/if}
                     </span>
                   </button>

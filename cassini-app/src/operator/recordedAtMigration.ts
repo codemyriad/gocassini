@@ -98,8 +98,6 @@ export function normalizeRecordedAtMigration(raw: unknown): RecordedAtMigration 
 }
 
 const copy = () => get(LL).app.operator.recorded_at_migration;
-// "1 recording" or "3 recordings", for a count inside a longer sentence.
-const recordings = (n: number) => (n === 1 ? copy().recordings_one() : copy().recordings_other({ count: formatCount(n) }));
 
 // Whether the panel shows anything. Nothing to say where nothing applies or
 // where no past recording needs it. While the first count is still running
@@ -136,11 +134,11 @@ export function migrationButton(m: RecordedAtMigration): MigrationButton | null 
   switch (m.state) {
     case "needed": {
       const n = m.blocked > 0 ? m.needed + m.blocked : m.needed;
-      return start(n === 1 ? t.write_one() : t.write_other({ count: formatCount(n) }));
+      return start(t.write({ count: n }));
     }
     case "running": return { action: "pause", label: t.pause(), disabled: false };
     case "paused": return start(t.resume());
-    case "blocked": return start(m.blocked === 1 ? t.retry_one() : t.retry_other({ count: formatCount(m.blocked) }));
+    case "blocked": return start(t.retry({ count: m.blocked }));
     default: return null;
   }
 }
@@ -151,35 +149,27 @@ export function migrationSummary(m: RecordedAtMigration): string {
   const left = m.queued + m.settling + m.in_progress;
   switch (m.state) {
     case "needed": {
-      const lead = m.needed === 1 ? t.needed_one() : t.needed_other({ count: formatCount(m.needed) });
+      const lead = t.needed({ count: m.needed });
       return m.checked ? lead : `${lead} ${t.still_counting()}`;
     }
     case "checking":
       return t.checking();
     case "running": {
-      const progress = m.done > 0
-        ? left === 1 ? t.running_one_done({ done: formatCount(m.done) }) : t.running_other_done({ count: formatCount(left), done: formatCount(m.done) })
-        : left === 1 ? t.running_one() : t.running_other({ count: formatCount(left) });
-      const pace = m.workers > 1
-        ? t.pace_many({ workers: formatCount(m.workers), seconds: formatCount(m.pace_seconds) })
-        : t.pace_one({ seconds: formatCount(m.pace_seconds) });
+      const progress = m.done > 0 ? t.running_done({ count: left, done: m.done }) : t.running({ count: left });
+      const pace = t.pace({ workers: Math.max(1, m.workers), seconds: m.pace_seconds });
       return `${progress} ${pace}`;
     }
     case "pausing": {
       // In progress, or an upload sent before the pause still being settled.
       const started = m.in_progress + m.settling;
-      const waiting = recordings(m.queued);
-      return started === 1 ? t.pausing_one({ waiting }) : t.pausing_other({ count: formatCount(started), waiting });
+      return t.pausing({ count: started, waiting: m.queued });
     }
     case "paused": {
-      const remaining = recordings(m.queued + m.settling);
-      return m.done > 0 ? t.paused_done({ remaining, done: formatCount(m.done) }) : t.paused({ remaining });
+      const remaining = m.queued + m.settling;
+      return m.done > 0 ? t.paused_done({ remaining, done: m.done }) : t.paused({ remaining });
     }
     case "blocked": {
-      const one = m.blocked === 1;
-      if (m.done === 0) return one ? t.blocked_one() : t.blocked_other({ count: formatCount(m.blocked) });
-      if (m.done === 1) return one ? t.blocked_one_done_one() : t.blocked_other_done_one({ count: formatCount(m.blocked) });
-      return one ? t.blocked_one_done_other({ done: formatCount(m.done) }) : t.blocked_other_done_other({ count: formatCount(m.blocked), done: formatCount(m.done) });
+      return m.done === 0 ? t.blocked({ count: m.blocked }) : t.blocked_done({ count: m.blocked, done: m.done });
     }
     case "done":
       return t.done({ done: formatCount(m.done) });

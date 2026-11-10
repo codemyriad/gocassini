@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Plus, Trash2, TriangleAlert } from "@lucide/svelte";
 
-  import { LL, numberFormat } from "../../i18n";
+  import { LL } from "../../i18n";
   import {
     WHOLE_MEETING,
     markRequest,
@@ -92,12 +92,10 @@
       {#if lost > 0}
         <span class="inline-flex items-center gap-1.5 rounded-field bg-warning/15 px-2 py-0.5">
           <TriangleAlert size={12} class="text-warning" aria-hidden="true" />
-          {lost === 1
-            ? $LL.viewer.meeting.tags.lost_one({ count: numberFormat().format(lost) })
-            : $LL.viewer.meeting.tags.lost_other({ count: numberFormat().format(lost) })}
+          {$LL.viewer.meeting.tags.lost({ count: lost })}
           {#if $session.editable}
             <button type="button" class="link" disabled={$session.busy} on:click={() => session.write(removeRequest(view.lost.map((item) => item.id)))}>
-              {lost === 1 ? $LL.viewer.meeting.tags.remove_lost_one() : $LL.viewer.meeting.tags.remove_lost_other()}
+              {$LL.viewer.meeting.tags.remove_lost({ count: lost })}
             </button>
           {/if}
         </span>

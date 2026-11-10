@@ -19,11 +19,9 @@
 <span class="tf-marks" role="status">
   {#if current >= 0 && current < count}
     <span class="tf-marks-at tabular-nums">{$LL.viewer.meeting.sections_nav.position({ current: numberFormat().format(current + 1), count: numberFormat().format(count) })}</span>
-    {count === 1 ? $LL.viewer.meeting.sections_nav.label_one() : $LL.viewer.meeting.sections_nav.label_other()}
+    {$LL.viewer.meeting.sections_nav.label({ count })}
   {:else}
-    {count === 1
-      ? $LL.viewer.meeting.sections_nav.count_one({ count: numberFormat().format(count) })
-      : $LL.viewer.meeting.sections_nav.count_other({ count: numberFormat().format(count) })}
+    {$LL.viewer.meeting.sections_nav.count({ count })}
   {/if}
 </span>
 {#if count > 0}

@@ -69,8 +69,7 @@
       "reference": ""
     },
     "sharing_notice": {
-      "pending_title_one": "",
-      "pending_title_other": "",
+      "pending_title": "",
       "pending_label": "",
       "pending_line": "",
       "show_them": "",
@@ -82,14 +81,11 @@
       "accept_refused": "",
       "accept_failed": "",
       "dismiss_failed": "",
-      "refused_title_one": "",
-      "refused_title_other": "",
+      "refused_title": "",
       "refused_line": "",
       "refused_group_label": "",
-      "starter_refused_title_one": "",
-      "starter_refused_title_other": "",
-      "starter_refused_line_one": "",
-      "starter_refused_line_other": "",
+      "starter_refused_title": "",
+      "starter_refused_line": "",
       "unpublished_group_label": "",
       "refused_notice": {
         "room_date": "",
@@ -119,8 +115,7 @@
   "operator": {
     "readiness": {
       "title": {
-        "needs_action_one": "",
-        "needs_action_other": "",
+        "needs_action": "",
         "warn": "",
         "not_verified": "",
         "not_verified_archive_failed": "",
@@ -185,22 +180,16 @@
         "unknown": ""
       },
       "unshared": {
-        "summary_one": "",
-        "summary_one_since": "",
-        "summary_other": "",
-        "summary_other_since": "",
+        "summary": "",
+        "summary_since": "",
         "missing": "",
-        "people_one": "",
-        "people_other": "",
-        "groups_one": "",
-        "groups_other": "",
+        "people": "",
+        "groups": "",
         "who_both": ""
       },
       "share_limited": {
-        "summary_one": "",
-        "summary_one_since": "",
-        "summary_other": "",
-        "summary_other_since": ""
+        "summary": "",
+        "summary_since": ""
       }
     },
     "feature_notice": {
@@ -240,8 +229,7 @@
         "group": "",
         "team": ""
       },
-      "recipients_one": "",
-      "recipients_other": "",
+      "recipients": "",
       "refused": {
         "entry_with_kind": "",
         "entry_with_reason": "",
@@ -352,43 +340,29 @@
       },
       "retention": {
         "forever": "",
-        "days_one": "",
-        "days_other": ""
+        "days": ""
       }
     },
     "recorded_at_migration": {
-      "recordings_one": "",
-      "recordings_other": "",
       "refresh_failed": "",
       "button": {
-        "write_one": "",
-        "write_other": "",
+        "write": "",
         "pause": "",
         "resume": "",
-        "retry_one": "",
-        "retry_other": ""
+        "retry": ""
       },
       "summary": {
-        "needed_one": "",
-        "needed_other": "",
+        "needed": "",
         "still_counting": "",
         "checking": "",
-        "running_one": "",
-        "running_one_done": "",
-        "running_other": "",
-        "running_other_done": "",
-        "pace_one": "",
-        "pace_many": "",
-        "pausing_one": "",
-        "pausing_other": "",
+        "running": "",
+        "running_done": "",
+        "pace": "",
+        "pausing": "",
         "paused": "",
         "paused_done": "",
-        "blocked_one": "",
-        "blocked_one_done_one": "",
-        "blocked_one_done_other": "",
-        "blocked_other": "",
-        "blocked_other_done_one": "",
-        "blocked_other_done_other": "",
+        "blocked": "",
+        "blocked_done": "",
         "done": "",
         "unknown": ""
       },
@@ -476,8 +450,7 @@
         "through": "",
         "from_label": "",
         "through_label": "",
-        "undated_one": "",
-        "undated_other": "",
+        "undated": "",
         "empty_no_files": "",
         "empty_no_dated_files": "",
         "in_selected_range": "",
@@ -494,8 +467,7 @@
         "plot_label": "",
         "cutoff_marker": "",
         "cutoff_note": "",
-        "files_one": "",
-        "files_other": "",
+        "files": "",
         "bar_label": "",
         "bar_hint": "",
         "data_summary": "",
@@ -626,16 +598,14 @@
       "empty_title": "",
       "empty_body": "",
       "attempt_badge": "",
-      "next_retry_deferrals_one": "",
-      "next_retry_deferrals_other": "",
+      "next_retry_deferrals": "",
       "cleanup_hint": "",
       "source_expired_badge": "",
       "source_expired_title": "",
       "meeting_deleted_badge": "",
       "meeting_deleted_title": "",
       "not_shared_badge": "",
-      "not_shared_title_one": "",
-      "not_shared_title_other": "",
+      "not_shared_title": "",
       "call_label": "",
       "recording_label": "",
       "recording_unnamed": "",
@@ -891,11 +861,9 @@
       "keep_video_help": "",
       "kept_plain": "",
       "kept_forever": "",
-      "kept_days_one": "",
-      "kept_days_other": "",
+      "kept_days": "",
       "source_forever": "",
-      "source_days_one": "",
-      "source_days_other": "",
+      "source_days": "",
       "source_unset": "",
       "storage_link": "",
       "must_transcribe": "",
@@ -935,7 +903,7 @@
     },
     "retention_policy": {
       "keep_forever": "",
-      "preset_days_other": "",
+      "preset_days": "",
       "custom": "",
       "keep_for": "",
       "custom_days_label": ""
@@ -1024,7 +992,7 @@
       "list_failed": "",
       "no_models": "",
       "no_match": "",
-      "match_count_other": ""
+      "match_count": ""
     },
     "published_format": {
       "field_label": "",
@@ -1081,8 +1049,7 @@
       "no_key": "",
       "model_named": "",
       "no_default_model": "",
-      "model_count_one": "",
-      "model_count_other": "",
+      "model_count": "",
       "loading_models": "",
       "timeout_fact": "",
       "token_limit_fact": "",
@@ -1124,8 +1091,7 @@
       "starting": "",
       "question_missing": "",
       "where_it_goes": "",
-      "textless_one": "",
-      "textless_other": ""
+      "textless": ""
     },
     "templates_panel": {
       "title": "",

@@ -719,7 +719,7 @@
                         {@const state = probes[provider.id]}
                         {@const count = state.status === "ok" ? state.count : 0}
                         <span>
-                          {count === 1 ? $LL.app.settings.llm.model_count_one() : $LL.app.settings.llm.model_count_other({ count: formatCount(count) })}
+                          {$LL.app.settings.llm.model_count({ count })}
                         </span>
                       {:else if probes[provider.id]?.status === "checking"}
                         <span>{$LL.app.settings.llm.loading_models()}</span>

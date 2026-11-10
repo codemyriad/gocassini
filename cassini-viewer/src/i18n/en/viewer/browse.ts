@@ -2,8 +2,8 @@
 //
 // Keys are grouped by component or module, in snake_case. See docs/translations.md.
 //
-// Counts: a key ending in `_one` is shown for exactly one, `_other` for any
-// other number ({count}). The code picks between them.
+// A count is one key with typesafe-i18n's plural syntax ({{meeting|meetings}});
+// the code passes the raw number (docs/translations.md).
 const browse = {
   // The viewer's frame (App.svelte): the page title, sheets and dialogs around the list.
   app: {
@@ -18,9 +18,10 @@ const browse = {
     meeting_not_found: "Meeting not found in catalog: {id}",
     no_context_bundle: "This build cannot assemble a context bundle.",
     search_failed: "Could not search the meetings.",
-    // {title} is the meeting's title.
-    delete_failed_one: "“{title}” could not be deleted.",
-    delete_failed_other: "{count} meetings could not be deleted.",
+    // One meeting failed. {title} is the meeting's title.
+    delete_failed_named: "“{title}” could not be deleted.",
+    // Plural; see the translator guide. {count}: meetings, 2 or more.
+    delete_failed: "{count:number|num} {{meeting|meetings}} could not be deleted.",
     insight_rename_busy: "Another rename is still saving. Try again in a moment.",
     // Labels of the dimmed area beside a sheet; clicking it closes the sheet.
     close_room_list: "Close the room list",
@@ -32,13 +33,14 @@ const browse = {
     // The Help sheet, opened from the rail's footer.
     help_sheet_label: "Help",
     import_sheet_label: "Import meetings",
-    // {title} is the meeting's title.
-    delete_confirm_title_one: "Delete “{title}”?",
-    delete_confirm_title_other: "Delete {count} meetings?",
+    // Deleting one meeting. {title} is the meeting's title.
+    delete_confirm_title_named: "Delete “{title}”?",
+    // Plural; see the translator guide. {count}: meetings, 2 or more.
+    delete_confirm_title: "Delete {count:number|num} {{meeting|meetings}}?",
     delete_confirm_body:
       "Deleting removes the recording, transcript and tags for everyone who can see it. This cannot be undone.",
-    delete_confirm_button_one: "Delete meeting",
-    delete_confirm_button_other: "Delete {count} meetings",
+    // Plural; see the translator guide. {count}: meetings.
+    delete_confirm_button: "Delete {count:number|num} {{meeting|meetings}}",
   },
 
   // The list of meetings and insights, with the search field above it.
@@ -75,24 +77,26 @@ const browse = {
     choose_room: "Choose a room",
     // On the narrow-screen rooms button when no room is chosen.
     all_rooms_short: "All",
-    // On the narrow-screen rooms button, after the room's name. {count} is how many tags filter the list.
-    room_button_tags_one: "{room} · 1 tag",
-    room_button_tags_other: "{room} · {count} tags",
+    // On the narrow-screen rooms button, after the room's name.
+    // Plural; see the translator guide. {count}: tags filtering the list.
+    room_button_tags: "{room} · {count:number|num} {{count:tag|tags}}",
     searching: "Searching…",
     clear_search: "Clear search",
     toggle_theme: "Toggle light or dark theme",
     finding_meetings: "Finding matching meetings…",
-    // The result line while something narrows the list. {shown} of {total}.
-    meetings_shown: "{shown} of {total} meetings",
-    meetings_count_one: "1 meeting",
-    meetings_count_other: "{count} meetings",
-    insights_shown: "{shown} of {total} insights",
-    insights_count_one: "1 insight",
-    insights_count_other: "{count} insights",
+    // The result line while something narrows the list.
+    // Plural; see the translator guide. {total}: meetings; {shown}: how many of them the list shows.
+    meetings_shown: "{shown:number|num} of {total:number|num} {{total:meeting|meetings}}",
+    // Plural; see the translator guide. {count}: meetings.
+    meetings_count: "{count:number|num} {{meeting|meetings}}",
+    // Plural; see the translator guide. {total}: insights; {shown}: how many of them the list shows.
+    insights_shown: "{shown:number|num} of {total:number|num} {{total:insight|insights}}",
+    // Plural; see the translator guide. {count}: insights.
+    insights_count: "{count:number|num} {{insight|insights}}",
     insights_failed: "Insights could not be listed.",
     show_every_room: "Show every room",
-    tag_filter_count_one: "1 tag",
-    tag_filter_count_other: "{count} tags",
+    // Plural; see the translator guide. {count}: tags filtering the list.
+    tag_filter_count: "{count:number|num} {{tag|tags}}",
     clear_tag_filters: "Clear tag filters",
     clear_filters: "Clear filters",
     retry_tag_update: "Retry tag update",
@@ -160,8 +164,8 @@ const browse = {
     // A badge on a row: the meeting has a transcript but no recording.
     transcription_only: "Transcription only",
     audio_included: "Audio included",
-    speakers_one: "1 speaker",
-    speakers_other: "{count} speakers",
+    // Plural; see the translator guide. {count}: speakers in the meeting.
+    speakers: "{count:number|num} {{speaker|speakers}}",
     tag_meeting: "Tag {title}",
     tag_this_meeting: "Tag this meeting",
     delete_meeting: "Delete {title}",
@@ -169,7 +173,8 @@ const browse = {
     // A search hit with no text to quote.
     matched_here: "matched here",
     matched_alias: "Matched a known mistranscription",
-    show_more: "Show more ({count} remaining)",
+    // Plural; see the translator guide. {count}: meetings or insights not shown yet.
+    show_more: "Show more ({count:number|num} {{item|items}} left)",
     load_note: "Load note",
     // Under "Load note" when the list could not be loaded or refreshed. The
     // technical reason follows underneath, in English.
@@ -213,11 +218,11 @@ const browse = {
     region_label: "Selected meetings",
     hide_selected: "Hide the selected meetings",
     show_selected: "Show the selected meetings",
-    selected_one: "1 meeting selected",
-    selected_other: "{count} meetings selected",
+    // Plural; see the translator guide. {count}: meetings picked.
+    selected: "{count:number|num} {{meeting|meetings}} selected",
     clear_selection: "Clear selection",
-    // {count} of the picked meetings are outside the current room or search.
-    not_shown_count: "{count} not shown here.",
+    // Plural; see the translator guide. {count}: picked meetings outside the current room or search.
+    not_shown_count: "{count:number|num} {{meeting|meetings}} not shown here.",
     what_next: "Tag, download or get insights from them.",
     // Over the cap, the bar says selection.over_cap_*.
     retry_tag_update: "Retry tag update",
@@ -225,25 +230,25 @@ const browse = {
     prepare: "Prepare",
     item_not_shown: "Not shown here",
     unpick: "Unpick {title}",
-    tag_meetings_one: "Tag 1 meeting",
-    tag_meetings_other: "Tag {count} meetings",
-    dropped_one: "1 selected meeting is no longer in the archive and was removed.",
-    dropped_other: "{count} selected meetings are no longer in the archive and were removed.",
+    // Plural; see the translator guide. {count}: meetings picked.
+    tag_meetings: "Tag {count:number|num} {{meeting|meetings}}",
+    // Plural; see the translator guide. {count}: picked meetings that were deleted meanwhile.
+    dropped: "{count:number|num} selected {{meeting is|meetings are}} no longer in the archive and {{was|were}} removed.",
     dismiss_dropped: "Dismiss the removal notice",
   },
 
   // What the Prepare panel says about the picked meetings (selectionModel.ts).
   selection: {
     length_not_recorded: "Length not recorded",
-    // {count} is already formatted ("12,405").
-    words: "{count} words",
-    at_least_words: "At least {count} words",
-    // In the selection bar and the Prepare panel. {max} is the most meetings
-    // one bundle can hold; {count} how many to unpick.
-    over_cap_one: "You can work with up to {max} meetings at once. Unpick one.",
-    over_cap_other: "You can work with up to {max} meetings at once. Unpick {count}.",
-    no_portable_audio_one: "One of these predates the single-file format (marked in the list). Unpick it to prepare.",
-    no_portable_audio_other: "{count} of these predate the single-file format (marked in the list). Unpick them to prepare.",
+    // Plural; see the translator guide. {count}: words in the picked transcripts.
+    words: "{count:number|num} {{word|words}}",
+    // Plural; see the translator guide. {count}: words; some meetings did not record theirs.
+    at_least_words: "At least {count:number|num} {{word|words}}",
+    // In the selection bar and the Prepare panel.
+    // Plural; see the translator guide. {max}: the most meetings one bundle can hold; {count}: how many to unpick.
+    over_cap: "You can work with up to {max:number|num} {{max:meeting|meetings}} at once. Unpick {count:number|num}.",
+    // Plural; see the translator guide. {count}: picked meetings without a single meeting file.
+    no_portable_audio: "{count:number|num} {{meeting predates|meetings predate}} the single-file format (marked in the list). Unpick {{it|them}} to prepare.",
   },
 
   // Renaming a room.
@@ -260,8 +265,8 @@ const browse = {
     scope: "This name is shared with everyone who can access this room in Cassini.",
     use_default: "Use default",
     invalid_characters: "Use a name without control characters.",
-    // {max} is the longest a name can be.
-    invalid_length: "Use a name between 1 and {max} characters.",
+    // Plural; see the translator guide. {max}: the longest a name can be.
+    invalid_length: "Use a name between 1 and {max:number|num} {{character|characters}}.",
   },
 
   // "Connect an agent": how to give an AI agent read access over MCP.
@@ -301,10 +306,12 @@ const browse = {
   import: {
     // The Import button beside search, and what it says while imports run.
     button: "Import",
-    button_running: "Importing {count}",
-    button_done: "{count} imported",
-    button_failed_one: "1 import failed",
-    button_failed_other: "{count} imports failed",
+    // Plural; see the translator guide. {count}: files being imported.
+    button_running: "Importing {count:number|num} {{file|files}}",
+    // Plural; see the translator guide. {count}: files imported.
+    button_done: "{count:number|num} {{file|files}} imported",
+    // Plural; see the translator guide. {count}: imports that failed.
+    button_failed: "{count:number|num} {{import|imports}} failed",
     title: "Import meetings",
     close: "Close import",
     intro:
@@ -343,11 +350,13 @@ const browse = {
     remove_title: "Delete the temporary upload and remove this attempt.",
     open: "Open",
     dismiss_title: "Hide this row. It stays in the server's import history.",
-    ready: "{count} ready",
-    ready_skipped: "{count} ready · {skipped} skipped",
+    // Plural; see the translator guide. {count}: files ready to import.
+    ready: "{count:number|num} {{file|files}} ready",
+    // Plural; see the translator guide. {count}: files ready to import; {skipped}: files skipped.
+    ready_skipped: "{count:number|num} {{count:file|files}} ready · {skipped:number|num} skipped",
     importing: "Importing…",
-    import_one: "Import 1 meeting",
-    import_other: "Import {count} meetings",
+    // Plural; see the translator guide. {count}: meetings to import.
+    import_meetings: "Import {count:number|num} {{meeting|meetings}}",
     // What a running import says.
     running_uploading: "Uploading…",
     running_adding: "Adding…",
@@ -360,17 +369,17 @@ const browse = {
     settled_imported: "Imported",
     // Parts of a dropped file's summary line, joined with " · ".
     preview_transcript_only: "Transcript only",
-    preview_speakers_one: "1 speaker",
-    preview_speakers_other: "{count} speakers",
-    preview_tags_one: "1 tag",
-    preview_tags_other: "{count} tags",
+    // Plural; see the translator guide. {count}: speakers in the file.
+    preview_speakers: "{count:number|num} {{speaker|speakers}}",
+    // Plural; see the translator guide. {count}: tags in the file.
+    preview_tags: "{count:number|num} {{tag|tags}}",
     preview_summary: "summary",
     duration_under_minute: "under a minute",
     // Who can open an imported meeting.
     sharing_only_you: "Only you",
     sharing_only_you_title: "Only you can open this meeting.",
-    // {count} people or groups, the importer included.
-    sharing_shared_with: "Shared with {count}",
+    // Plural; see the translator guide. {count}: people or groups, the importer included.
+    sharing_shared_with: "Shared with {count:number|num} {{recipient|recipients}}",
     // The first name in the list of who can open it.
     sharing_you: "you",
     // {name} is a Nextcloud group's name.
@@ -394,8 +403,8 @@ const browse = {
     find_or_create: "Find or create a tag",
     find: "Find a tag",
     list_label: "Tags",
-    meetings_one: "1 meeting",
-    meetings_other: "{count} meetings",
+    // Plural; see the translator guide. {count}: meetings with the tag.
+    meetings: "{count:number|num} {{meeting|meetings}}",
     // {name} is the new tag's name, shown in bold.
     create: "Create {name}",
     // {name} is a colour from `colors`.
@@ -417,8 +426,8 @@ const browse = {
     merge_instead: "Merge into “{name}” instead",
     // The Manage tags sheet.
     manager_title: "Manage tags",
-    manager_count_one: "1 tag",
-    manager_count_other: "{count} tags",
+    // Plural; see the translator guide. {count}: tags.
+    manager_count: "{count:number|num} {{tag|tags}}",
     manager_close_scrim: "Close Manage tags",
     none_yet: "No tags yet.",
     menu_rename: "Rename",
@@ -435,20 +444,20 @@ const browse = {
     run_again: "Run again",
     // How much of the archive a tag is on.
     counts_unused: "Not used yet",
-    counts_in_one: "Used in 1 meeting",
-    counts_in_other: "Used in {count} meetings",
-    // {times} is how many places the tag is on, across {count} meetings.
-    counts_times_one: "Used {times} times in 1 meeting",
-    counts_times_other: "Used {times} times in {count} meetings",
+    // Plural; see the translator guide. {count}: meetings with the tag.
+    counts_in: "Used in {count:number|num} {{meeting|meetings}}",
+    // Plural; see the translator guide. {times}: places the tag is on, across {count} meetings.
+    counts_times: "Used {times:number|num} {{times:time|times}} in {count:number|num} {{count:meeting|meetings}}",
     confirm_none: "None of your meetings use it.",
-    confirm_one: "Updates one of your meetings. Meetings that are in rooms you can't access will keep the old tag.",
-    confirm_other: "Updates {count} of your meetings. Meetings that are in rooms you can't access will keep the old tag.",
+    // Plural; see the translator guide. {count}: your meetings the change updates.
+    confirm: "Updates {count:number|num} {{meeting|meetings}} of yours. Meetings that are in rooms you can't access will keep the old tag.",
     // {name} is a person, {when} how long ago ("2 days ago").
     changed_by: "Changed by {name}",
     changed_by_when: "Changed by {name} · {when}",
     job_updating: "Updating {done} of {total}…",
     job_stopped: "Stopped before it finished.",
-    job_failed: "{count} couldn't be updated",
+    // Plural; see the translator guide. {count}: meetings the change failed on.
+    job_failed: "{count:number|num} {{meeting|meetings}} couldn't be updated",
     busy: "You already have a change running.",
     change_failed: "That change didn't go through. Try again.",
     // Errors from the server about tags and marks.
@@ -491,25 +500,26 @@ const browse = {
 
   // Tagging from the list and the selection bar (listTags.ts).
   list_tags: {
-    saving_one: "Saving 1 tag update…",
-    saving_other: "Saving {count} tag updates…",
+    // Plural; see the translator guide. {count}: tag updates.
+    saving: "Saving {count:number|num} tag {{update|updates}}…",
     // {title} is a meeting's title; {reason} is why it failed.
     confirm_failed_meeting: "Could not confirm the tag update for “{title}”: {reason}",
-    confirm_failed_meetings_one: "Could not confirm the tag update for 1 meeting: {reason}",
-    confirm_failed_meetings_other: "Could not confirm the tag update for {count} meetings: {reason}",
+    // Plural; see the translator guide. {count}: meetings.
+    confirm_failed_meetings: "Could not confirm the tag update for {count:number|num} {{count:meeting|meetings}}: {reason}",
     tag_failed_meeting: "Could not tag “{title}”: {reason}",
-    tag_failed_meetings_one: "Could not tag 1 meeting: {reason}",
-    tag_failed_meetings_other: "Could not tag {count} meetings: {reason}",
+    // Plural; see the translator guide. {count}: meetings.
+    tag_failed_meetings: "Could not tag {count:number|num} {{count:meeting|meetings}}: {reason}",
     untag_failed_meeting: "Could not untag “{title}”: {reason}",
-    untag_failed_meetings_one: "Could not untag 1 meeting: {reason}",
-    untag_failed_meetings_other: "Could not untag {count} meetings: {reason}",
-    tagged_one: "Tagged 1 meeting",
-    tagged_other: "Tagged {count} meetings",
-    untagged_one: "Untagged 1 meeting",
-    untagged_other: "Untagged {count} meetings",
+    // Plural; see the translator guide. {count}: meetings.
+    untag_failed_meetings: "Could not untag {count:number|num} {{count:meeting|meetings}}: {reason}",
+    // Plural; see the translator guide. {count}: meetings.
+    tagged: "Tagged {count:number|num} {{meeting|meetings}}",
+    // Plural; see the translator guide. {count}: meetings.
+    untagged: "Untagged {count:number|num} {{meeting|meetings}}",
     tagged_partial: "Tagged {done} of {total} — {failed} failed",
     untagged_partial: "Untagged {done} of {total} — {failed} failed",
-    too_many: "Tag at most {max} meetings at once.",
+    // Plural; see the translator guide. {max}: the most meetings one change can tag.
+    too_many: "Tag at most {max:number|num} {{meeting|meetings}} at once.",
   },
 
   // Loading and searching the list.

@@ -1,6 +1,6 @@
 import { get } from "svelte/store";
 
-import { formatCount, LL } from "../i18n";
+import { LL } from "../i18n";
 import { numberFormat } from "../i18n/format";
 import type { MeetingCatalogEntry } from "./catalog";
 
@@ -211,10 +211,6 @@ export function summarizeSelection(entries: readonly MeetingCatalogEntry[]): Sel
   return totals;
 }
 
-// The reader's own grouping separator (docs/translations.md, "Dates, times and
-// numbers"); en-GB until an entry point picks a locale.
-
-
 // formatWordCount renders one meeting's size. An entry with no wordCount says
 // so; it does not read as a short meeting.
 export function formatWordCount(wordCount: number | undefined): string {
@@ -222,7 +218,7 @@ export function formatWordCount(wordCount: number | undefined): string {
   if (typeof wordCount !== "number") {
     return text.length_not_recorded();
   }
-  return text.words({ count: formatCount(wordCount) });
+  return text.words({ count: wordCount });
 }
 
 // formatSelectionWordCount renders the selection's total, saying "at least"
@@ -233,7 +229,7 @@ export function formatSelectionWordCount(totals: SelectionTotals): string {
   if (totals.meetingsWithWordCount === 0) {
     return text.length_not_recorded();
   }
-  const count = formatCount(totals.wordCount);
+  const count = totals.wordCount;
   return totals.meetingsWithoutWordCount > 0 ? text.at_least_words({ count }) : text.words({ count });
 }
 
@@ -253,11 +249,7 @@ export function describeSelectionGaps(totals: SelectionTotals): string[] {
   // refuses a bundle, and a question, over more than this many meetings.
   if (totals.count > MAX_SELECTED_MEETINGS) {
     const excess = totals.count - MAX_SELECTED_MEETINGS;
-    gaps.push(
-      excess === 1
-        ? text.over_cap_one({ max: formatCount(MAX_SELECTED_MEETINGS) })
-        : text.over_cap_other({ max: formatCount(MAX_SELECTED_MEETINGS), count: formatCount(excess) }),
-    );
+    gaps.push(text.over_cap({ max: MAX_SELECTED_MEETINGS, count: excess }));
   }
   // summaryUnknown is deliberately NOT a sentence, though it is still counted.
   //
@@ -282,11 +274,7 @@ export function describeSelectionGaps(totals: SelectionTotals): string[] {
     // it" left the reader to discover both the certainty and the scope from an
     // error that blames availability. The panel marks the rows, so the meeting
     // to unpick can be found without counting.
-    gaps.push(
-      totals.withoutPortableAudio === 1
-        ? text.no_portable_audio_one()
-        : text.no_portable_audio_other({ count: formatCount(totals.withoutPortableAudio) }),
-    );
+    gaps.push(text.no_portable_audio({ count: totals.withoutPortableAudio }));
   }
   return gaps;
 }

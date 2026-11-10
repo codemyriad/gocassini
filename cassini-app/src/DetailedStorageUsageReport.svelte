@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { dateFormat, LL, numberFormat } from "cassini-viewer/i18n";
+  import { dateFormat, LL } from "cassini-viewer/i18n";
   import { onDestroy, onMount } from "svelte";
   import { HardDrive, RefreshCw, TriangleAlert } from "@lucide/svelte";
   import { formatStorageBytes, storageUsageTotal } from "./operator/storageUsage";
@@ -166,7 +166,7 @@
         {#each categories as category (category.id)}
           {@const info = presentation(category.id)}
           <details class="category-card op-tint" id={`category-${category.id}`} bind:open={expanded[category.id]}>
-            <summary><span class="category-dot" style:background={info.color}></span><span class="category-name">{info.label}<small>{category.files === 1 ? $LL.app.operator.storage.chart.files_one() : $LL.app.operator.storage.chart.files_other({ count: numberFormat().format(category.files) })}</small></span><strong>{formatStorageBytes(category.bytes)}</strong></summary>
+            <summary><span class="category-dot" style:background={info.color}></span><span class="category-name">{info.label}<small>{$LL.app.operator.storage.chart.files({ count: category.files })}</small></span><strong>{formatStorageBytes(category.bytes)}</strong></summary>
             <p class="category-description">{info.description}</p>
             {#if category.id === "published" && publishedPartial}<p class="category-description" role="status">{$LL.app.operator.storage.report.partial_category()}</p>{/if}
             <StorageCategoryChart {category} measuredAt={usage.measured_at} label={info.label} color={info.color} dateKind={category.id === "published" ? "published" : "lifecycle"} policy={chartRetentionPolicy(category.id, retention)} />

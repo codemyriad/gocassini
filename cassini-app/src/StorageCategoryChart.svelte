@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { formatCount, LL, numberFormat } from "cassini-viewer/i18n";
+  import { LL, numberFormat } from "cassini-viewer/i18n";
   import type { StorageUsageCategory } from "./operator/types";
   import { formatStorageBytes } from "./operator/storageUsage";
   import type { RetentionPolicy } from "./operator/retention";
@@ -57,8 +57,8 @@
     <label>{$LL.app.operator.storage.chart.range_label()}
       <select class="select select-bordered" aria-label={$LL.app.operator.storage.chart.range_select_label({ category: label })} bind:value={range}>
         <option value="all">{$LL.app.operator.storage.chart.range_all()}</option>
-        <option value="7">{$LL.app.operator.storage.chart.range_last_days({ count: formatCount(7) })}</option><option value="30">{$LL.app.operator.storage.chart.range_last_days({ count: formatCount(30) })}</option>
-        <option value="90">{$LL.app.operator.storage.chart.range_last_days({ count: formatCount(90) })}</option><option value="365">{$LL.app.operator.storage.chart.range_last_year()}</option>
+        <option value="7">{$LL.app.operator.storage.chart.range_last_days({ count: 7 })}</option><option value="30">{$LL.app.operator.storage.chart.range_last_days({ count: 30 })}</option>
+        <option value="90">{$LL.app.operator.storage.chart.range_last_days({ count: 90 })}</option><option value="365">{$LL.app.operator.storage.chart.range_last_year()}</option>
         <option value="custom">{$LL.app.operator.storage.chart.range_custom()}</option>
       </select>
     </label>
@@ -68,19 +68,19 @@
     {/if}
   </div>
   {#if category.undated_files > 0}
-    <p class="undated">{category.undated_files === 1 ? $LL.app.operator.storage.chart.undated_one({ size: formatStorageBytes(category.undated_bytes) }) : $LL.app.operator.storage.chart.undated_other({ size: formatStorageBytes(category.undated_bytes), count: count(category.undated_files) })}</p>
+    <p class="undated">{$LL.app.operator.storage.chart.undated({ size: formatStorageBytes(category.undated_bytes), count: category.undated_files })}</p>
   {/if}
   {#if result.error}
     <p class="chart-message" role="alert">{result.error}</p>
   {:else if category.days.length === 0}
     <p class="chart-message">{category.files === 0 ? $LL.app.operator.storage.chart.empty_no_files() : $LL.app.operator.storage.chart.empty_no_dated_files()}</p>
   {:else}
-    <div class="chart-summary"><strong>{formatStorageBytes(rangeBytes)} <span>{$LL.app.operator.storage.chart.in_selected_range()}</span></strong><span>{days === 1 ? $LL.app.operator.storage.chart.precision_daily() : $LL.app.operator.storage.chart.precision_days({ count: formatCount(days) })} · {dates}</span></div>
+    <div class="chart-summary"><strong>{formatStorageBytes(rangeBytes)} <span>{$LL.app.operator.storage.chart.in_selected_range()}</span></strong><span>{days === 1 ? $LL.app.operator.storage.chart.precision_daily() : $LL.app.operator.storage.chart.precision_days({ count: days })} · {dates}</span></div>
     {#if rangeBytes === 0}<p class="chart-message">{$LL.app.operator.storage.chart.empty_range()}</p>{/if}
     {#if canScrollEarlier || canScrollLater}
       <div class="timeline-navigation">
         <button class="op-btn" type="button" aria-label={$LL.app.operator.storage.chart.scroll_earlier_label({ category: label })} disabled={!canScrollEarlier} on:click={() => scrollTimeline(-1)}>← {$LL.app.operator.storage.chart.scroll_earlier()}</button>
-        <span>{$LL.app.operator.storage.chart.scroll_hint({ count: count(result.buckets.length) })}</span>
+        <span>{$LL.app.operator.storage.chart.scroll_hint({ count: result.buckets.length })}</span>
         <button class="op-btn" type="button" aria-label={$LL.app.operator.storage.chart.scroll_later_label({ category: label })} disabled={!canScrollLater} on:click={() => scrollTimeline(1)}>{$LL.app.operator.storage.chart.scroll_later()} →</button>
       </div>
     {/if}
@@ -98,8 +98,8 @@
         <div class="bars">
           {#each result.buckets as bucket, index (bucket.from)}
             <button type="button" class="bar-target" class:active={selected === index} class:removed={!!cutoff && bucket.from <= cutoff}
-              aria-label={$LL.app.operator.storage.chart.bar_label({ range: bucketLabel(bucket), size: formatStorageBytes(bucket.bytes), files: bucket.files === 1 ? $LL.app.operator.storage.chart.files_one() : $LL.app.operator.storage.chart.files_other({ count: count(bucket.files) }) })}
-              title={`${bucketLabel(bucket)} · ${formatStorageBytes(bucket.bytes)} · ${bucket.files === 1 ? $LL.app.operator.storage.chart.files_one() : $LL.app.operator.storage.chart.files_other({ count: count(bucket.files) })}`}
+              aria-label={$LL.app.operator.storage.chart.bar_label({ range: bucketLabel(bucket), size: formatStorageBytes(bucket.bytes), files: $LL.app.operator.storage.chart.files({ count: bucket.files }) })}
+              title={`${bucketLabel(bucket)} · ${formatStorageBytes(bucket.bytes)} · ${$LL.app.operator.storage.chart.files({ count: bucket.files })}`}
               on:focus={() => selected = index} on:mouseenter={() => selected = index} on:click={() => selected = index}>
               <span class="bar" class:empty={bucket.bytes === 0} style:height={`${maximum > 0 ? Math.max(bucket.bytes > 0 ? 1 : 0, bucket.bytes / maximum * 100) : 0}%`}></span>
             </button>
@@ -110,9 +110,9 @@
       </div>
     </div>
     {#if cutoff && policy?.count}
-      <p class="cutoff-note">{$LL.app.operator.storage.chart.cutoff_note({ date: chartDate(cutoff), days: formatCount(policy.count) })}</p>
+      <p class="cutoff-note">{$LL.app.operator.storage.chart.cutoff_note({ date: chartDate(cutoff), days: policy.count })}</p>
     {/if}
-    <p class="bar-detail" aria-live="polite">{#if active}<strong>{bucketLabel(active)}</strong> · {formatStorageBytes(active.bytes)} · {active.files === 1 ? $LL.app.operator.storage.chart.files_one() : $LL.app.operator.storage.chart.files_other({ count: count(active.files) })}{:else}{$LL.app.operator.storage.chart.bar_hint()}{/if}</p>
+    <p class="bar-detail" aria-live="polite">{#if active}<strong>{bucketLabel(active)}</strong> · {formatStorageBytes(active.bytes)} · {$LL.app.operator.storage.chart.files({ count: active.files })}{:else}{$LL.app.operator.storage.chart.bar_hint()}{/if}</p>
     <details class="values"><summary>{$LL.app.operator.storage.chart.data_summary()}</summary>
       <div class="table-scroll"><table><caption>{dateKind === "published" ? $LL.app.operator.storage.chart.data_caption_published({ category: label }) : $LL.app.operator.storage.chart.data_caption_lifecycle({ category: label })}</caption><thead><tr><th scope="col">{$LL.app.operator.storage.chart.column_range()}</th><th scope="col">{$LL.app.operator.storage.chart.column_bytes()}</th><th scope="col">{$LL.app.operator.storage.chart.column_files()}</th></tr></thead><tbody>
         {#each result.buckets as bucket (bucket.from)}<tr><th scope="row">{bucketLabel(bucket)}</th><td>{count(bucket.bytes)}</td><td>{count(bucket.files)}</td></tr>{/each}

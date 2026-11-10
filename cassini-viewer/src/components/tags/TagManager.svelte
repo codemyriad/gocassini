@@ -5,7 +5,7 @@
   import { Ellipsis, History } from "@lucide/svelte";
   import CloseButton from "../ui/CloseButton.svelte";
 
-  import { formatCount, LL } from "../../i18n";
+  import { LL } from "../../i18n";
   import type { TagPick, TagUpdate, VocabularyTag } from "../../viewer/annotations";
   import { changedLine, confirmLine, countsLine, createJobTracker, jobStatus, type TagAction, type TagProvider } from "../../viewer/tagManager";
   import { colorFor } from "../../viewer/tagPalette";
@@ -145,7 +145,7 @@
     <header class="tm-head flex items-center gap-2.5 border-b border-base-300 px-5 pb-3 pt-4 max-[720px]:px-4">
       <h2 id="tag-manager-title" class="flex flex-1 items-center gap-2.5 text-[17px] font-semibold">
         {text.manager_title()} <span class="badge badge-outline badge-sm font-medium"
-          >{tags.length === 1 ? text.manager_count_one() : text.manager_count_other({ count: formatCount(tags.length) })}</span
+          >{text.manager_count({ count: tags.length })}</span
         >
       </h2>
       <CloseButton label={$LL.common.action.close()} data-close on:click={() => dispatch("close")} />

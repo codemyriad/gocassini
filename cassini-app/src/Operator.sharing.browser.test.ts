@@ -150,7 +150,7 @@ it("adds the held-back sentence under the refused notice when both happened", as
   });
   await open("All hands");
   await expect.element(page.getByText("Published. Not shared: 1 recipient", { exact: true })).toBeVisible();
-  await expect.element(page.getByText("Nextcloud's share limit also held back 1.", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("Nextcloud's share limit also held back 1 recipient.", { exact: true })).toBeVisible();
   await expect.element(page.getByText("Who was refused (1)", { exact: true })).toBeVisible();
   expect(document.querySelector(".run-card")!.textContent).toContain("Not shared with everyone");
 });

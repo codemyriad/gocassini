@@ -1,7 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
   import { Sun, Moon, Search, PanelLeft, Tag, Trash2, TriangleAlert, Users, X } from "@lucide/svelte";
-  import { dateFormat, formatCount, LL } from "../i18n";
+  import { dateFormat, LL } from "../i18n";
   import type { TagPick, VocabularyTag } from "../viewer/annotations";
   import { filterByTagLabel, wholeTagState, type MeetingTags } from "../viewer/listTags";
   import { colorFor } from "../viewer/tagPalette";
@@ -325,15 +325,11 @@
   $: text = $LL.viewer.browse.meeting_list;
   // The result line: "3 of 12 meetings" while something narrows the list, else the total.
   $: meetingCountLine = narrowed
-    ? text.meetings_shown({ shown: formatCount(visibleMeetings.length), total: formatCount(totalCount) })
-    : totalCount === 1
-      ? text.meetings_count_one()
-      : text.meetings_count_other({ count: formatCount(totalCount) });
+    ? text.meetings_shown({ shown: visibleMeetings.length, total: totalCount })
+    : text.meetings_count({ count: totalCount });
   $: insightCountLine = narrowed
-    ? text.insights_shown({ shown: formatCount(visibleInsights.length), total: formatCount(totalInsightCount) })
-    : totalInsightCount === 1
-      ? text.insights_count_one()
-      : text.insights_count_other({ count: formatCount(totalInsightCount) });
+    ? text.insights_shown({ shown: visibleInsights.length, total: totalInsightCount })
+    : text.insights_count({ count: totalInsightCount });
   // The text filter is list-local by design, so the shell cannot compute what
   // the list is actually showing — and it has to, to say how many picked
   // meetings this narrowing hides (D-626). Reported rather than moved: the
@@ -370,9 +366,7 @@
         <span
           >{tagFilterCount === 0
             ? (selectedRoomName ?? text.all_rooms_short())
-            : tagFilterCount === 1
-              ? text.room_button_tags_one({ room: selectedRoomName ?? text.all_rooms_short() })
-              : text.room_button_tags_other({ room: selectedRoomName ?? text.all_rooms_short(), count: formatCount(tagFilterCount) })}</span
+            : text.room_button_tags({ room: selectedRoomName ?? text.all_rooms_short(), count: tagFilterCount })}</span
         >
       </button>
 
@@ -468,7 +462,7 @@
         </span>
       {:else if tagFilterCount > 0 && filterTags.length === 0}
         <span class="chip">
-          {tagFilterCount === 1 ? text.tag_filter_count_one() : text.tag_filter_count_other({ count: formatCount(tagFilterCount) })}
+          {text.tag_filter_count({ count: tagFilterCount })}
           <button type="button" on:click={() => dispatch("clearTags")} aria-label={text.clear_tag_filters()}>
             <X size={12} aria-hidden="true" />
           </button>
@@ -705,8 +699,8 @@
                       <span class="rule" aria-hidden="true"></span>
                       <span
                         class="row-speakers"
-                        title={meeting.speakerCount === 1 ? text.speakers_one() : text.speakers_other({ count: formatCount(meeting.speakerCount) })}
-                        aria-label={meeting.speakerCount === 1 ? text.speakers_one() : text.speakers_other({ count: formatCount(meeting.speakerCount) })}
+                        title={text.speakers({ count: meeting.speakerCount })}
+                        aria-label={text.speakers({ count: meeting.speakerCount })}
                       >
                         <Users size={12} aria-hidden="true" />{meeting.speakerCount}
                       </span>
@@ -790,7 +784,7 @@
       {/each}
       {#if feedItems.length > displayedFeedItems.length}
         <button type="button" class="list-empty-action" on:click={() => (displayLimit += 100)}>
-          {text.show_more({ count: formatCount(feedItems.length - displayedFeedItems.length) })}
+          {text.show_more({ count: feedItems.length - displayedFeedItems.length })}
         </button>
       {/if}
     {/if}

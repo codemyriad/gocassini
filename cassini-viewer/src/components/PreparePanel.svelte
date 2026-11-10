@@ -3,7 +3,7 @@
   import { FileText, TriangleAlert, X } from "@lucide/svelte";
   import ExportMenu from "./ExportMenu.svelte";
   import CloseButton from "./ui/CloseButton.svelte";
-  import { LL, numberFormat } from "../i18n";
+  import { LL } from "../i18n";
   import type { MeetingCatalogEntry } from "../viewer/catalog";
   import type { LoadedArtifact } from "../viewer/loadArtifact";
   import { displaySegmentsForArtifact, transcriptMarkdown } from "../viewer/meetingExport";
@@ -217,7 +217,7 @@
         const copied = await pending;
         status = {
           tone: "ok",
-          text: $LL.viewer.insights.prepare.copied_characters({ count: numberFormat().format(copied.length) }),
+          text: $LL.viewer.insights.prepare.copied_characters({ count: copied.length }),
         };
         busy = false;
         return;
@@ -239,7 +239,7 @@
       await clipboard.writeText(text);
       status = {
         tone: "ok",
-        text: $LL.viewer.insights.prepare.copied_characters({ count: numberFormat().format(text.length) }),
+        text: $LL.viewer.insights.prepare.copied_characters({ count: text.length }),
       };
     } catch {
       // The bytes are assembled and cached by now, so a second press writes

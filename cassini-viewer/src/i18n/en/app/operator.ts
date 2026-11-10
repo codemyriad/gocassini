@@ -9,9 +9,9 @@ const operator = {
   readiness: {
     // Doctor's heading, from the operator's verdict.
     title: {
-      needs_action_one: "One recording check needs attention",
-      // {count}: how many checks need action, always 2 or more.
-      needs_action_other: "{count} recording checks need attention",
+      // Plural; see the translator guide. {count}: checks that need action, a
+      // handful at most; ?? is that number.
+      needs_action: "{{count:One recording check needs attention|?? recording checks need attention}}",
       warn: "Recording checks need attention",
       not_verified: "Recording setup needs verification",
       not_verified_archive_failed: "Recording setup needs verification; archive search re-index failed",
@@ -92,29 +92,28 @@ const operator = {
     // with someone in the room. {since}: a short date ("12 Oct"). When the
     // operator says who, `missing` follows as a second sentence.
     unshared: {
-      summary_one: "1 recording was not shared with everyone.",
-      summary_one_since: "1 recording since {since} was not shared with everyone.",
-      summary_other: "{count} recordings were not shared with everyone.",
-      summary_other_since: "{count} recordings since {since} were not shared with everyone.",
+      // Plural; see the translator guide. {count}: recordings.
+      summary: "{count:number|num} {{recording was|recordings were}} not shared with everyone.",
+      // Plural; see the translator guide. {count}: recordings.
+      summary_since: "{count:number|num} {{count:recording|recordings}} since {since} {{count:was|were}} not shared with everyone.",
       // {who}: one of the people/groups phrases below.
       missing: "Missing: {who}.",
-      people_one: "1 person",
-      people_other: "{count} people",
-      groups_one: "1 group",
-      groups_other: "{count} groups",
+      // Plural; see the translator guide. {count}: people.
+      people: "{count:number|num} {{person|people}}",
+      // Plural; see the translator guide. {count}: groups.
+      groups: "{count:number|num} {{group|groups}}",
       // {people} and {groups}: the phrases above, e.g. "3 people and 1 group".
       who_both: "{people} and {groups}",
     },
     // Recording sharing row: recipients Nextcloud's share limit held back.
     // {since}: a short date ("6 Nov").
     share_limited: {
-      summary_one: "Nextcloud's share limit held back recipients of 1 recording. Re-share each from its run, or raise the limit.",
-      summary_one_since:
-        "Nextcloud's share limit held back recipients of 1 recording since {since}. Re-share each from its run, or raise the limit.",
-      summary_other:
-        "Nextcloud's share limit held back recipients of {count} recordings. Re-share each from its run, or raise the limit.",
-      summary_other_since:
-        "Nextcloud's share limit held back recipients of {count} recordings since {since}. Re-share each from its run, or raise the limit.",
+      // Plural; see the translator guide. {count}: recordings.
+      summary:
+        "Nextcloud's share limit held back recipients of {count:number|num} {{recording|recordings}}. Re-share each from its run, or raise the limit.",
+      // Plural; see the translator guide. {count}: recordings.
+      summary_since:
+        "Nextcloud's share limit held back recipients of {count:number|num} {{count:recording|recordings}} since {since}. Re-share each from its run, or raise the limit.",
     },
   },
   // buildFeatureNotice (operator/setupHealth.ts): what Browse says about a
@@ -166,15 +165,16 @@ const operator = {
       group: "group",
       team: "Team",
     },
-    recipients_one: "1 recipient",
-    recipients_other: "{count} recipients",
+    // Plural; see the translator guide. {count}: people or groups.
+    recipients: "{count:number|num} {{recipient|recipients}}",
     refused: {
       // {id}: a user, group or Team id. {kind}: one of the labels above.
       entry_with_kind: "{id} ({kind})",
       // {who}: an id, or the line above. {reason}: Nextcloud's reason, in English.
       entry_with_reason: "{who}: {reason}",
-      // {names}: the first few ids, e.g. "bob, carol, dave". {count}: how many more.
-      list_more: "{names} and {count} more",
+      // {names}: the first few ids, e.g. "bob, carol, dave".
+      // Plural; see the translator guide. {count}: how many more.
+      list_more: "{names} and {count:number|num} {{count:other|others}}",
     },
     // The line beside "Re-share with the room" after it ran.
     reshare: {
@@ -200,14 +200,15 @@ const operator = {
       // {recipients}: "1 recipient" or "3 recipients".
       held_back:
         "Published. Held back by Nextcloud's share limit: {recipients}. Re-share in 10 minutes, or raise the limit (Doctor › Recording sharing).",
-      // {count} of {audience}: refused recipients out of everyone in the room.
-      partial_of: "Published, but not shared with {count} of {audience} recipients",
+      // Plural; see the translator guide. {count} of {audience}: refused recipients out of everyone in the room.
+      partial_of: "Published, but not shared with {count:number|num} of {audience:number|num} {{audience:recipient|recipients}}",
       // {recipients}: "1 recipient" or "3 recipients".
       partial: "Published. Not shared: {recipients}",
       // A disclosure; {count}: how many are listed in it.
       who_was_refused: "Who was refused ({count})",
       partial_hint: "Nextcloud refused them because of a sharing setting. Doctor › Recording sharing names it and the fix.",
-      also_held_back: "Nextcloud's share limit also held back {count}.",
+      // Plural; see the translator guide. {count}: recipients.
+      also_held_back: "Nextcloud's share limit also held back {count:number|num} {{recipient|recipients}}.",
       reshare_button: "Re-share with the room",
       reshare_note:
         "Adds whoever is missing, including anyone removed by hand. People who accept shares by hand will find it waiting in Browse.",
@@ -321,59 +322,51 @@ const operator = {
     // How long recordings are kept, after the media kept, e.g. "Audio only · 30 days".
     retention: {
       forever: "forever",
-      days_one: "1 day",
-      days_other: "{count} days",
+      // Plural; see the translator guide. {count}: days.
+      days: "{count:number|num} {{day|days}}",
     },
   },
   // RecordedAtMigration.svelte and operator/recordedAtMigration.ts: the Doctor
   // card that writes the recording time into past recordings' files.
   recorded_at_migration: {
-    // A count inside a longer sentence ({waiting}, {remaining} below).
-    recordings_one: "1 recording",
-    recordings_other: "{count} recordings",
     // {message}: the error, usually the operator's own, in English.
     refresh_failed: "Couldn’t refresh: {message}",
     button: {
-      write_one: "Write the recording time into 1 recording",
-      write_other: "Write the recording time into {count} recordings",
+      // Plural; see the translator guide. {count}: recordings.
+      write: "Write the recording time into {count:number|num} {{recording|recordings}}",
       pause: "Pause",
       resume: "Resume",
-      retry_one: "Retry the blocked recording",
-      retry_other: "Retry {count} blocked recordings",
+      // Plural; see the translator guide. {count}: blocked recordings.
+      retry: "Retry {count:number|num} blocked {{recording|recordings}}",
     },
     summary: {
-      needed_one:
-        "1 recording was published before Cassini wrote the recording time into the file itself. Browse already shows the right time; writing it into the file makes it travel with downloads, the Nextcloud apps and the cassini command line.",
-      needed_other:
-        "{count} recordings were published before Cassini wrote the recording time into the file itself. Browse already shows the right time; writing it into the files makes it travel with downloads, the Nextcloud apps and the cassini command line.",
-      // Added after needed_one/needed_other while the first count runs.
+      // Plural; see the translator guide. {count}: recordings.
+      needed:
+        "{count:number|num} {{recording was|recordings were}} published before Cassini wrote the recording time into the file itself. Browse already shows the right time; writing it into the {{file|files}} makes it travel with downloads, the Nextcloud apps and the cassini command line.",
+      // Added after `needed` while the first count runs.
       still_counting: "Cassini is still counting, so this number may grow; you can start once it has finished.",
       checking: "Cassini is checking which past recordings were published before it wrote the recording time into the file itself.",
-      // {count}: recordings left. {done}: recordings finished.
-      running_one: "Writing the recording time into 1 recording.",
-      running_one_done: "Writing the recording time into 1 recording; {done} done.",
-      running_other: "Writing the recording time into {count} recordings.",
-      running_other_done: "Writing the recording time into {count} recordings; {done} done.",
-      // Follows a running_* sentence. {seconds}: the pause between files.
-      pace_one: "Cassini works on one at a time, {seconds} seconds apart, so it stays out of Nextcloud's way.",
-      pace_many: "Cassini works on up to {workers} at a time, {seconds} seconds apart, so it stays out of Nextcloud's way.",
-      // {waiting}: "1 recording" or "5 recordings", from recordings_one/other.
-      pausing_one:
-        "Pausing. The recording already being written is finished first, or left as it was if its upload had not gone through, so no file is left half-written; {waiting} then wait.",
-      pausing_other:
-        "Pausing. The {count} recordings already being written are finished first, or left as they were if their upload had not gone through, so no file is left half-written; {waiting} then wait.",
-      // {remaining}: "1 recording" or "5 recordings", from recordings_one/other.
-      paused: "Paused with {remaining} left. Nothing is being written until you resume.",
-      paused_done: "Paused with {remaining} left and {done} done. Nothing is being written until you resume.",
-      blocked_one: "1 recording could not be written and needs you. Fix what each one says, then retry.",
-      blocked_one_done_one: "1 recording could not be written and needs you; 1 is done. Fix what each one says, then retry.",
-      blocked_one_done_other:
-        "1 recording could not be written and needs you; {done} are done. Fix what each one says, then retry.",
-      blocked_other: "{count} recordings could not be written and need you. Fix what each one says, then retry.",
-      blocked_other_done_one:
-        "{count} recordings could not be written and need you; 1 is done. Fix what each one says, then retry.",
-      blocked_other_done_other:
-        "{count} recordings could not be written and need you; {done} are done. Fix what each one says, then retry.",
+      // Plural; see the translator guide. {count}: recordings left.
+      running: "Writing the recording time into {count:number|num} {{recording|recordings}}.",
+      // Plural; see the translator guide. {count}: recordings left; {done}: recordings finished.
+      running_done: "Writing the recording time into {count:number|num} {{count:recording|recordings}}; {done:number|num} done.",
+      // Follows a running sentence. Plural; see the translator guide.
+      // {workers}: recordings written at once (one or a few); {seconds}: the
+      // pause between files.
+      pace: "Cassini works on {{workers:one|up to ??}} at a time, {seconds:number|num} {{seconds:second|seconds}} apart, so it stays out of Nextcloud's way.",
+      // Plural; see the translator guide. {count}: recordings being written now (one or a few);
+      // {waiting}: recordings that have not started.
+      pausing:
+        "Pausing. {{count:The recording already being written is|The ?? recordings already being written are}} finished first, or left as {{count:it was|they were}} if {{count:its|their}} upload had not gone through, so no file is left half-written; {waiting:number|num} {{waiting:recording then waits|recordings then wait}}.",
+      // Plural; see the translator guide. {remaining}: recordings left.
+      paused: "Paused with {remaining:number|num} {{recording|recordings}} left. Nothing is being written until you resume.",
+      // Plural; see the translator guide. {remaining}: recordings left; {done}: recordings finished.
+      paused_done: "Paused with {remaining:number|num} {{remaining:recording|recordings}} left and {done:number|num} done. Nothing is being written until you resume.",
+      // Plural; see the translator guide. {count}: blocked recordings.
+      blocked: "{count:number|num} {{recording|recordings}} could not be written and {{needs|need}} you. Fix what each one says, then retry.",
+      // Plural; see the translator guide. {count}: blocked recordings; {done}: recordings finished.
+      blocked_done:
+        "{count:number|num} {{count:recording|recordings}} could not be written and {{count:needs|need}} you; {done:number|num} {{done:is|are}} done. Fix what each one says, then retry.",
       done: "Every past recording carries its recording time in the file itself ({done} written).",
       unknown: "Cassini could not read the migration's progress.",
     },
@@ -401,8 +394,9 @@ const operator = {
       state_checking: "Checking",
       state_needed: "Not started",
       blocked_list_label: "Blocked recordings",
-      // After the listed blocked recordings; {count}: how many more.
-      blocked_more: "and {count} more",
+      // After the listed blocked recordings.
+      // Plural; see the translator guide. {count}: how many more.
+      blocked_more: "and {count:number|num} more {{recording|recordings}}",
       details_summary: "What this does in Nextcloud",
       facts_label: "What Nextcloud reports",
       pause_note:
@@ -469,7 +463,8 @@ const operator = {
       // {category}: the chart's category name, e.g. "Recordings".
       range_select_label: "{category} time range",
       range_all: "All time",
-      range_last_days: "Last {count} days",
+      // Plural; see the translator guide. {count}: days.
+      range_last_days: "Last {count:number|num} {{day|days}}",
       range_last_year: "Last year",
       range_custom: "Custom range",
       from: "From",
@@ -477,14 +472,15 @@ const operator = {
       from_label: "{category} from date",
       through_label: "{category} through date",
       // {size}: e.g. "1.5 GB".
-      undated_one: "{size} in 1 file without a known date. Included in the total, not in the chart.",
-      undated_other: "{size} in {count} files without a known date. Included in the total, not in the chart.",
+      // Plural; see the translator guide. {count}: files.
+      undated: "{size} in {count:number|num} {{count:file|files}} without a known date. Included in the total, not in the chart.",
       empty_no_files: "No retained files in this category.",
       empty_no_dated_files: "No dated files to plot in this category.",
       // After the total for the range shown: "1.5 GB in selected range".
       in_selected_range: "in selected range",
       precision_daily: "Daily",
-      precision_days: "{count} days per bar",
+      // Plural; see the translator guide. {count}: days, 2 or more.
+      precision_days: "{count:number|num} {{day|days}} per bar",
       // Which date the bars use.
       dates_lifecycle: "UTC lifecycle dates",
       dates_published: "publication or recording dates",
@@ -493,15 +489,17 @@ const operator = {
       scroll_later: "Later",
       scroll_earlier_label: "Scroll {category} earlier",
       scroll_later_label: "Scroll {category} later",
-      scroll_hint: "Scroll left or right to explore all {count} bars.",
+      // Plural; see the translator guide. {count}: bars in the chart.
+      scroll_hint: "Scroll left or right to explore all {count:number|num} {{bar|bars}}.",
       plot_label: "{category} usage by date",
       // A short label on the chart's cleanup line.
       cutoff_marker: "removed at next cleanup",
-      // {date}: the cutoff date. {days}: the retention policy in days.
-      cutoff_note: "Files dated on or before {date} are removed at the next cleanup ({days}-day policy).",
-      files_one: "1 file",
-      files_other: "{count} files",
-      // {range}: a date or range. {size}: e.g. "1.5 GB". {files}: "1 file" or "3 files".
+      // {date}: the cutoff date.
+      // Plural; see the translator guide. {days}: how long the retention policy keeps files.
+      cutoff_note: "Files dated on or before {date} are removed at the next cleanup (kept for {days:number|num} {{days:day|days}}).",
+      // Plural; see the translator guide. {count}: files.
+      files: "{count:number|num} {{file|files}}",
+      // {range}: a date or range. {size}: e.g. "1.5 GB". {files}: `files`, "1 file" or "3 files".
       bar_label: "{range}: {size}, {files}",
       bar_hint: "Hover, focus or tap a bar for its dates and exact usage.",
       data_summary: "View chart data",
@@ -674,10 +672,9 @@ const operator = {
     // A badge on a run in the list once it has been retried. {number}: the
     // attempt number, 2 or more.
     attempt_badge: "Attempt {number}",
-    // A build waiting for resources. {time}: a date and time. {count}: how
-    // many times the build was put off.
-    next_retry_deferrals_one: "Next retry {time} · {count} deferral",
-    next_retry_deferrals_other: "Next retry {time} · {count} deferrals",
+    // A build waiting for resources. {time}: a date and time.
+    // Plural; see the translator guide. {count}: how many times the build was put off.
+    next_retry_deferrals: "Next retry {time} · {count:number|num} {{count:deferral|deferrals}}",
     cleanup_hint: "Transcription-only publication; source media is deleted after processing.",
     source_expired_badge: "Recording deleted",
     source_expired_title: "The source recording was deleted by retention. This job can no longer be rerun.",
@@ -685,11 +682,10 @@ const operator = {
     meeting_deleted_title:
       "The published meeting was deleted by a user. Its local artifacts are reclaimed and this job can no longer be rerun.",
     not_shared_badge: "Not shared with everyone",
-    // On hover over the badge above. {count}: how many people or groups.
-    not_shared_title_one:
-      "Not shared with 1 recipient: Nextcloud refused them or its share limit held them back. Open the run to see who.",
-    not_shared_title_other:
-      "Not shared with {count} recipients: Nextcloud refused them or its share limit held them back. Open the run to see who.",
+    // On hover over the badge above.
+    // Plural; see the translator guide. {count}: people or groups.
+    not_shared_title:
+      "Not shared with {count:number|num} {{recipient|recipients}}: Nextcloud refused them or its share limit held them back. Open the run to see who.",
     // A run's name when Talk's conversation name is unknown. {token}: the
     // room token; {id}: the start of the run id.
     call_label: "Call {token}",

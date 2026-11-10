@@ -36,10 +36,10 @@ const en = {
       confirm_write_title: "Write a summary for this meeting?",
       confirm_replace_title: "Replace this meeting's summary?",
       // What writing a summary costs. {target} is a model and provider, e.g.
-      // "deepseek-v4 (Open Router)"; {tokens} is a rounded number, e.g. "7.5K";
-      // {words} is a number.
-      cost_one: "1 call to {target} · about {tokens} input tokens, {words} words",
-      cost_other: "{count} calls to {target} · about {tokens} input tokens, {words} words",
+      // "deepseek-v4 (Open Router)". Plural; see the translator guide. {count}:
+      // calls to the model; {tokens}: input tokens, shortened ("7.5K"); {words}:
+      // words in the transcript.
+      cost: "{count:number|num} {{count:call|calls}} to {target} · about {tokens:number|compact} input {{tokens:token|tokens}}, {words:number|num} {{words:word|words}}",
       // {target} when no model is named.
       cost_target_fallback: "the summary model",
       // {model} with the provider it runs on.

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { formatCount, LL } from "cassini-viewer/i18n";
+  import { LL } from "cassini-viewer/i18n";
   import { richText, slotMark } from "cassini-viewer/ui/richText";
   import { retentionDayPresets, type RetentionPolicy } from "./operator/retention";
   export let policy: RetentionPolicy;
@@ -26,10 +26,10 @@
   <legend class="font-medium text-sm {hideLabel ? 'sr-only' : ''}">{label}</legend>
   <label class="flex items-center gap-2 text-sm"><input type="checkbox" checked={policy.forever} on:change={e => setForever(e.currentTarget.checked)} />{$LL.app.settings.retention_policy.keep_forever()}</label>
     {#each presets as days (days)}
-      <button type="button" class="btn btn-sm" class:btn-primary={!policy.forever && !showCustom && policy.count === days} aria-pressed={!policy.forever && !showCustom && policy.count === days} on:click={() => selectDays(days)}>{$LL.app.settings.retention_policy.preset_days_other({ count: formatCount(days) })}</button>
+      <button type="button" class="btn btn-sm" class:btn-primary={!policy.forever && !showCustom && policy.count === days} aria-pressed={!policy.forever && !showCustom && policy.count === days} on:click={() => selectDays(days)}>{$LL.app.settings.retention_policy.preset_days({ count: days })}</button>
     {/each}
     <button type="button" class="btn btn-sm" class:btn-primary={!policy.forever && showCustom} aria-pressed={!policy.forever && showCustom} on:click={selectCustom}>{$LL.app.settings.retention_policy.custom()}</button>
     {#if !policy.forever && showCustom}
-      <label class="text-sm">{#each richText<"days">($LL.app.settings.retention_policy.keep_for({ days: slotMark("days") })) as part}{#if part.slot === "days"}<input class="input input-bordered w-24" aria-label={$LL.app.settings.retention_policy.custom_days_label({ label })} type="number" min="1" max="9999" step="1" required bind:value={policy.count} />{:else}{part.text}{/if}{/each}</label>
+      <label class="text-sm">{#each richText<"days">($LL.app.settings.retention_policy.keep_for({ days: slotMark("days"), count: policy.count ?? 0 })) as part}{#if part.slot === "days"}<input class="input input-bordered w-24" aria-label={$LL.app.settings.retention_policy.custom_days_label({ label })} type="number" min="1" max="9999" step="1" required bind:value={policy.count} />{:else}{part.text}{/if}{/each}</label>
     {/if}
 </fieldset>

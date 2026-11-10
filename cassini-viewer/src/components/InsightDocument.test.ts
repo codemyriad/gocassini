@@ -32,9 +32,10 @@ describe("InsightDocument", () => {
     expect(insightDocumentSource).toContain("export let sources: MeetingCatalogEntry[] = [];");
     expect(insightDocumentSource).toContain("{#each sources as source (source.id)}");
     expect(insightDocumentSource).toContain(
-      "$LL.viewer.insights.document.sources_heading_other({ count: formatCount(sources.length) })",
+      "$LL.viewer.insights.document.sources_heading({ count: sources.length })",
     );
-    expect(get(LL).viewer.insights.document.sources_heading_other({ count: 3 })).toBe("Context from 3 meetings");
+    expect(get(LL).viewer.insights.document.sources_heading({ count: 1 })).toBe("Context from 1 meeting");
+    expect(get(LL).viewer.insights.document.sources_heading({ count: 3 })).toBe("Context from 3 meetings");
   });
 
   it("opens each source as itself, in the sheet", () => {

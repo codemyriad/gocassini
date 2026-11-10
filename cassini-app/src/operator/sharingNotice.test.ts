@@ -91,7 +91,7 @@ describe("the copy", () => {
   it("counts recordings with their singulars", () => {
     expect(pendingTitle(3)).toBe("3 recordings are waiting for you");
     expect(pendingTitle(1)).toBe("1 recording is waiting for you");
-    expect(acceptAllLabel(3)).toBe("Accept all 3");
+    expect(acceptAllLabel(3)).toBe("Accept all 3 recordings");
     // One recording has nothing to say "all" about.
     expect(acceptAllLabel(1)).toBe("Accept");
     expect(refusedTitle(2)).toBe("2 recordings could not be shared with you.");

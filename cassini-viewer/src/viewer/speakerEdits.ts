@@ -272,7 +272,7 @@ export function emptyPending(): PendingSpeakerEdits {
 export function labelProblem(label: string): string {
   const trimmed = label.trim();
   if ([...trimmed].length > MAX_SPEAKER_LABEL_LENGTH) {
-    return get(LL).viewer.meeting.speaker_edits.label_too_long({ max: numberFormat().format(MAX_SPEAKER_LABEL_LENGTH) });
+    return get(LL).viewer.meeting.speaker_edits.label_too_long({ max: MAX_SPEAKER_LABEL_LENGTH });
   }
   // eslint-disable-next-line no-control-regex
   if (/[\u0000-\u001f\u007f-\u009f]/.test(trimmed)) {
@@ -386,11 +386,6 @@ export function phaseText(phase: SpeakerEditsPhaseNow): string {
 // listed has at least one voice, so there are never fewer voices than devices.
 export function peopleCountText(people: { voices: number; devices: number; split: boolean }): string {
   const p = get(LL).viewer.meeting.people;
-  const voices = numberFormat().format(people.voices);
-  if (!people.split) {
-    return people.voices === 1 ? p.count_one({ count: voices }) : p.count_other({ count: voices });
-  }
-  if (people.voices <= 1) return p.split_one();
-  if (people.devices === 1) return p.split_one_device({ voices });
-  return p.split_other({ voices, devices: numberFormat().format(people.devices) });
+  if (!people.split) return p.count({ count: people.voices });
+  return p.split({ voices: people.voices, devices: people.devices });
 }

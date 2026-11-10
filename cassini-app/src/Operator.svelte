@@ -1504,9 +1504,7 @@
                         </p>
                         {#if isBuildWaitingForResources(job)}
                           <p class="truncate text-warning" title={job.error || formatTimestamp(job.build_retry_not_before)}>
-                            {job.build_deferral_count === 1
-                              ? $LL.app.operator.console.next_retry_deferrals_one({ time: formatTimestamp(job.build_retry_not_before), count: formatCount(job.build_deferral_count) })
-                              : $LL.app.operator.console.next_retry_deferrals_other({ time: formatTimestamp(job.build_retry_not_before), count: formatCount(job.build_deferral_count) })}
+                            {$LL.app.operator.console.next_retry_deferrals({ time: formatTimestamp(job.build_retry_not_before), count: job.build_deferral_count })}
                           </p>
                         {/if}
                         {#if job.media_cleanup}
@@ -1519,7 +1517,7 @@
                           <span class="badge badge-outline badge-warning badge-sm mt-1" title={$LL.app.operator.console.meeting_deleted_title()}>{$LL.app.operator.console.meeting_deleted_badge()}</span>
                         {/if}
                         {#if job.unshared_count}
-                          <span class="badge badge-outline badge-warning badge-sm mt-1" title={job.unshared_count === 1 ? $LL.app.operator.console.not_shared_title_one() : $LL.app.operator.console.not_shared_title_other({ count: formatCount(job.unshared_count) })}>{$LL.app.operator.console.not_shared_badge()}</span>
+                          <span class="badge badge-outline badge-warning badge-sm mt-1" title={$LL.app.operator.console.not_shared_title({ count: job.unshared_count })}>{$LL.app.operator.console.not_shared_badge()}</span>
                         {/if}
                         {#if job.error}
                           <p class="truncate {hasResourceNotice(job) ? 'text-warning' : 'text-base-content/55'}" title={job.error}>

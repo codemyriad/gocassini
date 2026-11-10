@@ -101,15 +101,16 @@ const shell = {
   // by a Nextcloud sharing setting. Also used by a meeting opened from a link
   // that the reader cannot open yet.
   sharing_notice: {
-    pending_title_one: "1 recording is waiting for you",
-    pending_title_other: "{count} recordings are waiting for you",
+    // Plural; see the translator guide. {count}: recordings.
+    pending_title: "{count:number|num} {{recording is|recordings are}} waiting for you",
     pending_label: "Recordings waiting for you",
     pending_line: "Nextcloud holds files shared with you until you accept them.",
     // A link that opens or closes the list under it.
     show_them: "Show them",
     hide_them: "Hide them",
     accept: "Accept",
-    accept_all: "Accept all {count}",
+    // Plural; see the translator guide. {count}: recordings, 2 or more.
+    accept_all: "Accept all {count:number|num} {{recording|recordings}}",
     // {title}: the recording's title, or its date.
     accept_row_label: "Accept {title}",
     why_accept:
@@ -118,14 +119,14 @@ const shell = {
     // {status}: an HTTP status code.
     accept_failed: "Could not accept the share (HTTP {status}).",
     dismiss_failed: "Could not dismiss the notice (HTTP {status}).",
-    refused_title_one: "1 recording could not be shared with you.",
-    refused_title_other: "{count} recordings could not be shared with you.",
+    // Plural; see the translator guide. {count}: recordings.
+    refused_title: "{count:number|num} {{recording|recordings}} could not be shared with you.",
     refused_line: "A Nextcloud sharing setting stops it.",
     refused_group_label: "Recordings that could not be shared with you",
-    starter_refused_title_one: "1 recording you started could not be published.",
-    starter_refused_title_other: "{count} recordings you started could not be published.",
-    starter_refused_line_one: "Nextcloud refused to share it with you.",
-    starter_refused_line_other: "Nextcloud refused to share them with you.",
+    // Plural; see the translator guide. {count}: recordings.
+    starter_refused_title: "{count:number|num} {{recording|recordings}} you started could not be published.",
+    // Plural; see the translator guide. {count}: the same recordings; it is not shown.
+    starter_refused_line: "Nextcloud refused to share {{count:it|them}} with you.",
     unpublished_group_label: "Recordings you started that could not be published",
     // One refused recording, in bold. {name}: the Talk room (or the meeting's
     // title). {date}: e.g. "Fri 30 Oct, 10:00".
