@@ -117,7 +117,7 @@ describe("a pending row", () => {
     expect(formatDuration(2520)).toBe(durationFormat({ minutes: 42 }));
     expect(formatDuration(3900)).toBe(durationFormat({ hours: 1, minutes: 5 }));
     expect(formatDuration(7200)).toBe(durationFormat({ hours: 2 }));
-    expect(formatDuration(2520)).toMatch(/^42 mins?$/);
+    expect(formatDuration(2520)).toBe("42 mins");
     expect(formatDuration(0)).toBe("");
     expect(formatDuration(20)).toBe("");
   });

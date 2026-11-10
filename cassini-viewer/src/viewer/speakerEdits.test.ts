@@ -153,8 +153,8 @@ describe("an apply's progress", () => {
     expect(remainingText(100_000)).toBe(t.time_left({ duration: durationFormat({ minutes: 2 }) }));
     expect(remainingText(0)).toBe(t.almost_done());
     expect(remainingText(-12_000)).toBe(t.almost_done());
-    // The English itself: "50 sec" from Intl.DurationFormat, "50 secs" without it.
-    expect(remainingText(50_000)).toMatch(/^about 50 secs? left$/);
+    // The English itself, the same in every runtime.
+    expect(remainingText(50_000)).toBe("about 50 secs left");
   });
 
   it("names each phase", () => {

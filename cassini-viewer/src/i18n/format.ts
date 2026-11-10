@@ -96,16 +96,15 @@ export function relativeNow(): string {
   return relativeTimeFormat({ numeric: "auto" }).format(0, "second");
 }
 
-// A length of time, in the locale's units: "1 hr, 5 min" (short) or "1h 5m"
+// A length of time, in the locale's units: "1 hr 5 mins" (short) or "1h 5m"
 // (narrow, for tight rows). Zero parts are left out; all zero shows the
-// smallest part given as 0. Intl.DurationFormat where the runtime has it;
-// otherwise each part through Intl.NumberFormat's units, joined by a space.
+// smallest part given as 0. Each part goes through Intl.NumberFormat's units,
+// joined by a space. Not Intl.DurationFormat: only some runtimes have it, and
+// its words differ ("12 min" against "12 mins"), so readers would not all see
+// the same text.
 export type DurationParts = { hours?: number; minutes?: number; seconds?: number };
 export type DurationStyle = "short" | "narrow";
 
-type DurationFormatter = { format(duration: DurationParts): string };
-type DurationFormatCtor = new (locale: string, options: { style: DurationStyle }) => DurationFormatter;
-const durationFormats = new Map<string, DurationFormatter | null>();
 const DURATION_UNITS = [
   ["hours", "hour"],
   ["minutes", "minute"],
@@ -116,31 +115,7 @@ export function durationFormat(parts: DurationParts, style: DurationStyle = "sho
   const given = DURATION_UNITS.filter(([key]) => parts[key] !== undefined);
   const shown = given.filter(([key]) => (parts[key] ?? 0) > 0);
   const used = shown.length > 0 ? shown : given.slice(-1);
-  const value: DurationParts = {};
-  for (const [key] of used) value[key] = used === shown ? parts[key] : 0;
-  const native = nativeDurationFormat(style);
-  if (native && shown.length > 0) {
-    try {
-      return native.format(value);
-    } catch {
-      // Fall through to the unit formatter.
-    }
-  }
   return used
-    .map(([key, unit]) => numberFormat({ style: "unit", unit, unitDisplay: style }).format(value[key] ?? 0))
+    .map(([key, unit]) => numberFormat({ style: "unit", unit, unitDisplay: style }).format(shown.length > 0 ? (parts[key] ?? 0) : 0))
     .join(" ");
-}
-
-function nativeDurationFormat(style: DurationStyle): DurationFormatter | null {
-  const key = `${current}|${style}`;
-  if (durationFormats.has(key)) return durationFormats.get(key) ?? null;
-  const Ctor = (Intl as unknown as { DurationFormat?: DurationFormatCtor }).DurationFormat;
-  let format: DurationFormatter | null = null;
-  try {
-    format = Ctor ? new Ctor(current, { style }) : null;
-  } catch {
-    format = null;
-  }
-  durationFormats.set(key, format);
-  return format;
 }

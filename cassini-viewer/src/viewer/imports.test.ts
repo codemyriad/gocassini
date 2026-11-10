@@ -56,8 +56,8 @@ describe("formatImportDuration", () => {
     expect(formatImportDuration(12 * 60_000)).toBe(durationFormat({ hours: 0, minutes: 12 }));
     expect(formatImportDuration(60 * 60_000)).toBe(durationFormat({ hours: 1 }));
     expect(formatImportDuration(92 * 60_000)).toBe(durationFormat({ hours: 1, minutes: 32 }));
-    // In the locale's units, whichever formatter the runtime has.
-    expect(formatImportDuration(92 * 60_000)).toMatch(/^1 hr,? 32 mins?$/);
+    // In the locale's units, the same in every runtime.
+    expect(formatImportDuration(92 * 60_000)).toBe("1 hr 32 mins");
   });
 });
 
