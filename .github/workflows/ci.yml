@@ -403,6 +403,10 @@ jobs:
     needs: [contracts, ui, unit, integration, integration-mute]
     if: always()
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/ci-require-jobs.sh
+          sparse-checkout-cone-mode: false
       - name: Every job passed or was not needed
         env:
           NEEDS: ${{ toJSON(needs) }}
