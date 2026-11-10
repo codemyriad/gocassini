@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
   import { Download } from "@lucide/svelte";
+  import { LL } from "cassini-viewer/i18n";
   import { requestSupportBundle, SupportDownloadError } from "./support/client";
 
   export let administrator = false;
@@ -40,13 +41,15 @@
       try { link.click(); } finally { link.remove(); }
       // Let the browser start reading the Blob before releasing it.
       cleanupTimer = setTimeout(cleanupURL, 1000);
-      result = bundle.administrator ? "Administrator support bundle downloaded." : "Your support bundle downloaded. An administrator can download additional server diagnostics.";
-      result += scrubSensitive ? " Privacy filtering was on." : " Privacy filtering was off.";
+      const t = $LL.app.operator.support_bundle;
+      result = bundle.administrator
+        ? (scrubSensitive ? t.downloaded_admin_scrubbed() : t.downloaded_admin_original())
+        : (scrubSensitive ? t.downloaded_user_scrubbed() : t.downloaded_user_original());
     } catch (cause) {
       cleanupURL();
       if (alive) error = cause instanceof SupportDownloadError ? cause.message : request.signal.aborted
-        ? "The support download timed out. Try again."
-        : "Couldn’t reach Cassini. Check your connection and try again.";
+        ? $LL.app.operator.support_bundle.error_timeout()
+        : $LL.app.operator.support_bundle.error_unreachable();
     } finally {
       clearTimeout(timeout);
       if (alive) busy = false;
@@ -57,22 +60,20 @@
   onDestroy(() => { alive = false; controller?.abort(); cleanupURL(); });
 </script>
 
-<div class="support-download" aria-label="Cassini support">
+<div class="support-download" aria-label={$LL.app.operator.support_bundle.region_label()}>
   <div class="support-action">
     <button class="btn btn-sm btn-ghost" type="button" disabled={busy} on:click={download}>
       {#if busy}<span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
       {:else}<Download size={14} aria-hidden="true" />{/if}
-      {busy ? "Preparing support bundle…" : "Download support bundle"}
+      {busy ? $LL.app.operator.support_bundle.preparing() : $LL.app.operator.support_bundle.download()}
     </button>
     <label class="support-choice">
       <input type="checkbox" class="checkbox checkbox-xs" bind:checked={scrubSensitive} disabled={busy} />
-      Scrub sensitive information
+      {$LL.app.operator.support_bundle.scrub()}
     </label>
   </div>
   <p class="support-explanation">
-    {#if scrubSensitive}Downloads scrubbed diagnostics. Review before sharing.
-    {:else}Original logs may contain names, URLs, credentials or meeting text. Review or edit the ZIP before sharing.{/if}
-    Nothing is sent automatically.
+    {scrubSensitive ? $LL.app.operator.support_bundle.explain_scrubbed() : $LL.app.operator.support_bundle.explain_original()}
   </p>
   {#if error}<p class="text-error text-xs" role="alert">{error}</p>{/if}
   {#if result}<p class="text-xs" role="status">{result}</p>{/if}

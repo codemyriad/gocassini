@@ -2,32 +2,32 @@
   import { createEventDispatcher } from "svelte";
   import { TriangleAlert, X } from "@lucide/svelte";
   import type { PendingRecording, RecordingNotice, SharingStatus } from "./operator/setupHealth";
+  import { LL } from "cassini-viewer/i18n";
   import {
     acceptAllLabel,
-    ADMIN_FIX_LEAD,
-    ADMIN_FIX_PLAIN,
-    DISMISS,
-    DISMISS_ALL,
+    acceptLabel,
+    adminFixParts,
+    adminFixPlain,
+    dismissAllLabel,
+    dismissLabel,
     hasSharingNews,
-    HIDE_THEM,
+    hideThem,
     listedJobIds,
-    PENDING_LINE,
+    pendingLine,
     pendingRowKey,
     pendingRowMeta,
     pendingRowTitle,
     pendingTitle,
-    REFUSED_LINE,
+    refusedLine,
     refusedTitle,
-    SEND_LINK,
-    SEND_LINK_TITLE,
-    SHOW_THEM,
+    showThem,
     starterRefusedLine,
     starterRefusedTitle,
     NOTICE_GROUP_AFTER,
     noticeRowLabel,
     refusedNoticeTitle,
     unpublishedTitle,
-    WHY_ACCEPT,
+    whyAccept,
     type AcceptSharesResult,
     type ListedMeeting,
   } from "./operator/sharingNotice";
@@ -89,15 +89,15 @@
   $: kinds = [
     {
       key: "refused",
-      label: "Recordings that could not be shared with you",
+      label: $LL.app.operator.sharing_notice.refused_group_label(),
       entries: notListed(news?.refused ?? []),
       title: refusedNoticeTitle,
       groupTitle: refusedTitle,
-      line: () => REFUSED_LINE,
+      line: () => refusedLine(),
     },
     {
       key: "unpublished",
-      label: "Recordings you started that could not be published",
+      label: $LL.app.operator.sharing_notice.unpublished_group_label(),
       entries: notListed(news?.unpublished ?? []),
       title: unpublishedTitle,
       groupTitle: starterRefusedTitle,
@@ -105,6 +105,8 @@
     },
   ].filter((kind) => kind.entries.length > 0);
   $: shown = pending.length > 0 || kinds.length > 0;
+  // Read again when the language changes; the link sits inside the sentence.
+  $: fix = $LL && adminFixParts();
 
   // Which kinds' disclosures are open, when they are grouped.
   let groupOpen: Record<string, boolean> = {};
@@ -166,7 +168,7 @@
         const refusals = result.failed.filter((failure) => entry.shareIds.includes(failure.shareId));
         if (refusals.length === 0) continue;
         const reasons = refusals.map((failure) => failure.reason).filter((reason) => reason !== "");
-        next.set(pendingRowKey(entry), reasons.join(" ") || "Nextcloud did not accept this share.");
+        next.set(pendingRowKey(entry), reasons.join(" ") || $LL.app.operator.sharing_notice.accept_refused());
       }
       failures = next;
       // A refusal is something to read, and the rows are where it is said.
@@ -188,7 +190,7 @@
 {#if news && shown}
   <div class="sharing-notice" class:sharing-card={variant === "card"} class:sharing-strip={variant === "strip"}>
     {#if pending.length > 0}
-      <section class="sharing-block" role="status" aria-label="Recordings waiting for you">
+      <section class="sharing-block" role="status" aria-label={$LL.app.operator.sharing_notice.pending_label()}>
         <!-- No mark in front of the pending line: the count is in the sentence
              and on the button, and this is an invitation rather than a
              warning. The refused lines below keep the shell's warning mark, as
@@ -204,8 +206,8 @@
         </div>
         <details class="sharing-details" bind:open={expanded}>
           <summary class="sharing-summary text-xs text-base-content/70">
-            {PENDING_LINE}
-            <span class="link link-primary">{expanded ? HIDE_THEM : SHOW_THEM}</span>
+            {pendingLine()}
+            <span class="link link-primary">{expanded ? hideThem() : showThem()}</span>
           </summary>
           <ul class="sharing-rows">
             {#each pending as entry (pendingRowKey(entry))}
@@ -222,18 +224,18 @@
                   type="button"
                   class="btn btn-sm"
                   disabled={busy}
-                  aria-label={`Accept ${pendingRowTitle(entry)}`}
+                  aria-label={$LL.app.operator.sharing_notice.accept_row_aria({ title: pendingRowTitle(entry) })}
                   on:click={() => acceptRows([entry])}
                 >
                   {#if rowBusy(entry, inFlight) && !acceptingAll}
                     <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
                   {/if}
-                  Accept
+                  {acceptLabel()}
                 </button>
               </li>
             {/each}
           </ul>
-          <p class="mt-2 text-xs text-base-content/65">{WHY_ACCEPT}</p>
+          <p class="mt-2 text-xs text-base-content/65">{whyAccept()}</p>
         </details>
       </section>
     {/if}
@@ -248,7 +250,7 @@
                 <strong class="font-semibold">{kind.groupTitle(kind.entries.length)}</strong>
                 {#if variant === "card"}{kind.line(kind.entries.length)}{/if}
               </p>
-              <span class="link link-primary text-xs">{groupOpen[kind.key] ? HIDE_THEM : SHOW_THEM}</span>
+              <span class="link link-primary text-xs">{groupOpen[kind.key] ? hideThem() : showThem()}</span>
             </summary>
             <ul class="sharing-rows">
               {#each kind.entries as entry (entry.jobId)}
@@ -263,26 +265,26 @@
                     type="button"
                     class="btn btn-sm"
                     disabled={dismissing.size > 0}
-                    aria-label={`${DISMISS} ${noticeRowLabel(entry)}`}
+                    aria-label={$LL.app.operator.sharing_notice.dismiss_row_aria({ label: noticeRowLabel(entry) })}
                     on:click={() => dismissRows([entry.jobId])}
                   >
                     {#if dismissing.has(entry.jobId) && dismissing.size === 1}
                       <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
                     {/if}
-                    {DISMISS}
+                    {dismissLabel()}
                   </button>
                 </li>
               {/each}
             </ul>
             <div class="sharing-line mt-2">
               <p class="text-xs text-base-content/75">
-                {#if appUrl}{ADMIN_FIX_LEAD} <a class="link link-primary" href={appUrl} title={SEND_LINK_TITLE}>{SEND_LINK}</a>.{:else}{ADMIN_FIX_PLAIN}{/if}
+                {#if appUrl}{fix.before}<a class="link link-primary" href={appUrl} title={fix.title}>{fix.link}</a>{fix.after}{:else}{adminFixPlain()}{/if}
               </p>
               <button type="button" class="btn btn-sm btn-ghost" disabled={dismissing.size > 0} on:click={() => dismissRows(kind.entries.map((entry) => entry.jobId))}>
                 {#if dismissing.size > 1 && kind.entries.some((entry) => dismissing.has(entry.jobId))}
                   <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
                 {/if}
-                {DISMISS_ALL}
+                {dismissAllLabel()}
               </button>
             </div>
           </details>
@@ -296,13 +298,13 @@
               <p class="text-sm">
                 <strong class="font-semibold">{kind.title(entry)}</strong>
                 {#if variant === "card"}{kind.line(1)}{/if}
-                {#if appUrl}{ADMIN_FIX_LEAD} <a class="link link-primary" href={appUrl} title={SEND_LINK_TITLE}>{SEND_LINK}</a>.{:else}{ADMIN_FIX_PLAIN}{/if}
+                {#if appUrl}{fix.before}<a class="link link-primary" href={appUrl} title={fix.title}>{fix.link}</a>{fix.after}{:else}{adminFixPlain()}{/if}
               </p>
               <button
                 type="button"
                 class="btn btn-ghost btn-xs btn-square"
-                title={DISMISS}
-                aria-label={`${DISMISS}: ${kind.title(entry)}`}
+                title={dismissLabel()}
+                aria-label={$LL.app.operator.sharing_notice.dismiss_notice_aria({ title: kind.title(entry) })}
                 disabled={dismissing.size > 0}
                 on:click={() => dismissRows([entry.jobId])}
               >

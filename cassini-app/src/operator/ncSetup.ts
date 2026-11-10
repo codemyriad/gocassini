@@ -1,3 +1,5 @@
+import { get } from "svelte/store";
+import { LL } from "cassini-viewer/i18n";
 import type { StorageSetupStep, StorageStatus } from "./types";
 
 // Performing Cassini's setup from the administrator's browser (D-671).
@@ -118,7 +120,7 @@ export function confirmPassword(): Promise<void> {
     return Promise.reject(
       new NcSetupError(
         "unavailable",
-        "Nextcloud's password confirmation isn't available on this page.",
+        get(LL).app.operator.nc_setup.confirmation_unavailable(),
       ),
     );
   }
@@ -129,7 +131,7 @@ export function confirmPassword(): Promise<void> {
     confirmation.requirePasswordConfirmation!(
       () => resolve(),
       {},
-      () => reject(new NcSetupError("cancelled", "Password confirmation was cancelled.")),
+      () => reject(new NcSetupError("cancelled", get(LL).app.operator.nc_setup.confirmation_cancelled())),
     );
   });
 }
@@ -224,10 +226,10 @@ async function ncRequest(
   if (response.status === 403 || code === 403) {
     throw new NcSetupError(
       "denied",
-      `Nextcloud rejected the change: ${message}. Your password confirmation may have expired, so try again.`,
+      get(LL).app.operator.nc_setup.rejected_confirmation({ message }),
     );
   }
-  throw new NcSetupError("failed", `Nextcloud rejected the change: ${message}`);
+  throw new NcSetupError("failed", get(LL).app.operator.nc_setup.rejected({ message }));
 }
 
 // randomPassword mints the service account's credential, in the browser, from
@@ -306,7 +308,7 @@ export async function runSetupPlan(
   if (!isSetupAvailable()) {
     throw new NcSetupError(
       "unavailable",
-      "Setup can't run on this page because Nextcloud's scripts aren't loaded here.",
+      get(LL).app.operator.nc_setup.setup_unavailable(),
     );
   }
 
@@ -390,7 +392,7 @@ export async function resetServiceAccountPassword(
   if (!isSetupAvailable()) {
     throw new NcSetupError(
       "unavailable",
-      "The password can't be changed on this page because Nextcloud's scripts aren't loaded here.",
+      get(LL).app.operator.nc_setup.password_unavailable(),
     );
   }
   await confirmPassword();
@@ -423,7 +425,7 @@ async function runStep(
   fetchImpl: typeof fetch,
 ): Promise<boolean> {
   if (step.action !== "create_user") {
-    throw new NcSetupError("failed", `This version of Cassini can't run the "${step.action}" step.`, step.id);
+    throw new NcSetupError("failed", get(LL).app.operator.nc_setup.unknown_step({ action: step.action }), step.id);
   }
   const args = step.args ?? {};
   const answer = await ncPost(

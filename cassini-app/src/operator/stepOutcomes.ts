@@ -2,7 +2,11 @@
 // (D-854, D-814). A meeting can publish without a transcript or a summary, and
 // the run used to read "Published" either way. Pure so the wording can be
 // tested without mounting the Operator.
+import { get } from "svelte/store";
+import { formatLocale, LL } from "cassini-viewer/i18n";
 import type { JobAttempt, JobDetailResponse, JobShareOutcome, SkippedShare } from "./types";
+
+const copy = () => get(LL).app.operator.step_outcomes;
 
 export type OutcomeTone = "error" | "warning" | "info";
 
@@ -53,26 +57,27 @@ export function transcriptionNotice(attempt: JobAttempt, rerunAvailable: boolean
   const reason = attempt.transcription_reason ?? "";
   const detail = attempt.transcription_detail?.trim() || undefined;
   if (status === "" || status === "completed") return null;
+  const t = copy().transcription;
   if (status === "skipped" && reason === "disabled") {
-    return { tone: "info", title: "Published without a transcript: transcription is turned off" };
+    return { tone: "info", title: t.disabled() };
   }
   if (status === "skipped" && reason === "model_unavailable") {
     return {
       tone: "warning",
-      title: "Published without a transcript: no speech model could run",
+      title: t.model_unavailable(),
       detail,
-      hint: "Check Speech models in Settings, then rerun to transcribe it.",
+      hint: t.model_unavailable_hint(),
     };
   }
-  const titles: Record<string, string> = {
-    transcription_failed: "Published without a transcript: transcription failed",
-    insufficient_resources: "Published without a transcript: not enough memory or GPU to transcribe",
+  const titles: Record<string, () => string> = {
+    transcription_failed: t.failed,
+    insufficient_resources: t.insufficient_resources,
   };
   return {
     tone: "error",
-    title: titles[reason] ?? `Published without a transcript (${reason || status})`,
+    title: titles[reason]?.() ?? t.other({ reason: reason || status }),
     detail,
-    hint: rerunAvailable ? "Rerun transcribes it again." : undefined,
+    hint: rerunAvailable ? t.rerun_hint() : undefined,
   };
 }
 
@@ -81,64 +86,81 @@ export function summaryNotice(attempt: JobAttempt): OutcomeNotice | null {
   const reason = attempt.summary_reason ?? "";
   // No transcript means nothing to summarize; the transcription notice says
   // why, and a second notice would only repeat it.
+  const t = copy().summary;
   if (status === "completed" && reason === "template_fallback") {
     // Written, but not by the template the summary step is set to run: that
     // one could not run, and the built-in wrote it instead (D-819).
     return {
       tone: "warning",
-      title: "Summarised with the built-in template: the configured summary template could not run",
-      hint: "The build log says why. Fix the template in Insight templates, or choose another one for summaries in Settings.",
+      title: t.template_fallback(),
+      hint: t.template_fallback_hint(),
     };
   }
   if (status === "" || status === "completed" || reason === "no_transcript") return null;
   if (status === "failed") {
     return {
       tone: "error",
-      title: "No summary: the summary could not be generated",
-      hint: "The build log has the language model's error.",
+      title: t.failed(),
+      hint: t.failed_hint(),
     };
   }
-  if (reason === "disabled") return { tone: "info", title: "No summary: summaries are turned off" };
+  if (reason === "disabled") return { tone: "info", title: t.disabled() };
   if (reason === "not_configured") {
-    return { tone: "warning", title: "No summary: no language model is set up for summaries", hint: "Add one in Settings." };
+    return { tone: "warning", title: t.not_configured(), hint: t.not_configured_hint() };
   }
-  return { tone: "warning", title: `No summary (${reason || status})` };
+  return { tone: "warning", title: t.other({ reason: reason || status }) };
 }
 
-const principalKinds: Record<string, string> = { user: "person", group: "group", circle: "Team" };
+// The kind of recipient, as the small label beside its id. "Team" is
+// Nextcloud's name for a circle.
+function principalKind(type: string): string {
+  const t = copy().principal;
+  if (type === "user") return t.person();
+  if (type === "group") return t.group();
+  if (type === "circle") return t.team();
+  return type;
+}
 
 function refusedEntry(skipped: SkippedShare): RefusedEntry {
-  return { id: skipped.id, kind: principalKinds[skipped.type] ?? skipped.type, reason: skipped.reason ?? "" };
+  return { id: skipped.id, kind: principalKind(skipped.type), reason: skipped.reason ?? "" };
 }
 
 // The one-line form of an entry, for a sentence: "bob", "marketing (group)",
 // with the reason after a colon where there is one.
+// Nextcloud's reason arrives in English.
 export function describeRefused(entry: RefusedEntry): string {
-  const who = entry.kind === "person" ? entry.id : `${entry.id} (${entry.kind})`;
-  return entry.reason ? `${who}: ${entry.reason}` : who;
+  const t = copy().refused;
+  // A person is the plain case, written with no label in a sentence.
+  const who = entry.kind === copy().principal.person() ? entry.id : t.entry_with_kind({ id: entry.id, kind: entry.kind });
+  return entry.reason ? t.entry_with_reason({ who, reason: entry.reason }) : who;
 }
 
 export function recipients(count: number): string {
-  return count === 1 ? "1 recipient" : `${count} recipients`;
+  return count === 1 ? copy().recipients_one() : copy().recipients_other({ count });
 }
 
 // "bob", "bob and carol", "bob, carol and dave", "bob, carol, dave and 2 more".
+// The list itself is the reader's locale's (Intl.ListFormat).
 export function listRefusedIds(ids: string[], shown = 3): string {
   const named = ids.slice(0, shown);
   const rest = ids.length - named.length;
-  if (rest > 0) return `${named.join(", ")} and ${rest} more`;
+  if (rest > 0) {
+    const names = new Intl.ListFormat(formatLocale(), { type: "unit", style: "short" }).format(named);
+    return copy().refused.list_more({ names, count: rest });
+  }
   if (named.length <= 1) return named.join("");
-  return `${named.slice(0, -1).join(", ")} and ${named[named.length - 1]}`;
+  return new Intl.ListFormat(formatLocale(), { type: "conjunction" }).format(named);
 }
 
 // What a re-share's answer says beside the button: everyone, or who is still
 // refused and where the setting is named, and how many Nextcloud's share
 // limit (20 new shares per account every 10 minutes) held back again.
 export function reshareOutcome(refusedIds: string[], deferredCount = 0): string {
-  const heldBack = `Nextcloud's share limit still held back ${recipients(deferredCount)}; re-share in 10 minutes.`;
-  if (refusedIds.length === 0) return deferredCount > 0 ? `Shared again. ${heldBack}` : "Shared with everyone.";
-  const refused = `Shared again. Nextcloud still refused ${recipients(refusedIds.length)} (${listRefusedIds(refusedIds)}). Check Doctor › Recording sharing.`;
-  return deferredCount > 0 ? `${refused} ${heldBack}` : refused;
+  const t = copy().reshare;
+  const heldBack = t.held_back({ recipients: recipients(deferredCount) });
+  if (refusedIds.length === 0) return deferredCount > 0 ? t.shared_again_held_back({ held_back: heldBack }) : t.shared_with_everyone();
+  const refused = t.still_refused({ recipients: recipients(refusedIds.length), names: listRefusedIds(refusedIds) });
+  return deferredCount > 0 ? t.two_sentences({ first: refused, second: heldBack }) : refused;
 }
 
 // Who a meeting could not be shared with (D-885). The person who started the
@@ -149,17 +171,18 @@ export function reshareOutcome(refusedIds: string[], deferredCount = 0): string 
 export function shareNotice(sharing: JobShareOutcome | null | undefined, rerunAvailable = true, reshareAvailable = true): OutcomeNotice | null {
   if (!sharing) return null;
   const skipped = sharing.skipped ?? [];
+  const t = copy().share;
   if (sharing.status === "starter_refused") {
     const starter = skipped[0]?.id ?? "";
     return {
       tone: "error",
-      title: `Not published: Nextcloud refused to share it with ${starter || "the person who started the recording"}${starter ? ", who started the recording" : ""}.`,
+      title: starter ? t.starter_refused_named({ starter }) : t.starter_refused(),
       detail: skipped.length > 0 ? describeRefused(refusedEntry(skipped[0])) : undefined,
-      hint: rerunAvailable
-        ? "Fix the setting Doctor › Recording sharing names, then Rerun. Rerun publishes it and shares it with the whole room."
-        : "Fix the setting Doctor › Recording sharing names so later recordings publish. This run cannot be rerun.",
+      hint: rerunAvailable ? t.starter_refused_hint_rerun() : t.starter_refused_hint_no_rerun(),
     };
   }
+  const reshareAction = (): OutcomeNotice["action"] =>
+    reshareAvailable ? { kind: "reshare", label: t.reshare_button(), note: t.reshare_note() } : undefined;
   // Who Nextcloud's share limit held back: not refused, but not shared with
   // either until the administrator re-shares once the limit allows.
   const deferred = sharing.deferred ?? [];
@@ -167,33 +190,21 @@ export function shareNotice(sharing: JobShareOutcome | null | undefined, rerunAv
     if (deferred.length === 0) return null;
     return {
       tone: "warning",
-      title: `Published, but Nextcloud's share limit held back ${recipients(deferred.length)}. Re-share in 10 minutes, or raise the limit (Doctor › Recording sharing).`,
-      action: reshareAvailable
-      ? {
-          kind: "reshare",
-          label: "Re-share with the room",
-          note: "Adds whoever is missing, including anyone removed by hand. People who accept shares by hand will find it waiting in Browse.",
-        }
-      : undefined,
+      title: t.held_back({ recipients: recipients(deferred.length) }),
+      action: reshareAction(),
     };
   }
   const audience = typeof sharing.audience_count === "number" && sharing.audience_count > 0 ? sharing.audience_count : 0;
   return {
     tone: "warning",
     title: audience
-      ? `Published, but not shared with ${skipped.length} of ${audience} recipients`
-      : `Published, but not shared with ${recipients(skipped.length)}`,
-    items: { summary: `Who was refused (${skipped.length})`, entries: skipped.map(refusedEntry) },
-    hint: "Nextcloud refused them because of a sharing setting. Doctor › Recording sharing names it and the fix.",
-    heldBack: deferred.length > 0 ? `Nextcloud's share limit also held back ${deferred.length}.` : undefined,
+      ? t.partial_of({ count: skipped.length, audience })
+      : t.partial({ recipients: recipients(skipped.length) }),
+    items: { summary: t.who_was_refused({ count: skipped.length }), entries: skipped.map(refusedEntry) },
+    hint: t.partial_hint(),
+    heldBack: deferred.length > 0 ? t.also_held_back({ count: deferred.length }) : undefined,
     // Offered only where the operator would do it: not while the meeting is
     // being processed again.
-    action: reshareAvailable
-      ? {
-          kind: "reshare",
-          label: "Re-share with the room",
-          note: "Adds whoever is missing, including anyone removed by hand. People who accept shares by hand will find it waiting in Browse.",
-        }
-      : undefined,
+    action: reshareAction(),
   };
 }

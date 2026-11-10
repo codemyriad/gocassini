@@ -1,7 +1,11 @@
 // Which models made an attempt's meeting (D-816), as the run detail names
 // them: the speech model and where it ran, and the summary model. Empty for
 // steps that did not run and for attempts built before this was recorded.
+import { get } from "svelte/store";
+import { LL } from "cassini-viewer/i18n";
 import type { JobAttempt } from "./types";
+
+const copy = () => get(LL).app.operator.attempt_models;
 
 export function deviceLabel(device: string | undefined): string {
   if (device === "cuda") return "GPU";
@@ -13,7 +17,7 @@ export function speechModelLabel(attempt: JobAttempt): string | null {
   const model = attempt.transcription_model?.trim();
   if (!model) return null;
   const device = deviceLabel(attempt.transcription_device?.trim());
-  return device ? `${model} on ${device}` : model;
+  return device ? copy().model_on_device({ model, device }) : model;
 }
 
 export function summaryModelLabel(attempt: JobAttempt): string | null {
@@ -36,15 +40,16 @@ const TRANSCRIBING_KINDS = new Set(["initial", "rerun"]);
 export function attemptReason(attempt: JobAttempt, stopReason: (reason: string) => string): string {
   switch (attempt.trigger_kind) {
     case "initial": {
-      const recorded = attempt.record_finished_at ? "Recording ended" : "Recording";
+      const t = copy().reason;
+      const recorded = attempt.record_finished_at ? t.recording_ended() : t.recording();
       return attempt.stop_reason ? `${recorded} · ${stopReason(attempt.stop_reason)}` : recorded;
     }
     case "rerun":
-      return "Rerun requested";
+      return copy().reason.rerun();
     case "summarize":
-      return "Summary requested";
+      return copy().reason.summarize();
     case "refine":
-      return attempt.summary_mode === "rewrite" ? "Speakers renamed, summary rewritten" : "Speakers renamed, summary kept";
+      return attempt.summary_mode === "rewrite" ? copy().reason.refine_rewrite() : copy().reason.refine_keep();
     default:
       return attempt.trigger_kind;
   }
@@ -57,42 +62,43 @@ export function attemptSpeech(attempt: JobAttempt, attempts: JobAttempt[]): Fiel
     const source = attempts
       .filter((a) => TRANSCRIBING_KINDS.has(a.trigger_kind) && a.state === "succeeded" && a.attempt_number < attempt.attempt_number)
       .sort((a, b) => b.attempt_number - a.attempt_number)[0];
-    return { text: source ? `Reused from attempt ${source.attempt_number}` : "Reused", muted: true };
+    return { text: source ? copy().speech.reused_from({ attempt: source.attempt_number }) : copy().speech.reused(), muted: true };
   }
   const label = speechModelLabel(attempt);
   return label ? { text: label } : null;
 }
 
-const SKIPPED_SUMMARY: Record<string, string> = {
-  disabled: "Skipped: summaries are turned off",
-  not_configured: "Skipped: no summary model is configured",
-  no_transcript: "Skipped: there was no transcript",
+const SKIPPED_SUMMARY: Record<string, () => string> = {
+  disabled: () => copy().summary.skipped_disabled(),
+  not_configured: () => copy().summary.skipped_not_configured(),
+  no_transcript: () => copy().summary.skipped_no_transcript(),
 };
 
 // The summary model, or what the summary step did instead: skipped and why,
 // failed, or kept by a speaker-edit save that did not ask to rewrite it.
 export function attemptSummary(attempt: JobAttempt): FieldValue | null {
   // First: a kept summary still names the model of the build that wrote it.
-  if (attempt.trigger_kind === "refine" && attempt.summary_mode !== "rewrite") return { text: "Kept as it was", muted: true };
+  const t = copy().summary;
+  if (attempt.trigger_kind === "refine" && attempt.summary_mode !== "rewrite") return { text: t.kept(), muted: true };
   const model = summaryModelLabel(attempt);
   if (model) return { text: model };
   switch (attempt.summary_status) {
     case "skipped":
-      return { text: SKIPPED_SUMMARY[attempt.summary_reason ?? ""] ?? "Skipped", muted: true };
+      return { text: SKIPPED_SUMMARY[attempt.summary_reason ?? ""]?.() ?? t.skipped(), muted: true };
     case "failed":
-      return { text: attempt.summary_reason === "llm_failed" ? "Failed: the model returned an error" : "Failed", muted: true };
+      return { text: attempt.summary_reason === "llm_failed" ? t.failed_llm() : t.failed(), muted: true };
     case "completed":
-      return { text: "Written; the model was not recorded", muted: true };
+      return { text: t.written_unrecorded(), muted: true };
     default:
       return null;
   }
 }
 
 export const LOG_STAGES = [
-  { key: "record", label: "Record", field: "record_log_path" },
-  { key: "build", label: "Build", field: "build_log_path" },
-  { key: "seal", label: "Seal", field: "seal_log_path" },
-  { key: "publish", label: "Publish", field: "publish_log_path" },
+  { key: "record", field: "record_log_path" },
+  { key: "build", field: "build_log_path" },
+  { key: "seal", field: "seal_log_path" },
+  { key: "publish", field: "publish_log_path" },
 ] as const;
 
 export type LogStage = (typeof LOG_STAGES)[number]["key"];
@@ -113,7 +119,8 @@ export function attemptLogs(attempt: JobAttempt): AttemptLog[] {
     const written = !!attempt[stage.field];
     return {
       stage: stage.key,
-      label: stage.label,
+      // The step's name, as the run's stage bar says it.
+      label: get(LL).app.operator.run_stages.stage[stage.key](),
       written,
       present: written && attempt.files_present?.[`${stage.key}_log`] !== false,
     };

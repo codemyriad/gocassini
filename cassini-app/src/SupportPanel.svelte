@@ -1,5 +1,6 @@
 <script lang="ts">
   import { ExternalLink } from "@lucide/svelte";
+  import { LL } from "cassini-viewer/i18n";
   import { SETUP_CALL_URL, SUPPORT_URL } from "./operator/support";
 </script>
 
@@ -10,33 +11,29 @@
 <header class="op-panel-head">
   <div>
     <div class="op-panel-title">
-      <h1>Support Cassini</h1>
+      <h1>{$LL.app.operator.support_panel.title()}</h1>
     </div>
-    <p>Cassini is built by Codemyriad, a small, independent team. Here's how you can help the project, and how we can help you.</p>
+    <p>{$LL.app.operator.support_panel.intro()}</p>
   </div>
 </header>
 
 <section class="op-tint support-card" aria-labelledby="support-heading">
-  <h2 id="support-heading" class="op-card-title">Fund its development</h2>
-  <p>
-    Cassini is free software, and every feature will stay free. If it's useful to you,
-    you can support its development with any amount from €2. It unlocks no features, just some
-    good karma.
-  </p>
+  <h2 id="support-heading" class="op-card-title">{$LL.app.operator.support_panel.fund_heading()}</h2>
+  <p>{$LL.app.operator.support_panel.fund_body()}</p>
   <div>
     <a class="op-btn inline-flex items-center gap-1.5" href={SUPPORT_URL} target="_blank" rel="noreferrer">
-      Support Cassini<ExternalLink size={14} aria-hidden="true" />
+      {$LL.app.operator.support_panel.fund_button()}<ExternalLink size={14} aria-hidden="true" />
     </a>
   </div>
-  <p class="support-fine">Payment is handled by Stripe and goes to Codemyriad, the team that builds Cassini.</p>
+  <p class="support-fine">{$LL.app.operator.support_panel.fund_fine_print()}</p>
 </section>
 
 <section class="op-tint support-card" aria-labelledby="setup-heading">
-  <h2 id="setup-heading" class="op-card-title">Running Cassini for an organisation?</h2>
-  <p>We help with setup and support. Book a 30-minute call to talk it through.</p>
+  <h2 id="setup-heading" class="op-card-title">{$LL.app.operator.support_panel.setup_heading()}</h2>
+  <p>{$LL.app.operator.support_panel.setup_body()}</p>
   <div>
     <a class="op-btn inline-flex items-center gap-1.5" href={SETUP_CALL_URL} target="_blank" rel="noreferrer">
-      Book a call<ExternalLink size={14} aria-hidden="true" />
+      {$LL.app.operator.support_panel.setup_button()}<ExternalLink size={14} aria-hidden="true" />
     </a>
   </div>
 </section>

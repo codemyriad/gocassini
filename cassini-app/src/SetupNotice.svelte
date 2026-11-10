@@ -78,7 +78,7 @@
       {#if hasDetails}
         <div class="flex flex-wrap gap-2 py-1">
           <button class="btn btn-xs" type="button" disabled={busy} on:click={() => dispatch("retry")}>
-            {busy ? $LL.app.setup_notice.checking() : $LL.app.setup_notice.try_again()}
+            {busy ? $LL.app.operator.setup_notice.checking() : $LL.app.operator.setup_notice.try_again()}
           </button>
           <button
             class="btn btn-xs btn-ghost"
@@ -86,12 +86,12 @@
             aria-expanded={detailsOpen}
             on:click={() => (detailsOpen = !detailsOpen)}
           >
-            {$LL.app.setup_notice.show_details()}
+            {$LL.app.operator.setup_notice.show_details()}
           </button>
         </div>
 
         <details class="text-sm" bind:open={detailsOpen}>
-          <summary class="cursor-pointer font-medium">{$LL.app.setup_notice.details_heading()}</summary>
+          <summary class="cursor-pointer font-medium">{$LL.app.operator.setup_notice.details_heading()}</summary>
           <div class="mt-2 flex flex-col gap-3">
             {#if notice.detail}
               <p class="font-mono text-xs break-words opacity-80">{notice.detail}</p>
@@ -108,7 +108,7 @@
                     type="button"
                     on:click={() => dispatch("navigate", "settings")}
                   >
-                    {$LL.app.setup_notice.open_publish_pipeline()}
+                    {$LL.app.operator.setup_notice.open_publish_pipeline()}
                   </button>
                 {/if}
                 {#if step.commands.length > 0}
