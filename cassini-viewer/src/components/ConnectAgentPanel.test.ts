@@ -22,6 +22,10 @@ describe("ConnectAgentPanel", () => {
     expect(steps).toContain("Create an app password");
     expect(steps).toContain("Add Cassini to your agent");
     expect(steps).toContain("Ask it something");
+    // The bold phrase carries no punctuation; the sentence around it does.
+    const text = steps.replace(/<!--.*?-->/g, "");
+    expect(text).toMatch(/Add Cassini to your agent<\/strong>\. For Claude Code/);
+    expect(text).toMatch(/Ask it something<\/strong>, like <em>/);
   });
 
   it("gives Claude Code a command that works as pasted, once the password is filled in", () => {

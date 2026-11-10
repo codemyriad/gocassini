@@ -5415,13 +5415,13 @@ export type NamespaceViewerTranslation = {
 			 */
 			step_password_link: string
 			/**
-			 * {​t​i​t​l​e​}​ ​F​o​r​ ​C​l​a​u​d​e​ ​C​o​d​e​,​ ​w​i​t​h​ ​y​o​u​r​ ​a​p​p​ ​p​a​s​s​w​o​r​d​ ​i​n​ ​p​l​a​c​e​ ​o​f​ ​{​p​l​a​c​e​h​o​l​d​e​r​}​:
+			 * {​t​i​t​l​e​}​.​ ​F​o​r​ ​C​l​a​u​d​e​ ​C​o​d​e​,​ ​w​i​t​h​ ​y​o​u​r​ ​a​p​p​ ​p​a​s​s​w​o​r​d​ ​i​n​ ​p​l​a​c​e​ ​o​f​ ​{​p​l​a​c​e​h​o​l​d​e​r​}​:
 			 * @param {unknown} placeholder
 			 * @param {unknown} title
 			 */
 			step_add: RequiredParams<'placeholder' | 'title'>
 			/**
-			 * A​d​d​ ​C​a​s​s​i​n​i​ ​t​o​ ​y​o​u​r​ ​a​g​e​n​t​.
+			 * A​d​d​ ​C​a​s​s​i​n​i​ ​t​o​ ​y​o​u​r​ ​a​g​e​n​t
 			 */
 			step_add_title: string
 			/**
@@ -5429,13 +5429,13 @@ export type NamespaceViewerTranslation = {
 			 */
 			password_placeholder: string
 			/**
-			 * {​t​i​t​l​e​}​ ​l​i​k​e​ ​{​e​x​a​m​p​l​e​}
+			 * {​t​i​t​l​e​}​,​ ​l​i​k​e​ ​{​e​x​a​m​p​l​e​}
 			 * @param {unknown} example
 			 * @param {unknown} title
 			 */
 			step_ask: RequiredParams<'example' | 'title'>
 			/**
-			 * A​s​k​ ​i​t​ ​s​o​m​e​t​h​i​n​g​,
+			 * A​s​k​ ​i​t​ ​s​o​m​e​t​h​i​n​g
 			 */
 			step_ask_title: string
 			/**
@@ -12816,11 +12816,11 @@ export type TranslationFunctions = {
 				 */
 				step_password_link: () => LocalizedString
 				/**
-				 * {title} For Claude Code, with your app password in place of {placeholder}:
+				 * {title}. For Claude Code, with your app password in place of {placeholder}:
 				 */
 				step_add: (arg: { placeholder: unknown, title: unknown }) => LocalizedString
 				/**
-				 * Add Cassini to your agent.
+				 * Add Cassini to your agent
 				 */
 				step_add_title: () => LocalizedString
 				/**
@@ -12828,11 +12828,11 @@ export type TranslationFunctions = {
 				 */
 				password_placeholder: () => LocalizedString
 				/**
-				 * {title} like {example}
+				 * {title}, like {example}
 				 */
 				step_ask: (arg: { example: unknown, title: unknown }) => LocalizedString
 				/**
-				 * Ask it something,
+				 * Ask it something
 				 */
 				step_ask_title: () => LocalizedString
 				/**

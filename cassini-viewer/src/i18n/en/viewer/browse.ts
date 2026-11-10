@@ -283,13 +283,15 @@ const browse = {
     // Nextcloud's own menu path; use the words Nextcloud uses in this language.
     step_password_link: "Personal settings › Security",
     // Step 2. {title} is step_add_title in bold, {placeholder} is the text to replace in the command.
-    step_add: "{title} For Claude Code, with your app password in place of {placeholder}:",
-    step_add_title: "Add Cassini to your agent.",
+    step_add: "{title}. For Claude Code, with your app password in place of {placeholder}:",
+    // A phrase put into step_add; the sentence carries the punctuation.
+    step_add_title: "Add Cassini to your agent",
     // Shown inside the command; the reader replaces it with their password.
     password_placeholder: "<app password>",
     // Step 3. {title} is step_ask_title in bold, {example} is step_ask_example in italics.
-    step_ask: "{title} like {example}",
-    step_ask_title: "Ask it something,",
+    step_ask: "{title}, like {example}",
+    // A phrase put into step_ask; the sentence carries the punctuation.
+    step_ask_title: "Ask it something",
     step_ask_example: "“What was decided in yesterday's standup?”",
     more: "Other agents and the command line",
   },
