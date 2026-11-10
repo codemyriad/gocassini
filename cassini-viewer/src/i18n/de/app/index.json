@@ -106,7 +106,6 @@
         "talk_hpb": "",
         "nextcloud": ""
       },
-      "just_now": "",
       "test_follow_up": {
         "failed": "",
         "play": "",
@@ -275,13 +274,6 @@
       }
     },
     "processing_speed": {
-      "span": {
-        "seconds": "",
-        "minutes": "",
-        "minutes_seconds": "",
-        "hours": "",
-        "hours_minutes": ""
-      },
       "multiplier": "",
       "real_time": "",
       "not_counting_summary": ""
@@ -568,9 +560,7 @@
       "admin_fix": "",
       "send_link": "",
       "send_link_title": "",
-      "admin_fix_plain": "",
-      "duration_minutes": "",
-      "duration_hours": ""
+      "admin_fix_plain": ""
     },
     "doctor": {
       "title": "",
@@ -748,7 +738,6 @@
         "queued": "",
         "blocked": ""
       },
-      "just_now": "",
       "not_available": "",
       "back_to_recordings": "",
       "detail_title": "",
@@ -1317,7 +1306,6 @@
       "cost_other": "",
       "cost_target_fallback": "",
       "cost_target": "",
-      "tokens_thousands": "",
       "endpoint_external": "",
       "endpoint_local": "",
       "replace_note": "",

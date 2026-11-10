@@ -386,10 +386,6 @@ export type NamespaceAppTranslation = {
 				 */
 				nextcloud: string
 			}
-			/**
-			 * j​u​s​t​ ​n​o​w
-			 */
-			just_now: string
 			test_follow_up: {
 				/**
 				 * y​o​u​r​ ​t​e​s​t​ ​r​e​c​o​r​d​i​n​g​ ​d​i​d​ ​n​o​t​ ​f​i​n​i​s​h
@@ -980,35 +976,6 @@ export type NamespaceAppTranslation = {
 			}
 		}
 		processing_speed: {
-			span: {
-				/**
-				 * {​s​e​c​o​n​d​s​}​s
-				 * @param {unknown} seconds
-				 */
-				seconds: RequiredParams<'seconds'>
-				/**
-				 * {​m​i​n​u​t​e​s​}​m
-				 * @param {unknown} minutes
-				 */
-				minutes: RequiredParams<'minutes'>
-				/**
-				 * {​m​i​n​u​t​e​s​}​m​ ​{​s​e​c​o​n​d​s​}​s
-				 * @param {unknown} minutes
-				 * @param {unknown} seconds
-				 */
-				minutes_seconds: RequiredParams<'minutes' | 'seconds'>
-				/**
-				 * {​h​o​u​r​s​}​h
-				 * @param {unknown} hours
-				 */
-				hours: RequiredParams<'hours'>
-				/**
-				 * {​h​o​u​r​s​}​h​ ​{​m​i​n​u​t​e​s​}​m
-				 * @param {unknown} hours
-				 * @param {unknown} minutes
-				 */
-				hours_minutes: RequiredParams<'hours' | 'minutes'>
-			}
 			/**
 			 * {​f​a​c​t​o​r​}​×
 			 * @param {unknown} factor
@@ -2058,17 +2025,6 @@ export type NamespaceAppTranslation = {
 			 * A​n​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​ ​c​a​n​ ​f​i​x​ ​t​h​a​t​.
 			 */
 			admin_fix_plain: string
-			/**
-			 * {​m​i​n​u​t​e​s​}​ ​m​i​n
-			 * @param {unknown} minutes
-			 */
-			duration_minutes: RequiredParams<'minutes'>
-			/**
-			 * {​h​o​u​r​s​}​ ​h​ ​{​m​i​n​u​t​e​s​}
-			 * @param {unknown} hours
-			 * @param {unknown} minutes
-			 */
-			duration_hours: RequiredParams<'hours' | 'minutes'>
 		}
 		doctor: {
 			/**
@@ -2720,10 +2676,6 @@ export type NamespaceAppTranslation = {
 				 */
 				blocked: string
 			}
-			/**
-			 * j​u​s​t​ ​n​o​w
-			 */
-			just_now: string
 			/**
 			 * N​o​t​ ​a​v​a​i​l​a​b​l​e
 			 */
@@ -4928,11 +4880,6 @@ export type NamespaceAppTranslation = {
 			 */
 			cost_target: RequiredParams<'model' | 'provider'>
 			/**
-			 * {​v​a​l​u​e​}​k
-			 * @param {unknown} value
-			 */
-			tokens_thousands: RequiredParams<'value'>
-			/**
 			 * T​h​e​ ​t​r​a​n​s​c​r​i​p​t​ ​i​s​ ​s​e​n​t​ ​t​o​ ​a​n​ ​e​x​t​e​r​n​a​l​ ​s​e​r​v​i​c​e​,​ ​w​h​i​c​h​ ​m​a​y​ ​b​i​l​l​ ​f​o​r​ ​i​t​.
 			 */
 			endpoint_external: string
@@ -5492,17 +5439,6 @@ export type NamespaceViewerTranslation = {
 			 * C​o​u​l​d​n​'​t​ ​l​o​a​d​ ​t​h​e​ ​m​e​e​t​i​n​g​s​.
 			 */
 			load_failed: string
-			/**
-			 * {​m​i​n​u​t​e​s​}​m
-			 * @param {unknown} minutes
-			 */
-			duration_minutes: RequiredParams<'minutes'>
-			/**
-			 * {​h​o​u​r​s​}​h​ ​{​m​i​n​u​t​e​s​}​m
-			 * @param {unknown} hours
-			 * @param {unknown} minutes
-			 */
-			duration_hours: RequiredParams<'hours' | 'minutes'>
 		}
 		rooms_rail: {
 			/**
@@ -6122,22 +6058,6 @@ export type NamespaceViewerTranslation = {
 			 */
 			duration_under_minute: string
 			/**
-			 * {​m​i​n​u​t​e​s​}​ ​m​i​n
-			 * @param {unknown} minutes
-			 */
-			duration_minutes: RequiredParams<'minutes'>
-			/**
-			 * {​h​o​u​r​s​}​ ​h
-			 * @param {unknown} hours
-			 */
-			duration_hours: RequiredParams<'hours'>
-			/**
-			 * {​h​o​u​r​s​}​ ​h​ ​{​m​i​n​u​t​e​s​}​ ​m​i​n
-			 * @param {unknown} hours
-			 * @param {unknown} minutes
-			 */
-			duration_hours_minutes: RequiredParams<'hours' | 'minutes'>
-			/**
 			 * O​n​l​y​ ​y​o​u
 			 */
 			sharing_only_you: string
@@ -6434,10 +6354,6 @@ export type NamespaceViewerTranslation = {
 			 * @param {unknown} when
 			 */
 			changed_by_when: RequiredParams<'name' | 'when'>
-			/**
-			 * j​u​s​t​ ​n​o​w
-			 */
-			just_now: string
 			/**
 			 * U​p​d​a​t​i​n​g​ ​{​d​o​n​e​}​ ​o​f​ ​{​t​o​t​a​l​}​…
 			 * @param {unknown} done
@@ -7488,15 +7404,10 @@ export type NamespaceViewerTranslation = {
 			 */
 			almost_done: string
 			/**
-			 * a​b​o​u​t​ ​{​s​e​c​o​n​d​s​}​ ​s​ ​l​e​f​t
-			 * @param {unknown} seconds
+			 * a​b​o​u​t​ ​{​d​u​r​a​t​i​o​n​}​ ​l​e​f​t
+			 * @param {unknown} duration
 			 */
-			seconds_left: RequiredParams<'seconds'>
-			/**
-			 * a​b​o​u​t​ ​{​m​i​n​u​t​e​s​}​ ​m​i​n​ ​l​e​f​t
-			 * @param {unknown} minutes
-			 */
-			minutes_left: RequiredParams<'minutes'>
+			time_left: RequiredParams<'duration'>
 			/**
 			 * S​t​a​r​t​i​n​g​…
 			 */
@@ -8257,11 +8168,6 @@ export type NamespaceViewerTranslation = {
 			 */
 			cost_target: RequiredParams<'model' | 'provider'>
 			/**
-			 * {​v​a​l​u​e​}​k
-			 * @param {unknown} value
-			 */
-			tokens_thousands: RequiredParams<'value'>
-			/**
 			 * T​h​e​ ​t​r​a​n​s​c​r​i​p​t​ ​i​s​ ​s​e​n​t​ ​t​o​ ​a​n​ ​e​x​t​e​r​n​a​l​ ​s​e​r​v​i​c​e​,​ ​w​h​i​c​h​ ​m​a​y​ ​b​i​l​l​ ​f​o​r​ ​i​t​.
 			 */
 			endpoint_external: string
@@ -8852,10 +8758,6 @@ export type TranslationFunctions = {
 					 */
 					nextcloud: () => LocalizedString
 				}
-				/**
-				 * just now
-				 */
-				just_now: () => LocalizedString
 				test_follow_up: {
 					/**
 					 * your test recording did not finish
@@ -9396,28 +9298,6 @@ export type TranslationFunctions = {
 				}
 			}
 			processing_speed: {
-				span: {
-					/**
-					 * {seconds}s
-					 */
-					seconds: (arg: { seconds: unknown }) => LocalizedString
-					/**
-					 * {minutes}m
-					 */
-					minutes: (arg: { minutes: unknown }) => LocalizedString
-					/**
-					 * {minutes}m {seconds}s
-					 */
-					minutes_seconds: (arg: { minutes: unknown, seconds: unknown }) => LocalizedString
-					/**
-					 * {hours}h
-					 */
-					hours: (arg: { hours: unknown }) => LocalizedString
-					/**
-					 * {hours}h {minutes}m
-					 */
-					hours_minutes: (arg: { hours: unknown, minutes: unknown }) => LocalizedString
-				}
 				/**
 				 * {factor}×
 				 */
@@ -10386,14 +10266,6 @@ export type TranslationFunctions = {
 				 * An administrator can fix that.
 				 */
 				admin_fix_plain: () => LocalizedString
-				/**
-				 * {minutes} min
-				 */
-				duration_minutes: (arg: { minutes: unknown }) => LocalizedString
-				/**
-				 * {hours} h {minutes}
-				 */
-				duration_hours: (arg: { hours: unknown, minutes: unknown }) => LocalizedString
 			}
 			doctor: {
 				/**
@@ -11018,10 +10890,6 @@ export type TranslationFunctions = {
 					 */
 					blocked: () => LocalizedString
 				}
-				/**
-				 * just now
-				 */
-				just_now: () => LocalizedString
 				/**
 				 * Not available
 				 */
@@ -13108,10 +12976,6 @@ export type TranslationFunctions = {
 				 */
 				cost_target: (arg: { model: unknown, provider: unknown }) => LocalizedString
 				/**
-				 * {value}k
-				 */
-				tokens_thousands: (arg: { value: unknown }) => LocalizedString
-				/**
 				 * The transcript is sent to an external service, which may bill for it.
 				 */
 				endpoint_external: () => LocalizedString
@@ -13629,14 +13493,6 @@ export type TranslationFunctions = {
 				 * Couldn't load the meetings.
 				 */
 				load_failed: () => LocalizedString
-				/**
-				 * {minutes}m
-				 */
-				duration_minutes: (arg: { minutes: unknown }) => LocalizedString
-				/**
-				 * {hours}h {minutes}m
-				 */
-				duration_hours: (arg: { hours: unknown, minutes: unknown }) => LocalizedString
 			}
 			rooms_rail: {
 				/**
@@ -14218,18 +14074,6 @@ export type TranslationFunctions = {
 				 */
 				duration_under_minute: () => LocalizedString
 				/**
-				 * {minutes} min
-				 */
-				duration_minutes: (arg: { minutes: unknown }) => LocalizedString
-				/**
-				 * {hours} h
-				 */
-				duration_hours: (arg: { hours: unknown }) => LocalizedString
-				/**
-				 * {hours} h {minutes} min
-				 */
-				duration_hours_minutes: (arg: { hours: unknown, minutes: unknown }) => LocalizedString
-				/**
 				 * Only you
 				 */
 				sharing_only_you: () => LocalizedString
@@ -14499,10 +14343,6 @@ export type TranslationFunctions = {
 				 * Changed by {name} · {when}
 				 */
 				changed_by_when: (arg: { name: unknown, when: unknown }) => LocalizedString
-				/**
-				 * just now
-				 */
-				just_now: () => LocalizedString
 				/**
 				 * Updating {done} of {total}…
 				 */
@@ -15476,13 +15316,9 @@ export type TranslationFunctions = {
 				 */
 				almost_done: () => LocalizedString
 				/**
-				 * about {seconds} s left
+				 * about {duration} left
 				 */
-				seconds_left: (arg: { seconds: unknown }) => LocalizedString
-				/**
-				 * about {minutes} min left
-				 */
-				minutes_left: (arg: { minutes: unknown }) => LocalizedString
+				time_left: (arg: { duration: unknown }) => LocalizedString
 				/**
 				 * Starting…
 				 */
@@ -16199,10 +16035,6 @@ export type TranslationFunctions = {
 				 * {model} ({provider})
 				 */
 				cost_target: (arg: { model: unknown, provider: unknown }) => LocalizedString
-				/**
-				 * {value}k
-				 */
-				tokens_thousands: (arg: { value: unknown }) => LocalizedString
 				/**
 				 * The transcript is sent to an external service, which may bill for it.
 				 */

@@ -4,7 +4,7 @@
 // reason buildSetupNotice gives: the sentences are the part worth testing, and
 // SharingNotice.svelte renders what it is handed.
 import { get } from "svelte/store";
-import { formatLocale, LL } from "cassini-viewer/i18n";
+import { durationFormat, formatCount, formatLocale, LL } from "cassini-viewer/i18n";
 import { readServedMessage } from "../servedMessage";
 import { isRecord, readSharing, type PendingRecording, type RecordingNotice, type SharingStatus } from "./setupHealth";
 
@@ -70,7 +70,7 @@ const copy = () => get(LL).app.operator.sharing_notice;
 // --- Pending (contract §5, revised in §8) ---
 
 export function pendingTitle(count: number): string {
-  return count === 1 ? copy().pending_title_one() : copy().pending_title_other({ count });
+  return count === 1 ? copy().pending_title_one() : copy().pending_title_other({ count: formatCount(count) });
 }
 
 export const pendingLine = (): string => copy().pending_line();
@@ -80,7 +80,7 @@ export const hideThem = (): string => copy().hide_them();
 // The primary button on the first line. One recording has nothing to say
 // "all" about: the button accepts it.
 export function acceptAllLabel(count: number): string {
-  return count === 1 ? copy().accept() : copy().accept_all({ count });
+  return count === 1 ? copy().accept() : copy().accept_all({ count: formatCount(count) });
 }
 
 export const whyAccept = (): string => copy().why_accept();
@@ -89,13 +89,13 @@ export const whyAccept = (): string => copy().why_accept();
 // link to hand on as the last words of the line ---
 
 export function refusedTitle(count: number): string {
-  return count === 1 ? copy().refused_title_one() : copy().refused_title_other({ count });
+  return count === 1 ? copy().refused_title_one() : copy().refused_title_other({ count: formatCount(count) });
 }
 
 export const refusedLine = (): string => copy().refused_line();
 
 export function starterRefusedTitle(count: number): string {
-  return count === 1 ? copy().starter_refused_title_one() : copy().starter_refused_title_other({ count });
+  return count === 1 ? copy().starter_refused_title_one() : copy().starter_refused_title_other({ count: formatCount(count) });
 }
 
 export function starterRefusedLine(count: number): string {
@@ -201,12 +201,11 @@ export function formatShareDate(iso: string, options: DateFormatOptions = {}): s
   }).format(date);
 }
 
-// "42 min", "1 h 05"; "" for an unknown duration.
+// "42 min", "1 hr, 5 min" (the locale's units); "" for an unknown duration.
 export function formatDuration(seconds: number): string {
   const minutes = Math.round(seconds / 60);
   if (!Number.isFinite(minutes) || minutes < 1) return "";
-  if (minutes < 60) return copy().duration_minutes({ minutes });
-  return copy().duration_hours({ hours: Math.floor(minutes / 60), minutes: String(minutes % 60).padStart(2, "0") });
+  return durationFormat({ hours: Math.floor(minutes / 60), minutes: minutes % 60 });
 }
 
 // The row's first line: the meeting's title; without one the date stands in,

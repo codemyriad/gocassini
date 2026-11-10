@@ -1,7 +1,7 @@
 import { get } from "svelte/store";
 
 import { LL } from "../i18n";
-import { dateFormat } from "../i18n/format";
+import { dateFormat, durationFormat } from "../i18n/format";
 import { readViewerBase, resolveAppBaseUrl } from "./appBase";
 import {
   formatMeetingStartShort,
@@ -445,17 +445,13 @@ export function formatMeetingDate(dateLabel: string): string {
 }
 
 // formatMeetingDuration renders a catalog entry's duration the way the browse
-// list wants it: a coarse "46m" / "1h 5m", not a clock time. The list is a
+// list wants it: a coarse "46m" / "1h 5m" (the locale's narrow units), not a clock time. The list is a
 // scanning surface — the exact seconds belong to the player, which shows them.
 // Rounds to the nearest minute, and floors at "1m" so a short-but-real
 // recording never reads as an empty one.
 export function formatMeetingDuration(durationMs: number): string {
   const minutes = Math.max(1, Math.round(durationMs / 60000));
-  const text = get(LL).viewer.browse.meeting_list;
-  if (minutes < 60) {
-    return text.duration_minutes({ minutes });
-  }
-  return text.duration_hours({ hours: Math.floor(minutes / 60), minutes: minutes % 60 });
+  return durationFormat({ hours: Math.floor(minutes / 60), minutes: minutes % 60 }, "narrow");
 }
 
 function requireNonEmptyString(value: unknown, label: string): string {

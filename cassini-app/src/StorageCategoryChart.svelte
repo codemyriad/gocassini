@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { LL, numberFormat } from "cassini-viewer/i18n";
+  import { formatCount, LL, numberFormat } from "cassini-viewer/i18n";
   import type { StorageUsageCategory } from "./operator/types";
   import { formatStorageBytes } from "./operator/storageUsage";
   import type { RetentionPolicy } from "./operator/retention";
@@ -57,8 +57,8 @@
     <label>{$LL.app.operator.storage.chart.range_label()}
       <select class="select select-bordered" aria-label={$LL.app.operator.storage.chart.range_aria({ category: label })} bind:value={range}>
         <option value="all">{$LL.app.operator.storage.chart.range_all()}</option>
-        <option value="7">{$LL.app.operator.storage.chart.range_last_days({ count: 7 })}</option><option value="30">{$LL.app.operator.storage.chart.range_last_days({ count: 30 })}</option>
-        <option value="90">{$LL.app.operator.storage.chart.range_last_days({ count: 90 })}</option><option value="365">{$LL.app.operator.storage.chart.range_last_year()}</option>
+        <option value="7">{$LL.app.operator.storage.chart.range_last_days({ count: formatCount(7) })}</option><option value="30">{$LL.app.operator.storage.chart.range_last_days({ count: formatCount(30) })}</option>
+        <option value="90">{$LL.app.operator.storage.chart.range_last_days({ count: formatCount(90) })}</option><option value="365">{$LL.app.operator.storage.chart.range_last_year()}</option>
         <option value="custom">{$LL.app.operator.storage.chart.range_custom()}</option>
       </select>
     </label>
@@ -75,7 +75,7 @@
   {:else if category.days.length === 0}
     <p class="chart-message">{category.files === 0 ? $LL.app.operator.storage.chart.empty_no_files() : $LL.app.operator.storage.chart.empty_no_dated_files()}</p>
   {:else}
-    <div class="chart-summary"><strong>{formatStorageBytes(rangeBytes)} <span>{$LL.app.operator.storage.chart.in_selected_range()}</span></strong><span>{days === 1 ? $LL.app.operator.storage.chart.precision_daily() : $LL.app.operator.storage.chart.precision_days({ count: days })} · {dates}</span></div>
+    <div class="chart-summary"><strong>{formatStorageBytes(rangeBytes)} <span>{$LL.app.operator.storage.chart.in_selected_range()}</span></strong><span>{days === 1 ? $LL.app.operator.storage.chart.precision_daily() : $LL.app.operator.storage.chart.precision_days({ count: formatCount(days) })} · {dates}</span></div>
     {#if rangeBytes === 0}<p class="chart-message">{$LL.app.operator.storage.chart.empty_range()}</p>{/if}
     {#if canScrollEarlier || canScrollLater}
       <div class="timeline-navigation">

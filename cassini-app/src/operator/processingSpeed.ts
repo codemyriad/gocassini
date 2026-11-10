@@ -3,7 +3,7 @@
 // the transcription research does: 4.8× real time means a 58 minute meeting
 // took 12 minutes, and below 1× the server falls behind the meetings it records.
 import { get } from "svelte/store";
-import { LL, numberFormat } from "cassini-viewer/i18n";
+import { durationFormat, LL, numberFormat } from "cassini-viewer/i18n";
 import type { Job, JobAttempt, JobDetailResponse } from "./types";
 
 const copy = () => get(LL).app.operator.processing_speed;
@@ -35,18 +35,13 @@ export function spanMs(start: string | null | undefined, end: string | null | un
   return to - from;
 }
 
+// "45s", "34m 25s", "1h 15m": seconds are dropped past an hour.
 export function formatSpan(ms: number): string {
-  const t = copy().span;
   const totalSeconds = Math.round(ms / 1000);
-  if (totalSeconds < 60) return t.seconds({ seconds: totalSeconds });
+  if (totalSeconds < 60) return durationFormat({ seconds: totalSeconds }, "narrow");
   const totalMinutes = Math.floor(totalSeconds / 60);
-  const remSeconds = totalSeconds % 60;
-  if (totalMinutes < 60) {
-    return remSeconds > 0 ? t.minutes_seconds({ minutes: totalMinutes, seconds: remSeconds }) : t.minutes({ minutes: totalMinutes });
-  }
-  const hours = Math.floor(totalMinutes / 60);
-  const remMinutes = totalMinutes % 60;
-  return remMinutes > 0 ? t.hours_minutes({ hours, minutes: remMinutes }) : t.hours({ hours });
+  if (totalMinutes < 60) return durationFormat({ minutes: totalMinutes, seconds: totalSeconds % 60 }, "narrow");
+  return durationFormat({ hours: Math.floor(totalMinutes / 60), minutes: totalMinutes % 60 }, "narrow");
 }
 
 export function formatMultiplier(factor: number): string {

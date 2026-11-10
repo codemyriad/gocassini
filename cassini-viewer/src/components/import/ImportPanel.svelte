@@ -12,7 +12,7 @@
   import { createEventDispatcher, onDestroy, onMount } from "svelte";
   import { Check, ChevronDown, ChevronUp, CircleAlert, CloudUpload, FileAudio, FileText, Lock, Users, X } from "@lucide/svelte";
 
-  import { LL } from "../../i18n";
+  import { formatCount, LL } from "../../i18n";
   import type { DataProvider } from "../../viewer/dataProvider";
   import {
     describeImportSharing,
@@ -425,9 +425,9 @@
       formatImportDuration(preview.durationMs),
     ];
     const speakers = preview.speakerCount;
-    if (speakers > 0) parts.push(speakers === 1 ? text.preview_speakers_one() : text.preview_speakers_other({ count: speakers }));
+    if (speakers > 0) parts.push(speakers === 1 ? text.preview_speakers_one() : text.preview_speakers_other({ count: formatCount(speakers) }));
     const tags = preview.tagCount;
-    if (tags > 0) parts.push(tags === 1 ? text.preview_tags_one() : text.preview_tags_other({ count: tags }));
+    if (tags > 0) parts.push(tags === 1 ? text.preview_tags_one() : text.preview_tags_other({ count: formatCount(tags) }));
     if (preview.hasSummary) parts.push(text.preview_summary());
     return parts.filter(Boolean).join(" · ");
   }
@@ -657,9 +657,9 @@
 
   {#if readyCount > 0}
     <footer class="import-foot">
-      <span>{skippedCount > 0 ? text.ready_skipped({ count: readyCount, skipped: skippedCount }) : text.ready({ count: readyCount })}</span>
+      <span>{skippedCount > 0 ? text.ready_skipped({ count: formatCount(readyCount), skipped: formatCount(skippedCount) }) : text.ready({ count: formatCount(readyCount) })}</span>
       <button type="button" class="btn btn-primary" disabled={submitting} on:click={() => void submit()}>
-        {submitting ? text.importing() : readyCount === 1 ? text.import_one() : text.import_other({ count: readyCount })}
+        {submitting ? text.importing() : readyCount === 1 ? text.import_one() : text.import_other({ count: formatCount(readyCount) })}
       </button>
     </footer>
   {/if}

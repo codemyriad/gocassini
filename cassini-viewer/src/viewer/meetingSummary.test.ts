@@ -33,7 +33,7 @@ describe("meeting summary", () => {
   });
 
   it("says the cost before anything is sent", () => {
-    expect(summaryCostLine(state)).toBe("1 call to deepseek/deepseek-v4.1-flash (Open Router) · about 7.5k input tokens, 5,213 words");
+    expect(summaryCostLine(state)).toBe("1 call to deepseek/deepseek-v4.1-flash (Open Router) · about 7.5K input tokens, 5,213 words");
     expect(summaryEndpointLine(state)).toContain("external service");
     expect(summaryEndpointLine({ ...state, external: false })).toBe("The model runs on your own network.");
   });

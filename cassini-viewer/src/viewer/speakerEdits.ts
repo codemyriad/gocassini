@@ -15,7 +15,7 @@ import { get } from "svelte/store";
 
 import type { TranscriptSpeaker } from "../core/types";
 import { voiceParent } from "../core/speakers";
-import { LL, numberFormat } from "../i18n";
+import { durationFormat, LL, numberFormat } from "../i18n";
 
 export const SPEAKER_EDITS_FORMAT = "cassini.speaker-edits.v1";
 // The annotation label rule, which the operator applies to these labels too.
@@ -366,8 +366,8 @@ export function progressNow(progress: SpeakerEditsProgress, sinceMs: number): Sp
 export function remainingText(remainingMs: number): string {
   const t = get(LL).viewer.meeting.speaker_edits;
   if (remainingMs <= 0) return t.almost_done();
-  if (remainingMs <= 55_000) return t.seconds_left({ seconds: numberFormat().format(Math.ceil(remainingMs / 5000) * 5) });
-  return t.minutes_left({ minutes: numberFormat().format(Math.max(1, Math.round(remainingMs / 60_000))) });
+  if (remainingMs <= 55_000) return t.time_left({ duration: durationFormat({ seconds: Math.ceil(remainingMs / 5000) * 5 }) });
+  return t.time_left({ duration: durationFormat({ minutes: Math.max(1, Math.round(remainingMs / 60_000)) }) });
 }
 
 export function phaseText(phase: SpeakerEditsPhaseNow): string {

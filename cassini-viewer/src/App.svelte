@@ -3,7 +3,7 @@
   import { cubicOut } from "svelte/easing";
   import { fade } from "svelte/transition";
   import { get } from "svelte/store";
-  import { LL } from "./i18n";
+  import { formatCount, LL } from "./i18n";
   import type { PortableMeetingSummary } from "./viewer/loadArtifact";
   import {
     filterMeetingCatalogEntries,
@@ -891,7 +891,7 @@
       deleteNotice =
         failed.length === 1
           ? get(LL).viewer.browse.app.delete_failed_one({ title: failed[0].title })
-          : get(LL).viewer.browse.app.delete_failed_other({ count: failed.length });
+          : get(LL).viewer.browse.app.delete_failed_other({ count: formatCount(failed.length) });
     }
     deleteFailed = failed;
     deleteBusy = false;
@@ -1941,11 +1941,11 @@
       <ConfirmDialog
         title={deleteConfirm.length === 1
           ? appText.delete_confirm_title_one({ title: deleteConfirm[0].title })
-          : appText.delete_confirm_title_other({ count: deleteConfirm.length })}
+          : appText.delete_confirm_title_other({ count: formatCount(deleteConfirm.length) })}
         body={appText.delete_confirm_body()}
         confirmLabel={deleteConfirm.length === 1
           ? appText.delete_confirm_button_one()
-          : appText.delete_confirm_button_other({ count: deleteConfirm.length })}
+          : appText.delete_confirm_button_other({ count: formatCount(deleteConfirm.length) })}
         busy={deleteBusy}
         on:cancel={() => (deleteConfirm = null)}
         on:confirm={confirmDeleteMeetings}

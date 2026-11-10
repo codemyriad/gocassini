@@ -130,8 +130,8 @@ describe("how old a check is", () => {
   const now = new Date("2026-09-22T12:00:00Z");
   const ago = (ms: number) => new Date(now.getTime() - ms).toISOString();
 
-  it("says just now inside the first minute", () => {
-    expect(formatAge(ago(5_000), now)).toBe("just now");
+  it("says now inside the first minute", () => {
+    expect(formatAge(ago(5_000), now)).toBe("now");
   });
 
   it("counts minutes, hours and days", () => {
@@ -148,7 +148,7 @@ describe("how old a check is", () => {
   // A clock skewed forward must not produce "in 3 minutes"; the reader only
   // needs to know the check is current.
   it("does not go negative on a skewed clock", () => {
-    expect(formatAge(new Date(now.getTime() + 180_000).toISOString(), now)).toBe("just now");
+    expect(formatAge(new Date(now.getTime() + 180_000).toISOString(), now)).toBe("now");
   });
 
   it("says nothing it cannot parse", () => {

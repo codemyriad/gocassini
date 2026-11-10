@@ -15,7 +15,7 @@
   import { createEventDispatcher, onDestroy } from "svelte";
   import { createCombobox } from "@melt-ui/svelte";
   import { ChevronDown, TriangleAlert } from "@lucide/svelte";
-  import { LL } from "cassini-viewer/i18n";
+  import { formatCount, LL } from "cassini-viewer/i18n";
   import type { LLMModel } from "./operator/types";
 
   export let value = "";
@@ -151,7 +151,7 @@
           </li>
         {/each}
         {#if visible.length !== models.length}
-          <li class="model-note">{$LL.app.settings.model_combobox.match_count_other({ shown: visible.length, count: models.length })}</li>
+          <li class="model-note">{$LL.app.settings.model_combobox.match_count_other({ shown: formatCount(visible.length), count: formatCount(models.length) })}</li>
         {/if}
       {/if}
     </ul>

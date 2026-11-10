@@ -32,7 +32,7 @@
     TextAlignStart,
     TriangleAlert,
   } from "@lucide/svelte";
-  import { LL } from "cassini-viewer/i18n";
+  import { formatCount, LL } from "cassini-viewer/i18n";
   import ModelCombobox from "./ModelCombobox.svelte";
   import { OperatorClient, OperatorHttpError } from "./operator/client";
   import type {
@@ -556,7 +556,7 @@
                 type="number"
                 min="1"
                 class="op-input"
-                placeholder={$LL.app.settings.llm.timeout_placeholder({ seconds: 900 })}
+                placeholder={$LL.app.settings.llm.timeout_placeholder({ seconds: formatCount(900) })}
               />
             </label>
             <label class="op-field">
@@ -568,7 +568,7 @@
                 type="number"
                 min="1"
                 class="op-input"
-                placeholder={$LL.app.settings.llm.token_limit_placeholder({ tokens: 4096 })}
+                placeholder={$LL.app.settings.llm.token_limit_placeholder({ tokens: formatCount(4096) })}
               />
             </label>
           </div>
@@ -726,16 +726,16 @@
                         {@const state = probes[provider.id]}
                         {@const count = state.status === "ok" ? state.count : 0}
                         <span>
-                          {count === 1 ? $LL.app.settings.llm.model_count_one() : $LL.app.settings.llm.model_count_other({ count })}
+                          {count === 1 ? $LL.app.settings.llm.model_count_one() : $LL.app.settings.llm.model_count_other({ count: formatCount(count) })}
                         </span>
                       {:else if probes[provider.id]?.status === "checking"}
                         <span>{$LL.app.settings.llm.loading_models()}</span>
                       {/if}
                       {#if provider.timeout_sec > 0}
-                        <span>{$LL.app.settings.llm.timeout_fact({ seconds: provider.timeout_sec })}</span>
+                        <span>{$LL.app.settings.llm.timeout_fact({ seconds: formatCount(provider.timeout_sec) })}</span>
                       {/if}
                       {#if provider.max_tokens > 0}
-                        <span>{$LL.app.settings.llm.token_limit_fact({ tokens: provider.max_tokens })}</span>
+                        <span>{$LL.app.settings.llm.token_limit_fact({ tokens: formatCount(provider.max_tokens) })}</span>
                       {/if}
                     </div>
                   </div>

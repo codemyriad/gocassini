@@ -172,9 +172,6 @@ const browse = {
     // Under "Load note" when the list could not be loaded or refreshed. The
     // technical reason follows underneath, in English.
     load_failed: "Couldn't load the meetings.",
-    // A meeting's length in the list. Short forms: the row is narrow.
-    duration_minutes: "{minutes}m",
-    duration_hours: "{hours}h {minutes}m",
   },
 
   // The rooms, tags and kinds down the side of the list.
@@ -365,9 +362,6 @@ const browse = {
     preview_tags_other: "{count} tags",
     preview_summary: "summary",
     duration_under_minute: "under a minute",
-    duration_minutes: "{minutes} min",
-    duration_hours: "{hours} h",
-    duration_hours_minutes: "{hours} h {minutes} min",
     // Who can open an imported meeting.
     sharing_only_you: "Only you",
     sharing_only_you_title: "Only you can open this meeting.",
@@ -452,7 +446,6 @@ const browse = {
     // {name} is a person, {when} how long ago ("2 days ago").
     changed_by: "Changed by {name}",
     changed_by_when: "Changed by {name} · {when}",
-    just_now: "just now",
     job_updating: "Updating {done} of {total}…",
     job_stopped: "Stopped before it finished.",
     job_failed: "{count} couldn't be updated",

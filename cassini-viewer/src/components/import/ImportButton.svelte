@@ -2,7 +2,7 @@
   // The Import button beside search. Its label is the import status while the
   // sheet is closed: running, just finished, or failed (see ImportPanel).
   import { Check, CircleAlert, CloudUpload, LoaderCircle } from "@lucide/svelte";
-  import { LL } from "../../i18n";
+  import { formatCount, LL } from "../../i18n";
   import type { ImportStatus } from "./importStatus";
 
   export let status: ImportStatus = { kind: "idle", count: 0 };
@@ -11,13 +11,13 @@
   $: text = $LL.viewer.browse.import;
   $: label =
     status.kind === "running"
-      ? text.button_running({ count: status.count })
+      ? text.button_running({ count: formatCount(status.count) })
       : status.kind === "done"
-        ? text.button_done({ count: status.count })
+        ? text.button_done({ count: formatCount(status.count) })
         : status.kind === "failed"
           ? status.count === 1
             ? text.button_failed_one()
-            : text.button_failed_other({ count: status.count })
+            : text.button_failed_other({ count: formatCount(status.count) })
           : text.button();
 </script>
 

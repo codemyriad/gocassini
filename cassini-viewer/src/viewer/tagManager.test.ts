@@ -71,12 +71,12 @@ describe("row lines", () => {
   });
 
   it("tells time relative to now", () => {
-    expect(relativeTime(ago(30e3), NOW)).toBe("just now");
+    expect(relativeTime(ago(30e3), NOW)).toBe("now");
     expect(relativeTime(ago(5 * 6e4), NOW)).toBe("5 minutes ago");
     expect(relativeTime(ago(3 * 36e5), NOW)).toBe("3 hours ago");
     expect(relativeTime(ago(1.5 * DAY), NOW)).toBe("yesterday");
     expect(relativeTime(ago(15 * DAY), NOW)).toBe("2 weeks ago");
-    expect(relativeTime(ago(-60e3), NOW)).toBe("just now");
+    expect(relativeTime(ago(-60e3), NOW)).toBe("now");
   });
 
   it("confirms with one line about the caller's own meetings", () => {

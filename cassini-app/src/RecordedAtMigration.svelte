@@ -6,7 +6,7 @@
   // when an administrator presses the button here, and can be paused here.
   import { onDestroy, onMount } from "svelte";
   import { CircleAlert, CircleCheck, Clock, Info, Pause, Play, TriangleAlert } from "@lucide/svelte";
-  import { LL } from "cassini-viewer/i18n";
+  import { formatCount, LL } from "cassini-viewer/i18n";
   import type { OperatorClient } from "./operator/client";
   import { migrationActive, migrationButton, migrationCounting, migrationSummary, migrationVisible, notificationFacts, type RecordedAtMigration } from "./operator/recordedAtMigration";
   import { toneClasses } from "./operator/readiness";
@@ -115,7 +115,7 @@
       {#each migration.blocked_items as item}
         <li class="flex gap-1.5 text-base-content/70"><CircleAlert size={14} class="mt-0.5 shrink-0 {toneClasses.warning}" aria-hidden="true" /><span><span class="font-medium text-base-content">{item.title || item.meeting}</span>{#if item.date_label}<span class="text-base-content/60">{` · ${item.date_label}`}</span>{/if}: {item.reason}</span></li>
       {/each}
-      {#if migration.blocked > migration.blocked_items.length}<li class="text-xs text-base-content/60">{$LL.app.operator.recorded_at_migration.panel.blocked_more({ count: migration.blocked - migration.blocked_items.length })}</li>{/if}
+      {#if migration.blocked > migration.blocked_items.length}<li class="text-xs text-base-content/60">{$LL.app.operator.recorded_at_migration.panel.blocked_more({ count: formatCount(migration.blocked - migration.blocked_items.length) })}</li>{/if}
     </ul>
   {/if}
 

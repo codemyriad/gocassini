@@ -32,7 +32,7 @@ describe("InsightDocument", () => {
     expect(insightDocumentSource).toContain("export let sources: MeetingCatalogEntry[] = [];");
     expect(insightDocumentSource).toContain("{#each sources as source (source.id)}");
     expect(insightDocumentSource).toContain(
-      "$LL.viewer.insights.document.sources_heading_other({ count: sources.length })",
+      "$LL.viewer.insights.document.sources_heading_other({ count: formatCount(sources.length) })",
     );
     expect(get(LL).viewer.insights.document.sources_heading_other({ count: 3 })).toBe("Context from 3 meetings");
   });

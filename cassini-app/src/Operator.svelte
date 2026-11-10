@@ -1,6 +1,6 @@
 <script module lang="ts">
   import { get } from "svelte/store";
-  import { LL, dateFormat, relativeTimeFormat } from "cassini-viewer/i18n";
+  import { dateFormat, formatCount, LL, relativeNow, relativeTimeFormat } from "cassini-viewer/i18n";
   import type { Job, JobAttempt } from "./operator/types";
   import type { OperatorPanel } from "./surfaceRouting";
   import {
@@ -1012,7 +1012,7 @@
     const then = Date.parse(value);
     if (Number.isNaN(then)) return "—";
     const seconds = Math.round((Date.now() - then) / 1000);
-    if (seconds < 60) return c().just_now();
+    if (seconds < 60) return relativeNow();
     const ago = relativeTimeFormat({ style: "narrow" });
     const minutes = Math.round(seconds / 60);
     if (minutes < 60) return ago.format(-minutes, "minute");
@@ -1125,7 +1125,7 @@
         // The normal mode in Nextcloud (AppAPI can't stream SSE), so state the
         // refresh cadence plainly rather than framing routine operation as a
         // failure.
-        return t.auto_refreshing({ seconds: POLL_INTERVAL_MS / 1000 });
+        return t.auto_refreshing({ seconds: formatCount(POLL_INTERVAL_MS / 1000) });
       case "disconnected":
         return t.disconnected();
       default:
@@ -1375,14 +1375,14 @@
             <span class="cassini-tick" style="--cassini-tick: {POLL_INTERVAL_MS}ms">
               <RefreshCw size={12} aria-hidden="true" />
             </span>
-            {$LL.app.operator.console.checking_every({ seconds: POLL_INTERVAL_MS / 1000 })}
+            {$LL.app.operator.console.checking_every({ seconds: formatCount(POLL_INTERVAL_MS / 1000) })}
           </span>
         {:else if streamStatus === "disconnected"}
           <span class="flex items-center gap-1 text-xs text-base-content/60">
             <span class="cassini-tick" style="--cassini-tick: {POLL_INTERVAL_MS}ms">
               <RefreshCw size={12} aria-hidden="true" />
             </span>
-            {$LL.app.operator.console.retrying_every({ seconds: POLL_INTERVAL_MS / 1000 })}
+            {$LL.app.operator.console.retrying_every({ seconds: formatCount(POLL_INTERVAL_MS / 1000) })}
           </span>
         {/if}
         </div>
@@ -1485,7 +1485,7 @@
                         </p>
                         {#if job.current_attempt_number > 1}
                           <span class="badge badge-outline badge-sm shrink-0 border-base-content/20 text-base-content"
-                            >{$LL.app.operator.console.attempt_badge({ number: job.current_attempt_number })}</span
+                            >{$LL.app.operator.console.attempt_badge({ number: formatCount(job.current_attempt_number) })}</span
                           >
                         {/if}
                       </div>
@@ -1500,8 +1500,8 @@
                         {#if isBuildWaitingForResources(job)}
                           <p class="truncate text-warning" title={job.error || formatTimestamp(job.build_retry_not_before)}>
                             {job.build_deferral_count === 1
-                              ? $LL.app.operator.console.next_retry_deferrals_one({ time: formatTimestamp(job.build_retry_not_before), count: job.build_deferral_count })
-                              : $LL.app.operator.console.next_retry_deferrals_other({ time: formatTimestamp(job.build_retry_not_before), count: job.build_deferral_count })}
+                              ? $LL.app.operator.console.next_retry_deferrals_one({ time: formatTimestamp(job.build_retry_not_before), count: formatCount(job.build_deferral_count) })
+                              : $LL.app.operator.console.next_retry_deferrals_other({ time: formatTimestamp(job.build_retry_not_before), count: formatCount(job.build_deferral_count) })}
                           </p>
                         {/if}
                         {#if job.media_cleanup}
@@ -1514,7 +1514,7 @@
                           <span class="badge badge-outline badge-warning badge-sm mt-1" title={$LL.app.operator.console.meeting_deleted_title()}>{$LL.app.operator.console.meeting_deleted_badge()}</span>
                         {/if}
                         {#if job.unshared_count}
-                          <span class="badge badge-outline badge-warning badge-sm mt-1" title={job.unshared_count === 1 ? $LL.app.operator.console.not_shared_title_one() : $LL.app.operator.console.not_shared_title_other({ count: job.unshared_count })}>{$LL.app.operator.console.not_shared_badge()}</span>
+                          <span class="badge badge-outline badge-warning badge-sm mt-1" title={job.unshared_count === 1 ? $LL.app.operator.console.not_shared_title_one() : $LL.app.operator.console.not_shared_title_other({ count: formatCount(job.unshared_count) })}>{$LL.app.operator.console.not_shared_badge()}</span>
                         {/if}
                         {#if job.error}
                           <p class="truncate {hasResourceNotice(job) ? 'text-warning' : 'text-base-content/55'}" title={job.error}>
@@ -1934,7 +1934,7 @@
                             aria-hidden="true"
                           />
                           <span class="min-w-0 flex-1 truncate text-xs text-base-content/60">
-                            <span class="text-sm font-medium text-base-content">{$LL.app.operator.console.attempt({ number: attempt.attempt_number })}</span>
+                            <span class="text-sm font-medium text-base-content">{$LL.app.operator.console.attempt({ number: formatCount(attempt.attempt_number) })}</span>
                             <span class="ml-2">{triggerKindLabel(attempt.trigger_kind)}</span>
                             <span class="mx-1.5 text-base-content/40">·</span>
                             <span class={jobStatusToneClass(attempt)}>{jobStatusLabel(attempt)}</span>

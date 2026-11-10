@@ -1,7 +1,7 @@
 import { get } from "svelte/store";
 
 import type { MeetingCatalogEntry } from "./catalog";
-import { LL } from "../i18n";
+import { formatCount, LL } from "../i18n";
 import { dateFormat } from "../i18n/format";
 import { DAY_OPTIONS, formatMeetingDateShort, meetingStartDayKey, parseDateLabelMs } from "./meetingTime";
 import { NO_ROOM_KEY, roomKeyOf, roomLabelOf } from "./rooms";
@@ -60,7 +60,7 @@ function describeSources(entries: readonly MeetingCatalogEntry[]): string {
   if (rooms.size === 1 && !rooms.has(NO_ROOM_KEY)) {
     parts.push(oneLine(roomLabelOf(entries[0])));
   }
-  parts.push(get(LL).viewer.insights.default_name.meetings_other({ count: entries.length }));
+  parts.push(get(LL).viewer.insights.default_name.meetings_other({ count: formatCount(entries.length) }));
   // The day each meeting is SHOWN on — local for one with recordedAtUtc — so
   // the name agrees with the list it was picked from.
   const range = formatDateRange(entries.map((entry) => meetingStartDayKey(entry)));

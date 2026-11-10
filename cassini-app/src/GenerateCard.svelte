@@ -59,7 +59,7 @@
   import { ChevronDown, Pencil } from "@lucide/svelte";
   import type { MeetingCatalogEntry } from "cassini-viewer/dataProvider";
   import { defaultInsightName, INSIGHT_NAME_MAX } from "cassini-viewer/insightName";
-  import { LL } from "cassini-viewer/i18n";
+  import { formatCount, LL } from "cassini-viewer/i18n";
 
   import ModelCombobox from "./ModelCombobox.svelte";
   import { loadConfig } from "./operator/config";
@@ -502,7 +502,7 @@
       <p class="text-xs" role="status">
         {textless.length === 1
           ? $LL.app.insights.generate_card.textless_one()
-          : $LL.app.insights.generate_card.textless_other({ count: textless.length })}
+          : $LL.app.insights.generate_card.textless_other({ count: formatCount(textless.length) })}
       </p>
     {/if}
     {#if createError}

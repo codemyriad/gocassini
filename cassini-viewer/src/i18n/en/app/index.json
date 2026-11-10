@@ -106,7 +106,6 @@
         "talk_hpb": "How to set up a High Performance Backend",
         "nextcloud": "Read Nextcloud's guide"
       },
-      "just_now": "just now",
       "test_follow_up": {
         "failed": "your test recording did not finish",
         "play": "play your test recording to finish it",
@@ -275,13 +274,6 @@
       }
     },
     "processing_speed": {
-      "span": {
-        "seconds": "{seconds}s",
-        "minutes": "{minutes}m",
-        "minutes_seconds": "{minutes}m {seconds}s",
-        "hours": "{hours}h",
-        "hours_minutes": "{hours}h {minutes}m"
-      },
       "multiplier": "{factor}×",
       "real_time": "{multiplier} real time",
       "not_counting_summary": "Not counting {span} waiting on the summary model"
@@ -568,9 +560,7 @@
       "admin_fix": "An administrator can fix that: {link}.",
       "send_link": "send them this link",
       "send_link_title": "Opening it as an administrator shows exactly what is stopping it",
-      "admin_fix_plain": "An administrator can fix that.",
-      "duration_minutes": "{minutes} min",
-      "duration_hours": "{hours} h {minutes}"
+      "admin_fix_plain": "An administrator can fix that."
     },
     "doctor": {
       "title": "Doctor",
@@ -748,7 +738,6 @@
         "queued": "Queued",
         "blocked": "Blocked"
       },
-      "just_now": "just now",
       "not_available": "Not available",
       "back_to_recordings": "Back to recordings",
       "detail_title": "Run detail",
@@ -1317,7 +1306,6 @@
       "cost_other": "{count} calls to {target} · about {tokens} input tokens, {words} words",
       "cost_target_fallback": "the summary model",
       "cost_target": "{model} ({provider})",
-      "tokens_thousands": "{value}k",
       "endpoint_external": "The transcript is sent to an external service, which may bill for it.",
       "endpoint_local": "The model runs on your own network.",
       "replace_note": "Everyone who can open the meeting sees the new summary instead of the current one.",

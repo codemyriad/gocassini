@@ -1,5 +1,5 @@
 import { get } from "svelte/store";
-import { dateFormat, LL } from "cassini-viewer/i18n";
+import { dateFormat, formatCount, LL } from "cassini-viewer/i18n";
 import type { StorageUsageCategory } from "./types";
 import { retentionDayPresets, type RetentionPolicy, type RetentionSettings } from "./retention";
 
@@ -72,7 +72,7 @@ export function storageBuckets(category: StorageUsageCategory, from: string, to:
   const t = get(LL).app.operator.storage.chart;
   if (!Number.isFinite(start) || !Number.isFinite(end)) return { buckets: [], error: t.error_invalid_dates() };
   if (end < start) return { buckets: [], error: t.error_end_before_start() };
-  if (!Number.isInteger(precision) || precision < 1 || precision > 9999) return { buckets: [], error: t.error_precision({ max: 9999 }) };
+  if (!Number.isInteger(precision) || precision < 1 || precision > 9999) return { buckets: [], error: t.error_precision({ max: formatCount(9999) }) };
   const count = Math.floor((end - start) / (DAY * precision)) + 1;
   const buckets = Array.from({length: count}, (_,i) => ({ from: iso(start+i*precision*DAY), to: iso(Math.min(end,start+((i+1)*precision-1)*DAY)), bytes: 0, files: 0 }));
   for (const day of category.days) {

@@ -12,7 +12,7 @@
 import { get } from "svelte/store";
 
 import { LL } from "../i18n";
-import { numberFormat } from "../i18n/format";
+import { formatCompactCount, numberFormat } from "../i18n/format";
 
 export type SummaryRequestRunState = "idle" | "writing" | "failed";
 
@@ -82,7 +82,7 @@ export function missingSummaryText(summary: SummaryStatus | undefined): string |
   }
 }
 
-// "1 call to deepseek/deepseek-v4.1-flash (Open Router) · about 7.5k input tokens, 5,213 words"
+// "1 call to deepseek/deepseek-v4.1-flash (Open Router) · about 7.5K input tokens, 5,213 words"
 export function summaryCostLine(state: SummaryRequestState): string {
   const t = get(LL).viewer.insights.summary;
   const target = state.model
@@ -102,10 +102,9 @@ export function summaryEndpointLine(state: SummaryRequestState): string {
   return state.external ? t.endpoint_external() : t.endpoint_local();
 }
 
+// "850", "7.5K": the locale's short form for a large count.
 function approxTokens(tokens: number): string {
-  if (tokens < 1000) return numberFormat().format(tokens);
-  const thousands = numberFormat({ maximumFractionDigits: 1 }).format(Math.round(tokens / 100) / 10);
-  return get(LL).viewer.insights.summary.tokens_thousands({ value: thousands });
+  return formatCompactCount(tokens);
 }
 
 export function describeSummaryRequestError(error: unknown): string {

@@ -159,7 +159,7 @@ const insights = {
     confirm_write_title: "Write a summary for this meeting?",
     confirm_replace_title: "Replace this meeting's summary?",
     // What writing a summary costs. {target} is a model and provider, e.g.
-    // "deepseek-v4 (Open Router)"; {tokens} is a rounded number, e.g. "7.5k";
+    // "deepseek-v4 (Open Router)"; {tokens} is a rounded number, e.g. "7.5K";
     // {words} is a number.
     cost_one: "1 call to {target} · about {tokens} input tokens, {words} words",
     cost_other: "{count} calls to {target} · about {tokens} input tokens, {words} words",
@@ -167,8 +167,6 @@ const insights = {
     cost_target_fallback: "the summary model",
     // {model} with the provider it runs on.
     cost_target: "{model} ({provider})",
-    // A rounded number of thousands of tokens, e.g. "7.5k".
-    tokens_thousands: "{value}k",
     endpoint_external: "The transcript is sent to an external service, which may bill for it.",
     endpoint_local: "The model runs on your own network.",
     replace_note: "Everyone who can open the meeting sees the new summary instead of the current one.",

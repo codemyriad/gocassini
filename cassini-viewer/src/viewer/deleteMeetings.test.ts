@@ -110,7 +110,7 @@ describe("the insight document's gone sources", () => {
     );
     expect(insightDocumentSource).toContain("export let missingSourceCount = 0;");
     expect(insightDocumentSource).toContain("{#if sources.length > 0 || missingSourceCount > 0}");
-    expect(insightDocumentSource).toContain("$LL.viewer.insights.document.missing_sources_other({ count: missingSourceCount })");
+    expect(insightDocumentSource).toContain("$LL.viewer.insights.document.missing_sources_other({ count: formatCount(missingSourceCount) })");
     expect(get(LL).viewer.insights.document.missing_sources_one()).toContain(
       "no longer available (deleted, or no longer shared with you)",
     );

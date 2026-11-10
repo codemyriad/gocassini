@@ -22,7 +22,19 @@ loadAllLocales();
 setLocale(baseLocale);
 
 export { LL, locale, locales, baseLocale };
-export { dateFormat, formatLocale, nextcloudLocale, numberFormat, relativeTimeFormat, useFormatLocale } from "./format.js";
+export {
+  dateFormat,
+  durationFormat,
+  formatCompactCount,
+  formatCount,
+  formatLocale,
+  nextcloudLocale,
+  numberFormat,
+  relativeNow,
+  relativeTimeFormat,
+  useFormatLocale,
+} from "./format.js";
+export type { DurationParts, DurationStyle } from "./format.js";
 export type { Locales };
 
 // A language people may ask for under another name. Nextcloud's pt_BR and

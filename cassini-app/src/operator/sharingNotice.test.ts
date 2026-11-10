@@ -24,6 +24,7 @@ import {
   accessLine,
 } from "./sharingNotice";
 import type { PendingRecording, RecordingNotice, SharingStatus } from "./setupHealth";
+import { durationFormat } from "cassini-viewer/i18n";
 
 const weekly: PendingRecording = {
   shareIds: ["34", "35"], jobId: "01K9QV7X3B2MA8ZC4D6N0RT5WE", title: "Weekly sync",
@@ -113,20 +114,21 @@ describe("a pending row", () => {
     expect(formatShareDate("2026-10-30T10:00:00Z", { locale: "en-US", timeZone: "UTC" })).toBe("Fri, Oct 30, 10:00 AM");
     expect(formatShareDate("", gb)).toBe("");
     expect(formatShareDate("not a date", gb)).toBe("");
-    expect(formatDuration(2520)).toBe("42 min");
-    expect(formatDuration(3900)).toBe("1 h 05");
-    expect(formatDuration(7200)).toBe("2 h 00");
+    expect(formatDuration(2520)).toBe(durationFormat({ minutes: 42 }));
+    expect(formatDuration(3900)).toBe(durationFormat({ hours: 1, minutes: 5 }));
+    expect(formatDuration(7200)).toBe(durationFormat({ hours: 2 }));
+    expect(formatDuration(2520)).toMatch(/^42 mins?$/);
     expect(formatDuration(0)).toBe("");
     expect(formatDuration(20)).toBe("");
   });
 
   it("reads title, date and duration, and falls back when the job is unknown", () => {
     expect(pendingRowTitle(weekly, gb)).toBe("Weekly sync");
-    expect(pendingRowMeta(weekly, gb)).toBe("Fri 30 Oct, 10:00 · 42 min");
+    expect(pendingRowMeta(weekly, gb)).toBe(`Fri 30 Oct, 10:00 · ${durationFormat({ minutes: 42 })}`);
     // No title: the date stands in for it, and is not repeated underneath.
     const untitled = { ...weekly, title: "" };
     expect(pendingRowTitle(untitled, gb)).toBe("Fri 30 Oct, 10:00");
-    expect(pendingRowMeta(untitled, gb)).toBe("42 min");
+    expect(pendingRowMeta(untitled, gb)).toBe(durationFormat({ minutes: 42 }));
     // Nothing known but the share itself.
     const bare = { shareIds: ["37"], jobId: "", title: "", startedAt: "", durationSeconds: 0 };
     expect(pendingRowTitle(bare, gb)).toBe("A recording");

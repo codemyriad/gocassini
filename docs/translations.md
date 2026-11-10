@@ -70,7 +70,11 @@ before month, 24-hour clock.
 
 Every date, time and number formatter goes through `cassini-viewer/src/i18n/format.ts`:
 `dateFormat(options)`, `numberFormat(options)` and `relativeTimeFormat(options)`
-return a cached `Intl` formatter for the current locale. Don't name a locale
+return a cached `Intl` formatter for the current locale. On top of them:
+`formatCount(n)` for every number put into a message, `formatCompactCount(n)`
+("7.5K"), `durationFormat({ hours, minutes, seconds }, "short" | "narrow")` for
+a length of time, and `relativeNow()` for an age under a minute. Don't write a
+unit or "just now" into a dictionary string. Don't name a locale
 (`"en-GB"`, `undefined`) in a formatter that shows a date to someone. The one
 exception is code that takes a date apart to calculate with it
 (`zonedPartsFormat` in `meetingTime.ts`), which keeps a fixed locale because

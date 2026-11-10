@@ -243,8 +243,8 @@ const meeting = {
     label_control_characters: "Names cannot contain control characters.",
     // Time left on an update, beside a progress bar.
     almost_done: "almost done",
-    seconds_left: "about {seconds} s left",
-    minutes_left: "about {minutes} min left",
+    // {duration} is a rounded length of time, "50 sec" or "2 min".
+    time_left: "about {duration} left",
     phase_starting: "Starting…",
     phase_queued: "Waiting for other recordings…",
     phase_separating: "Separating voices…",

@@ -10,8 +10,8 @@
 
 import { get } from "svelte/store";
 
-import { LL } from "../i18n";
-import { dateFormat } from "../i18n/format";
+import { formatCount, LL } from "../i18n";
+import { dateFormat, durationFormat } from "../i18n/format";
 import {
   extractPortableManifestFromArrayBuffer,
   extractTranscriptionDocument,
@@ -169,12 +169,7 @@ export function formatImportDuration(durationMs: number): string {
   if (minutes < 1) {
     return text.duration_under_minute();
   }
-  if (minutes < 60) {
-    return text.duration_minutes({ minutes });
-  }
-  const hours = Math.floor(minutes / 60);
-  const rest = minutes % 60;
-  return rest === 0 ? text.duration_hours({ hours }) : text.duration_hours_minutes({ hours, minutes: rest });
+  return durationFormat({ hours: Math.floor(minutes / 60), minutes: minutes % 60 });
 }
 
 // The sharing line a settled row shows, and the names behind it on hover. The
@@ -190,7 +185,7 @@ export function describeImportSharing(job: Pick<ImportJobRecord, "sharing">): { 
     return sharee.type === "group" ? text.sharee_group({ name }) : sharee.type === "circle" ? text.sharee_team({ name }) : name;
   });
   return {
-    line: text.sharing_shared_with({ count: audience.length + 1 }),
+    line: text.sharing_shared_with({ count: formatCount(audience.length + 1) }),
     title: [text.sharing_you(), ...names].join(", "),
   };
 }

@@ -4,7 +4,7 @@
   import DOMPurify from "dompurify";
   import { Calendar, ExternalLink, FileText, FileX, MessageSquare, Pencil } from "@lucide/svelte";
   import CloseButton from "./ui/CloseButton.svelte";
-  import { LL } from "../i18n";
+  import { formatCount, LL } from "../i18n";
   import ExportMenu from "./ExportMenu.svelte";
   import type { MeetingCatalogEntry } from "../viewer/catalog";
   import { formatMeetingStartWithDay } from "../viewer/meetingTime";
@@ -188,7 +188,7 @@
     roomLabels.length === 1
       ? roomLabels[0]
       : roomLabels.length > 1
-        ? $LL.viewer.insights.document.rooms_other({ count: roomLabels.length })
+        ? $LL.viewer.insights.document.rooms_other({ count: formatCount(roomLabels.length) })
         : "";
 
   function renderDocumentHtml(markdown: string, quoted: boolean): string {
@@ -415,8 +415,8 @@
         <h3 class="ins-card-title">
           {#if sources.length > 0}
             {sources.length === 1
-              ? $LL.viewer.insights.document.sources_heading_one({ count: sources.length })
-              : $LL.viewer.insights.document.sources_heading_other({ count: sources.length })}
+              ? $LL.viewer.insights.document.sources_heading_one({ count: formatCount(sources.length) })
+              : $LL.viewer.insights.document.sources_heading_other({ count: formatCount(sources.length) })}
           {:else}
             {$LL.viewer.insights.document.sources_heading_none()}
           {/if}
@@ -445,7 +445,7 @@
               <span>
                 {missingSourceCount === 1
                   ? $LL.viewer.insights.document.missing_sources_one()
-                  : $LL.viewer.insights.document.missing_sources_other({ count: missingSourceCount })}
+                  : $LL.viewer.insights.document.missing_sources_other({ count: formatCount(missingSourceCount) })}
               </span>
             </li>
           {/if}

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { get } from "svelte/store";
 
-import { LL } from "../i18n";
+import { durationFormat, LL } from "../i18n";
 
 import {
   applyPending,
@@ -144,16 +144,17 @@ describe("an apply's progress", () => {
 
   it("says the time left as a rough figure, and almost done once it is up", () => {
     const t = get(LL).viewer.meeting.speaker_edits;
-    expect(remainingText(50_000)).toBe(t.seconds_left({ seconds: "50" }));
-    expect(remainingText(46_200)).toBe(t.seconds_left({ seconds: "50" }));
-    expect(remainingText(1)).toBe(t.seconds_left({ seconds: "5" }));
-    expect(remainingText(55_000)).toBe(t.seconds_left({ seconds: "55" }));
-    expect(remainingText(55_001)).toBe(t.minutes_left({ minutes: "1" }));
-    expect(remainingText(89_000)).toBe(t.minutes_left({ minutes: "1" }));
-    expect(remainingText(100_000)).toBe(t.minutes_left({ minutes: "2" }));
+    expect(remainingText(50_000)).toBe(t.time_left({ duration: durationFormat({ seconds: 50 }) }));
+    expect(remainingText(46_200)).toBe(t.time_left({ duration: durationFormat({ seconds: 50 }) }));
+    expect(remainingText(1)).toBe(t.time_left({ duration: durationFormat({ seconds: 5 }) }));
+    expect(remainingText(55_000)).toBe(t.time_left({ duration: durationFormat({ seconds: 55 }) }));
+    expect(remainingText(55_001)).toBe(t.time_left({ duration: durationFormat({ minutes: 1 }) }));
+    expect(remainingText(89_000)).toBe(t.time_left({ duration: durationFormat({ minutes: 1 }) }));
+    expect(remainingText(100_000)).toBe(t.time_left({ duration: durationFormat({ minutes: 2 }) }));
     expect(remainingText(0)).toBe(t.almost_done());
     expect(remainingText(-12_000)).toBe(t.almost_done());
-    expect(remainingText(50_000)).toBe("about 50 s left");
+    // The English itself: "50 sec" from Intl.DurationFormat, "50 secs" without it.
+    expect(remainingText(50_000)).toMatch(/^about 50 secs? left$/);
   });
 
   it("names each phase", () => {

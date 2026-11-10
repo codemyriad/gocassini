@@ -2,7 +2,7 @@
 // strip at the top of the Publishing card says it. Pure so the wording and the
 // warnings can be tested without mounting the panel.
 import { get } from "svelte/store";
-import { LL } from "cassini-viewer/i18n";
+import { formatCount, LL } from "cassini-viewer/i18n";
 import type { RetentionPolicy } from "./retention";
 import type { SettingsQuality, SpeechModel, SpeechModelInventory, SpeechModelJob } from "./types";
 
@@ -106,7 +106,7 @@ export function retentionSpan(policy: RetentionPolicy | null | undefined): strin
   const t = copy().retention;
   if (policy.forever) return t.forever();
   if (!policy.count || policy.count <= 0) return null;
-  return policy.count === 1 ? t.days_one() : t.days_other({ count: policy.count });
+  return policy.count === 1 ? t.days_one() : t.days_other({ count: formatCount(policy.count) });
 }
 
 export function pipelineStatus(input: PipelineInput): PipelineStatus {

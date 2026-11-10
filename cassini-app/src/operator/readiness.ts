@@ -3,7 +3,7 @@
 // enabled optional transcription model being unavailable.
 
 import { get } from "svelte/store";
-import { dateFormat, LL, relativeTimeFormat } from "cassini-viewer/i18n";
+import { dateFormat, formatCount, LL, relativeNow, relativeTimeFormat } from "cassini-viewer/i18n";
 
 // The copy, read when it is needed so it follows the reader's language.
 const copy = () => get(LL).app.operator.readiness;
@@ -81,7 +81,7 @@ export function shareLimitedSummary(limited: ShareLimitedCount, now: Date = new 
   const t = copy().share_limited;
   const since = formatSince(limited.since, now);
   if (limited.jobs === 1) return since ? t.summary_one_since({ since }) : t.summary_one();
-  return since ? t.summary_other_since({ count: limited.jobs, since }) : t.summary_other({ count: limited.jobs });
+  return since ? t.summary_other_since({ count: formatCount(limited.jobs), since }) : t.summary_other({ count: formatCount(limited.jobs) });
 }
 
 export interface UnsharedCount {
@@ -101,13 +101,13 @@ export interface UnsharedCount {
 export function unsharedSummary(unshared: UnsharedCount, now: Date = new Date()): string {
   const t = copy().unshared;
   const since = formatSince(unshared.since, now);
-  const people = unshared.users === 0 ? "" : unshared.users === 1 ? t.people_one() : t.people_other({ count: unshared.users });
-  const groups = unshared.groups === 0 ? "" : unshared.groups === 1 ? t.groups_one() : t.groups_other({ count: unshared.groups });
+  const people = unshared.users === 0 ? "" : unshared.users === 1 ? t.people_one() : t.people_other({ count: formatCount(unshared.users) });
+  const groups = unshared.groups === 0 ? "" : unshared.groups === 1 ? t.groups_one() : t.groups_other({ count: formatCount(unshared.groups) });
   const who = people && groups ? t.who_both({ people, groups }) : people || groups || t.who_everyone();
   if (unshared.jobs === 1) return since ? t.summary_one_since({ since, who }) : t.summary_one({ who });
   return since
-    ? t.summary_other_since({ count: unshared.jobs, since, who })
-    : t.summary_other({ count: unshared.jobs, who });
+    ? t.summary_other_since({ count: formatCount(unshared.jobs), since, who })
+    : t.summary_other({ count: formatCount(unshared.jobs), who });
 }
 
 function formatSince(iso: string | undefined, now: Date): string {
@@ -259,7 +259,7 @@ export function readinessTitle(report: RecordingReadiness): string {
       : archiveRows.length > 0 ? "reindexing" : "";
   if (verdict === "needs_action") {
     const count = report.checks.filter(c => c.state === "needs_action").length;
-    return count === 1 ? t.needs_action_one() : t.needs_action_other({ count });
+    return count === 1 ? t.needs_action_one() : t.needs_action_other({ count: formatCount(count) });
   }
   if (verdict === "warn") return t.warn();
   if (verdict === "not_verified") {
@@ -441,7 +441,7 @@ export function formatAge(checkedAt: string, now: Date = new Date()): string {
   // A clock skewed forward should not produce "in 3 minutes"; the reader only
   // needs to know it is current.
   if (seconds < 60) {
-    return copy().just_now();
+    return relativeNow();
   }
   // "always": "1 day ago" rather than "yesterday", which reads oddly beside
   // a time that was measured, not remembered.

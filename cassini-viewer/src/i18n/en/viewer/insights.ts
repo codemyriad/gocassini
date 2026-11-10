@@ -136,7 +136,7 @@ const insights = {
     missing_disabled: "No summary: summaries were turned off when this meeting was published.",
     missing_not_configured: "No summary: no language model was set up for summaries when this meeting was published.",
     // What writing a summary costs. {target} is a model and provider, e.g.
-    // "deepseek-v4 (Open Router)"; {tokens} is a rounded number, e.g. "7.5k";
+    // "deepseek-v4 (Open Router)"; {tokens} is a rounded number, e.g. "7.5K";
     // {words} is a number.
     cost_one: "1 call to {target} · about {tokens} input tokens, {words} words",
     cost_other: "{count} calls to {target} · about {tokens} input tokens, {words} words",
@@ -144,8 +144,6 @@ const insights = {
     cost_target_fallback: "the summary model",
     // {model} with the provider it runs on.
     cost_target: "{model} ({provider})",
-    // A rounded number of thousands of tokens, e.g. "7.5k".
-    tokens_thousands: "{value}k",
     endpoint_external: "The transcript is sent to an external service, which may bill for it.",
     endpoint_local: "The model runs on your own network.",
     error_busy: "A summary is already being written for this meeting.",

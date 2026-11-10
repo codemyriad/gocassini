@@ -191,7 +191,7 @@ describe("separating the voices on a shared device", () => {
     await expect.poll(() => release).toBeTypeOf("function");
     const asked = fixture.load.mock.calls.length;
     fixture.time.advance(25_000);
-    await expect.element(status()).toHaveTextContent(/^Separating voices…\s*about 45 s left$/);
+    await expect.element(status()).toHaveTextContent(/^Separating voices…\s*about 45 secs? left$/);
     await expect.element(bar()).toHaveAttribute("aria-valuenow", "40");
     expect(fixture.load.mock.calls.length).toBe(asked);
     await shot("eta-02-separating");
@@ -200,7 +200,7 @@ describe("separating the voices on a shared device", () => {
     // The voices are found; the recording and its summary are rewritten.
     fixture.phase("updating");
     fixture.time.advance(35_000);
-    await expect.element(status()).toHaveTextContent(/^Updating the recording…\s*about 10 s left$/);
+    await expect.element(status()).toHaveTextContent(/^Updating the recording…\s*about 10 secs? left$/);
     await expect.element(bar()).toHaveAttribute("aria-valuenow", "87");
     await shot("eta-03-updating");
 
@@ -506,7 +506,7 @@ describe("changes shown as soon as they are saved", () => {
     await nameField(voice(2)).fill("Leo");
     fixture.phase("updating");
     await details().getByRole("button", { name: "Save", exact: true }).click();
-    await expect.element(status()).toHaveTextContent(/^Updating the recording…\s*about 15 s left$/);
+    await expect.element(status()).toHaveTextContent(/^Updating the recording…\s*about 15 secs? left$/);
 
     // The turns carry the new names straight from the save's answer, while
     // the operator is still rewriting the recording.

@@ -1,8 +1,8 @@
 import { get, writable } from "svelte/store";
 
-import { LL } from "../i18n";
+import { formatCount, LL } from "../i18n";
 
-import { relativeTimeFormat } from "../i18n/format";
+import { relativeNow, relativeTimeFormat } from "../i18n/format";
 
 import { AnnotationError, type TagJob, type TagUpdate, type VocabularyTag } from "./annotations";
 import type { DataProvider } from "./dataProvider";
@@ -30,15 +30,15 @@ export const countsLine = (tag: VocabularyTag) => {
     return text.counts_unused();
   }
   if (tag.marks <= count) {
-    return count === 1 ? text.counts_in_one() : text.counts_in_other({ count });
+    return count === 1 ? text.counts_in_one() : text.counts_in_other({ count: formatCount(count) });
   }
-  return count === 1 ? text.counts_times_one({ times: tag.marks }) : text.counts_times_other({ times: tag.marks, count });
+  return count === 1 ? text.counts_times_one({ times: formatCount(tag.marks) }) : text.counts_times_other({ times: formatCount(tag.marks), count: formatCount(count) });
 };
 
 export function confirmLine(meetings: number): string {
   const text = get(LL).viewer.browse.tags;
   if (meetings === 0) return text.confirm_none();
-  return meetings === 1 ? text.confirm_one() : text.confirm_other({ count: meetings });
+  return meetings === 1 ? text.confirm_one() : text.confirm_other({ count: formatCount(meetings) });
 }
 
 const DAY = 864e5;
@@ -47,7 +47,7 @@ const UNITS = [["year", 365 * DAY], ["month", 30 * DAY], ["week", 7 * DAY], ["da
 export function relativeTime(iso: string, now = Date.now()): string {
   const ago = now - Date.parse(iso);
   const unit = UNITS.find(([, size]) => ago >= size);
-  return unit ? relativeTimeFormat({ numeric: "auto" }).format(-Math.floor(ago / unit[1]), unit[0]) : get(LL).viewer.browse.tags.just_now();
+  return unit ? relativeTimeFormat({ numeric: "auto" }).format(-Math.floor(ago / unit[1]), unit[0]) : relativeNow();
 }
 
 // Compatibility formatter for older operator responses. The manager no longer
@@ -78,11 +78,11 @@ function actionOf(job: TagJob): TagAction | null {
 export function jobStatus({ job, action, lost }: JobState, tagId: string): JobStatus | null {
   if (!job || job.tagId !== tagId) return null;
   const text = get(LL).viewer.browse.tags;
-  if (job.state === "running" && !lost) return { text: text.job_updating({ done: job.done, total: job.total }), failed: [], rerun: null };
+  if (job.state === "running" && !lost) return { text: text.job_updating({ done: formatCount(job.done), total: formatCount(job.total) }), failed: [], rerun: null };
   const failed = job.failed.map((failure) => failure.meeting);
   const stopped = lost || job.state === "interrupted";
   if (!stopped && failed.length === 0) return null;
-  return { text: stopped ? text.job_stopped() : text.job_failed({ count: failed.length }), failed, rerun: action ?? actionOf(job) };
+  return { text: stopped ? text.job_stopped() : text.job_failed({ count: formatCount(failed.length) }), failed, rerun: action ?? actionOf(job) };
 }
 
 async function send(provider: TagProvider, action: TagAction): Promise<TagJob | null> {

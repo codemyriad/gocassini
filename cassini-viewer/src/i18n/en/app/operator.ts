@@ -69,9 +69,6 @@ const operator = {
       talk_hpb: "How to set up a High Performance Backend",
       nextcloud: "Read Nextcloud's guide",
     },
-    // How long ago a check ran, under one minute. Longer ages are written by
-    // the browser ("6 minutes ago").
-    just_now: "just now",
     // The second half of Doctor's heading (doctor.verdict_and_follow_up),
     // drawn as a link to the test recording row; lowercase.
     test_follow_up: {
@@ -305,15 +302,6 @@ const operator = {
   // operator/processingSpeed.ts: how long a run took to process, in a run's
   // detail. "12m · 4.8× real time".
   processing_speed: {
-    // Compact durations: keep them short, with the unit as a one-letter
-    // abbreviation where the language has one.
-    span: {
-      seconds: "{seconds}s",
-      minutes: "{minutes}m",
-      minutes_seconds: "{minutes}m {seconds}s",
-      hours: "{hours}h",
-      hours_minutes: "{hours}h {minutes}m",
-    },
     // {factor}: a number, e.g. "4.8".
     multiplier: "{factor}×",
     // {multiplier}: the line above, e.g. "4.8×". Processing speed against the
@@ -671,9 +659,6 @@ const operator = {
     send_link_title: "Opening it as an administrator shows exactly what is stopping it",
     // When there is no address to hand on.
     admin_fix_plain: "An administrator can fix that.",
-    // A recording's length: "42 min", "1 h 05" ({minutes} is two digits).
-    duration_minutes: "{minutes} min",
-    duration_hours: "{hours} h {minutes}",
   },
   // RecordingSetup.svelte: Operator › Doctor.
   doctor: {
@@ -903,9 +888,6 @@ const operator = {
       queued: "Queued",
       blocked: "Blocked",
     },
-    // How long ago, in the run list; anything older uses the locale's own
-    // short relative time ("6 min ago").
-    just_now: "just now",
     not_available: "Not available",
     // The run detail.
     back_to_recordings: "Back to recordings",

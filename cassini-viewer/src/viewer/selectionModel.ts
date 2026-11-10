@@ -1,6 +1,6 @@
 import { get } from "svelte/store";
 
-import { LL } from "../i18n";
+import { formatCount, LL } from "../i18n";
 import { numberFormat } from "../i18n/format";
 import type { MeetingCatalogEntry } from "./catalog";
 
@@ -213,7 +213,7 @@ export function summarizeSelection(entries: readonly MeetingCatalogEntry[]): Sel
 
 // The reader's own grouping separator (docs/translations.md, "Dates, times and
 // numbers"); en-GB until an entry point picks a locale.
-const formatCount = (n: number) => numberFormat().format(n);
+
 
 // formatWordCount renders one meeting's size. An entry with no wordCount says
 // so; it does not read as a short meeting.
@@ -255,8 +255,8 @@ export function describeSelectionGaps(totals: SelectionTotals): string[] {
     const excess = totals.count - MAX_SELECTED_MEETINGS;
     gaps.push(
       excess === 1
-        ? text.over_cap_one({ max: MAX_SELECTED_MEETINGS })
-        : text.over_cap_other({ max: MAX_SELECTED_MEETINGS, count: excess }),
+        ? text.over_cap_one({ max: formatCount(MAX_SELECTED_MEETINGS) })
+        : text.over_cap_other({ max: formatCount(MAX_SELECTED_MEETINGS), count: formatCount(excess) }),
     );
   }
   // summaryUnknown is deliberately NOT a sentence, though it is still counted.
@@ -285,7 +285,7 @@ export function describeSelectionGaps(totals: SelectionTotals): string[] {
     gaps.push(
       totals.withoutPortableAudio === 1
         ? text.no_portable_audio_one()
-        : text.no_portable_audio_other({ count: totals.withoutPortableAudio }),
+        : text.no_portable_audio_other({ count: formatCount(totals.withoutPortableAudio) }),
     );
   }
   return gaps;
