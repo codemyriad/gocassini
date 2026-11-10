@@ -482,6 +482,16 @@
   // Same mechanism as handleOpenPanel: push the fragment, then announce it once,
   // so the surface, the operator's panel nav and the viewer all read the same
   // address instead of three updates that can disagree about where we are.
+  // Help's "Open Operator › Help" link, for an administrator in Browse (D-910).
+  function openOperatorHelp(): void {
+    if (!operatorAvailable) {
+      return;
+    }
+    const hash = applyPanel(applySurface(window.location.hash, "operator"), "help");
+    window.history.pushState({}, "", locationWithHash(hash));
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }
+
   function openPublishPipeline(): void {
     if (!operatorAvailable) {
       return;
@@ -715,9 +725,9 @@
             <MeetingAccessNotice {access} {appUrl} accept={acceptRecordingShares} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} />
           {/if}
         </svelte:fragment>
-        <!-- Help › Support (D-910): every reader downloads their own bundle here;
-             an administrator is pointed at Doctor for the installation one. -->
-        <SupportBundle slot="support" let:close openDoctor={operatorAvailable ? () => { close(); openRecordingSetup(); } : null} />
+        <!-- Help (D-910): everyone downloads their own bundle here; an
+             administrator is pointed at Operator › Help for the installation one. -->
+        <SupportBundle slot="support" let:close openOperatorHelp={operatorAvailable ? () => { close(); openOperatorHelp(); } : null} />
       </ViewerApp>
     </div>
     {#if surface === "operator" && operatorClient}

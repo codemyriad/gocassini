@@ -126,7 +126,7 @@
   // waiting for them to accept, or one a sharing setting refused. Any other
   // missing meeting keeps the plain not-found card.
   export let notFoundFilledFor: readonly string[] = [];
-  // Whether the shell fills the Help › Support sheet (D-910). A slot cannot be
+  // Whether the shell fills the Help sheet (D-910). A slot cannot be
   // provided conditionally, so the viewer is told; without it the rail shows
   // no Help section.
   export let supportOffered = false;
@@ -179,7 +179,7 @@
   let prepareOpen = false;
   // The Connect an agent panel (D-813), opened from the rooms rail's footer.
   let agentOpen = false;
-  // Help › Support, opened from the rooms rail (D-910).
+  // Help, opened from the rooms rail footer (D-910).
   let supportOpen = false;
   $: if (!supportOffered) supportOpen = false;
   // The floating bar's real height, so the list can leave exactly that much
@@ -1940,7 +1940,7 @@
       </aside>
     {/if}
 
-    <!-- Help › Support (D-910), opened from the rail. Same sheet geometry and
+    <!-- Help (D-910), opened from the rail footer. Same sheet geometry and
          clear scrim as Connect an agent; the body is the shell's. Hidden rather
          than unmounted when closed, like Import: a download started before
          closing must not be cancelled by closing. -->
@@ -1950,7 +1950,7 @@
         class="shell-scrim agent-scrim"
         tabindex="-1"
         inert={topLayer > 2}
-        aria-label="Close Support"
+        aria-label="Close Help"
         on:click={() => (supportOpen = false)}
       ></button>
     {/if}
@@ -1958,7 +1958,7 @@
       <aside
         class="agent-sheet"
         class:support-sheet-closed={!supportOpen}
-        aria-label="Support"
+        aria-label="Help"
         inert={!supportOpen || topLayer > 2}
         use:focusLayerWhile={supportOpen}
       >
