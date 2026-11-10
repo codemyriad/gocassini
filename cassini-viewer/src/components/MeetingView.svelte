@@ -91,7 +91,7 @@
     LoadedArtifact,
   } from "../viewer/loadArtifact";
   import type { PortableTranscriptDescriptor } from "../viewer/portable";
-  import { displaySegmentsForArtifact, safeMeetingStem, transcriptMarkdown } from "../viewer/meetingExport";
+  import { displaySegmentsForArtifact, safeMeetingStem, summaryExportName, transcriptMarkdown } from "../viewer/meetingExport";
   import { loadAudioFile, saveBlob, saveTranscript } from "../viewer/exportTransfer";
   import type { MeetingCatalogEntry } from "../viewer/catalog";
   import { hasRoom, roomLabelOf } from "../viewer/rooms";
@@ -678,6 +678,13 @@
     exportRequestId += 1;
     saveTranscript(transcriptMarkdown(meetingWithStart, displaySegments), `${exportStem()}-transcript.md`);
     exportStatus = "Transcript downloaded.";
+  }
+
+  function downloadSummary() {
+    if (!summaryMarkdown) return;
+    exportRequestId += 1;
+    saveTranscript(summaryMarkdown, summaryExportName(meeting ?? { title: "Meeting", id: "transcript" }));
+    exportStatus = "Summary downloaded.";
   }
 
   async function downloadAudio() {
@@ -1695,15 +1702,18 @@
           {/each}
         </div>
       {/if}
-      {#if transcriptIndex}
+      {#if transcriptIndex || summaryMarkdown}
         <ExportMenu
+          includeSummary
           canCopy={!copyExportBusy && displaySegments.length > 0}
           canDownloadTranscript={displaySegments.length > 0}
+          canDownloadSummary={Boolean(summaryMarkdown)}
           canDownloadAudio={Boolean(meeting?.meetingPath ?? audioSrc) && !audioExportBusy}
           audioLabel={meeting?.meetingPath ? "Download meeting file" : "Download audio"}
           status={exportStatus}
           on:copy={copyTranscript}
           on:transcript={downloadTranscript}
+          on:summary={downloadSummary}
           on:audio={downloadAudio}
         />
       {/if}

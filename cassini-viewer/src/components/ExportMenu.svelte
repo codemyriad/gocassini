@@ -1,6 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
-  import { ChevronDown, Copy, FileAudio, FileText } from "@lucide/svelte";
+  import { ChevronDown, Copy, FileAudio, FileText, NotebookText } from "@lucide/svelte";
 
   import { popover, stepIndex } from "./tags/popover";
 
@@ -20,8 +20,13 @@
   export let transcriptLabel = "";
   // The audio item is a meeting's; an insight has no audio to offer.
   export let includeAudio = true;
+  // The summary item is a meeting's, and only where its notes can be read:
+  // callers that have no summary leave it out entirely.
+  export let includeSummary = false;
+  export let canDownloadSummary = true;
+  export let summaryLabel = "Download summary";
 
-  const dispatch = createEventDispatcher<{ copy: void; transcript: void; audio: void; copyContext: void; context: void }>();
+  const dispatch = createEventDispatcher<{ copy: void; transcript: void; audio: void; summary: void; copyContext: void; context: void }>();
 
   let open = false;
   let anchor: HTMLButtonElement;
@@ -31,7 +36,7 @@
     node.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
   };
 
-  function choose(action: "copy" | "transcript" | "audio" | "copyContext" | "context") {
+  function choose(action: "copy" | "transcript" | "audio" | "summary" | "copyContext" | "context") {
     open = false;
     anchor?.focus();
     dispatch(action);
@@ -88,6 +93,11 @@
     <button type="button" role="menuitem" class="em-item" disabled={!canDownloadTranscript} on:click={() => choose("transcript")}>
       <FileText size={14} aria-hidden="true" />{transcriptLabel || `Download ${plural ? "transcripts" : "transcript"}`}
     </button>
+    {#if includeSummary}
+      <button type="button" role="menuitem" class="em-item" disabled={!canDownloadSummary} on:click={() => choose("summary")}>
+        <NotebookText size={14} aria-hidden="true" />{summaryLabel}
+      </button>
+    {/if}
     {#if includeAudio}
       <button type="button" role="menuitem" class="em-item" disabled={!canDownloadAudio} on:click={() => choose("audio")}>
         <FileAudio size={14} aria-hidden="true" />{audioLabel}

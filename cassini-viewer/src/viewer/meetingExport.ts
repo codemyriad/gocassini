@@ -87,3 +87,8 @@ export function safeMeetingStem(entry: Pick<MeetingCatalogEntry, "title" | "id">
   }
   return `${title}-${id}`;
 }
+
+/** The download name for a meeting's notes, beside its transcript export. */
+export function summaryExportName(entry: Pick<MeetingCatalogEntry, "title" | "id">): string {
+  return `${safeMeetingStem(entry)}-summary.md`;
+}

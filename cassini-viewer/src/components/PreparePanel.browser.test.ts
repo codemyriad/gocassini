@@ -48,6 +48,22 @@ it("keeps the meeting menu's original three actions and keyboard dismissal", asy
   expect(host.querySelector('[role="menu"]')).toBeNull();
 });
 
+it("offers the meeting notes download where the meeting has notes", async () => {
+  app = mount(ExportMenu, { target: host, props: { includeSummary: true, canDownloadSummary: true } });
+  await page.getByRole("button", { name: "Export", exact: true }).click();
+  expect(host.querySelectorAll('[role="menuitem"]')).toHaveLength(4);
+  const item = page.getByRole("menuitem", { name: "Download summary", exact: true });
+  await expect.element(item).toBeEnabled();
+  await item.click();
+  expect(host.querySelector('[role="menu"]')).toBeNull();
+});
+
+it("disables the meeting notes download when the meeting has no notes", async () => {
+  app = mount(ExportMenu, { target: host, props: { includeSummary: true, canDownloadSummary: false } });
+  await page.getByRole("button", { name: "Export", exact: true }).click();
+  await expect.element(page.getByRole("menuitem", { name: "Download summary", exact: true })).toBeDisabled();
+});
+
 it("downloads full context through the bundle loader and disables exports while busy", async () => {
   const { loadBundle, loadMeeting } = prepare();
   await page.getByRole("button", { name: "Export", exact: true }).click();
