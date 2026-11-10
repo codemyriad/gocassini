@@ -1,7 +1,8 @@
 package mcpserver
 
 // The tools' inputs and results. Each result is the document the matching
-// `cassini meetings <verb> --json` prints, field for field, so an agent reads
+// `cassini meetings <verb> --json` prints, field for field — list excepted,
+// which answers a page of typed entries (see ListMeeting) — so an agent reads
 // the same contract whichever door it came through (docs/agent-meeting-access.md
 // is the spec). The JSON schemas the tools advertise are inferred from these
 // types, so a field absent here is a field no client is ever promised.
@@ -31,16 +32,27 @@ type Room struct {
 	Earliest        string `json:"earliest,omitempty"`
 }
 
-// ListInput narrows list. Every field is optional.
+// A page of list. The default is a page an agent can read in one go; the
+// maximum is search's, so the two tools bound a caller's context the same way.
+const (
+	ListDefaultLimit = 25
+	ListMaxLimit     = 100
+)
+
+// ListInput narrows and pages list. Every field is optional.
 type ListInput struct {
-	Room string `json:"room,omitempty" jsonschema:"a room id, as rooms reports it"`
-	From string `json:"from,omitempty" jsonschema:"earliest date, inclusive: 2026-08-11, 2026-08-11 14:30 or 2026-08-11 14:30:05; no timezone"`
-	To   string `json:"to,omitempty" jsonschema:"latest date, inclusive, in the same forms as from"`
-	Tag  string `json:"tag,omitempty" jsonschema:"a tag label (any case) or tag id"`
+	Room   string `json:"room,omitempty" jsonschema:"a room id (roomId), as rooms and list report it"`
+	From   string `json:"from,omitempty" jsonschema:"earliest date, inclusive: 2026-08-11, 2026-08-11 14:30 or 2026-08-11 14:30:05; no timezone"`
+	To     string `json:"to,omitempty" jsonschema:"latest date, inclusive, in the same forms as from"`
+	Tag    string `json:"tag,omitempty" jsonschema:"a tag label (any case) or tag id"`
+	Limit  int    `json:"limit,omitempty" jsonschema:"how many meetings to return (default 25, max 100)"`
+	Offset int    `json:"offset,omitempty" jsonschema:"how many matching meetings to skip, newest first; the previous page's offset + limit reads the next one"`
 }
 
-// ListResult is `meetings list --json`: meetings newest first, each entry
-// exactly as the archive publishes it.
+// ListResult is one page of `meetings list --json`: the matching meetings
+// newest first, Offset in, at most Limit of them. Total is how many matched in
+// all, so a page is never mistaken for the whole archive: Offset + len(Meetings)
+// below Total means there is more.
 type ListResult struct {
 	Version string `json:"version"`
 	Source  string `json:"source"`
@@ -50,9 +62,33 @@ type ListResult struct {
 	// Excluded counts meetings the filter removed; ExcludedUndated is the
 	// subset dropped because a date bound was set and their date could not be
 	// read — readable meetings that simply cannot be placed in time.
-	Excluded        int              `json:"excluded"`
-	ExcludedUndated int              `json:"excludedUndated"`
-	Meetings        []map[string]any `json:"meetings"`
+	Excluded        int           `json:"excluded"`
+	ExcludedUndated int           `json:"excludedUndated"`
+	Total           int           `json:"total"`
+	Offset          int           `json:"offset"`
+	Limit           int           `json:"limit"`
+	Meetings        []ListMeeting `json:"meetings"`
+}
+
+// ListMeeting is one readable meeting: the fields of the published catalog
+// entry an agent acts on, and nothing about how the archive stores it. The
+// CLI's `meetings list --json` re-emits the whole entry instead; this is the
+// one place the two doors differ in shape, and only in what is left out.
+type ListMeeting struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
+	// DateLabel is a wall clock with no zone, the value from and to compare
+	// against. Empty when the archive could not date the meeting.
+	DateLabel       string `json:"dateLabel,omitempty"`
+	RoomID          string `json:"roomId,omitempty"`
+	RoomName        string `json:"roomName,omitempty"`
+	RoomDisplayName string `json:"roomDisplayName,omitempty"`
+	SpeakerCount    int    `json:"speakerCount,omitempty"`
+	SegmentCount    int    `json:"segmentCount,omitempty"`
+	DurationMS      int64  `json:"durationMs,omitempty"`
+	// Fetchable is false for a meeting recorded before the portable format:
+	// it has no single file to read, so context cannot serve it.
+	Fetchable bool `json:"fetchable"`
 }
 
 // ListFilter is the narrowing as applied, dates normalised.

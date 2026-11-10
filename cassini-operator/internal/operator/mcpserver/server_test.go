@@ -32,10 +32,11 @@ func (f fakeReader) List(_ context.Context, caller string, in ListInput) (ListRe
 	if f.err != nil {
 		return ListResult{}, f.err
 	}
-	result := ListResult{Version: "v", Source: "nextcloud-files", Meetings: []map[string]any{}}
+	result := ListResult{Version: "v", Source: "nextcloud-files", Meetings: []ListMeeting{}}
 	for _, id := range f.lists[caller] {
-		result.Meetings = append(result.Meetings, map[string]any{"id": id})
+		result.Meetings = append(result.Meetings, ListMeeting{ID: id, Fetchable: true})
 	}
+	result.Total, result.Limit = len(result.Meetings), ListDefaultLimit
 	if in.Room != "" {
 		result.Filter = &ListFilter{Room: in.Room}
 	}
@@ -167,7 +168,7 @@ func TestToolsActAsTheCaller(t *testing.T) {
 		}
 		var ids []string
 		for _, meeting := range got.Meetings {
-			ids = append(ids, meeting["id"].(string))
+			ids = append(ids, meeting.ID)
 		}
 		if strings.Join(ids, ",") != want {
 			t.Fatalf("%s sees %v, want %s", user, ids, want)

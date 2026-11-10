@@ -549,7 +549,7 @@ disconnects the agent.
 | Tool | Answers | Returns |
 |------|---------|---------|
 | `rooms` | Which conversations does this account have recordings from? | `meetings rooms --json` |
-| `list` | Which meetings may this account read, optionally a room's (`room`), a date range's (`from`, `to`) or a tag's (`tag`)? | `meetings list --json` |
+| `list` | Which meetings may this account read, optionally a room's (`room`), a date range's (`from`, `to`) or a tag's (`tag`)? A page at a time: `limit` (default 25, max 100) and `offset`, newest first | A page of `meetings list --json`: `total` counts every match, and each entry is the typed subset an agent acts on (`id`, `title`, `dateLabel`, `roomId`, `roomName`, `roomDisplayName`, `speakerCount`, `segmentCount`, `durationMs`, `fetchable`), never the archive's storage paths |
 | `search` | Where was this said? (`query`, optional `speaker`, `room`, `tag`, `limit`) | `meetings search --json`: references only |
 | `context` | Give me those meetings to read. (`ids`, optional `fromMs`, `toMs`) | `cassini.meetings.context.v1`, always as the `meetings` container |
 | `tags` | Which tags are on the meetings I may read? | `meetings tags --json` |

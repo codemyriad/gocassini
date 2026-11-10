@@ -106,7 +106,7 @@ func mcpErrorText(result *mcp.CallToolResult) string {
 func mcpListIDs(result mcpserver.ListResult) string {
 	ids := make([]string, 0, len(result.Meetings))
 	for _, meeting := range result.Meetings {
-		ids = append(ids, meeting["id"].(string))
+		ids = append(ids, meeting.ID)
 	}
 	return strings.Join(ids, ",")
 }
@@ -138,9 +138,17 @@ func TestMCPListIsTheCallersOwn(t *testing.T) {
 	if alice.Source != ncFilesSourceValue {
 		t.Fatalf("source = %q", alice.Source)
 	}
-	// Entries travel exactly as published, fields this code never reads included.
-	if alice.Meetings[2]["speakerCount"] != float64(3) {
-		t.Fatalf("entry a lost a field: %v", alice.Meetings[2])
+	// Each entry is the typed subset the tool promises, derived fields included,
+	// and nothing about how the archive stores it.
+	if a := alice.Meetings[2]; a.ID != "a" || a.Title != "Standup" || a.SpeakerCount != 3 || a.RoomID != "rm_aaaaaaaaaaaaaaaa" || !a.Fetchable {
+		t.Fatalf("entry a = %+v", a)
+	}
+	if alice.Total != 4 || alice.Offset != 0 || alice.Limit != mcpserver.ListDefaultLimit {
+		t.Fatalf("page = total %d offset %d limit %d", alice.Total, alice.Offset, alice.Limit)
+	}
+	wire, _ := json.Marshal(alice)
+	if strings.Contains(string(wire), "audioPath") || strings.Contains(string(wire), "digestDurationMs") {
+		t.Fatalf("storage fields reached the agent: %s", wire)
 	}
 	for _, user := range []string{"alice", "bob"} {
 		if !strings.Contains(logs.String(), "mcp: tool=list caller="+user+" ") {
@@ -168,6 +176,44 @@ func TestMCPListFilters(t *testing.T) {
 	result := mcpCall(t, endpoint, "alice", "list", map[string]any{"from": "2026-09-01", "to": "2026-08-01"}, nil)
 	if !result.IsError || !strings.Contains(mcpErrorText(result), "did you swap them?") {
 		t.Fatalf("an inverted range was not refused: %s", mcpErrorText(result))
+	}
+}
+
+// list is read a page at a time: offset and limit cut the newest-first order,
+// total says how much matched in all, and a page past the end is empty rather
+// than an error. A limit over the maximum is clamped and echoed; a negative
+// value is refused as the caller's to fix.
+func TestMCPListPages(t *testing.T) {
+	upstream := mcpUpstream(t, map[string][]string{"alice": {"JOB1.opus", "JOB2.opus", "JOB3.opus", "JOB4.opus"}})
+	var logs bytes.Buffer
+	endpoint := serveMCP(t, meetingsListConfig(upstream.URL), &logs)
+
+	var page mcpserver.ListResult
+	mcpCall(t, endpoint, "alice", "list", map[string]any{"limit": 2}, &page)
+	if mcpListIDs(page) != "c,b" || page.Total != 4 || page.Offset != 0 || page.Limit != 2 {
+		t.Fatalf("first page = %s total=%d offset=%d limit=%d", mcpListIDs(page), page.Total, page.Offset, page.Limit)
+	}
+	mcpCall(t, endpoint, "alice", "list", map[string]any{"limit": 2, "offset": 2}, &page)
+	if mcpListIDs(page) != "a,d" || page.Total != 4 || page.Offset != 2 {
+		t.Fatalf("second page = %s total=%d offset=%d", mcpListIDs(page), page.Total, page.Offset)
+	}
+	mcpCall(t, endpoint, "alice", "list", map[string]any{"offset": 10}, &page)
+	if len(page.Meetings) != 0 || page.Total != 4 || page.Meetings == nil {
+		t.Fatalf("past the end = %+v", page)
+	}
+	// Paging applies after the filter: total is what matched, not the archive.
+	mcpCall(t, endpoint, "alice", "list", map[string]any{"room": "rm_aaaaaaaaaaaaaaaa", "limit": 1}, &page)
+	if mcpListIDs(page) != "c" || page.Total != 3 || page.Excluded != 1 {
+		t.Fatalf("filtered page = %s total=%d excluded=%d", mcpListIDs(page), page.Total, page.Excluded)
+	}
+	mcpCall(t, endpoint, "alice", "list", map[string]any{"limit": 1000}, &page)
+	if page.Limit != mcpserver.ListMaxLimit {
+		t.Fatalf("limit 1000 was echoed as %d", page.Limit)
+	}
+	for _, args := range []map[string]any{{"limit": -1}, {"offset": -1}} {
+		if result := mcpCall(t, endpoint, "alice", "list", args, nil); !result.IsError {
+			t.Errorf("%v was accepted", args)
+		}
 	}
 }
 

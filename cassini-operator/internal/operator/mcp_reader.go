@@ -84,18 +84,26 @@ func (m *mcpReader) List(ctx context.Context, caller string, in mcpserver.ListIn
 		// Every filter error is the caller's to fix, and says how.
 		return mcpserver.ListResult{}, mcpRefusal(readFail(http.StatusBadRequest, err.Error()))
 	}
+	offset, limit, err := listPage(in.Offset, in.Limit)
+	if err != nil {
+		return mcpserver.ListResult{}, err
+	}
 	response, err := m.exapp.meetingsList(ctx, m.client, caller, filter, m.search, m.logger)
 	if err != nil {
 		return mcpserver.ListResult{}, mcpRefusal(err)
 	}
-	// The CLI's document: newest first, entries with no id skipped and
-	// counted, each entry otherwise exactly as published.
+	// The CLI's ordering: newest first, entries with no id skipped and
+	// counted. Then one page of it, each entry reduced to the fields the tool
+	// promises.
 	items, skipped := orderListedMeetings(response.Meetings)
 	result := mcpserver.ListResult{
 		Version:  response.Version,
 		Source:   ncFilesSourceValue,
 		Skipped:  skipped,
-		Meetings: make([]map[string]any, 0, len(items)),
+		Total:    len(items),
+		Offset:   offset,
+		Limit:    limit,
+		Meetings: []mcpserver.ListMeeting{},
 	}
 	if response.Filter != nil {
 		result.Filter = &mcpserver.ListFilter{
@@ -107,17 +115,81 @@ func (m *mcpReader) List(ctx context.Context, caller string, in mcpserver.ListIn
 		result.Excluded = response.Excluded.Total
 		result.ExcludedUndated = response.Excluded.Undated
 	}
-	for _, item := range items {
-		var entry map[string]any
-		if err := json.Unmarshal(item.raw, &entry); err != nil {
+	for _, item := range pageOf(items, offset, limit) {
+		meeting, ok := listMeetingFromRaw(item.raw)
+		if !ok {
 			// orderListedMeetings already decoded it, so this cannot happen
 			// for an object; a non-object entry has no id and was skipped.
 			result.Skipped++
 			continue
 		}
-		result.Meetings = append(result.Meetings, entry)
+		result.Meetings = append(result.Meetings, meeting)
 	}
 	return result, nil
+}
+
+// listPage validates a page request. A limit over the maximum is clamped, as
+// search's is, and the result echoes the limit actually applied; a negative
+// value is the caller's to fix.
+func listPage(offset, limit int) (int, int, error) {
+	if offset < 0 {
+		return 0, 0, errors.New("offset must be zero or more")
+	}
+	if limit < 0 {
+		return 0, 0, errors.New("limit must be a positive whole number")
+	}
+	if limit == 0 {
+		limit = mcpserver.ListDefaultLimit
+	}
+	if limit > mcpserver.ListMaxLimit {
+		limit = mcpserver.ListMaxLimit
+	}
+	return offset, limit, nil
+}
+
+// pageOf is items[offset : offset+limit], empty past the end.
+func pageOf(items []listedMeeting, offset, limit int) []listedMeeting {
+	if offset >= len(items) {
+		return nil
+	}
+	end := offset + limit
+	if end > len(items) {
+		end = len(items)
+	}
+	return items[offset:end]
+}
+
+// listMeetingFromRaw reduces a published catalog entry to what list promises.
+// Fetchable is derived as the CLI derives it: a meeting has a single portable
+// file to read, or it does not.
+func listMeetingFromRaw(raw json.RawMessage) (mcpserver.ListMeeting, bool) {
+	var entry struct {
+		ID               string `json:"id"`
+		Title            string `json:"title"`
+		DateLabel        string `json:"dateLabel"`
+		AudioPath        string `json:"audioPath"`
+		RoomID           string `json:"roomId"`
+		RoomName         string `json:"roomName"`
+		RoomDisplayName  string `json:"roomDisplayName"`
+		SpeakerCount     int    `json:"speakerCount"`
+		SegmentCount     int    `json:"segmentCount"`
+		DigestDurationMS int64  `json:"digestDurationMs"`
+	}
+	if err := json.Unmarshal(raw, &entry); err != nil {
+		return mcpserver.ListMeeting{}, false
+	}
+	return mcpserver.ListMeeting{
+		ID:              strings.TrimSpace(entry.ID),
+		Title:           entry.Title,
+		DateLabel:       strings.TrimSpace(entry.DateLabel),
+		RoomID:          strings.TrimSpace(entry.RoomID),
+		RoomName:        strings.TrimSpace(entry.RoomName),
+		RoomDisplayName: strings.TrimSpace(entry.RoomDisplayName),
+		SpeakerCount:    entry.SpeakerCount,
+		SegmentCount:    entry.SegmentCount,
+		DurationMS:      entry.DigestDurationMS,
+		Fetchable:       strings.TrimSpace(entry.AudioPath) != "",
+	}, true
 }
 
 func (m *mcpReader) Tags(ctx context.Context, caller string) (mcpserver.TagsResult, error) {
