@@ -75,10 +75,19 @@ before month, 24-hour clock.
 Every date, time and number formatter goes through `cassini-viewer/src/i18n/format.ts`:
 `dateFormat(options)`, `numberFormat(options)` and `relativeTimeFormat(options)`
 return a cached `Intl` formatter for the current locale. On top of them:
-`formatCount(n)` for every number put into a message, `formatCompactCount(n)`
-("7.5K"), `durationFormat({ hours, minutes, seconds }, "short" | "narrow")` for
-a length of time, and `relativeNow()` for an age under a minute. Don't write a
-unit or "just now" into a dictionary string. Don't name a locale
+`formatCompactCount(n)` ("7.5K"), `durationFormat({ hours, minutes, seconds }, "short" | "narrow")`
+for a length of time, and `relativeNow()` for an age under a minute. Don't
+write a unit or "just now" into a dictionary string.
+
+A count in a message formats itself: `{count:number|num}` runs the `num`
+formatter (`|compact` for "7.5K"), defined in `cassini-viewer/src/i18n/formatters.ts`,
+which writes the number in the reader's locale, not their language. Pass the
+raw number. `formatCount(n)` is only for a number in a string with no plural
+(`"{done} of {total}"`).
+
+`durationFormat` joins `Intl.NumberFormat` units ("1 hr 32 mins") rather than
+using `Intl.DurationFormat`, which only some runtimes have and which words
+some units differently, so every reader sees the same text. Don't name a locale
 (`"en-GB"`, `undefined`) in a formatter that shows a date to someone. The one
 exception is code that takes a date apart to calculate with it
 (`zonedPartsFormat` in `meetingTime.ts`), which keeps a fixed locale because
@@ -109,13 +118,48 @@ Writing strings that translate well:
 
 - Name placeholders: `"Shared with {name}"`, never pieced together from
   fragments. Weblate checks that a translation keeps every `{name}`.
-- No typesafe-i18n plural syntax (`{{meeting|meetings}}`). Translators would
-  have to write it by hand, and Polish and Croatian need more forms than
-  English has. Write two keys ("Copy transcript" and "Copy transcripts"), or
-  rephrase ("Meetings: {count}").
+- A phrase put into a sentence (a bold title, a link) carries none of the
+  sentence's punctuation: `"{title}, like {example}"` with `"Ask it something"`,
+  so a translator can move the comma.
+- A count is one key in typesafe-i18n's plural syntax (below), never a `_one` /
+  `_other` pair the code picks between.
 - One key per meaning, even when the English matches. "Export" the button and
   "Export" the heading can need different words.
 - Keep product terms the same everywhere. They are in the Weblate glossary.
+
+### Counts
+
+typesafe-i18n picks the form from the number and the language's plural rules
+(`Intl.PluralRules`), so Polish and Croatian translators write their few and
+many forms without a code change. Write the English with two forms, the plural
+next to the noun, and pass the raw number:
+
+```ts
+// Plural; see the translator guide. {count}: meetings.
+meetings: "{count:number|num} {{meeting|meetings}}",
+```
+
+```svelte
+{$LL.viewer.browse.tags.meetings({ count: tag.meetings })}
+```
+
+- `{{one|other}}` binds to the nearest argument before it (or the first one in
+  the string). When a string has more than one argument, name it:
+  `"{voices:number|num} {{voices:voice|voices}} on {devices:number|num} {{devices:device|devices}}"`.
+  A plural can also bind to an argument that is not shown:
+  `"{{count:Remove it|Remove them}}"`.
+- `??` inside the braces is the number, unformatted. Use it only for whole-sentence
+  forms of small numbers (`{{count:One recording check needs attention|?? recording checks need attention}}`);
+  otherwise put `{count:number|num}` outside the braces.
+- No `{placeholder}` and no `:` inside `{{…}}`: the parser cannot read them.
+- With two forms, 0 takes the plural. `{{zero|one|other}}` (three) or the full
+  six, `{{zero|one|two|few|many|other}}`, give 0 its own form; four or five
+  forms do not work.
+- A different message for exactly one item that is not a plural, such as naming
+  the meeting (`delete_failed_named`: "“{title}” could not be deleted."), is a
+  separate key; the counted key still has its plural.
+- Comment every count key `// Plural; see the translator guide.` and say what
+  the number counts.
 
 Non-English files are Weblate's. Don't edit `<lang>/**/index.json` by hand
 except through `i18n:sync`, or a Weblate change will conflict with yours.
@@ -162,8 +206,15 @@ Component settings, all three the same:
   point at it (`weblate://cassini/nextcloud/nextcloud-common`).
 - **Commit delay:** 24 hours, so a day's work arrives as one change.
 - **Translation flags:** `check-glossary` (a translation that doesn't use the
-  glossary's word is flagged) and `placeholders:r"\{[a-zA-Z0-9_]+\}"` (a
-  translation that drops or changes a `{name}` is flagged).
+  glossary's word is flagged) and
+  `placeholders:r"(?<!\{)\{[a-zA-Z0-9_]+(?::[a-z]+)?(?:\|[a-z]+)?\}(?!\})|\{\{|\}\}|\?\?"`.
+  The placeholders check compares the matches in the source with those in the
+  translation, so it flags a translation that drops or changes a `{name}` or a
+  `{count:number|num}`, or loses the plural's `{{`, `}}` or `??`. The plural's
+  words are not matched (they are the translation), and the lookarounds keep
+  `{meeting|meetings}` inside `{{…}}` from reading as a placeholder. Weblate
+  has no check for typesafe-i18n's plural syntax itself, and a `regex:` flag
+  would apply to every string, with or without a plural.
 - **Add-ons:** "Customize JSON output" (2-space indent, keys in source order,
   matching `i18n:sync` so its rewrites don't show as changes) and "Squash Git
   commits" (one commit per language).

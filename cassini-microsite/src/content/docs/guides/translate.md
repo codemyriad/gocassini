@@ -55,12 +55,41 @@ A few things that help:
 
 - **Keep the words in braces as they are.** In `Shared with {name}`, `{name}`
   is replaced with a person's name, so leave it untranslated and move it to
-  wherever your language needs it. Weblate warns you if one goes missing.
+  wherever your language needs it. The same goes for `{count:number|num}`,
+  which becomes a number. Weblate warns you if one goes missing.
 - **Check the glossary.** It's in the panel beside each string and gives the
   agreed translation of Cassini's terms (meeting, room, insight, tag). Using
   the same word everywhere matters more than finding the perfect one.
 - **Say what you weren't sure about.** Use a string's comments to ask, or to
   explain a choice.
+
+## Numbers and plurals
+
+A string with a count has its forms in double braces, chosen by the number:
+
+```
+{count:number|num} {{meeting|meetings}}
+```
+
+- **Two forms** are `one|other`: "1 meeting", "5 meetings". 0 takes the second.
+- **More forms:** write all six, in this order, `zero|one|two|few|many|other`.
+  Skip none; leave a slot empty if your language doesn't use it. An empty
+  `zero` lets 0 follow your language's own rule.
+- **`??`** inside the braces stands for the number.
+- Keep the `{placeholders}`, outside the braces, as they are. A name before the
+  forms, as in `{{devices:device|devices}}`, says which number they follow:
+  keep it, and add one if you move the forms before their number.
+- Apart from that name, don't put a colon (`:`) or a `{placeholder}` inside
+  the double braces.
+
+Polish, for `{count:number|num} {{meeting|meetings}}`:
+
+```
+{count:number|num} {{|spotkanie||spotkania|spotkań|spotkania}}
+```
+
+1 spotkanie, 3 spotkania, 5 spotkań, 22 spotkania, 0 spotkań. Zero and two are
+empty: Polish has no form for two, and 0 takes the "many" form.
 
 ## When you'll see it
 
