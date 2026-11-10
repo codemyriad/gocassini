@@ -1,8 +1,12 @@
 # Download a support bundle
 
-Open Cassini and press **Download support bundle** above the meeting browser.
-The button is available even when your meeting list is empty or fails to load.
-Administrators can also find it in **Operator → Doctor**.
+In the meeting browser, open **Help › Support** in the left sidebar and press
+**Download support bundle**. It is there even when your meeting list is empty or
+fails to load. This downloads your own bundle: it describes your browser and the
+recordings shared with you.
+
+Administrators download the installation bundle, with logs and job history,
+from **Operator → Doctor**. Help › Support links there for them.
 
 Cassini downloads a ZIP named
 `cassini-support-<original|scrubbed>-<UTC time>-<id>.zip`. Review it before
@@ -13,7 +17,7 @@ messages and diagnostic identifiers, which can contain names, URLs, credentials
 or meeting text. You can send the ZIP as downloaded, or extract it, edit/remove
 sensitive information and create a new ZIP yourself.
 
-Select **Scrub sensitive information** before downloading if you want Cassini to
+In Doctor, select **Scrub sensitive information** before downloading if you want Cassini to
 produce a filtered bundle instead. This replaces original logs and error messages
 with diagnostic categories/status codes and pseudonymizes job identifiers. It
 can remove information needed to diagnose an unfamiliar failure. You can download

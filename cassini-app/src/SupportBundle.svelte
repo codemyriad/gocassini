@@ -3,8 +3,14 @@
   import { Download } from "@lucide/svelte";
   import { requestSupportBundle, SupportDownloadError } from "./support/client";
 
+  // administrator: Operator › Doctor's installation bundle, with the scrub
+  // choice (its logs can hold sensitive text). Otherwise the reader's own
+  // bundle from Help › Support (D-910): no logs, so no choice to make.
   export let administrator = false;
   export let surface: "browse" | "operator" = "browse";
+  // Help › Support offers an administrator the way to Doctor instead of a
+  // second copy of the installation bundle.
+  export let openDoctor: (() => void) | null = null;
   let busy = false;
   let scrubSensitive = false;
   let error = "";
@@ -64,16 +70,25 @@
       {:else}<Download size={14} aria-hidden="true" />{/if}
       {busy ? "Preparing support bundle…" : "Download support bundle"}
     </button>
-    <label class="support-choice">
-      <input type="checkbox" class="checkbox checkbox-xs" bind:checked={scrubSensitive} disabled={busy} />
-      Scrub sensitive information
-    </label>
+    {#if administrator}
+      <label class="support-choice">
+        <input type="checkbox" class="checkbox checkbox-xs" bind:checked={scrubSensitive} disabled={busy} />
+        Scrub sensitive information
+      </label>
+    {/if}
   </div>
   <p class="support-explanation">
-    {#if scrubSensitive}Downloads scrubbed diagnostics. Review before sharing.
+    {#if !administrator}It describes your browser and the recordings shared with you, without any meeting content.
+    {:else if scrubSensitive}Downloads scrubbed diagnostics. Review before sharing.
     {:else}Original logs may contain names, URLs, credentials or meeting text. Review or edit the ZIP before sharing.{/if}
     Nothing is sent automatically.
   </p>
+  {#if openDoctor}
+    <p class="support-explanation">
+      Administrators: installation logs and job history are in
+      <button type="button" class="link" on:click={openDoctor}>Operator › Doctor</button>.
+    </p>
+  {/if}
   {#if error}<p class="text-error text-xs" role="alert">{error}</p>{/if}
   {#if result}<p class="text-xs" role="status">{result}</p>{/if}
 </div>

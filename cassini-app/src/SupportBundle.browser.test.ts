@@ -55,19 +55,25 @@ it("cancels an in-flight export when the support action is unmounted", async () 
   expect(signal?.aborted).toBe(true);
 });
 
-it("keeps support discoverable for an ordinary user when the catalog fails", async () => {
+it("keeps support reachable from Help for an ordinary user when the catalog fails", async () => {
   vi.stubGlobal("OC", { isUserAdmin: () => false });
   vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 502 })));
   component = mount(App, { target: host });
-  await expect.element(page.getByRole("button", { name: "Download support bundle" })).toBeVisible();
   await expect.element(page.getByText("Load note", { exact: true })).toBeVisible();
+  // No strip above the list any more (D-910): the download lives in Help › Support.
+  expect(document.body.textContent).not.toContain("Download support bundle");
+  await page.getByRole("group", { name: "Help" }).getByRole("button", { name: "Support" }).click();
   await expect.element(page.getByRole("button", { name: "Download support bundle" })).toBeEnabled();
+  // A reader's own bundle holds no logs: no scrub choice, no logs warning, no Doctor link.
+  await expect.element(page.getByRole("checkbox", { name: "Scrub sensitive information" })).not.toBeInTheDocument();
+  expect(document.body.textContent).not.toContain("Original logs may contain");
+  expect(document.body.textContent).not.toContain("Operator › Doctor");
 });
 
 it("offers original logs by default and scrubs only when selected", async () => {
   const bodies: {privacy:string}[]=[];
   vi.stubGlobal("fetch",vi.fn(async (_url,init)=>{bodies.push(JSON.parse(init.body));return new Response(null,{status:500});}));
-  component=mount(SupportBundle,{target:host});
+  component=mount(SupportBundle,{target:host,props:{administrator:true,surface:"operator"}});
   const choice=page.getByRole("checkbox",{name:"Scrub sensitive information"});
   await expect.element(choice).not.toBeChecked();
   await expect.element(page.getByText(/Original logs may contain/)).toBeVisible();
@@ -78,4 +84,11 @@ it("offers original logs by default and scrubs only when selected", async () => 
   await page.getByRole("button",{name:"Download support bundle"}).click();
   await expect.poll(()=>bodies.length).toBe(2);
   expect(bodies[1].privacy).toBe("scrubbed");
+});
+
+it("points an administrator at Doctor from Help › Support", async () => {
+  const openDoctor = vi.fn();
+  component = mount(SupportBundle, { target: host, props: { openDoctor } });
+  await page.getByRole("button", { name: "Operator › Doctor" }).click();
+  expect(openDoctor).toHaveBeenCalledOnce();
 });

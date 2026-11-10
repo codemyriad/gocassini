@@ -57,6 +57,10 @@
   // sits under the narrowings rather than beside them.
   export let agentOffered = false;
   export let agentOpen = false;
+  // Help › Support (D-910): offered only when the shell has something to put
+  // in the sheet; a standalone export does not.
+  export let helpOffered = false;
+  export let supportOpen = false;
 
   const dispatch = createEventDispatcher<{
     select: string | null;
@@ -67,6 +71,7 @@
     tagMatch: TagMatch;
     manageTags: void;
     connectAgent: void;
+    openSupport: void;
   }>();
 
   const TAG_MATCHES: TagMatch[] = ["any", "all"];
@@ -316,6 +321,24 @@
         <span class="room-name">Insights</span>
         <span class="room-count">{insightsLoading ? "" : insightCount}</span>
       </label>
+    </div>
+  {/if}
+
+  {#if helpOffered}
+    <h2 class="rail-head rail-head-sub">Help</h2>
+    <div class="rail-list" role="group" aria-label="Help">
+      <button
+        type="button"
+        class="room-button"
+        aria-haspopup="dialog"
+        aria-expanded={supportOpen}
+        on:click={() => {
+          dispatch("openSupport");
+          dispatch("close");
+        }}
+      >
+        <span class="room-name">Support</span>
+      </button>
     </div>
   {/if}
 

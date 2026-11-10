@@ -126,3 +126,18 @@ describe("RoomsRail audience notice", () => {
     expect(rail).not.toContain("Shared with participants");
   });
 });
+
+describe("RoomsRail Help section (D-910)", () => {
+  it("shows Help › Support only when the shell offers it", () => {
+    // A standalone export has nothing to download, so no Help section at all.
+    expect(render(RoomsRail as never, { props: {} } as never).body).not.toContain(">Help</h2>");
+    const offered = render(RoomsRail as never, { props: { helpOffered: true } } as never).body;
+    expect(offered).toContain(">Help</h2>");
+    expect(offered).toMatch(/aria-label="Help"[\s\S]*>Support</);
+  });
+
+  it("opens the sheet and closes the drawer", () => {
+    expect(roomsRailSource).toMatch(/dispatch\("openSupport"\);\s*dispatch\("close"\);/);
+    expect(roomsRailSource).toContain("aria-expanded={supportOpen}");
+  });
+});

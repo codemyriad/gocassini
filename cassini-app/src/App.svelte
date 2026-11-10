@@ -603,11 +603,6 @@
 
 <div class="cassini-app-frame" bind:this={appFrame}>
 <div class="cassini-app-content">
-{#if surface === "browse"}
-  <div class="cassini-support-bar" inert={overlayOpen} data-theme={themeMode}>
-    <SupportBundle administrator={operatorClient !== null} {surface} />
-  </div>
-{/if}
 <!-- D-763's warning, rehomed. It used to send people to a Setup tab; that tab is
      gone (D-751) and `setup` is no longer a surface (D-756), so the checks now
      live in Operator › Publish pipeline, above the recording-access section.
@@ -687,7 +682,7 @@
          hidden while an admin surface is active; those mount only when active
          so the operator's SSE stream + polling don't run in the background. -->
     <div class="cassini-shell-surface" class:cassini-shell-hidden={surface !== "browse"}>
-      <ViewerApp {ncMode} {dataProvider} {audience} listEmptyFilled={sharingNews} notFoundFilledFor={explainedIds} bind:this={viewerApp} on:prepareOpen={() => void refreshSetupFeatures()} on:overlay={(event) => (overlayOpen = event.detail)}>
+      <ViewerApp {ncMode} {dataProvider} {audience} supportOffered listEmptyFilled={sharingNews} notFoundFilledFor={explainedIds} bind:this={viewerApp} on:prepareOpen={() => void refreshSetupFeatures()} on:overlay={(event) => (overlayOpen = event.detail)}>
         <NeedsSetupCard slot="prepare-readiness" notice={insightsNotice} on:open={handleOpenPanel} />
         <!-- Its opposite, driven by the same bit (D-700): the readiness card
              says a question cannot be asked here, this one asks it. The Prepare
@@ -720,6 +715,9 @@
             <MeetingAccessNotice {access} {appUrl} accept={acceptRecordingShares} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} />
           {/if}
         </svelte:fragment>
+        <!-- Help › Support (D-910): every reader downloads their own bundle here;
+             an administrator is pointed at Doctor for the installation one. -->
+        <SupportBundle slot="support" openDoctor={operatorAvailable ? openRecordingSetup : null} />
       </ViewerApp>
     </div>
     {#if surface === "operator" && operatorClient}
@@ -756,7 +754,7 @@
       </div>
     </div>
     <div class="cassini-shell-surface">
-      <ViewerApp {ncMode} {dataProvider} {audience} listEmptyFilled={sharingNews} notFoundFilledFor={explainedIds} on:prepareOpen={() => void refreshSetupFeatures()}>
+      <ViewerApp {ncMode} {dataProvider} {audience} supportOffered listEmptyFilled={sharingNews} notFoundFilledFor={explainedIds} on:prepareOpen={() => void refreshSetupFeatures()}>
         <NeedsSetupCard slot="prepare-readiness" notice={insightsNotice} on:open={handleOpenPanel} />
         <svelte:fragment slot="prepare-generate" let:entries let:onInsightCreated>
           {#if insightsReady}
@@ -784,11 +782,12 @@
             <MeetingAccessNotice {access} {appUrl} accept={acceptRecordingShares} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} />
           {/if}
         </svelte:fragment>
+        <SupportBundle slot="support" />
       </ViewerApp>
     </div>
   </div>
 {:else}
-  <ViewerApp {ncMode} {dataProvider} {audience} listEmptyFilled={sharingNews} notFoundFilledFor={explainedIds} on:prepareOpen={() => void refreshSetupFeatures()}>
+  <ViewerApp {ncMode} {dataProvider} {audience} supportOffered listEmptyFilled={sharingNews} notFoundFilledFor={explainedIds} on:prepareOpen={() => void refreshSetupFeatures()}>
     <NeedsSetupCard slot="prepare-readiness" notice={insightsNotice} on:open={handleOpenPanel} />
     <svelte:fragment slot="prepare-generate" let:entries let:onInsightCreated>
       {#if insightsReady}
@@ -816,6 +815,7 @@
         <MeetingAccessNotice {access} {appUrl} accept={acceptRecordingShares} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} />
       {/if}
     </svelte:fragment>
+    <SupportBundle slot="support" />
   </ViewerApp>
 {/if}
 
@@ -826,7 +826,6 @@
 <style>
   .cassini-app-frame { position: relative; height: 100%; min-height: 0; overflow: hidden; }
   .cassini-app-content { display: flex; flex-direction: column; height: 100%; min-height: 0; }
-  .cassini-support-bar { flex-shrink: 0; padding: 0.125rem 0.5rem; background: var(--color-main-background, var(--color-base-100)); }
   /* Plain CSS (not Tailwind utilities) so the nav renders regardless of content
      scanning; theme tokens come from app.css (:root / :host). */
   .cassini-shell {
