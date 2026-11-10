@@ -92,7 +92,7 @@
           <X size={13} aria-hidden="true" />
         </button>
       {:else}
-        <span class="tt-kbd"><Kbd size="sm"><span>{mac ? "⌘" : "Ctrl"}</span><span>F</span></Kbd></span>
+        <span class="tt-kbd"><Kbd size="sm"><span>{mac ? "⌘" : $LL.viewer.meeting.keys.ctrl()}</span><span>F</span></Kbd></span>
       {/if}
     </label>
   </div>

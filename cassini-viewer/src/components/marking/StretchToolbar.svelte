@@ -44,7 +44,8 @@
     }
   }
 
-  const copyKey = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘C" : "Ctrl C";
+  const mac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
+  $: copyKey = mac ? "⌘C" : `${$LL.viewer.meeting.keys.ctrl()} C`;
 
   const dispatch = createEventDispatcher<{ tag: TagPick; save: void; remove: void; clear: void; copy: void; edit: void }>();
   let tagButton: HTMLButtonElement | undefined;
@@ -114,7 +115,7 @@
     {#if locked || !editable}
       <div class={row ? "ml-auto flex flex-wrap items-center justify-end gap-1.5" : "grid grid-flow-col auto-cols-fr gap-1"}>
         {#if editable}<ActionButton tone="plain" compact disabled={busy} on:click={() => dispatch("edit")}>{$LL.viewer.meeting.stretch.edit()}</ActionButton>{/if}
-        <ActionButton tone="plain" compact key={row ? "" : "Esc"} on:click={() => dispatch("clear")}>{$LL.viewer.meeting.stretch.done()}</ActionButton>
+        <ActionButton tone="plain" compact key={row ? "" : $LL.viewer.meeting.keys.escape()} on:click={() => dispatch("clear")}>{$LL.viewer.meeting.stretch.done()}</ActionButton>
       </div>
     {:else}
     <div class={row ? "ml-auto flex flex-wrap items-center justify-end gap-1.5" : "grid gap-1.5"}>
@@ -125,7 +126,7 @@
            tighter buttons, so "Cancel" and its key fit half the card. -->
       <div class="grid grid-flow-col auto-cols-fr gap-1">
         <ActionButton tone="error" compact disabled={busy} on:click={() => dispatch("remove")}>{$LL.viewer.meeting.stretch.remove()}</ActionButton>
-        <ActionButton tone="plain" compact key={row ? "" : "Esc"} on:click={() => dispatch("clear")}>{moved ? $LL.viewer.meeting.stretch.cancel() : $LL.viewer.meeting.stretch.done()}</ActionButton>
+        <ActionButton tone="plain" compact key={row ? "" : $LL.viewer.meeting.keys.escape()} on:click={() => dispatch("clear")}>{moved ? $LL.viewer.meeting.stretch.cancel() : $LL.viewer.meeting.stretch.done()}</ActionButton>
       </div>
     </div>
     {/if}
@@ -135,7 +136,7 @@
         {$LL.viewer.meeting.stretch.tag_selection()}
       </ActionButton>{/if}
       <ActionButton tone="plain" block={!row} key={row ? "" : copyKey} on:click={() => dispatch("copy")}>{#if copied}<span class="text-success">{$LL.viewer.meeting.stretch.copied()}</span>{:else}{$LL.viewer.meeting.stretch.copy_text()}{/if}</ActionButton>
-      <ActionButton tone="plain" block={!row} key={row ? "" : "Esc"} on:click={() => dispatch("clear")}>{$LL.viewer.meeting.stretch.cancel()}</ActionButton>
+      <ActionButton tone="plain" block={!row} key={row ? "" : $LL.viewer.meeting.keys.escape()} on:click={() => dispatch("clear")}>{$LL.viewer.meeting.stretch.cancel()}</ActionButton>
     </div>
   {/if}
   {#if shareUrl}

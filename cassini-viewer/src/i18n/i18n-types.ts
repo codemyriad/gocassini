@@ -65,6 +65,11 @@ export type NamespaceAppTranslation = {
 			 * C​o​u​l​d​ ​n​o​t​ ​l​o​a​d​ ​r​e​t​e​n​t​i​o​n​ ​s​e​t​t​i​n​g​s​.
 			 */
 			retention_load_failed: string
+			/**
+			 * C​o​u​l​d​ ​n​o​t​ ​d​i​s​m​i​s​s​ ​t​h​e​ ​r​e​m​i​n​d​e​r​:​ ​{​d​e​t​a​i​l​}
+			 * @param {unknown} detail
+			 */
+			retention_dismiss_failed: RequiredParams<'detail'>
 		}
 		load_error: {
 			/**
@@ -1522,10 +1527,6 @@ export type NamespaceAppTranslation = {
 				 * @param {unknown} when
 				 */
 				last_calculated: RequiredParams<'when'>
-				/**
-				 * j​u​s​t​ ​n​o​w
-				 */
-				just_now: string
 				/**
 				 * C​a​l​c​u​l​a​t​i​n​g​…
 				 */
@@ -3572,6 +3573,11 @@ export type NamespaceAppTranslation = {
 			 */
 			search_limit: string
 			/**
+			 * C​a​s​s​i​n​i​,​ ​c​a​s​i​n​o​,​ ​c​a​s​i​n​i​
+		​E​i​s​b​u​k​,​ ​i​c​e​ ​b​o​o​k​,​ ​i​c​e​b​o​o​k
+			 */
+			search_placeholder: string
+			/**
 			 * D​o​e​s​n​'​t​ ​c​h​a​n​g​e​ ​a​n​y​ ​t​r​a​n​s​c​r​i​p​t​,​ ​o​n​l​y​ ​w​h​a​t​ ​s​e​a​r​c​h​ ​f​i​n​d​s​.
 			 */
 			search_note_transcripts: string
@@ -5483,6 +5489,10 @@ export type NamespaceViewerTranslation = {
 			 */
 			load_note: string
 			/**
+			 * C​o​u​l​d​n​'​t​ ​l​o​a​d​ ​t​h​e​ ​m​e​e​t​i​n​g​s​.
+			 */
+			load_failed: string
+			/**
 			 * {​m​i​n​u​t​e​s​}​m
 			 * @param {unknown} minutes
 			 */
@@ -6853,6 +6863,10 @@ export type NamespaceViewerTranslation = {
 			 */
 			not_found_heading: string
 			/**
+			 * C​o​u​l​d​n​'​t​ ​l​o​a​d​ ​t​h​i​s​ ​m​e​e​t​i​n​g​.
+			 */
+			load_failed: string
+			/**
 			 * L​o​a​d​i​n​g​ ​m​e​e​t​i​n​g​…
 			 */
 			loading: string
@@ -7131,6 +7145,19 @@ export type NamespaceViewerTranslation = {
 			 * C​o​p​i​e​d
 			 */
 			copied: string
+			/**
+			 * m​o​n​o
+			 */
+			audio_mono: string
+			/**
+			 * s​t​e​r​e​o
+			 */
+			audio_stereo: string
+			/**
+			 * {​c​o​u​n​t​}​ ​c​h​a​n​n​e​l​s
+			 * @param {unknown} count
+			 */
+			audio_channels: RequiredParams<'count'>
 		}
 		timing: {
 			/**
@@ -7663,6 +7690,16 @@ export type NamespaceViewerTranslation = {
 			 * N​e​x​t​ ​t​a​g​g​e​d​ ​s​e​c​t​i​o​n
 			 */
 			next: string
+		}
+		keys: {
+			/**
+			 * C​t​r​l
+			 */
+			ctrl: string
+			/**
+			 * E​s​c
+			 */
+			escape: string
 		}
 		stretch: {
 			/**
@@ -8501,6 +8538,10 @@ export type TranslationFunctions = {
 				 * Could not load retention settings.
 				 */
 				retention_load_failed: () => LocalizedString
+				/**
+				 * Could not dismiss the reminder: {detail}
+				 */
+				retention_dismiss_failed: (arg: { detail: unknown }) => LocalizedString
 			}
 			load_error: {
 				/**
@@ -9862,10 +9903,6 @@ export type TranslationFunctions = {
 					 * Last calculated {when}
 					 */
 					last_calculated: (arg: { when: unknown }) => LocalizedString
-					/**
-					 * just now
-					 */
-					just_now: () => LocalizedString
 					/**
 					 * Calculating…
 					 */
@@ -11788,6 +11825,11 @@ export type TranslationFunctions = {
 				 */
 				search_limit: () => LocalizedString
 				/**
+				 * Cassini, casino, casini
+			Eisbuk, ice book, icebook
+				 */
+				search_placeholder: () => LocalizedString
+				/**
 				 * Doesn't change any transcript, only what search finds.
 				 */
 				search_note_transcripts: () => LocalizedString
@@ -13584,6 +13626,10 @@ export type TranslationFunctions = {
 				 */
 				load_note: () => LocalizedString
 				/**
+				 * Couldn't load the meetings.
+				 */
+				load_failed: () => LocalizedString
+				/**
 				 * {minutes}m
 				 */
 				duration_minutes: (arg: { minutes: unknown }) => LocalizedString
@@ -14846,6 +14892,10 @@ export type TranslationFunctions = {
 				 */
 				not_found_heading: () => LocalizedString
 				/**
+				 * Couldn't load this meeting.
+				 */
+				load_failed: () => LocalizedString
+				/**
 				 * Loading meeting…
 				 */
 				loading: () => LocalizedString
@@ -15107,6 +15157,18 @@ export type TranslationFunctions = {
 				 * Copied
 				 */
 				copied: () => LocalizedString
+				/**
+				 * mono
+				 */
+				audio_mono: () => LocalizedString
+				/**
+				 * stereo
+				 */
+				audio_stereo: () => LocalizedString
+				/**
+				 * {count} channels
+				 */
+				audio_channels: (arg: { count: unknown }) => LocalizedString
 			}
 			timing: {
 				/**
@@ -15599,6 +15661,16 @@ export type TranslationFunctions = {
 				 * Next tagged section
 				 */
 				next: () => LocalizedString
+			}
+			keys: {
+				/**
+				 * Ctrl
+				 */
+				ctrl: () => LocalizedString
+				/**
+				 * Esc
+				 */
+				escape: () => LocalizedString
 			}
 			stretch: {
 				/**

@@ -7,7 +7,8 @@
       "close_overlay": "Close",
       "recording_needs_action": "Recording setup needs an administrator’s attention.",
       "open_recording_setup": "Open recording setup",
-      "retention_load_failed": "Could not load retention settings."
+      "retention_load_failed": "Could not load retention settings.",
+      "retention_dismiss_failed": "Could not dismiss the reminder: {detail}"
     },
     "load_error": {
       "title": "Cassini couldn't read these settings",
@@ -439,7 +440,6 @@
       "report": {
         "title": "Storage",
         "last_calculated": "Last calculated {when}",
-        "just_now": "just now",
         "calculating": "Calculating…",
         "recalculate": "Recalculate",
         "calculate": "Calculate",
@@ -963,6 +963,7 @@
       "search_intro": "Common mishearings of a name, so searching for the name finds them too.",
       "search_field": "One name per line, then its spellings, separated by commas",
       "search_limit": "(up to 100 names, 25 spellings each)",
+      "search_placeholder": "Cassini, casino, casini\nEisbuk, ice book, icebook",
       "search_note_transcripts": "Doesn't change any transcript, only what search finds.",
       "search_note_results": "Results say when they matched one of these spellings.",
       "search_note_when": "Use these spellings when the transcriber mishears a name.",

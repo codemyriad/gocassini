@@ -41,7 +41,7 @@ const browse = {
   // The list of meetings and insights, with the search field above it.
   meeting_list: {
     list_label: "Meeting list",
-    // Tooltip on a row's Imported badge. {name} is who imported it, {date} the day (2026-10-14).
+    // Tooltip on a row's Imported badge. {name} is who imported it, {date} the day, written in the reader's locale ("14 Oct 2026").
     imported_by_on: "Imported by {name} on {date}",
     imported_by: "Imported by {name}",
     imported_on: "Imported on {date}",
@@ -169,6 +169,9 @@ const browse = {
     matched_alias: "Matched a known mistranscription",
     show_more: "Show more ({count} remaining)",
     load_note: "Load note",
+    // Under "Load note" when the list could not be loaded or refreshed. The
+    // technical reason follows underneath, in English.
+    load_failed: "Couldn't load the meetings.",
     // A meeting's length in the list. Short forms: the row is narrow.
     duration_minutes: "{minutes}m",
     duration_hours: "{hours}h {minutes}m",

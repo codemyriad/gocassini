@@ -1121,7 +1121,7 @@
               bind:value={searchAliasesText}
               class="op-input pipe-textarea"
               maxlength={10_100}
-              placeholder={'Cassini, casino, casini\nEisbuk, ice book, icebook'}
+              placeholder={t.search_placeholder()}
             ></textarea>
           </label>
           <ul class="pipe-notes">

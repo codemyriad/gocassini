@@ -25,8 +25,6 @@ export const noRoomLabel = () => get(LL).viewer.browse.rooms.no_room();
 // id as the label) still need a heading to sit under.
 export const UNDATED_MONTH_KEY = "";
 export const undatedMonthLabel = () => get(LL).viewer.browse.rooms.undated();
-// English only, for insights.ts until it reads undatedMonthLabel() instead.
-export const UNDATED_MONTH_LABEL = "Undated";
 
 export interface RoomBucket {
   roomId?: string;

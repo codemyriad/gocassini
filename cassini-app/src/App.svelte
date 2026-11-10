@@ -154,7 +154,7 @@
       if (!destroyed && client === operatorClient) acceptRetention(settings);
     } catch (error) {
       if (!destroyed && client === operatorClient) {
-        retentionError = `Could not dismiss the reminder: ${error instanceof Error ? error.message : String(error)}`;
+        retentionError = $LL.app.shell.app.retention_dismiss_failed({ detail: error instanceof Error ? error.message : String(error) });
       }
     } finally { dismissingRetention = false; }
   }

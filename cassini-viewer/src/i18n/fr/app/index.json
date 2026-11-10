@@ -7,7 +7,8 @@
       "close_overlay": "",
       "recording_needs_action": "",
       "open_recording_setup": "",
-      "retention_load_failed": ""
+      "retention_load_failed": "",
+      "retention_dismiss_failed": ""
     },
     "load_error": {
       "title": "",
@@ -439,7 +440,6 @@
       "report": {
         "title": "",
         "last_calculated": "",
-        "just_now": "",
         "calculating": "",
         "recalculate": "",
         "calculate": "",
@@ -963,6 +963,7 @@
       "search_intro": "",
       "search_field": "",
       "search_limit": "",
+      "search_placeholder": "",
       "search_note_transcripts": "",
       "search_note_results": "",
       "search_note_when": "",

@@ -1790,7 +1790,12 @@
       <div class="card bg-base-100 w-full max-w-md border border-base-300">
         <div class="card-body items-center text-center">
           <h2 class="text-lg font-bold">{$LL.viewer.meeting.view.not_found_heading()}</h2>
-          <p class="text-base-content">{errorMessage || notFoundMessage}</p>
+          {#if errorMessage}
+            <p class="text-base-content">{$LL.viewer.meeting.view.load_failed()}</p>
+            <p class="text-sm text-base-content/70 break-words">{errorMessage}</p>
+          {:else}
+            <p class="text-base-content">{notFoundMessage}</p>
+          {/if}
         </div>
       </div>
     </div>

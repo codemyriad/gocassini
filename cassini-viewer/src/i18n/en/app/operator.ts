@@ -508,7 +508,6 @@ const operator = {
       title: "Storage",
       // {when}: a date and time.
       last_calculated: "Last calculated {when}",
-      just_now: "just now",
       calculating: "Calculating…",
       recalculate: "Recalculate",
       calculate: "Calculate",

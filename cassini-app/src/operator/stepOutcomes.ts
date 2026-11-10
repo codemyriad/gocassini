@@ -3,7 +3,7 @@
 // the run used to read "Published" either way. Pure so the wording can be
 // tested without mounting the Operator.
 import { get } from "svelte/store";
-import { formatLocale, LL } from "cassini-viewer/i18n";
+import { LL, locale } from "cassini-viewer/i18n";
 import type { JobAttempt, JobDetailResponse, JobShareOutcome, SkippedShare } from "./types";
 
 const copy = () => get(LL).app.operator.step_outcomes;
@@ -140,16 +140,17 @@ export function recipients(count: number): string {
 }
 
 // "bob", "bob and carol", "bob, carol and dave", "bob, carol, dave and 2 more".
-// The list itself is the reader's locale's (Intl.ListFormat).
+// The list itself is in the reader's language (Intl.ListFormat): "and" is a word,
+// so it follows the language, not the date-and-number locale.
 export function listRefusedIds(ids: string[], shown = 3): string {
   const named = ids.slice(0, shown);
   const rest = ids.length - named.length;
   if (rest > 0) {
-    const names = new Intl.ListFormat(formatLocale(), { type: "unit", style: "short" }).format(named);
+    const names = new Intl.ListFormat(get(locale), { type: "unit", style: "short" }).format(named);
     return copy().refused.list_more({ names, count: rest });
   }
   if (named.length <= 1) return named.join("");
-  return new Intl.ListFormat(formatLocale(), { type: "conjunction" }).format(named);
+  return new Intl.ListFormat(get(locale), { type: "conjunction" }).format(named);
 }
 
 // What a re-share's answer says beside the button: everyone, or who is still

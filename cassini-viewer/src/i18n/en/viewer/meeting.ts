@@ -36,6 +36,9 @@ const meeting = {
     close_title: "Close (Esc)",
     no_audio: "This meeting contains a transcript without audio. Playback is unavailable.",
     not_found_heading: "Meeting not found",
+    // Under the heading above when the meeting's file could not be read. The
+    // technical reason follows underneath, in English.
+    load_failed: "Couldn't load this meeting.",
     loading: "Loading meeting…",
     select_prompt: "Select a meeting to view",
     // Heading over the list of insights made from this meeting, on its Summary tab.
@@ -127,6 +130,13 @@ const meeting = {
     copy_id: "Copy meeting ID",
     id_copied: "Meeting ID copied",
     copied: "Copied",
+    // The audio's channels, in the recording's details after the codec and
+    // sample rate ("OPUS · 48 kHz · mono"). Mid-sentence; use your language's
+    // capitalisation.
+    audio_mono: "mono",
+    audio_stereo: "stereo",
+    // {count} is 3 or more.
+    audio_channels: "{count} channels",
   },
   // How precisely the words are timed, under "Timing" in the details.
   timing: {
@@ -298,6 +308,14 @@ const meeting = {
     next: "Next tagged section",
   },
   // The card for a selected stretch of transcript (StretchToolbar.svelte).
+  // Keycaps printed next to a button, for its keyboard shortcut. Use the key's
+  // name as printed on keyboards in your language (German: "Strg").
+  keys: {
+    // The Control key (Mac shows ⌘ instead).
+    ctrl: "Ctrl",
+    // The Escape key.
+    escape: "Esc",
+  },
   stretch: {
     toolbar_label: "This section",
     unsaved: "Unsaved changes",

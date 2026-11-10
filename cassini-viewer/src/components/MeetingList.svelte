@@ -1,7 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
   import { Sun, Moon, Search, PanelLeft, Tag, Trash2, TriangleAlert, Users, X } from "@lucide/svelte";
-  import { LL } from "../i18n";
+  import { dateFormat, LL } from "../i18n";
   import type { TagPick, VocabularyTag } from "../viewer/annotations";
   import { filterByTagLabel, wholeTagState, type MeetingTags } from "../viewer/listTags";
   import { colorFor } from "../viewer/tagPalette";
@@ -34,7 +34,8 @@
   // The Imported badge's tooltip (D-828): attribution, phrased like a sentence.
   function importedTitle(imported: { by?: string; atUtc?: string }): string {
     const by = imported.by?.trim() ?? "";
-    const day = (imported.atUtc ?? "").slice(0, 10);
+    const at = imported.atUtc ? new Date(imported.atUtc) : null;
+    const day = at && !Number.isNaN(at.getTime()) ? dateFormat({ dateStyle: "medium" }).format(at) : "";
     if (by && day) return text.imported_by_on({ name: by, date: day });
     if (by) return text.imported_by({ name: by });
     return day ? text.imported_on({ date: day }) : text.imported_here();
@@ -822,7 +823,8 @@
       <section class="alert alert-warning items-start">
         <div>
           <h2 class="text-xs font-bold uppercase tracking-widest mb-1">{text.load_note()}</h2>
-          <p>{errorMessage}</p>
+          <p>{text.load_failed()}</p>
+          <p class="text-sm opacity-80 break-words">{errorMessage}</p>
         </div>
       </section>
     </footer>

@@ -139,6 +139,7 @@
       "matched_alias": "",
       "show_more": "",
       "load_note": "",
+      "load_failed": "",
       "duration_minutes": "",
       "duration_hours": ""
     },
@@ -480,6 +481,7 @@
       "close_title": "",
       "no_audio": "",
       "not_found_heading": "",
+      "load_failed": "",
       "loading": "",
       "select_prompt": "",
       "insights_heading": "",
@@ -549,7 +551,10 @@
       "passages_other": "",
       "copy_id": "",
       "id_copied": "",
-      "copied": ""
+      "copied": "",
+      "audio_mono": "",
+      "audio_stereo": "",
+      "audio_channels": ""
     },
     "timing": {
       "passage": "",
@@ -685,6 +690,10 @@
       "label_other": "",
       "previous": "",
       "next": ""
+    },
+    "keys": {
+      "ctrl": "",
+      "escape": ""
     },
     "stretch": {
       "toolbar_label": "",

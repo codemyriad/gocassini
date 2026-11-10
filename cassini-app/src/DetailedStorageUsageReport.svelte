@@ -88,7 +88,7 @@
 
   function measuredAt(value: string): string {
     const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? $LL.app.operator.storage.report.just_now() : dateFormat({ dateStyle: "medium", timeStyle: "short" }).format(date);
+    return Number.isNaN(date.getTime()) ? "" : dateFormat({ dateStyle: "medium", timeStyle: "short" }).format(date);
   }
 </script>
 
@@ -96,7 +96,7 @@
   <header class="report-head">
     <div class="op-panel-title"><HardDrive size={18} aria-hidden="true" /><h1 id="detailed-storage-title">{$LL.app.operator.storage.report.title()}</h1></div>
     <div class="report-actions">
-      {#if usage?.measured_at}<span class="measured">{$LL.app.operator.storage.report.last_calculated({ when: measuredAt(usage.measured_at) })}</span>{/if}
+      {#if usage?.measured_at && measuredAt(usage.measured_at)}<span class="measured">{$LL.app.operator.storage.report.last_calculated({ when: measuredAt(usage.measured_at) })}</span>{/if}
       <button class="op-btn recalculate" class:refreshing={recalculating} type="button" on:click={() => void load(true)} disabled={loading}>
         <RefreshCw size={15} aria-hidden="true" />
         {recalculating ? $LL.app.operator.storage.report.calculating() : usage?.measured_at ? $LL.app.operator.storage.report.recalculate() : $LL.app.operator.storage.report.calculate()}

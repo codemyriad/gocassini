@@ -132,6 +132,10 @@ const settings = {
     search_intro: "Common mishearings of a name, so searching for the name finds them too.",
     search_field: "One name per line, then its spellings, separated by commas",
     search_limit: "(up to 100 names, 25 spellings each)",
+    // Example text in the empty field: two lines, each a name followed by ways
+    // a transcriber mishears it. Keep the format (one name per line, then
+    // commas); you may use your own examples of names misheard in your language.
+    search_placeholder: "Cassini, casino, casini\nEisbuk, ice book, icebook",
     search_note_transcripts: "Doesn't change any transcript, only what search finds.",
     search_note_results: "Results say when they matched one of these spellings.",
     search_note_when: "Use these spellings when the transcriber mishears a name.",

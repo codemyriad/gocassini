@@ -13,7 +13,7 @@ import {
   type StartOrder,
   wallClockMonth,
 } from "./meetingTime";
-import { NO_ROOM_KEY, UNDATED_MONTH_KEY, UNDATED_MONTH_LABEL } from "./rooms";
+import { NO_ROOM_KEY, UNDATED_MONTH_KEY, undatedMonthLabel } from "./rooms";
 
 // Insights in the browse catalogue (D-721). Pure, for the same reason rooms.ts
 // and selectionModel.ts are: the viewer's suite runs in node with no DOM, and
@@ -622,11 +622,11 @@ export function groupBrowseFeedByMonth(
 
 function monthOf(item: BrowseFeedItem): { key: string; label: string } {
   if (item.kind === "meeting") {
-    return meetingStartMonth(item.meeting) ?? { key: UNDATED_MONTH_KEY, label: UNDATED_MONTH_LABEL };
+    return meetingStartMonth(item.meeting) ?? { key: UNDATED_MONTH_KEY, label: undatedMonthLabel() };
   }
   const ms = insightTimestampMs(item.insight);
   if (ms === null) {
-    return { key: UNDATED_MONTH_KEY, label: UNDATED_MONTH_LABEL };
+    return { key: UNDATED_MONTH_KEY, label: undatedMonthLabel() };
   }
   return wallClockMonth(instantWallClock(ms));
 }

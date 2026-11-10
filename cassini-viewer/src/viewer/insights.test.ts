@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { sameHeadlineText, stripLeadingHeading } from "./insights";
 import type { MeetingCatalogEntry } from "./catalog";
-import { NO_ROOM_KEY, UNDATED_MONTH_LABEL } from "./rooms";
+import { NO_ROOM_KEY, undatedMonthLabel } from "./rooms";
 import {
   ALL_BROWSE_TYPES,
   buildBrowseFeed,
@@ -357,7 +357,7 @@ describe("groupBrowseFeedByMonth", () => {
     );
 
     expect(groups).toHaveLength(1);
-    expect(groups[0].label).toBe(UNDATED_MONTH_LABEL);
+    expect(groups[0].label).toBe(undatedMonthLabel());
   });
 
   it("keeps the headings in order for a reader west of UTC", () => {

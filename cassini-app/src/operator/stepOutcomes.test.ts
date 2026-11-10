@@ -163,7 +163,8 @@ describe("after a re-share", () => {
     expect(reshareOutcome([])).toBe("Shared with everyone.");
     expect(reshareOutcome(["bob"])).toBe("Shared again. Nextcloud still refused 1 recipient (bob). Check Doctor › Recording sharing.");
     expect(reshareOutcome(["bob", "carol"])).toBe("Shared again. Nextcloud still refused 2 recipients (bob and carol). Check Doctor › Recording sharing.");
-    expect(reshareOutcome(["bob", "carol", "dave"])).toBe("Shared again. Nextcloud still refused 3 recipients (bob, carol and dave). Check Doctor › Recording sharing.");
+    // The list follows the language ("en"), so English gets its serial comma.
+    expect(reshareOutcome(["bob", "carol", "dave"])).toBe("Shared again. Nextcloud still refused 3 recipients (bob, carol, and dave). Check Doctor › Recording sharing.");
     expect(reshareOutcome(["bob", "carol", "dave", "erin", "frank"])).toBe("Shared again. Nextcloud still refused 5 recipients (bob, carol, dave and 2 more). Check Doctor › Recording sharing.");
     expect(listRefusedIds([])).toBe("");
   });

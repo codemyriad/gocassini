@@ -139,6 +139,7 @@
       "matched_alias": "Matched a known mistranscription",
       "show_more": "Show more ({count} remaining)",
       "load_note": "Load note",
+      "load_failed": "Couldn't load the meetings.",
       "duration_minutes": "{minutes}m",
       "duration_hours": "{hours}h {minutes}m"
     },
@@ -480,6 +481,7 @@
       "close_title": "Close (Esc)",
       "no_audio": "This meeting contains a transcript without audio. Playback is unavailable.",
       "not_found_heading": "Meeting not found",
+      "load_failed": "Couldn't load this meeting.",
       "loading": "Loading meeting…",
       "select_prompt": "Select a meeting to view",
       "insights_heading": "Insights",
@@ -549,7 +551,10 @@
       "passages_other": "{count} passages",
       "copy_id": "Copy meeting ID",
       "id_copied": "Meeting ID copied",
-      "copied": "Copied"
+      "copied": "Copied",
+      "audio_mono": "mono",
+      "audio_stereo": "stereo",
+      "audio_channels": "{count} channels"
     },
     "timing": {
       "passage": "Passage-timed",
@@ -685,6 +690,10 @@
       "label_other": "tagged sections",
       "previous": "Previous tagged section",
       "next": "Next tagged section"
+    },
+    "keys": {
+      "ctrl": "Ctrl",
+      "escape": "Esc"
     },
     "stretch": {
       "toolbar_label": "This section",

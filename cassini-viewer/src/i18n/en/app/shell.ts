@@ -15,6 +15,8 @@ const shell = {
     recording_needs_action: "Recording setup needs an administrator’s attention.",
     open_recording_setup: "Open recording setup",
     retention_load_failed: "Could not load retention settings.",
+    // Shown above the retention reminder. {detail} is the server's error, in English.
+    retention_dismiss_failed: "Could not dismiss the reminder: {detail}",
   },
   // A settings section that could not be read from Cassini.
   load_error: {
