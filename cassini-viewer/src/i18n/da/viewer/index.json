@@ -449,6 +449,7 @@
       "export_copied": "Transskriptionen er kopieret.",
       "export_clipboard_blocked": "Udklipsholderen er blokeret her – brug Hent transskription.",
       "export_downloaded": "Transskriptionen er hentet.",
+      "export_summary_downloaded": "",
       "export_preparing_file": "Forbereder mødefil…",
       "export_file_downloaded": "Mødefilen er hentet.",
       "reload_failed": "Kunne ikke genindlæse optagelsen: {error}",
@@ -832,6 +833,7 @@
     "copy_transcripts": "Kopiér transskriptioner",
     "download_transcript": "Hent transskription",
     "download_transcripts": "Hent transskriptioner",
+    "download_summary": "",
     "download_audio": "Hent lyd"
   }
 }

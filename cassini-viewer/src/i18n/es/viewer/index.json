@@ -449,6 +449,7 @@
       "export_copied": "Transcripción copiada.",
       "export_clipboard_blocked": "El portapapeles está bloqueado aquí. Usa Descargar transcripción.",
       "export_downloaded": "Transcripción descargada.",
+      "export_summary_downloaded": "",
       "export_preparing_file": "Preparando el archivo de reunión…",
       "export_file_downloaded": "Archivo de reunión descargado.",
       "reload_failed": "No se pudo volver a cargar la grabación: {error}",
@@ -832,6 +833,7 @@
     "copy_transcripts": "Copiar transcripciones",
     "download_transcript": "Descargar transcripción",
     "download_transcripts": "Descargar transcripciones",
+    "download_summary": "",
     "download_audio": "Descargar audio"
   }
 }

@@ -449,6 +449,7 @@
       "export_copied": "Transkript je kopiran.",
       "export_clipboard_blocked": "Međuspremnik je ovdje blokiran — koristi Preuzmi transkript.",
       "export_downloaded": "Transkript je preuzet.",
+      "export_summary_downloaded": "",
       "export_preparing_file": "Priprema datoteke sastanka…",
       "export_file_downloaded": "Datoteka sastanka je preuzeta.",
       "reload_failed": "Nije moguće ponovno učitati snimku: {error}",
@@ -832,6 +833,7 @@
     "copy_transcripts": "Kopiraj transkripte",
     "download_transcript": "Preuzmi transkript",
     "download_transcripts": "Preuzmi transkripte",
+    "download_summary": "",
     "download_audio": "Preuzmi zvuk"
   }
 }

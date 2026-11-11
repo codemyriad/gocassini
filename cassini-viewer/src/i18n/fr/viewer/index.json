@@ -449,6 +449,7 @@
       "export_copied": "Transcription copiée.",
       "export_clipboard_blocked": "Presse-papiers bloqué ici. Utilisez « Télécharger la transcription ».",
       "export_downloaded": "Transcription téléchargée.",
+      "export_summary_downloaded": "",
       "export_preparing_file": "Préparation du fichier de réunion…",
       "export_file_downloaded": "Fichier de réunion téléchargé.",
       "reload_failed": "Impossible de recharger l’enregistrement : {error}",
@@ -832,6 +833,7 @@
     "copy_transcripts": "Copier les transcriptions",
     "download_transcript": "Télécharger la transcription",
     "download_transcripts": "Télécharger les transcriptions",
+    "download_summary": "",
     "download_audio": "Télécharger l’audio"
   }
 }

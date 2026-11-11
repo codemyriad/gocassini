@@ -54,6 +54,7 @@ const meeting = {
     export_copied: "Transcript copied.",
     export_clipboard_blocked: "Clipboard blocked here — use Download transcript.",
     export_downloaded: "Transcript downloaded.",
+    export_summary_downloaded: "Summary downloaded.",
     export_preparing_file: "Preparing meeting file…",
     export_file_downloaded: "Meeting file downloaded.",
     reload_failed: "Couldn't reload the recording: {error}",

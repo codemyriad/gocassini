@@ -7253,6 +7253,10 @@ export type NamespaceViewerTranslation = {
 			 */
 			export_downloaded: string
 			/**
+			 * S​u​m​m​a​r​y​ ​d​o​w​n​l​o​a​d​e​d​.
+			 */
+			export_summary_downloaded: string
+			/**
 			 * P​r​e​p​a​r​i​n​g​ ​m​e​e​t​i​n​g​ ​f​i​l​e​…
 			 */
 			export_preparing_file: string
@@ -8601,6 +8605,10 @@ export type NamespaceViewerTranslation = {
 		 * D​o​w​n​l​o​a​d​ ​t​r​a​n​s​c​r​i​p​t​s
 		 */
 		download_transcripts: string
+		/**
+		 * D​o​w​n​l​o​a​d​ ​s​u​m​m​a​r​y
+		 */
+		download_summary: string
 		/**
 		 * D​o​w​n​l​o​a​d​ ​a​u​d​i​o
 		 */
@@ -15364,6 +15372,10 @@ export type TranslationFunctions = {
 				 */
 				export_downloaded: () => LocalizedString
 				/**
+				 * Summary downloaded.
+				 */
+				export_summary_downloaded: () => LocalizedString
+				/**
 				 * Preparing meeting file…
 				 */
 				export_preparing_file: () => LocalizedString
@@ -16640,6 +16652,10 @@ export type TranslationFunctions = {
 			 * Download transcripts
 			 */
 			download_transcripts: () => LocalizedString
+			/**
+			 * Download summary
+			 */
+			download_summary: () => LocalizedString
 			/**
 			 * Download audio
 			 */

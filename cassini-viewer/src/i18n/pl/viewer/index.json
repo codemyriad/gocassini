@@ -449,6 +449,7 @@
       "export_copied": "Skopiowano transkrypcję.",
       "export_clipboard_blocked": "Schowek jest tutaj zablokowany — użyj opcji Pobierz transkrypcję.",
       "export_downloaded": "Pobrano transkrypcję.",
+      "export_summary_downloaded": "",
       "export_preparing_file": "Przygotowywanie pliku spotkania…",
       "export_file_downloaded": "Pobrano plik spotkania.",
       "reload_failed": "Nie udało się ponownie wczytać nagrania: {error}",
@@ -832,6 +833,7 @@
     "copy_transcripts": "Kopiuj transkrypcje",
     "download_transcript": "Pobierz transkrypcję",
     "download_transcripts": "Pobierz transkrypcje",
+    "download_summary": "",
     "download_audio": "Pobierz dźwięk"
   }
 }
