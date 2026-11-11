@@ -75,6 +75,27 @@ expect true  ".github/workflows/new-workflow.yml"
 expect true  $'.github/workflows/lint.yml\ncassini-operator/main.go'
 expect true  $'cassini-microsite/x.astro\nscripts/lib-release-version.sh'
 
+# ci.yml's suites (--ci-suite): the same, except that ci.yml tests itself.
+expect_suite() {
+  local want="$1" input="$2" got
+  got="$(printf '%s' "$input" | "$CLASSIFIER" --ci-suite)"
+  [[ "$got" == "$want" ]] \
+    || fail "--ci-suite returned '$got', wanted '$want' for input <<${input}>>"
+}
+expect_suite false ""
+expect_suite false $'\n'
+expect_suite false $'README.md\ndocs/guide.md'
+expect_suite false $'.github/workflows/lint.yml\n.github/workflows/pr-conflict-impact.yml'
+expect_suite false $'cassini-microsite/src/pages/index.astro\n.claude/settings.json'
+expect_suite true  ".github/workflows/ci.yml"
+expect_suite true  $'.github/workflows/ci.yml\nREADME.md'
+# contracts tests the image workflow's gate, so it runs the suites too.
+expect_suite true  ".github/workflows/publish-exapp-image.yml"
+expect_suite true  ".github/workflows/new-workflow.yml"
+expect_suite true  "scripts/classify-image-relevance.sh"
+expect_suite true  $'README.md\ncassini-operator/main.go'
+"$CLASSIFIER" --bogus </dev/null >/dev/null 2>&1 && fail "an unknown option must fail"
+
 echo "PASS: classifier behavioral fixtures"
 
 # ---- (2) drift assertion vs ci.yml paths-ignore ------------------------------
@@ -99,8 +120,8 @@ gh_to_bash_glob() {
   esac
 }
 
-# Extract ci.yml's paths-ignore items. push + pull_request carry identical
-# lists, so we collect both and dedupe. No yq on the contracts runner, so parse
+# Extract ci.yml's paths-ignore items (push only: pull requests always run
+# and classify in the `changes` job). Collected and deduped all the same. No yq on the contracts runner, so parse
 # the small, stable YAML with awk: take `- '...'` items directly under a
 # `paths-ignore:` key, then strip the dash prefix and surrounding quotes.
 mapfile -t ci_globs_raw < <(

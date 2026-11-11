@@ -7,6 +7,9 @@
 #            that don't build or test the image, the website, agent config).
 #   true  -> run the gate; emitted the moment ANY changed path is not.
 #
+# With `--ci-suite` it answers the same question for ci.yml's test suites,
+# using NOT_SUITE_GLOBS instead of NOT_IMAGE_GLOBS (D-906).
+#
 # This is a DENY-list, deliberately mirroring .github/workflows/ci.yml's
 # `paths-ignore`. The gate it feeds is a REQUIRED status check, so the cost
 # asymmetry is the whole point (D-505): an unmatched path here costs ~30 wasted
@@ -49,17 +52,23 @@ OTHER_WORKFLOWS=(
   '.github/workflows/release.yml'
 )
 
-# Paths that are not docs but never reach the image or its tests (D-906). These
-# apply to the image gate only and stay OUT of DENY_GLOBS: ci.yml's paths-ignore
-# must not skip them, or its required checks would never report on such a PR.
-# ci.yml itself is here because it runs its own suite on its own change.
-NOT_IMAGE_GLOBS=(
+# Paths that are not docs but that neither ci.yml's suites nor the image use
+# (D-906). They stay OUT of DENY_GLOBS: ci.yml's push paths-ignore must not
+# skip them. On a pull request ci.yml always runs and its `changes` job skips
+# the suites with this list, so `CI passed` still reports.
+NOT_SUITE_GLOBS=(
   "${OTHER_WORKFLOWS[@]}"
-  '.github/workflows/ci.yml'
   '.github/FUNDING.yml'
   '.github/actionlint.yaml'
   '.claude/*'              # agent skills and settings
   'cassini-microsite/*'    # the website: not an npm workspace, never COPYed
+)
+
+# The same, for the image gate. ci.yml is here but not above: it runs its own
+# suites on its own change, and nothing in the image workflow reads it.
+NOT_IMAGE_GLOBS=(
+  "${NOT_SUITE_GLOBS[@]}"
+  '.github/workflows/ci.yml'
 )
 
 # classify_path_matches PATH GLOB... -> 0 (true) when PATH matches any GLOB.
@@ -86,10 +95,17 @@ classify_path_skips_image() {
   classify_path_is_docs "$1" || classify_path_matches "$1" "${NOT_IMAGE_GLOBS[@]}"
 }
 
-# classify_stream reads changed paths on stdin and prints the verdict: false
-# when every path is docs or in NOT_IMAGE_GLOBS; true at the first other path.
+# classify_path_skips_suite PATH -> 0 (true) when a change to PATH alone cannot
+# change what ci.yml's suites test.
+classify_path_skips_suite() {
+  classify_path_is_docs "$1" || classify_path_matches "$1" "${NOT_SUITE_GLOBS[@]}"
+}
+
+# classify_stream [SKIPS] reads changed paths on stdin and prints the verdict:
+# false when SKIPS (default classify_path_skips_image) holds for every path;
+# true at the first path it doesn't.
 classify_stream() {
-  local relevant=false path
+  local skips="${1:-classify_path_skips_image}" relevant=false path
   # `|| [[ -n "$path" ]]` processes a final line with no trailing newline too:
   # a dropped last path would emit a false `false`, i.e. a green REQUIRED gate on
   # an unbuilt product -- exactly the failure D-505 exists to end. So we tolerate
@@ -102,7 +118,7 @@ classify_stream() {
     # EVERY docs-only PR -- this guard is load-bearing, not decorative (see
     # test-classify-image-relevance.sh).
     [[ -n "$path" ]] || continue
-    if ! classify_path_skips_image "$path"; then
+    if ! "$skips" "$path"; then
       relevant=true
       break
     fi
@@ -114,5 +130,9 @@ classify_stream() {
 # DENY_GLOBS and calls the functions) do nothing.
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   set -euo pipefail
-  classify_stream
+  case "${1:-}" in
+    '') classify_stream classify_path_skips_image ;;
+    --ci-suite) classify_stream classify_path_skips_suite ;;
+    *) echo "usage: $0 [--ci-suite] < changed-paths" >&2; exit 2 ;;
+  esac
 fi

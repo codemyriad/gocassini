@@ -10,8 +10,9 @@ on:
     # (expensive) suite. paths-ignore is a DENY-list: if any changed file falls
     # outside this list the workflow still runs, so a real code change is
     # never silently skipped (avoids the allow-list false-green trap the PR #36
-    # incident demonstrated; scripts/classify-image-relevance.sh now applies the
-    # same deny-list to the required faithful gate in publish-exapp-image.yml).
+    # incident demonstrated; scripts/classify-image-relevance.sh applies the
+    # same deny-list to pull requests below and to the required faithful gate
+    # in publish-exapp-image.yml).
     # spec/ is intentionally NOT here: it holds the manifest JSON schemas that
     # code validates against.
     paths-ignore:
@@ -22,15 +23,10 @@ on:
       - 'planning/**'
       - 'img/**'
       - 'media-kit.*'
+  # No paths-ignore on pull requests (D-906): `CI passed` is required, and a
+  # workflow that never starts never reports it. The `changes` job skips the
+  # suites instead, and the gate passes on skipped jobs.
   pull_request:
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
-      - 'docs-wip/**'
-      - 'dev-docs-wip/**'
-      - 'planning/**'
-      - 'img/**'
-      - 'media-kit.*'
   # Run the full suite on demand for any commit, without opening a PR:
   #   gh workflow run ci.yml --ref <branch> -f ref=<sha|branch|tag>
   # An empty ref tests the dispatched branch's head. paths-ignore does not
@@ -54,9 +50,49 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Decides whether a pull request needs the suites at all (D-906): not when
+  # every changed path is docs, or a workflow or file the suites never use
+  # (classify-image-relevance.sh --ci-suite). Every other event runs them.
+  changes:
+    name: Classify changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      suite: ${{ steps.classify.outputs.suite }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+          # The diff needs commits and trees, not file contents.
+          filter: blob:none
+      - name: Classify
+        id: classify
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          suite=true
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+            # Same diff as the recorder classifier in contracts. A failed
+            # diff fails this job, and with it `CI passed`.
+            changed="$(git diff --no-renames --name-only "$BASE_SHA" "$HEAD_SHA")"
+            suite="$(printf '%s\n' "$changed" | ./scripts/classify-image-relevance.sh --ci-suite)"
+          fi
+          echo "suite=$suite" >> "$GITHUB_OUTPUT"
+          if [[ "$suite" == true ]]; then
+            echo "Running the test suites." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Only docs or files the suites never use changed: skipping the suites." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   contracts:
     name: Fast manifest + harness contracts
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.suite == 'true'
     outputs:
       recorder-integration: ${{ steps.changes.outputs.relevant }}
       recorder-matrix: ${{ steps.matrix.outputs.value }}
@@ -145,6 +181,8 @@ jobs:
   ui:
     name: UI tests
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.suite == 'true'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -198,6 +236,8 @@ jobs:
   unit:
     name: Unit tests (${{ matrix.module }})
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.suite == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -429,13 +469,13 @@ jobs:
   # The one check branch protection requires from this workflow (D-906).
   # Jobs above can be split, merged or renamed without touching the rulesets:
   # this job fails unless every job it needs passed or was not needed.
-  # `skipped` passes because a job is only skipped by design here: the
-  # recorder classifier skips integration, and a failed `needs` already shows
-  # up as that job's own failure.
+  # `skipped` passes because a job is only skipped by design here: `changes`
+  # skips the suites, the recorder classifier skips integration, and a failed
+  # `needs` already shows up as that job's own failure.
   ci-passed:
     name: CI passed
     runs-on: ubuntu-latest
-    needs: [contracts, ui, unit, integration, integration-mute]
+    needs: [changes, contracts, ui, unit, integration, integration-mute]
     if: always()
     steps:
       - uses: actions/checkout@v4
