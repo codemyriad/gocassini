@@ -201,7 +201,7 @@ func requeueRepublishedRecordedAtFileTx(ctx context.Context, tx *sql.Tx, opusNam
 	_, err := tx.ExecContext(ctx, `INSERT INTO recorded_at_file_backfill(opus_name, recorded_at_utc, state, updated_at) VALUES(?, ?, 'needed', ?)
  ON CONFLICT(opus_name) DO UPDATE SET recorded_at_utc=excluded.recorded_at_utc,
  state=CASE WHEN recorded_at_file_backfill.state='needed' THEN 'needed' ELSE 'pending' END,
- attempts=0, retry_at=0, last_error='', updated_at=excluded.updated_at`, opusName, value, nowUTCString())
+ attempts=0, retry_at=0, last_error='', last_error_code='', last_error_params='', updated_at=excluded.updated_at`, opusName, value, nowUTCString())
 	return err
 }
 

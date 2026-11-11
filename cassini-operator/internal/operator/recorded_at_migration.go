@@ -251,7 +251,7 @@ func (w *recordedAtFileWorker) startMigration(ctx context.Context) (int64, error
 		return 0, err
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, `UPDATE recorded_at_file_backfill SET state='pending', attempts=0, retry_at=0, last_error='', updated_at=? WHERE state IN ('needed','blocked')`, nowUTCString())
+	result, err := tx.ExecContext(ctx, `UPDATE recorded_at_file_backfill SET state='pending', attempts=0, retry_at=0, last_error='', last_error_code='', last_error_params='', updated_at=? WHERE state IN ('needed','blocked')`, nowUTCString())
 	if err != nil {
 		return 0, err
 	}

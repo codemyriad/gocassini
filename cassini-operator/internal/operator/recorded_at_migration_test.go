@@ -68,6 +68,9 @@ func TestRecordedAtMigrationStartRetriesBlockedAndWakes(t *testing.T) {
 	f := newFileWorkerFixture(t, 0)
 	ctx := context.Background()
 	f.setState(t, recordedAtStateBlocked)
+	if _, err := f.w.rt.meetingMetadata.db.Exec(`UPDATE recorded_at_file_backfill SET last_error='x', last_error_code='recording_missing', last_error_params='{"a":1}' WHERE opus_name='MEETING1.opus'`); err != nil {
+		t.Fatal(err)
+	}
 	f.addRow(t, "DONE.opus", recordedAtStateDone)
 	f.addRow(t, "NEEDED.opus", recordedAtStateNeeded)
 	n, err := f.w.startMigration(ctx)
@@ -76,6 +79,12 @@ func TestRecordedAtMigrationStartRetriesBlockedAndWakes(t *testing.T) {
 	}
 	if r := f.row(t); r.state != recordedAtStatePending || r.attempts != 0 || r.lastError != "" {
 		t.Fatalf("blocked row = %+v", r)
+	}
+	// The reason's code goes with its English, so a later block is not
+	// worded by a stale one.
+	var code, params string
+	if err := f.w.rt.meetingMetadata.db.QueryRow(`SELECT last_error_code, last_error_params FROM recorded_at_file_backfill WHERE opus_name='MEETING1.opus'`).Scan(&code, &params); err != nil || code != "" || params != "" {
+		t.Fatalf("code = %q, params = %q, %v", code, params, err)
 	}
 	if len(f.w.wake) != recordedAtFileWorkers {
 		t.Fatalf("woke %d workers, want %d", len(f.w.wake), recordedAtFileWorkers)

@@ -179,7 +179,7 @@ func (w *recordedAtFileWorker) startWorkers() {
 // person (restore the file, upgrade the CLI); a restart is when what they
 // fixed can take effect.
 func (w *recordedAtFileWorker) requeueBlocked(ctx context.Context) (int64, error) {
-	result, err := w.rt.meetingMetadata.db.ExecContext(ctx, `UPDATE recorded_at_file_backfill SET state='pending', attempts=0, retry_at=0, updated_at=? WHERE state='blocked'`, nowUTCString())
+	result, err := w.rt.meetingMetadata.db.ExecContext(ctx, `UPDATE recorded_at_file_backfill SET state='pending', attempts=0, retry_at=0, last_error_code='', last_error_params='', updated_at=? WHERE state='blocked'`, nowUTCString())
 	if err != nil {
 		return 0, err
 	}
@@ -337,7 +337,7 @@ func (w *recordedAtFileWorker) processOne(ctx context.Context, name string) {
 		return
 	case errors.As(err, &deferred):
 		retry := w.now().Add(recordedAtFileDeferral)
-		if _, e := store.db.ExecContext(persist, `UPDATE recorded_at_file_backfill SET retry_at=?, last_error=?, updated_at=? WHERE opus_name=?`, retry.Unix(), deferred.reason, nowUTCString(), name); e != nil {
+		if _, e := store.db.ExecContext(persist, `UPDATE recorded_at_file_backfill SET retry_at=?, last_error=?, last_error_code='', last_error_params='', updated_at=? WHERE opus_name=?`, retry.Unix(), deferred.reason, nowUTCString(), name); e != nil {
 			w.logf("recorded-at: persist deferral %s: %v", name, e)
 		}
 		time.AfterFunc(recordedAtFileDeferral, w.poke)
@@ -370,7 +370,7 @@ func (w *recordedAtFileWorker) processOne(ctx context.Context, name string) {
 		var retryAt int64
 		err := store.db.QueryRowContext(persist, `UPDATE recorded_at_file_backfill SET attempts=attempts+1,
  retry_at=CASE WHEN state='uploading' AND COALESCE((SELECT paused FROM recorded_at_file_backfill_control WHERE id=1), 0)!=0 THEN ? ELSE ? END,
- last_error=?, updated_at=? WHERE opus_name=? RETURNING retry_at`,
+ last_error=?, last_error_code='', last_error_params='', updated_at=? WHERE opus_name=? RETURNING retry_at`,
 			now.Add(soon).Unix(), now.Add(backoff).Unix(), "delivered file could not be re-tagged yet; retrying", nowUTCString(), name).Scan(&retryAt)
 		wait := soon
 		if err != nil || retryAt != now.Add(soon).Unix() {
@@ -384,7 +384,7 @@ func (w *recordedAtFileWorker) processOne(ctx context.Context, name string) {
 }
 
 func (w *recordedAtFileWorker) setState(ctx context.Context, name, state string) error {
-	_, err := w.rt.meetingMetadata.db.ExecContext(ctx, `UPDATE recorded_at_file_backfill SET state=?, attempts=0, retry_at=0, last_error='', updated_at=? WHERE opus_name=?`, state, nowUTCString(), name)
+	_, err := w.rt.meetingMetadata.db.ExecContext(ctx, `UPDATE recorded_at_file_backfill SET state=?, attempts=0, retry_at=0, last_error='', last_error_code='', last_error_params='', updated_at=? WHERE opus_name=?`, state, nowUTCString(), name)
 	return err
 }
 
