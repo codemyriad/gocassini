@@ -10,7 +10,7 @@ import (
 )
 
 // The note on a share, in the words the contract fixes: what the file is,
-// when, how long, and where to open it. No URL.
+// what it contains, when, how long, and where to open it. No URL.
 func TestShareNoteWording(t *testing.T) {
 	start := time.Date(2026, 10, 30, 10, 0, 0, 0, time.UTC)
 	for name, tc := range map[string]struct {
@@ -18,14 +18,14 @@ func TestShareNoteWording(t *testing.T) {
 		imported bool
 		want     string
 	}{
-		"a recording":      {meetingFacts{Title: "Weekly sync", StartedAt: start, Duration: 42 * time.Minute}, false, "Recording of Weekly sync, Friday 30 October 2026, 10:00 UTC (42 min). Open it in Cassini."},
-		"an import":        {meetingFacts{Title: "Weekly sync", StartedAt: start, Duration: 42 * time.Minute}, true, "Imported meeting Weekly sync, Friday 30 October 2026, 10:00 UTC (42 min). Open it in Cassini."},
-		"over an hour":     {meetingFacts{Title: "Planning", StartedAt: start, Duration: 65 * time.Minute}, false, "Recording of Planning, Friday 30 October 2026, 10:00 UTC (1 h 05). Open it in Cassini."},
-		"very short":       {meetingFacts{Title: "Test", StartedAt: start, Duration: 20 * time.Second}, false, "Recording of Test, Friday 30 October 2026, 10:00 UTC (under a minute). Open it in Cassini."},
-		"no title":         {meetingFacts{StartedAt: start, Duration: 42 * time.Minute}, false, "Recording from Friday 30 October 2026, 10:00 UTC (42 min). Open it in Cassini."},
-		"no date":          {meetingFacts{Title: "Weekly sync", Duration: 42 * time.Minute}, false, "Recording of Weekly sync (42 min). Open it in Cassini."},
-		"nothing known":    {meetingFacts{}, false, "Recording. Open it in Cassini."},
-		"multi-line title": {meetingFacts{Title: "Weekly\nsync", StartedAt: start}, false, "Recording of Weekly sync, Friday 30 October 2026, 10:00 UTC. Open it in Cassini."},
+		"a recording":      {meetingFacts{Title: "Weekly sync", StartedAt: start, Duration: 42 * time.Minute}, false, "Cassini meeting recording — Weekly sync, Friday 30 October 2026, 10:00 UTC (42 min). One portable file containing the audio, transcript and AI summary. Open it in Nextcloud Files, or in Cassini to read the transcript and summary."},
+		"an import":        {meetingFacts{Title: "Weekly sync", StartedAt: start, Duration: 42 * time.Minute}, true, "Imported Cassini meeting — Weekly sync, Friday 30 October 2026, 10:00 UTC (42 min). One portable file containing the audio, transcript and AI summary. Open it in Nextcloud Files, or in Cassini to read the transcript and summary."},
+		"over an hour":     {meetingFacts{Title: "Planning", StartedAt: start, Duration: 65 * time.Minute}, false, "Cassini meeting recording — Planning, Friday 30 October 2026, 10:00 UTC (1 h 05). One portable file containing the audio, transcript and AI summary. Open it in Nextcloud Files, or in Cassini to read the transcript and summary."},
+		"very short":       {meetingFacts{Title: "Test", StartedAt: start, Duration: 20 * time.Second}, false, "Cassini meeting recording — Test, Friday 30 October 2026, 10:00 UTC (under a minute). One portable file containing the audio, transcript and AI summary. Open it in Nextcloud Files, or in Cassini to read the transcript and summary."},
+		"no title":         {meetingFacts{StartedAt: start, Duration: 42 * time.Minute}, false, "Cassini meeting recording — Friday 30 October 2026, 10:00 UTC (42 min). One portable file containing the audio, transcript and AI summary. Open it in Nextcloud Files, or in Cassini to read the transcript and summary."},
+		"no date":          {meetingFacts{Title: "Weekly sync", Duration: 42 * time.Minute}, false, "Cassini meeting recording — Weekly sync (42 min). One portable file containing the audio, transcript and AI summary. Open it in Nextcloud Files, or in Cassini to read the transcript and summary."},
+		"nothing known":    {meetingFacts{}, false, "Cassini meeting recording. One portable file containing the audio, transcript and AI summary. Open it in Nextcloud Files, or in Cassini to read the transcript and summary."},
+		"multi-line title": {meetingFacts{Title: "Weekly\nsync", StartedAt: start}, false, "Cassini meeting recording — Weekly sync, Friday 30 October 2026, 10:00 UTC. One portable file containing the audio, transcript and AI summary. Open it in Nextcloud Files, or in Cassini to read the transcript and summary."},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if got := tc.facts.shareNote(tc.imported); got != tc.want {
@@ -54,7 +54,7 @@ func TestRecordingSharesCarryANoteNamingTheMeeting(t *testing.T) {
 	if err := f.deliver(); err != nil {
 		t.Fatal(err)
 	}
-	const want = "Recording of Standup, Sunday 1 November 2026, 10:00 UTC (30 min). Open it in Cassini."
+	const want = "Cassini meeting recording — Standup, Sunday 1 November 2026, 10:00 UTC (30 min). One portable file containing the audio, transcript and AI summary. Open it in Nextcloud Files, or in Cassini to read the transcript and summary."
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for _, key := range []string{"0/alice", "0/bob", "1/marketing"} {
