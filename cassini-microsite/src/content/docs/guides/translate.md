@@ -2,7 +2,7 @@
 title: Help translate Cassini
 description: Cassini's buttons, menus and messages come in eleven languages, translated by the people who use them. How to fix a word, finish a language, or ask for a new one.
 source: docs/translations.md
-copied: "2026-11-10"
+copied: "2026-11-11"
 ---
 
 Cassini's own words (its buttons, menus, headings and messages) are translated
@@ -96,9 +96,30 @@ empty: Polish has no form for two, and 0 takes the "many" form.
 Translations are reviewed, then go into the next Cassini release. Once your
 administrator updates the app, you'll see them in Nextcloud.
 
-## Ask for a new language
+## Add your language
 
-[Open an issue](https://github.com/codemyriad/gocassini/issues/new) titled
-"Translation: <your language>". Adding a language takes a small change to
-Cassini itself, so it can't be started from Weblate. We'll add it, seed it with
-a machine translation, and let you know when it's ready to correct.
+If your language isn't on the list, you can ask for it from Weblate itself:
+
+1. Sign in to Weblate and open the [Cassini project](https://weblate.codemyriad.io/projects/cassini/).
+2. Open any of the three parts (**nextcloud-app**, **nextcloud-viewer** or
+   **nextcloud-common**) and choose **Start new translation**.
+3. Pick your language and send the request. Weblate lets us know.
+
+If you'd rather, [open an issue](https://github.com/codemyriad/gocassini/issues/new)
+titled "Translation: <your language>" instead.
+
+Weblate can't start the language on its own: Cassini has to be told that a
+new language exists, which takes a small change to the app. We make that
+change, fill the language with a machine translation marked as needing
+editing, and let you know when it's in Weblate. From then on it works like any
+other language:
+
+- Start with the strings people see most: **nextcloud-common**, then
+  **nextcloud-viewer**.
+- Agree on your words for Cassini's terms (meeting, room, insight, tag) in the
+  glossary early, so everyone translating your language uses the same ones.
+- If your language has more than two plural forms, check those strings first
+  (see Numbers and plurals). Machine translation gets them wrong most often.
+
+The language goes into the next Cassini release. Any string not translated yet
+shows in English until it is.

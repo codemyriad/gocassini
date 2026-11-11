@@ -1,8 +1,19 @@
 # Translations
 
-How the Nextcloud app's own words (buttons, headings, messages) are translated,
-how a developer adds a string, and how the Weblate project is set up. For
-translators, the guide is [Help translate Cassini](https://gocassini.com/docs/guides/translate)
+This page is for developers working on the Nextcloud app (`cassini-app` and
+`cassini-viewer`) and for whoever looks after the Weblate project. It explains
+how the app's own words (its buttons, headings and messages) reach a reader in
+their language, what to do when you add a string or a language, and how the
+Weblate project is set up.
+
+The app uses [typesafe-i18n](https://github.com/ivanhofer/typesafe-i18n):
+developers write English in TypeScript dictionaries, typesafe-i18n generates
+the types that check every use of a string, and translators work on JSON
+copies of those dictionaries in [Weblate](https://weblate.codemyriad.io/projects/cassini/).
+Every language ships with the app, so a translation reaches readers in the
+next release.
+
+Translators don't need this page. Their guide is [Help translate Cassini](https://gocassini.com/docs/guides/translate)
 (source: `cassini-microsite/src/content/docs/guides/translate.md`).
 
 ## What is translated
@@ -18,8 +29,8 @@ translators, the guide is [Help translate Cassini](https://gocassini.com/docs/gu
 - **Not yet:** the app's name and description in the App Store (`appinfo/info.xml`)
   and the Cassini entry in Nextcloud's top menu, which Nextcloud draws itself.
 
-Strings are being moved into the dictionaries area by area. Anything still
-written into a component appears in English in every language.
+A string written straight into a component, rather than taken from a
+dictionary, appears in English in every language. Code review is the check.
 
 ### Not translated yet
 
@@ -101,8 +112,10 @@ return a cached `Intl` formatter for the current locale. On top of them:
 for a length of time, and `relativeNow()` for an age under a minute. Don't
 write a unit or "just now" into a dictionary string.
 
-A count in a message formats itself: `{count:number|num}` runs the `num`
-formatter (`|compact` for "7.5K"), defined in `cassini-viewer/src/i18n/formatters.ts`,
+A count in a message formats itself, using typesafe-i18n's
+[formatters](https://github.com/ivanhofer/typesafe-i18n/tree/main/packages/runtime#format-passed-in-arguments)
+and [plural syntax](https://github.com/ivanhofer/typesafe-i18n/tree/main/packages/runtime#plural)
+(see Counts, below): `{count:number|num}` runs the `num` formatter (`|compact` for "7.5K"), defined in `cassini-viewer/src/i18n/formatters.ts`,
 which writes the number in the reader's locale, not their language. Pass the
 raw number. `formatCount(n)` is only for a number in a string with no plural
 (`"{done} of {total}"`).
@@ -151,6 +164,7 @@ Writing strings that translate well:
 
 ### Counts
 
+Plurals use [typesafe-i18n's plural syntax](https://github.com/ivanhofer/typesafe-i18n/tree/main/packages/runtime#plural).
 typesafe-i18n picks the form from the number and the language's plural rules
 (`Intl.PluralRules`), so Polish and Croatian translators write their few and
 many forms without a code change. Write the English with two forms, the plural
@@ -197,7 +211,10 @@ except through `i18n:sync`, or a Weblate change will conflict with yours.
 4. After it merges, add the language in each Weblate component (Tools › Start new translation).
 
 Weblate cannot add a language by itself. Each one needs these TypeScript
-files, so its components are set to ask a maintainer (see below).
+files, so its components are set to ask a maintainer (see below): a
+translator's **Start new translation** sends the project's administrators a
+"new language requested" notification in Weblate instead of creating files.
+Requests can also arrive as a GitHub issue titled "Translation: <language>".
 
 ## Weblate
 
