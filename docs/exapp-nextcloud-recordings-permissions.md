@@ -50,11 +50,10 @@ refused them, are listed in `sharing` one meeting at a time
 start); `POST operator/shares/dismiss` (USER) records that the person
 dismissed one, by person and meeting, and hides it from nobody else. Every recording share carries a note
 naming the meeting, its date and its length ("Cassini meeting recording —
-Weekly sync, Friday 30 October 2026, 10:00 UTC (42 min). One portable file
-containing the audio, transcript and AI summary. Open it in Nextcloud Files,
-or in Cassini to read the transcript and summary."), so the file is
-recognisable in Files and the share email body explains it; the notification
-itself does not show the note.
+Weekly sync, Friday 30 October 2026, 10:00 UTC (42 min). Open it in
+Cassini."), so the file is recognisable in Files and the share email, whose
+heading shows only the file's name, says what it is; the notification itself
+does not show the note. The note is in English for every recipient.
 
 Nextcloud's sharing settings apply to the `cassini` account like to anyone:
 "Allow apps to use the Share API", "Exclude some groups from sharing" /

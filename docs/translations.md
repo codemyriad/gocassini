@@ -40,6 +40,8 @@ so they are English in every language:
 - **Doctor check messages and remedy steps.**
 - **Why a recording is blocked** in the recording-time migration. A follow-up
   has the operator send a code and parameters, so the app can word them.
+- **The note on a recording share**, which Nextcloud also puts in its share
+  email (`share_note.go`).
 - **Raw errors from Nextcloud or the system** (an HTTP failure, a file-system
   error, the operator's state names). These stay English on purpose: they are
   what an administrator searches for and quotes in a bug report.

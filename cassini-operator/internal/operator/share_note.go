@@ -30,13 +30,14 @@ func oneLineTitle(title string) string {
 // shareNote is the text on every recording share Cassini makes: what the
 // file is, so the person recognises it in Files and in Cassini's own list of
 // recordings waiting for them. Nextcloud also puts this text in the body of
-// the share email, so it carries the whole explanation a recipient needs:
-// the meeting, its date and length, what the file contains, and how to open
-// it. No URL — the deep link into Cassini is not stable across versions, and
-// a stale link would be worse than none.
+// the share email, under a heading that names only the file, so it opens by
+// saying the file is a Cassini recording. It promises no contents: a meeting
+// may have no transcript, summary or audio. No URL — the deep link into
+// Cassini is not stable across versions, and a stale link would be worse
+// than none.
 //
-//	Cassini meeting recording — Weekly sync, Friday 30 October 2026, 10:00 UTC (42 min). One portable file containing the audio, transcript and AI summary. Open it in Nextcloud Files, or in Cassini to read the transcript and summary.
-//	Imported Cassini meeting — Weekly sync, Friday 30 October 2026, 10:00 UTC (42 min). One portable file containing the audio, transcript and AI summary. Open it in Nextcloud Files, or in Cassini to read the transcript and summary.
+//	Cassini meeting recording — Weekly sync, Friday 30 October 2026, 10:00 UTC (42 min). Open it in Cassini.
+//	Imported Cassini meeting — Weekly sync, Friday 30 October 2026, 10:00 UTC (42 min). Open it in Cassini.
 //
 // The clock time says it is UTC: Browse shows the same start in the reader's
 // own zone, and the two must not look like different meetings. A missing
@@ -64,7 +65,7 @@ func (f meetingFacts) shareNote(imported bool) string {
 	if f.Duration > 0 {
 		b.WriteString(" (" + formatMeetingDuration(f.Duration) + ")")
 	}
-	b.WriteString(". One portable file containing the audio, transcript and AI summary. Open it in Nextcloud Files, or in Cassini to read the transcript and summary.")
+	b.WriteString(". Open it in Cassini.")
 	return b.String()
 }
 
