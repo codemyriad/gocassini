@@ -63,6 +63,12 @@
       "step_create_account": "Opret kontoen {user} i Nextcloud",
       "step_set_admin_user": "Sæt {variable} til en Nextcloud-administrator",
       "cause_unknown": "Cassini kunne ikke bekræfte sin opsætning af optagelser.",
+      "cause": {
+        "nextcloud_probe": "",
+        "private_archive": "",
+        "sharing_api": "",
+        "owner_account": ""
+      },
       "detail_state": "Operatøren rapporterede {state}.",
       "detail_state_at_step": "Operatøren rapporterede {state} ved {step}.",
       "note_occ": "{command} står for den måde, din installation kalder det på, for eksempel {example}.",

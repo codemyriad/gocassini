@@ -63,6 +63,12 @@
       "step_create_account": "Create the {user} account in Nextcloud",
       "step_set_admin_user": "Set {variable} to a Nextcloud administrator",
       "cause_unknown": "Cassini could not confirm its recordings setup.",
+      "cause": {
+        "nextcloud_probe": "Nextcloud did not answer the recordings account check.",
+        "private_archive": "Cassini could not confirm its recordings folder is private and writable.",
+        "sharing_api": "Nextcloud file sharing is unavailable to the Cassini recordings account.",
+        "owner_account": "The Cassini recordings account does not exist."
+      },
       "detail_state": "The operator reported {state}.",
       "detail_state_at_step": "The operator reported {state} at {step}.",
       "note_occ": "{command} is however your deployment invokes it, for example {example}.",

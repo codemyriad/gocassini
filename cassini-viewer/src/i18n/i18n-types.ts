@@ -400,6 +400,24 @@ export type NamespaceAppTranslation = {
 			 * C​a​s​s​i​n​i​ ​c​o​u​l​d​ ​n​o​t​ ​c​o​n​f​i​r​m​ ​i​t​s​ ​r​e​c​o​r​d​i​n​g​s​ ​s​e​t​u​p​.
 			 */
 			cause_unknown: string
+			cause: {
+				/**
+				 * N​e​x​t​c​l​o​u​d​ ​d​i​d​ ​n​o​t​ ​a​n​s​w​e​r​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​s​ ​a​c​c​o​u​n​t​ ​c​h​e​c​k​.
+				 */
+				nextcloud_probe: string
+				/**
+				 * C​a​s​s​i​n​i​ ​c​o​u​l​d​ ​n​o​t​ ​c​o​n​f​i​r​m​ ​i​t​s​ ​r​e​c​o​r​d​i​n​g​s​ ​f​o​l​d​e​r​ ​i​s​ ​p​r​i​v​a​t​e​ ​a​n​d​ ​w​r​i​t​a​b​l​e​.
+				 */
+				private_archive: string
+				/**
+				 * N​e​x​t​c​l​o​u​d​ ​f​i​l​e​ ​s​h​a​r​i​n​g​ ​i​s​ ​u​n​a​v​a​i​l​a​b​l​e​ ​t​o​ ​t​h​e​ ​C​a​s​s​i​n​i​ ​r​e​c​o​r​d​i​n​g​s​ ​a​c​c​o​u​n​t​.
+				 */
+				sharing_api: string
+				/**
+				 * T​h​e​ ​C​a​s​s​i​n​i​ ​r​e​c​o​r​d​i​n​g​s​ ​a​c​c​o​u​n​t​ ​d​o​e​s​ ​n​o​t​ ​e​x​i​s​t​.
+				 */
+				owner_account: string
+			}
 			/**
 			 * T​h​e​ ​o​p​e​r​a​t​o​r​ ​r​e​p​o​r​t​e​d​ ​{​s​t​a​t​e​}​.
 			 * @param {unknown} state
@@ -8166,6 +8184,24 @@ export type TranslationFunctions = {
 				 * Cassini could not confirm its recordings setup.
 				 */
 				cause_unknown: () => LocalizedString
+				cause: {
+					/**
+					 * Nextcloud did not answer the recordings account check.
+					 */
+					nextcloud_probe: () => LocalizedString
+					/**
+					 * Cassini could not confirm its recordings folder is private and writable.
+					 */
+					private_archive: () => LocalizedString
+					/**
+					 * Nextcloud file sharing is unavailable to the Cassini recordings account.
+					 */
+					sharing_api: () => LocalizedString
+					/**
+					 * The Cassini recordings account does not exist.
+					 */
+					owner_account: () => LocalizedString
+				}
 				/**
 				 * The operator reported {state}.
 				 */

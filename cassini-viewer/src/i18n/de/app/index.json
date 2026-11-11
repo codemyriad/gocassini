@@ -63,6 +63,12 @@
       "step_create_account": "Erstelle das Konto {user} in Nextcloud",
       "step_set_admin_user": "Setze {variable} auf ein Nextcloud-Administrationskonto",
       "cause_unknown": "Cassini konnte die Einrichtung der Aufnahmen nicht bestätigen.",
+      "cause": {
+        "nextcloud_probe": "",
+        "private_archive": "",
+        "sharing_api": "",
+        "owner_account": ""
+      },
       "detail_state": "Der Operator meldete {state}.",
       "detail_state_at_step": "Der Operator meldete {state} bei {step}.",
       "note_occ": "{command} ist so aufzurufen, wie es deine Installation vorsieht, zum Beispiel {example}.",

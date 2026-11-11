@@ -224,6 +224,19 @@ const settingsOffer = (): SetupNoticeStep => ({
   commands: [], action: "settings",
 });
 
+// What failed, by the operator's step (storage_causes.go, its administrator
+// wording); "" for a step not listed there.
+function stepCause(step: string): string {
+  const t = get(LL).app.shell.setup_notice.cause;
+  switch (step) {
+    case "nextcloud_probe": return t.nextcloud_probe();
+    case "private_archive": return t.private_archive();
+    case "sharing_api": return t.sharing_api();
+    case "owner_account": return t.owner_account();
+    default: return "";
+  }
+}
+
 export function buildSetupNotice(options: {
   health: SetupHealth | null;
   access: RecordingsAccess | null;
@@ -256,8 +269,12 @@ export function buildSetupNotice(options: {
       : [settingsOffer(), rerunSetup()];
   return {
     ...base,
-    // cause and detail are the operator's own sentences, in English.
-    cause: access?.cause || health?.cause || t.cause_unknown(),
+    // The cause is worded here from the failing step, in the reader's
+    // language; for a step this app does not know, the operator's own
+    // sentence, in English. detail is the operator's raw state text, in
+    // English. /setup sends no step, so its cause (health.cause) stays the
+    // operator's sentence too.
+    cause: stepCause(access?.step ?? "") || access?.cause || health?.cause || t.cause_unknown(),
     steps,
     detail: access?.detail || (step
       ? t.detail_state_at_step({ state: verdict.state, step })

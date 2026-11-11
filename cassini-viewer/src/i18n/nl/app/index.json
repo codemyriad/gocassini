@@ -63,6 +63,12 @@
       "step_create_account": "Maak het account {user} aan in Nextcloud",
       "step_set_admin_user": "Stel {variable} in op een Nextcloud-beheerder",
       "cause_unknown": "Cassini kon de opname-instellingen niet bevestigen.",
+      "cause": {
+        "nextcloud_probe": "",
+        "private_archive": "",
+        "sharing_api": "",
+        "owner_account": ""
+      },
       "detail_state": "De operator meldde {state}.",
       "detail_state_at_step": "De operator meldde {state} bij {step}.",
       "note_occ": "{command} is hoe jouw installatie het ook aanroept, bijvoorbeeld {example}.",

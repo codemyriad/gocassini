@@ -63,6 +63,12 @@
       "step_create_account": "Créez le compte {user} dans Nextcloud",
       "step_set_admin_user": "Définissez {variable} sur un administrateur Nextcloud",
       "cause_unknown": "Cassini n’a pas pu confirmer la configuration de ses enregistrements.",
+      "cause": {
+        "nextcloud_probe": "",
+        "private_archive": "",
+        "sharing_api": "",
+        "owner_account": ""
+      },
       "detail_state": "L’Opérateur a signalé {state}.",
       "detail_state_at_step": "L’Opérateur a signalé {state} à l’étape {step}.",
       "note_occ": "{command} désigne la façon dont votre déploiement l’appelle, par exemple {example}.",

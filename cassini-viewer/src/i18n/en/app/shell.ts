@@ -87,6 +87,14 @@ const shell = {
     // {variable}: an environment variable name, CASSINI_NC_ADMIN_USER.
     step_set_admin_user: "Set {variable} to a Nextcloud administrator",
     cause_unknown: "Cassini could not confirm its recordings setup.",
+    // Why recordings cannot be saved, by the check that failed. Shown to
+    // administrators after summary_failing.
+    cause: {
+      nextcloud_probe: "Nextcloud did not answer the recordings account check.",
+      private_archive: "Cassini could not confirm its recordings folder is private and writable.",
+      sharing_api: "Nextcloud file sharing is unavailable to the Cassini recordings account.",
+      owner_account: "The Cassini recordings account does not exist.",
+    },
     // {state} and {step}: the operator's internal names for the failing check,
     // e.g. "unavailable" at "owner_account". Shown to administrators only.
     detail_state: "The operator reported {state}.",

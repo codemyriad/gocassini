@@ -63,6 +63,12 @@
       "step_create_account": "Crie a conta {user} no Nextcloud",
       "step_set_admin_user": "Defina {variable} como um administrador do Nextcloud",
       "cause_unknown": "O Cassini não conseguiu confirmar a configuração das gravações.",
+      "cause": {
+        "nextcloud_probe": "",
+        "private_archive": "",
+        "sharing_api": "",
+        "owner_account": ""
+      },
       "detail_state": "O operador comunicou {state}.",
       "detail_state_at_step": "O operador comunicou {state} em {step}.",
       "note_occ": "{command} é a forma como a sua instalação o invoca, por exemplo {example}.",

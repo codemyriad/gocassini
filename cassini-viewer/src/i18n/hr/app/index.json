@@ -63,6 +63,12 @@
       "step_create_account": "Stvori račun {user} u Nextcloudu",
       "step_set_admin_user": "Postavi {variable} na Nextcloud administratora",
       "cause_unknown": "Cassini nije mogao potvrditi postavke snimanja.",
+      "cause": {
+        "nextcloud_probe": "",
+        "private_archive": "",
+        "sharing_api": "",
+        "owner_account": ""
+      },
       "detail_state": "Operater je prijavio {state}.",
       "detail_state_at_step": "Operater je prijavio {state} u koraku {step}.",
       "note_occ": "{command} je onako kako ga tvoja instalacija poziva, na primjer {example}.",
