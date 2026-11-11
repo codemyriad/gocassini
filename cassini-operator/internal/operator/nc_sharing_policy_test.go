@@ -723,3 +723,23 @@ func TestRecordingSharingRowCountsWhatIsUnshared(t *testing.T) {
 		t.Fatalf("blocked row = %+v unshared %+v", row, row.Unshared)
 	}
 }
+
+// The app words the row from its params (D-921): which sentences, in order,
+// and the groups and account they name. Steps carry ids and their own params.
+func TestSharingPolicyParamsNameEverySentence(t *testing.T) {
+	finding := evaluateSharingPolicy(sharingPolicySettings{APIEnabled: true, OnlyGroupMembers: true, AllowGroupSharing: false}, []string{"staff", "robots"})
+	want := readinessParams{"issues": []string{"only_groups", "group_sharing_off"}, "account": "cassini", "shareable_groups": []string{"staff", "robots"}}
+	if !reflect.DeepEqual(finding.Params, want) {
+		t.Fatalf("params = %#v", finding.Params)
+	}
+	var ids []string
+	for _, step := range finding.Steps {
+		ids = append(ids, step.ID)
+	}
+	if want := []string{"lift_group_restriction", "join_every_group", "enable_group_sharing"}; !reflect.DeepEqual(ids, want) {
+		t.Fatalf("step ids = %v", ids)
+	}
+	if got := sharingPolicyRow(finding, true).Params; !reflect.DeepEqual(got, want) {
+		t.Fatalf("row params = %#v", got)
+	}
+}
