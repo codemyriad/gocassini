@@ -1,6 +1,10 @@
-import { writable } from "svelte/store";
+import { get, writable } from "svelte/store";
 
-import { AnnotationError, plural, type TagJob, type TagUpdate, type VocabularyTag } from "./annotations";
+import { formatCount, LL } from "../i18n";
+
+import { relativeNow, relativeTimeFormat } from "../i18n/format";
+
+import { AnnotationError, type TagJob, type TagUpdate, type VocabularyTag } from "./annotations";
 import type { DataProvider } from "./dataProvider";
 import { colorFor, type TagColorId, type TagIconId } from "./tagPalette";
 
@@ -13,42 +17,47 @@ export type TagAction =
 export type JobState = { job: TagJob | null; action: TagAction | null; lost: boolean; notice: string };
 export type JobStatus = { text: string; failed: string[]; rerun: TagAction | null };
 
-export const BUSY = "You already have a change running.";
+// Read when it is shown, so it is in the reader's language.
+export const busyNotice = () => get(LL).viewer.browse.tags.busy();
 
 // How much of the archive a tag is on. "Marks" — one per whole-meeting tag and
 // one per tagged stretch of a transcript — was the operator's word for it, and
 // named nothing the reader had ever seen in the app.
 export const countsLine = (tag: VocabularyTag) => {
-  const meetings = plural(tag.meetings, "meeting");
-  if (tag.meetings === 0) {
-    return "Not used yet";
+  const text = get(LL).viewer.browse.tags;
+  const count = tag.meetings;
+  if (count === 0) {
+    return text.counts_unused();
   }
-  if (tag.marks <= tag.meetings) {
-    return `Used in ${meetings}`;
+  if (tag.marks <= count) {
+    return text.counts_in({ count });
   }
-  return `Used ${tag.marks} times in ${meetings}`;
+  return text.counts_times({ times: tag.marks, count });
 };
 
 export function confirmLine(meetings: number): string {
-  if (meetings === 0) return "None of your meetings use it.";
-  return `Updates ${meetings === 1 ? "one" : meetings} of your meetings. Meetings that are in rooms you can't access will keep the old tag.`;
+  const text = get(LL).viewer.browse.tags;
+  if (meetings === 0) return text.confirm_none();
+  return text.confirm({ count: meetings });
 }
 
-const RELATIVE = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
 const DAY = 864e5;
 const UNITS = [["year", 365 * DAY], ["month", 30 * DAY], ["week", 7 * DAY], ["day", DAY], ["hour", 36e5], ["minute", 6e4]] as const;
 
 export function relativeTime(iso: string, now = Date.now()): string {
   const ago = now - Date.parse(iso);
   const unit = UNITS.find(([, size]) => ago >= size);
-  return unit ? RELATIVE.format(-Math.floor(ago / unit[1]), unit[0]) : "just now";
+  return unit ? relativeTimeFormat({ numeric: "auto" }).format(-Math.floor(ago / unit[1]), unit[0]) : relativeNow();
 }
 
 // Compatibility formatter for older operator responses. The manager no longer
 // renders this global audit because a recording's saved appearance is local.
 export function changedLine(tag: VocabularyTag, now = Date.now()): string {
 	if (!tag.changedBy) return "";
-	return `Changed by ${tag.changedBy}${tag.changedAtUtc ? ` · ${relativeTime(tag.changedAtUtc, now)}` : ""}`;
+	const text = get(LL).viewer.browse.tags;
+	return tag.changedAtUtc
+		? text.changed_by_when({ name: tag.changedBy, when: relativeTime(tag.changedAtUtc, now) })
+		: text.changed_by({ name: tag.changedBy });
 }
 
 export function tagUpdate(tag: VocabularyTag, draft: { label: string; color: TagColorId; icon: TagIconId | "" }): TagUpdate | null {
@@ -68,11 +77,12 @@ function actionOf(job: TagJob): TagAction | null {
 
 export function jobStatus({ job, action, lost }: JobState, tagId: string): JobStatus | null {
   if (!job || job.tagId !== tagId) return null;
-  if (job.state === "running" && !lost) return { text: `Updating ${job.done} of ${job.total}…`, failed: [], rerun: null };
+  const text = get(LL).viewer.browse.tags;
+  if (job.state === "running" && !lost) return { text: text.job_updating({ done: formatCount(job.done), total: formatCount(job.total) }), failed: [], rerun: null };
   const failed = job.failed.map((failure) => failure.meeting);
   const stopped = lost || job.state === "interrupted";
   if (!stopped && failed.length === 0) return null;
-  return { text: stopped ? "Stopped before it finished." : `${failed.length} couldn't be updated`, failed, rerun: action ?? actionOf(job) };
+  return { text: stopped ? text.job_stopped() : text.job_failed({ count: failed.length }), failed, rerun: action ?? actionOf(job) };
 }
 
 async function send(provider: TagProvider, action: TagAction): Promise<TagJob | null> {
@@ -126,7 +136,7 @@ export function createJobTracker(provider: TagProvider, changed: () => void, int
     } catch (caught) {
       const error = caught instanceof AnnotationError ? caught : new AnnotationError(0, "");
       if (error.code === "busy") void refresh();
-      if (error.code !== "label-exists") set({ notice: error.code === "busy" ? BUSY : "That change didn't go through. Try again." });
+      if (error.code !== "label-exists") set({ notice: error.code === "busy" ? busyNotice() : get(LL).viewer.browse.tags.change_failed() });
       return error;
     }
   }

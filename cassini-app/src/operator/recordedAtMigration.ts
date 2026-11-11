@@ -1,10 +1,12 @@
+import { get } from "svelte/store";
+import { formatCount, LL } from "cassini-viewer/i18n";
+
 // The recordedAtUtc file migration, as the Doctor shows it: /status's
 // recorded_at_migration (cassini-operator recorded_at_migration.go). The
 // operator enumerates the past recordings whose delivered file lacks the
 // recording time; nothing rewrites them until an administrator presses the
-// button, and the same panel pauses it. The notification sentences are the
-// operator's — it is the side that read Nextcloud's capabilities — so the panel
-// shows them verbatim rather than rewording what it cannot check.
+// button, and the same panel pauses it. The operator reads Nextcloud's
+// capabilities and sends what it found; recordedAtNotices.ts words it.
 
 export type RecordedAtMigrationState =
   | "not_applicable" | "checking" | "needed" | "running" | "pausing" | "paused" | "blocked" | "done" | "not_needed" | "unknown";
@@ -29,7 +31,6 @@ export interface RecordedAtNotifications {
   web_push?: boolean;
   browser_push?: boolean;
   versioning?: boolean;
-  details: string[];
 }
 
 export interface RecordedAtMigration {
@@ -88,13 +89,12 @@ export function normalizeRecordedAtMigration(raw: unknown): RecordedAtMigration 
       web_push: flag(notices.web_push),
       browser_push: flag(notices.browser_push),
       versioning: flag(notices.versioning),
-      details: Array.isArray(notices.details) ? notices.details.filter((line): line is string => typeof line === "string" && line.trim() !== "") : [],
     } : undefined,
     error: text(value.error) || undefined,
   };
 }
 
-const recordings = (n: number) => `${n} ${n === 1 ? "recording" : "recordings"}`;
+const copy = () => get(LL).app.operator.recorded_at_migration;
 
 // Whether the panel shows anything. Nothing to say where nothing applies or
 // where no past recording needs it. While the first count is still running
@@ -126,40 +126,53 @@ export interface MigrationButton {
 
 // The one button for the state, or none.
 export function migrationButton(m: RecordedAtMigration): MigrationButton | null {
+  const t = copy().button;
   const start = (label: string): MigrationButton => ({ action: "start", label, disabled: !m.checked });
   switch (m.state) {
-    case "needed": return start(m.blocked > 0 ? `Write the recording time into ${recordings(m.needed + m.blocked)}` : `Write the recording time into ${recordings(m.needed)}`);
-    case "running": return { action: "pause", label: "Pause", disabled: false };
-    case "paused": return start("Resume");
-    case "blocked": return start(m.blocked === 1 ? "Retry the blocked recording" : `Retry ${m.blocked} blocked recordings`);
+    case "needed": {
+      const n = m.blocked > 0 ? m.needed + m.blocked : m.needed;
+      return start(t.write({ count: n }));
+    }
+    case "running": return { action: "pause", label: t.pause(), disabled: false };
+    case "paused": return start(t.resume());
+    case "blocked": return start(t.retry({ count: m.blocked }));
     default: return null;
   }
 }
 
 // The sentence the panel leads with.
 export function migrationSummary(m: RecordedAtMigration): string {
+  const t = copy().summary;
   const left = m.queued + m.settling + m.in_progress;
   switch (m.state) {
-    case "needed":
-      return `${recordings(m.needed)} ${m.needed === 1 ? "was" : "were"} published before Cassini wrote the recording time into the file itself. Browse already shows the right time; writing it into the ${m.needed === 1 ? "file" : "files"} makes it travel with downloads, the Nextcloud apps and the cassini command line.` +
-        (m.checked ? "" : " Cassini is still counting, so this number may grow; you can start once it has finished.");
+    case "needed": {
+      const lead = t.needed({ count: m.needed });
+      return m.checked ? lead : `${lead} ${t.still_counting()}`;
+    }
     case "checking":
-      return "Cassini is checking which past recordings were published before it wrote the recording time into the file itself.";
-    case "running":
-      return `Writing the recording time into ${recordings(left)}${m.done > 0 ? `; ${m.done} done` : ""}. Cassini works on ${m.workers > 1 ? `up to ${m.workers} at a time` : "one at a time"}, ${m.pace_seconds} seconds apart, so it stays out of Nextcloud's way.`;
+      return t.checking();
+    case "running": {
+      const progress = m.done > 0 ? t.running_done({ count: left, done: m.done }) : t.running({ count: left });
+      const pace = t.pace({ workers: Math.max(1, m.workers), seconds: m.pace_seconds });
+      return `${progress} ${pace}`;
+    }
     case "pausing": {
       // In progress, or an upload sent before the pause still being settled.
       const started = m.in_progress + m.settling;
-      return `Pausing. ${started === 1 ? "The recording already being written is finished first, or left as it was if its upload had not gone through" : `The ${started} recordings already being written are finished first, or left as they were if their upload had not gone through`}, so no file is left half-written; ${recordings(m.queued)} then wait.`;
+      return t.pausing({ count: started, waiting: m.queued });
     }
-    case "paused":
-      return `Paused with ${recordings(m.queued + m.settling)} left${m.done > 0 ? ` and ${m.done} done` : ""}. Nothing is being written until you resume.`;
-    case "blocked":
-      return `${recordings(m.blocked)} could not be written and ${m.blocked === 1 ? "needs" : "need"} you${m.done > 0 ? `; ${m.done} ${m.done === 1 ? "is" : "are"} done` : ""}. Fix what each one says, then retry.`;
+    case "paused": {
+      const remaining = m.queued + m.settling;
+      return m.done > 0 ? t.paused_done({ remaining, done: m.done }) : t.paused({ remaining });
+    }
+    case "blocked": {
+      return m.done === 0 ? t.blocked({ count: m.blocked }) : t.blocked_done({ count: m.blocked, done: m.done });
+    }
     case "done":
-      return `Every past recording carries its recording time in the file itself (${m.done} written).`;
+      return t.done({ done: formatCount(m.done) });
     case "unknown":
-      return m.error ?? "Cassini could not read the migration's progress.";
+      // The operator's own error, in English, when it sent one.
+      return m.error ?? t.unknown();
     default:
       return "";
   }
@@ -169,14 +182,15 @@ export function migrationSummary(m: RecordedAtMigration): string {
 // the capabilities could not be read: the sentences say so instead.
 export function notificationFacts(n: RecordedAtNotifications | undefined): Array<{ label: string; value: string }> {
   if (!n || !n.known) return [];
-  const on = (value: boolean | undefined) => (value === undefined ? "Unknown" : value ? "Enabled" : "Not enabled");
-  const facts = [
-    { label: "File versioning", value: on(n.versioning) },
-    { label: "Activity app", value: on(n.activity_app) },
-    { label: "Notifications app", value: on(n.notifications_app) },
+  const t = copy().facts;
+  const on = (value: boolean | undefined) => (value === undefined ? t.unknown() : value ? t.enabled() : t.not_enabled());
+  const facts: Array<{ label: string; value: string }> = [
+    { label: t.versioning(), value: on(n.versioning) },
+    { label: t.activity_app(), value: on(n.activity_app) },
+    { label: t.notifications_app(), value: on(n.notifications_app) },
   ];
   if (n.notifications_app && n.web_push !== undefined) {
-    facts.push({ label: "Web push", value: n.browser_push ? "Allowed, browsers too" : n.web_push ? "Allowed, not for browsers" : "Not allowed" });
+    facts.push({ label: t.web_push(), value: n.browser_push ? t.web_push_browsers() : n.web_push ? t.web_push_apps() : t.web_push_off() });
   }
   if (n.nextcloud_version) facts.push({ label: "Nextcloud", value: n.nextcloud_version });
   return facts;

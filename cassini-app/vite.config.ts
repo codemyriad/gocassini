@@ -1,6 +1,7 @@
 import { defineConfig, loadEnv, type ProxyOptions } from "vite";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import tailwindcss from "@tailwindcss/vite";
+import { i18nBundle } from "../cassini-viewer/scripts/i18n-bundle-plugin.mjs";
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
@@ -11,7 +12,7 @@ export default defineConfig(({ mode }) => {
   const proxy = createOperatorProxy(operatorBasePath, operatorProxyTarget);
 
   return {
-    plugins: [tailwindcss(), svelte()],
+    plugins: [i18nBundle(), tailwindcss(), svelte()],
     base: "./",
     define: {
       __CASSINI_OPERATOR_BASE_PATH__: JSON.stringify(operatorBasePath),

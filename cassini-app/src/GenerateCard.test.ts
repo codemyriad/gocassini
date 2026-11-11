@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { get } from "svelte/store";
+import { LL } from "cassini-viewer/i18n";
 
 import generateCardSource from "./GenerateCard.svelte?raw";
 
@@ -35,7 +37,10 @@ describe("GenerateCard", () => {
     // denied; it decides whether "Edit templates" is offered, and nothing else.
     expect(generateCardSource).toContain("$: isAdmin = operatorClient !== null;");
     expect(generateCardSource).toContain("{#if isAdmin}");
-    expect(generateCardSource).toContain("This runs the template your administrator configured");
+    expect(generateCardSource).toContain("$LL.app.insights.generate_card.configured_template()");
+    expect(get(LL).app.insights.generate_card.configured_template()).toContain(
+      "This runs the template your administrator configured",
+    );
   });
 
   it("offers every user the template picker, from the names-only list (D-819)", () => {
@@ -53,7 +58,7 @@ describe("GenerateCard", () => {
     // On the label's line, not between the picker and the description: the
     // two are read together and nothing else sits between them.
     expect(generateCardSource).toMatch(
-      /<div class="tpl-field-head">\s*<label for=\{templatePickerId\}>Insight template<\/label>\s*\{#if isAdmin\}\s*<a [^>]*>.*Edit templates<\/a>/,
+      /<div class="tpl-field-head">\s*<label for=\{templatePickerId\}>\{\$LL\.app\.insights\.generate_card\.template_label\(\)\}<\/label>\s*\{#if isAdmin\}\s*<a [^>]*>.*\{\$LL\.app\.insights\.generate_card\.edit_templates\(\)\}<\/a>/,
     );
     expect(generateCardSource).toMatch(/<\/select>[\s\S]*?<\/div>\s*\{#if chosenWorkflowEntry\?\.description\}/);
     expect(generateCardSource).toContain('dispatch("open", { panel: "templates", href: templatesUrl() });');
@@ -89,7 +94,8 @@ describe("GenerateCard", () => {
   it("folds the provider and model away, under what they are set to", () => {
     // The first provider and its default model are the right answer for most
     // people; the ones who want another are the ones who open this.
-    expect(generateCardSource).toContain("Provider and model");
+    expect(generateCardSource).toContain("$LL.app.insights.generate_card.provider_and_model()");
+    expect(get(LL).app.insights.generate_card.provider_and_model()).toBe("Provider and model");
     expect(generateCardSource).toContain("providerName(chosenProvider)");
     expect(generateCardSource).toContain("<details class=\"ins-endpoint\">");
   });
@@ -101,7 +107,8 @@ describe("GenerateCard", () => {
     expect(generateCardSource).toContain("defaultInsightName(");
     expect(generateCardSource).toContain("$: if (!nameTouched) {");
     expect(generateCardSource).toContain("on:input={() => (nameTouched = true)}");
-    expect(generateCardSource).toContain("You can rename it later from the insight.");
+    expect(generateCardSource).toContain("$LL.app.insights.generate_card.name_hint()");
+    expect(get(LL).app.insights.generate_card.name_hint()).toBe("You can rename it later from the insight.");
   });
 
   it("never names an insight after the question", () => {
@@ -127,7 +134,7 @@ describe("GenerateCard", () => {
     const first = generateCardSource.indexOf("{@render nameField()}");
     expect(first).toBeGreaterThan(box);
     expect(first).toBeLessThan(boxEnd);
-    const nonAdmin = generateCardSource.indexOf("This runs the template your administrator configured");
+    const nonAdmin = generateCardSource.indexOf("$LL.app.insights.generate_card.configured_template()");
     expect(generateCardSource.indexOf("{@render nameField()}", nonAdmin)).toBeGreaterThan(nonAdmin);
   });
 
@@ -142,8 +149,9 @@ describe("GenerateCard", () => {
     // The model call uses the instance's key, so a run is attributable to the
     // deployment; the document lands in the requester's own files. Both are
     // said here rather than discovered afterwards.
-    expect(generateCardSource).toContain("transcripts are sent to the AI provider");
-    expect(generateCardSource).toContain("document in your Nextcloud files");
+    expect(generateCardSource).toContain("$LL.app.insights.generate_card.where_it_goes()");
+    expect(get(LL).app.insights.generate_card.where_it_goes()).toContain("transcripts are sent to the AI provider");
+    expect(get(LL).app.insights.generate_card.where_it_goes()).toContain("document in your Nextcloud files");
   });
 
   it("never puts a raw workflow id in front of somebody who has no names", () => {
@@ -184,7 +192,8 @@ describe("GenerateCard", () => {
     // The first endpoint is chosen through the same path a change is, so the
     // opening default is pre-filled too.
     expect(generateCardSource).toContain("chooseProvider(providers[0].id);");
-    expect(generateCardSource).toContain('placeholder="endpoint default"');
+    expect(generateCardSource).toContain("placeholder={$LL.app.insights.generate_card.model_placeholder()}");
+    expect(get(LL).app.insights.generate_card.model_placeholder()).toBe("endpoint default");
     expect(generateCardSource).toContain("model: chosenModel,");
     expect(generateCardSource).not.toContain("putLLMSettings");
   });

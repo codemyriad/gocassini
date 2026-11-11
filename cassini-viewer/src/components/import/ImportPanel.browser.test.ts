@@ -150,7 +150,7 @@ it("tells every settled row how it is shared, with the names on hover", async ()
   retryImport: vi.fn(async () => {}),
  });
  open(provider);
- await expect.element(page.getByText("Shared with 3", { exact: true })).toBeVisible();
+ await expect.element(page.getByText("Shared with 3 recipients", { exact: true })).toBeVisible();
  expect((host.querySelector(".import-sharing") as HTMLElement).title).toBe("you, Bob Lee, Design (group)");
  await expect.element(page.getByText("Only you", { exact: true })).toBeVisible();
  const live = Array.from(host.querySelectorAll(".import-item")).find((row) => row.textContent?.includes("live.json"))!;

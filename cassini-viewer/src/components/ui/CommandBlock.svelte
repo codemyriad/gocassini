@@ -2,9 +2,13 @@
   import { onDestroy } from "svelte";
   import { Check, Copy } from "@lucide/svelte";
 
+  import { LL } from "../../i18n";
+
   export let command: string;
   // What the copy button says it copies, for a block that is not a command.
-  export let copyLabel = "Copy command";
+  // Empty means "Copy command", in the reader's language.
+  export let copyLabel = "";
+  $: copyText = copyLabel || $LL.viewer.browse.ui.copy_command();
 
   let copied = false;
   let copyFailed = false;
@@ -56,11 +60,11 @@
   <button
     type="button"
     class="btn btn-ghost btn-xs btn-square absolute top-1.5 right-1.5"
-    aria-label={copied ? "Copied" : copyLabel}
-    title={copied ? "Copied" : copyLabel}
+    aria-label={copied ? $LL.common.status.copied() : copyText}
+    title={copied ? $LL.common.status.copied() : copyText}
     on:click={copy}
   >
     {#if copied}<Check size={14} aria-hidden="true" />{:else}<Copy size={14} aria-hidden="true" />{/if}
   </button>
 </div>
-{#if copyFailed}<p class="mt-1 text-xs text-base-content/65" role="status">Copying is blocked here. It is selected: press ⌘C or Ctrl+C.</p>{/if}
+{#if copyFailed}<p class="mt-1 text-xs text-base-content/65" role="status">{$LL.viewer.browse.ui.copy_blocked()}</p>{/if}

@@ -1,3 +1,7 @@
+import { get } from "svelte/store";
+
+import { LL } from "../i18n";
+import { dateFormat, durationFormat } from "../i18n/format";
 import { readViewerBase, resolveAppBaseUrl } from "./appBase";
 import {
   formatMeetingStartShort,
@@ -112,9 +116,7 @@ export async function loadMeetingCatalog(
     if (response.status === 404) {
       return null;
     }
-    throw new Error(
-      `Could not load the meeting list (HTTP ${response.status}).`,
-    );
+    throw new Error(get(LL).viewer.browse.catalog.load_failed({ status: response.status }));
   }
   return materializeCatalog(await response.json(), response.url);
 }
@@ -213,7 +215,7 @@ async function meetingsListErrorMessage(response: Response): Promise<string> {
     // A non-JSON body (a proxy error page, a truncated response) is not worth
     // reporting verbatim; fall through to the status.
   }
-  return `Could not load the meeting list (HTTP ${response.status}).`;
+  return get(LL).viewer.browse.catalog.load_failed({ status: response.status });
 }
 
 export function validateMeetingCatalog(value: unknown): MeetingCatalog {
@@ -433,7 +435,7 @@ export function formatMeetingDate(dateLabel: string): string {
   if (Number.isNaN(date.getTime())) {
     return dateLabel;
   }
-  return new Intl.DateTimeFormat(undefined, {
+  return dateFormat({
     weekday: "short",
     month: "short",
     day: "numeric",
@@ -443,16 +445,13 @@ export function formatMeetingDate(dateLabel: string): string {
 }
 
 // formatMeetingDuration renders a catalog entry's duration the way the browse
-// list wants it: a coarse "46m" / "1h 5m", not a clock time. The list is a
+// list wants it: a coarse "46m" / "1h 5m" (the locale's narrow units), not a clock time. The list is a
 // scanning surface — the exact seconds belong to the player, which shows them.
 // Rounds to the nearest minute, and floors at "1m" so a short-but-real
 // recording never reads as an empty one.
 export function formatMeetingDuration(durationMs: number): string {
   const minutes = Math.max(1, Math.round(durationMs / 60000));
-  if (minutes < 60) {
-    return `${minutes}m`;
-  }
-  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+  return durationFormat({ hours: Math.floor(minutes / 60), minutes: minutes % 60 }, "narrow");
 }
 
 function requireNonEmptyString(value: unknown, label: string): string {

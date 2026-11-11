@@ -68,7 +68,7 @@ describe("pipelineStatus", () => {
 
   it("omits the policy part when retention is unknown and names the GPU", () => {
     const status = pipelineStatus({ ...team, keep: "audio-video", recordingsPolicy: null, device: "cuda", quality: "best" });
-    expect(status.keep.state).toBe("Audio + video");
+    expect(status.keep.state).toBe("Audio and video");
     expect(status.transcribe.state).toBe("On · Best · GPU");
   });
 });

@@ -5,6 +5,7 @@
   // nothing to offer), so the body is the shell's, through the default slot.
   import { createEventDispatcher } from "svelte";
   import CloseButton from "./ui/CloseButton.svelte";
+  import { LL } from "../i18n";
 
   const dispatch = createEventDispatcher<{ close: void }>();
 </script>
@@ -12,12 +13,12 @@
 <section class="support-panel" aria-labelledby="support-panel-title">
   <header class="support-head">
     <div class="min-w-0 flex-1">
-      <h2 id="support-panel-title" class="text-[15px] font-semibold">A recording missing, or something not working?</h2>
+      <h2 id="support-panel-title" class="text-[15px] font-semibold">{$LL.viewer.browse.support_panel.title()}</h2>
       <p class="mt-0.5 text-[13px] leading-normal text-base-content/70">
-        Download a support bundle and send it to whoever runs Cassini for you.
+        {$LL.viewer.browse.support_panel.intro()}
       </p>
     </div>
-    <CloseButton label="Close Help" on:click={() => dispatch("close")} />
+    <CloseButton label={$LL.viewer.browse.support_panel.close()} on:click={() => dispatch("close")} />
   </header>
 
   <div class="support-body">

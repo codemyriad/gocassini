@@ -83,7 +83,9 @@ it("writes a missing summary only after the cost is shown and confirmed", async 
   await userEvent.click(page.getByRole("button", { name: "Write summary", exact: true }));
   const confirm = page.getByRole("alertdialog", { name: "Write a summary for this meeting?" });
   await expect.element(confirm).toBeVisible();
-  await expect.element(confirm.getByText("1 call to deepseek/deepseek-v4.1-flash (Open Router) · about 7.5k input tokens, 5,213 words")).toBeVisible();
+  // Compact numbers differ between ICU versions ("7.5K" in older CLDR, "7.5k" in newer en-GB).
+  const tokens = new Intl.NumberFormat("en-GB", { notation: "compact", maximumFractionDigits: 1 }).format(7480);
+  await expect.element(confirm.getByText(`1 call to deepseek/deepseek-v4.1-flash (Open Router) · about ${tokens} input tokens, 5,213 words`)).toBeVisible();
   await expect.element(confirm.getByText("The transcript is sent to an external service, which may bill for it.")).toBeVisible();
   expect(posts).toEqual([]);
   await page.screenshot({ element: document.querySelector(".op-detail-pane")!, path: `${SHOTS}/01-confirm-write.png` });
@@ -118,6 +120,6 @@ it("asks before replacing a summary, and cancelling sends nothing", async () => 
 it("says why it cannot write one when an administrator can fix that", async () => {
   serve("Planning", plan({ available: false, reason: "summaries_off" }));
   await open("Planning");
-  await expect.element(page.getByText("Summaries are off. Turn them on in Settings › Publish pipeline to write one.")).toBeVisible();
+  await expect.element(page.getByText("Summaries are off. Turn them on in Operator › Publish pipeline to write one.")).toBeVisible();
   await expect.element(page.getByRole("button", { name: "Write summary", exact: true })).not.toBeInTheDocument();
 });

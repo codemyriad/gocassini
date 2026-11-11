@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
 
+  import { LL } from "../../i18n";
   import { railTicks } from "../../core/marking";
   import { formatClockTime } from "../../core/transcript";
   import type { TagColorId } from "../../viewer/tagPalette";
@@ -140,7 +141,7 @@
       bind:this={track}
       class="mr-track absolute inset-y-0 left-0.5 w-3.5 rounded-sm bg-base-content/8"
       role="group"
-      aria-label="Tagged sections across the whole meeting"
+      aria-label={$LL.viewer.meeting.marking.map_label()}
       on:click={(event) => durationMs > 0 && dispatch("go", msAt(event))}
     >
       {@render seen()}
@@ -156,7 +157,7 @@
           style:height={pct(mark.endMs - mark.startMs)}
           style:left="calc({(mark.column / columns) * 100}% + 1px)"
           style:width="calc({100 / columns}% - 2px)"
-          aria-label={`${describeMark(mark)}. Go to it.`}
+          aria-label={$LL.viewer.meeting.marking.go_to_mark({ mark: describeMark(mark) })}
           on:click|stopPropagation={() => dispatch("select", mark)}
         ></button>
       {/each}
@@ -176,9 +177,7 @@
     class:scrubbing={scrub?.moved}
     tabindex={grabbing ? 0 : -1}
     role="group"
-    aria-label={grabbing
-      ? "The whole meeting. Drag to scroll the transcript, click to go to a moment, or press Enter for the turn under the playhead."
-      : "The whole meeting. Drag to scroll the transcript, or click to go to a moment."}
+    aria-label={grabbing ? $LL.viewer.meeting.marking.rail_label_grab() : $LL.viewer.meeting.marking.rail_label()}
     on:pointerdown={startScrub}
     on:pointermove={move}
     on:pointerup={up}

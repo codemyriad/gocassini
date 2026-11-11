@@ -7,9 +7,10 @@
   // Three root elements rather than one box: the row that holds this is a
   // grid, and the parent places the meta, the action and the detail in it.
   import { createEventDispatcher } from "svelte";
+  import { LL } from "cassini-viewer/i18n";
   import type { OperatorClient } from "./operator/client";
   import type { SpeechModel, SpeechModelInventory } from "./operator/types";
-  import { jobRunning, jobStepText, modelJob } from "./speechModels";
+  import { jobRunning, jobStepText, modelJob, modelSize } from "./speechModels";
   export let client: OperatorClient | null = null;
   export let inventory: SpeechModelInventory | null = null;
   export let modelId: string;
@@ -25,16 +26,15 @@
   $: model = inventory?.models.find((m) => m.id === modelId);
   $: job = modelJob(inventory, model, device);
   $: running = jobRunning(job);
-  function size(n: number) {
-    return n >= 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(1)} GiB` : `${(n / 1024 / 1024).toFixed(1)} MiB`;
-  }
+  $: t = $LL.app.settings.speech_model_cell;
+  const size = modelSize;
   $: state = !model ? "" : running && job ? jobStepText(job)
-    : model.ready ? "Ready"
+    : model.ready ? $LL.app.settings.model_download.ready()
     // Not checked against this build yet. The model in use is checked before
     // the next recording on its own; any other one when someone presses Check.
-    : model.installed ? (selected ? "Installed · checked before the next recording" : "Installed · not checked on this build yet")
-    : job?.state === "cancelled" ? "Download cancelled. Retry resumes it."
-    : "Not installed";
+    : model.installed ? (selected ? t.state_installed_selected() : t.state_installed())
+    : job?.state === "cancelled" ? $LL.app.settings.model_download.cancelled()
+    : $LL.app.settings.model_download.not_installed();
   async function action(kind: "install" | "cancel" | "retry") {
     if (!client || !model || busy) return;
     busy = true;
@@ -58,11 +58,11 @@
 <span class="model-action">
   {#if model}
     {#if running && job}
-      <button type="button" class="btn btn-xs" disabled={busy} on:click={() => action("cancel")}>Cancel</button>
+      <button type="button" class="btn btn-xs" disabled={busy} on:click={() => action("cancel")}>{$LL.common.action.cancel()}</button>
     {:else if model.ready}
-      {#if selected}<span class="model-inuse">In use</span>{/if}
+      {#if selected}<span class="model-inuse">{t.in_use()}</span>{/if}
     {:else if model.installed || inventory?.downloads_allowed}
-      <button type="button" class="btn btn-xs" disabled={busy} on:click={() => action(job ? "retry" : "install")}>{model.installed ? "Check" : job ? "Retry" : "Download"}</button>
+      <button type="button" class="btn btn-xs" disabled={busy} on:click={() => action(job ? "retry" : "install")}>{model.installed ? $LL.app.settings.model_download.check() : job ? $LL.common.action.retry() : $LL.app.settings.model_download.download()}</button>
     {/if}
   {/if}
 </span>
@@ -71,10 +71,10 @@
     {#if error}<p class="model-error" role="status">{error}</p>{/if}
     {#if running && job}
       {#if job.state === "downloading" && job.progress.total_bytes > 0}
-        <progress max={job.progress.total_bytes} value={job.progress.completed_bytes} aria-label="Model download progress"></progress>
-        <p>{size(job.progress.completed_bytes)} / {size(job.progress.total_bytes)}{#if job.progress.reused_bytes > 0} · {size(job.progress.reused_bytes)} reused{/if}{job.progress.file ? ` · ${job.progress.file}` : ""}</p>
+        <progress max={job.progress.total_bytes} value={job.progress.completed_bytes} aria-label={t.progress_label()}></progress>
+        <p>{t.progress({ done: size(job.progress.completed_bytes), total: size(job.progress.total_bytes) })}{#if job.progress.reused_bytes > 0} · {t.reused({ size: size(job.progress.reused_bytes) })}{/if}{job.progress.file ? ` · ${job.progress.file}` : ""}</p>
       {/if}
-      <p>You can close this page; it carries on.</p>
+      <p>{t.carries_on()}</p>
     {:else if job?.error}
       <p class="model-error">{job.error}</p>
     {/if}

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { LL } from "cassini-viewer/i18n";
   import SupportBundle from "./SupportBundle.svelte";
 </script>
 
@@ -8,14 +9,14 @@
 <header class="op-panel-head">
   <div>
     <div class="op-panel-title">
-      <h1>Help</h1>
+      <h1>{$LL.app.operator.help_panel.title()}</h1>
     </div>
-    <p>Recording failing, or a meeting not showing up? Download a support bundle and attach it to your support request.</p>
+    <p>{$LL.app.operator.help_panel.intro()}</p>
   </div>
 </header>
 
 <section class="op-tint help-card" aria-labelledby="help-bundle-heading">
-  <h2 id="help-bundle-heading">Support bundle</h2>
+  <h2 id="help-bundle-heading">{$LL.app.operator.help_panel.bundle_heading()}</h2>
   <SupportBundle administrator={true} surface="operator" />
 </section>
 

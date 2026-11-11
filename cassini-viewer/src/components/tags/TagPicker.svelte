@@ -2,14 +2,17 @@
   import { createEventDispatcher, onMount } from "svelte";
   import { Check, Minus } from "@lucide/svelte";
 
-  import { findByLabel, matchTags, plural, type TagPick, type VocabularyTag } from "../../viewer/annotations";
-  import { colorFor, leastUsedColor, styleName, type TagColorId } from "../../viewer/tagPalette";
+  import { LL } from "../../i18n";
+  import { findByLabel, matchTags, type TagPick, type VocabularyTag } from "../../viewer/annotations";
+  import { colorFor, leastUsedColor, type TagColorId } from "../../viewer/tagPalette";
+  import { richText, slotArgs } from "../ui/richText";
   import ColorSwatchPicker from "./ColorSwatchPicker.svelte";
   import TagIcon from "./TagIcon.svelte";
   import { popover, stepIndex } from "./popover";
 
   export let tags: readonly VocabularyTag[] = [];
-  export let label = "Tag";
+  // Empty means "Tag", in the reader's language.
+  export let label = "";
   export let query = "";
   // Tick boxes, for toggling tags on whole meetings. `mixed` is on some of several.
   export let multiple = false;
@@ -35,6 +38,8 @@
   $: count = matches.length + (canCreate ? 1 : 0);
   $: if (active >= count) active = Math.max(0, count - 1);
   $: newColor = chosenColor ?? leastUsedColor(tags);
+  $: text = $LL.viewer.browse.tags;
+  $: findLabel = creatable ? text.find_or_create() : text.find();
 
   onMount(() => input.focus());
 
@@ -80,7 +85,7 @@
   use:popover={{ anchor, close: () => dispatch("close") }}
   class="tag-popover tag-picker"
   role="dialog"
-  aria-label={label}
+  aria-label={label || text.picker_label()}
 >
   <input
     bind:this={input}
@@ -88,8 +93,8 @@
     type="text"
     maxlength="64"
     autocomplete="off"
-    placeholder={creatable ? "Find or create a tag" : "Find a tag"}
-    aria-label={creatable ? "Find or create a tag" : "Find a tag"}
+    placeholder={findLabel}
+    aria-label={findLabel}
     role="combobox"
     aria-expanded="true"
     aria-controls={`${uid}-list`}
@@ -101,7 +106,7 @@
   <ul
     id={`${uid}-list`}
     role="listbox"
-    aria-label="Tags"
+    aria-label={text.list_label()}
     aria-multiselectable={multiple || undefined}
     aria-owns={canCreate ? `${uid}-${matches.length}` : undefined}
   >
@@ -129,7 +134,7 @@
         <!-- The mark is in the name's line so vertical-align: middle centres
              it on the name's x-height; as a flex item it sat on the box centre. -->
         <span class="name"><span class="mark"><TagIcon icon={tag.icon} /></span>{tag.label}</span>
-        <span class="uses">{plural(tag.meetings, "meeting")}</span>
+        <span class="uses">{text.meetings({ count: tag.meetings })}</span>
       </li>
     {/each}
   </ul>
@@ -145,14 +150,14 @@
         on:pointerdown={keepFocus}
         on:click={() => pick(matches.length)}
       >
-        Create <b>“{draft}”</b>
+        {#each richText(text.create(slotArgs(["name"]))) as part}{#if part.slot}<b>“{draft}”</b>{:else}{part.text}{/if}{/each}
       </div>
       <button
         bind:this={swatchButton}
         type="button"
         class="swatch"
         data-tag-color={newColor}
-        aria-label={`Colour: ${styleName(newColor)}`}
+        aria-label={text.colour_named({ name: text.colors[newColor]() })}
         aria-haspopup="true"
         aria-expanded={choosingColor}
         on:click={() => (choosingColor = !choosingColor)}
@@ -163,14 +168,14 @@
         <ColorSwatchPicker
           value={newColor}
           anchor={swatchButton}
-          label={`Colour for “${draft}”`}
+          label={text.colour_for({ name: draft })}
           on:select={chooseColor}
           on:close={() => (choosingColor = false)}
         />
       {/if}
     </div>
   {:else if tags.length === 0}
-    <p class="empty">No tags yet. Type a name to create one.</p>
+    <p class="empty">{text.none_yet_create()}</p>
   {/if}
 </div>
 

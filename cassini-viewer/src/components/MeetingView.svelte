@@ -15,6 +15,9 @@
     Trash2,
     X,
   } from "@lucide/svelte";
+  import { get } from "svelte/store";
+
+  import { LL } from "../i18n";
   import CloseButton from "./ui/CloseButton.svelte";
   import {
     formatClockTime,
@@ -91,7 +94,7 @@
     LoadedArtifact,
   } from "../viewer/loadArtifact";
   import type { PortableTranscriptDescriptor } from "../viewer/portable";
-  import { displaySegmentsForArtifact, safeMeetingStem, summaryExportName, transcriptMarkdown } from "../viewer/meetingExport";
+  import { displaySegmentsForArtifact, formatNameList, safeMeetingStem, shownSpeakerLabel, summaryExportName, transcriptMarkdown } from "../viewer/meetingExport";
   import { loadAudioFile, saveBlob, saveTranscript } from "../viewer/exportTransfer";
   import type { MeetingCatalogEntry } from "../viewer/catalog";
   import { hasRoom, roomLabelOf } from "../viewer/rooms";
@@ -658,7 +661,7 @@
     if (copyExportBusy) return;
     const text = transcriptMarkdown(meetingWithStart, displaySegments);
     if (!navigator.clipboard?.writeText) {
-      exportStatus = "Clipboard unavailable here — use Download transcript.";
+      exportStatus = get(LL).viewer.meeting.view.export_clipboard_unavailable();
       return;
     }
     const requestId = ++exportRequestId;
@@ -666,9 +669,9 @@
     copyExportBusy = true;
     try {
       await navigator.clipboard.writeText(text);
-      if (requestId === exportRequestId) exportStatus = "Transcript copied.";
+      if (requestId === exportRequestId) exportStatus = get(LL).viewer.meeting.view.export_copied();
     } catch {
-      if (requestId === exportRequestId) exportStatus = "Clipboard blocked here — use Download transcript.";
+      if (requestId === exportRequestId) exportStatus = get(LL).viewer.meeting.view.export_clipboard_blocked();
     } finally {
       if (copyId === copyRequestId) copyExportBusy = false;
     }
@@ -677,7 +680,7 @@
   function downloadTranscript() {
     exportRequestId += 1;
     saveTranscript(transcriptMarkdown(meetingWithStart, displaySegments), `${exportStem()}-transcript.md`);
-    exportStatus = "Transcript downloaded.";
+    exportStatus = get(LL).viewer.meeting.view.export_downloaded();
   }
 
   function downloadSummary() {
@@ -693,7 +696,7 @@
     const audioId = ++audioRequestId;
     const source = meeting?.meetingPath ?? audioSrc;
     audioExportBusy = true;
-    exportStatus = "Preparing meeting file…";
+    exportStatus = get(LL).viewer.meeting.view.export_preparing_file();
     try {
       const file = await loadAudioFile({
         id: meeting?.id ?? "meeting",
@@ -701,7 +704,7 @@
         audioPath: source,
       });
       saveBlob(file.blob, file.name);
-      if (requestId === exportRequestId) exportStatus = "Meeting file downloaded.";
+      if (requestId === exportRequestId) exportStatus = get(LL).viewer.meeting.view.export_file_downloaded();
     } catch (error) {
       if (requestId === exportRequestId) exportStatus = error instanceof Error ? error.message : String(error);
     } finally {
@@ -797,7 +800,7 @@
       dispatch("enriched", mergeMeetingRuntimeSummary(entry, artifact));
     } catch (error) {
       speakerSession.reportError(
-        `Couldn't reload the recording: ${error instanceof Error ? error.message : String(error)}`,
+        get(LL).viewer.meeting.view.reload_failed({ error: error instanceof Error ? error.message : String(error) }),
       );
     } finally {
       reloadingForSpeakers = false;
@@ -843,9 +846,9 @@
       lastSharedHash = hostHash();
     } catch (error) {
       // Surface inline next to the switcher; previous transcript stays visible.
-      transcriptSwitchError = `Couldn't load that transcript: ${
-        error instanceof Error ? error.message : String(error)
-      }`;
+      transcriptSwitchError = get(LL).viewer.meeting.view.switch_failed_detail({
+        error: error instanceof Error ? error.message : String(error),
+      });
     } finally {
       transcriptSwitchPending = false;
     }
@@ -942,7 +945,7 @@
     if (audioEl.paused) {
       void audioEl.play().catch(() => {
         stopSample();
-        dispatch("playbackerror", "Playback could not start. Try again or download the audio file.");
+        dispatch("playbackerror", get(LL).viewer.meeting.view.playback_failed());
       });
     }
   }
@@ -1012,7 +1015,7 @@
     }
     if (audioEl.paused) {
       void audioEl.play().catch(() => {
-        dispatch("playbackerror", "Playback could not start. Try again or download the audio file.");
+        dispatch("playbackerror", get(LL).viewer.meeting.view.playback_failed());
       });
       return;
     }
@@ -1091,7 +1094,7 @@
   }
 
   function handleAudioError() {
-    dispatch("playbackerror", "This browser could not play the audio file. You can download it to listen in an Opus player.");
+    dispatch("playbackerror", get(LL).viewer.meeting.view.playback_unsupported());
   }
 
   // Paused, the playhead is as often in a silence between turns as in one, and
@@ -1254,17 +1257,6 @@
     togglePlayback();
   }
 
-  // Tooltip fragment for a low-confidence word. Guarded against non-finite
-  // gaps (hosts can mount this published component with unvalidated data):
-  // never render "NaN dB" or "Infinity dB" — fall back to the unmeasured
-  // wording instead.
-  function describeAttributionGap(gapDb: number | undefined): string {
-    if (gapDb === undefined || !Number.isFinite(gapDb)) {
-      return "much louder";
-    }
-    return `${gapDb.toFixed(0)} dB louder`;
-  }
-
   // A row whose speaker just held the floor a moment ago does not repeat its
   // own name: the same rule as before, only asked of turns rather than of the
   // fragments a turn arrives in. A monologue the producer split at a two-second
@@ -1357,28 +1349,24 @@
   }
 
   function likelyCrosstalkTitle(speakerLabel: string): string {
-    return `Another participant's microphone was much louder here. This is probably their voice bleeding into ${speakerLabel}'s track, not ${speakerLabel} speaking.`;
+    return get(LL).viewer.meeting.transcript.crosstalk_title({ name: shownSpeakerLabel(speakerLabel) });
   }
 
   // "over Chris", "over Chris and Dana" - names, never durations. The measured
   // simultaneity stays in the model; a reader can act on who, not on how long.
   function formatSpeakerList(labels: readonly string[]): string {
-    if (labels.length <= 1) {
-      return labels[0] ?? "";
-    }
-    return `${labels.slice(0, -1).join(", ")} and ${labels.at(-1)}`;
+    return formatNameList(labels);
+  }
+
+  // The switcher's name for a transcript: the two a separated meeting has are
+  // named in the reader's language; any other keeps its humanized id.
+  function transcriptLabel(descriptor: PortableTranscriptDescriptor): string {
+    if (descriptor.id === "separated-voices") return $LL.viewer.meeting.load.transcript_separated();
+    if (descriptor.id === "raw-asr") return $LL.viewer.meeting.load.transcript_original();
+    return descriptor.label;
   }
 
 
-  function describeTranscriptInteraction(): string {
-    if (!meeting && hasCatalog) {
-      return "Choose a meeting from the library to load its audio, transcript, and timing data.";
-    }
-    if (!transcriptIndex) {
-      return "Load a meeting artifact to inspect its transcript and timing.";
-    }
-    return "Select a word to seek to it.";
-  }
 
 
 
@@ -1588,7 +1576,7 @@
 
 <section
   bind:this={viewRootEl}
-  aria-label="Meeting view"
+  aria-label={$LL.viewer.meeting.view.region_label()}
   class="meeting-viewer relative flex flex-col h-full min-h-0 min-w-0"
 >
     <header class="mv-header relative z-40 flex-none min-h-12 px-4 py-3 min-[981px]:px-6 bg-base-200 border-b border-base-300">
@@ -1599,7 +1587,7 @@
         on:click={() => dispatch("back")}
         class="btn btn-square btn-neutral btn-xs flex-none"
         type="button"
-        aria-label="Back to meeting list"
+        aria-label={$LL.viewer.meeting.view.back()}
       >
         <ArrowLeft size={18} aria-hidden="true" />
       </button>
@@ -1616,7 +1604,7 @@
           class="input input-bordered input-sm flex-1 min-w-0"
           maxlength="200"
           disabled={renameBusy}
-          aria-label="Meeting title"
+          aria-label={$LL.viewer.meeting.view.title_field()}
           on:keydown={(event) => {
             if (event.key === "Escape") {
               event.stopPropagation();
@@ -1629,31 +1617,31 @@
             {renameError}
           </span>
         {/if}
-        <button type="submit" class="btn btn-primary btn-xs flex-none" disabled={renameBusy}>Save</button>
+        <button type="submit" class="btn btn-primary btn-xs flex-none" disabled={renameBusy}>{$LL.common.action.save()}</button>
         <button
           type="button"
           class="btn btn-ghost btn-xs flex-none"
           disabled={renameBusy}
-          title="Restore the default title"
+          title={$LL.viewer.meeting.view.rename_reset_title()}
           on:click={() => void submitRename("")}
         >
-          Reset
+          {$LL.viewer.meeting.view.rename_reset()}
         </button>
         <button type="button" class="btn btn-ghost btn-xs flex-none" disabled={renameBusy} on:click={cancelRename}>
-          Cancel
+          {$LL.common.action.cancel()}
         </button>
       </form>
     {:else}
       <div class="flex flex-1 min-w-0 items-center gap-2">
         <h1 class="mv-title min-w-0 truncate text-lg font-bold min-[981px]:text-xl">
-          {meeting ? meeting.title : "Meeting transcript viewer"}
+          {meeting ? meeting.title : $LL.viewer.meeting.view.no_meeting_heading()}
         </h1>
         {#if canRename}
           <button
             type="button"
             class="btn btn-ghost btn-square btn-xs flex-none"
-            aria-label="Rename meeting"
-            title="Rename meeting"
+            aria-label={$LL.viewer.meeting.view.rename()}
+            title={$LL.viewer.meeting.view.rename()}
             on:click={startRename}
           >
             <Pencil size={16} aria-hidden="true" />
@@ -1669,10 +1657,10 @@
           type="button"
           class="badge badge-xs badge-error gap-1 px-1"
           title={transcriptSwitchError}
-          aria-label={`Dismiss switch error: ${transcriptSwitchError}`}
+          aria-label={$LL.viewer.meeting.view.switch_failed_dismiss({ error: transcriptSwitchError })}
           on:click={dismissTranscriptSwitchError}
         >
-          <span>Switch failed</span>
+          <span>{$LL.viewer.meeting.view.switch_failed()}</span>
           <span aria-hidden="true">×</span>
         </button>
       {/if}
@@ -1680,7 +1668,7 @@
         <div
           class="join"
           role="group"
-          aria-label="Choose transcript"
+          aria-label={$LL.viewer.meeting.view.choose_transcript()}
         >
           {#each availableTranscripts as descriptor (descriptor.id)}
             <button
@@ -1691,13 +1679,13 @@
               disabled={transcriptSwitchPending && descriptor.id !== currentTranscriptId}
               aria-pressed={descriptor.id === currentTranscriptId}
               title={[
-                descriptor.label,
+                transcriptLabel(descriptor),
                 descriptor.description,
-                descriptor.isDefault ? "(producer default)" : "",
+                descriptor.isDefault ? $LL.viewer.meeting.view.transcript_default() : "",
               ].filter(Boolean).join(" — ")}
               on:click={() => void handleTranscriptSwitch(descriptor.id)}
             >
-              {descriptor.label}
+              {transcriptLabel(descriptor)}
             </button>
           {/each}
         </div>
@@ -1709,7 +1697,7 @@
           canDownloadTranscript={displaySegments.length > 0}
           canDownloadSummary={Boolean(summaryMarkdown)}
           canDownloadAudio={Boolean(meeting?.meetingPath ?? audioSrc) && !audioExportBusy}
-          audioLabel={meeting?.meetingPath ? "Download meeting file" : "Download audio"}
+          audioLabel={meeting?.meetingPath ? $LL.viewer.meeting.view.download_meeting_file() : $LL.viewer.meeting.view.download_audio()}
           status={exportStatus}
           on:copy={copyTranscript}
           on:transcript={downloadTranscript}
@@ -1721,8 +1709,8 @@
         <button
           type="button"
           class="btn btn-sm btn-square btn-quiet"
-          aria-label={`Delete ${meeting.title}`}
-          title="Delete this meeting"
+          aria-label={$LL.viewer.meeting.view.delete_label({ title: meeting.title })}
+          title={$LL.viewer.meeting.view.delete_title()}
           on:click={() => dispatch("deleteMeeting")}
         >
           <Trash2 size={14} aria-hidden="true" />
@@ -1732,7 +1720,7 @@
 
 
     {#if inSheet}
-      <CloseButton label="Close the meeting" title="Close (Esc)" on:click={() => dispatch("back")} />
+      <CloseButton label={$LL.viewer.meeting.view.close_label()} title={$LL.viewer.meeting.view.close_title()} on:click={() => dispatch("back")} />
     {/if}
     </div>
 
@@ -1762,7 +1750,7 @@
       </div>
     {/if}
     {#if transcriptIndex && transcriptionOnly}
-      <p class="mt-2 text-sm text-base-content/70" role="status">This meeting contains a transcript without audio. Playback is unavailable.</p>
+      <p class="mt-2 text-sm text-base-content/70" role="status">{$LL.viewer.meeting.view.no_audio()}</p>
     {/if}
   </header>
 
@@ -1791,8 +1779,13 @@
     <div class="grid place-items-center flex-1 p-4">
       <div class="card bg-base-100 w-full max-w-md border border-base-300">
         <div class="card-body items-center text-center">
-          <h2 class="text-lg font-bold">Meeting not found</h2>
-          <p class="text-base-content">{errorMessage || notFoundMessage}</p>
+          <h2 class="text-lg font-bold">{$LL.viewer.meeting.view.not_found_heading()}</h2>
+          {#if errorMessage}
+            <p class="text-base-content">{$LL.viewer.meeting.view.load_failed()}</p>
+            <p class="text-sm text-base-content/70 break-words">{errorMessage}</p>
+          {:else}
+            <p class="text-base-content">{notFoundMessage}</p>
+          {/if}
         </div>
       </div>
     </div>
@@ -1849,7 +1842,7 @@
           {/if}
           {#if linkedInsights.length > 0}
             <div class="mv-summary-insights" class:mv-summary-insights-only={!summaryHtml}>
-              <h2 class="mv-summary-insights-title">Insights</h2>
+              <h2 class="mv-summary-insights-title">{$LL.viewer.meeting.view.insights_heading()}</h2>
               <div class="mv-card mv-card-list">
                 {#each linkedInsights as record (record.id)}
                   <button
@@ -1864,8 +1857,8 @@
                     <span class="shrink-0 text-xs tabular-nums text-base-content/60 max-[720px]:basis-full max-[720px]:pl-[22px]">
                       {formatInsightCreated(record)}
                       {#if (insightSourceCounts.get(record.id) ?? 0) > 0}
-                        &middot; Context from {insightSourceCounts.get(record.id)}
-                        {insightSourceCounts.get(record.id) === 1 ? "meeting" : "meetings"}
+                        {@const sources = insightSourceCounts.get(record.id) ?? 0}
+                        &middot; {$LL.viewer.meeting.view.insight_context({ count: sources })}
                       {/if}
                     </span>
                   </button>
@@ -1896,11 +1889,11 @@
     {/if}
     {#if displaySegments.length === 0}
       <p class="text-base-content/70 text-sm leading-normal">
-        {#if transcriptionStatus?.status === "failed"}Recording available. Transcription failed.
+        {#if transcriptionStatus?.status === "failed"}{$LL.viewer.meeting.transcript.failed()}
         {:else if transcriptionStatus?.status === "skipped"}
-          {transcriptionStatus.reason === "disabled" ? "Transcription was turned off for this recording." : "Recording available. Transcription needs attention in Settings."}
-        {:else if transcriptionStatus?.status === "completed"}No speech was transcribed in this recording.
-        {:else}No transcript loaded yet.{/if}
+          {transcriptionStatus.reason === "disabled" ? $LL.viewer.meeting.transcript.turned_off() : $LL.viewer.meeting.transcript.needs_attention()}
+        {:else if transcriptionStatus?.status === "completed"}{$LL.viewer.meeting.transcript.no_speech()}
+        {:else}{$LL.viewer.meeting.transcript.not_loaded()}{/if}
       </p>
     {:else}
       <!-- Heading and bar are one block, so the sheet's gap falls above the
@@ -1933,12 +1926,12 @@
            matched what you typed" are different facts, and the first one read as
            an answer to a search would say the meeting has no words in it. -->
       <p class="text-base-content/70 text-sm leading-normal">
-        Nothing in this transcript matches “{transcriptQuery.trim()}”.
+        {$LL.viewer.meeting.transcript.no_matches({ query: transcriptQuery.trim() })}
       </p>
       {:else}
       <div
         bind:this={transcriptPane}
-        aria-label="Transcript"
+        aria-label={$LL.viewer.meeting.transcript.label()}
         class="grid gap-3"
         on:touchmove={() => (manualScrollLock = true)}
         on:wheel={() => (manualScrollLock = true)}
@@ -1982,13 +1975,13 @@
                 <!-- A name, not a status: it takes the page's own ink on a
                      quiet surface rather than the solid white chip, which was
                      the brightest thing in a dark transcript. -->
-                <span class="mv-speaker-name badge badge-md text-sm px-1.5">{row.speakerLabel}</span>
+                <span class="mv-speaker-name badge badge-md text-sm px-1.5">{shownSpeakerLabel(row.speakerLabel)}</span>
               {/if}
               {#if isRowLikelyCrosstalk(row)}
                 <span
                   class="badge badge-md badge-warning badge-outline text-sm px-1"
                   title={likelyCrosstalkTitle(row.speakerLabel)}
-                >probably crosstalk</span>
+                >{$LL.viewer.meeting.transcript.crosstalk_badge()}</span>
               {/if}
               <button
                 class="mv-turn-time badge badge-md text-sm px-1.5 text-base-content/60 cursor-pointer tabular-nums"
@@ -2003,12 +1996,8 @@
               {#if row.over.length > 0}
                 <span
                   class="text-sm text-base-content/55 min-w-0"
-                  title="Simultaneous speech: {formatSpeakerList(row.over)} {row.over.length > 1
-                    ? 'were'
-                    : 'was'} speaking at the same time."
-                ><span class="sr-only">Simultaneous speech: </span><span aria-hidden="true">(</span>over {formatSpeakerList(
-                    row.over,
-                  )}<span aria-hidden="true">)</span></span>
+                  title={$LL.viewer.meeting.transcript.simultaneous_title({ names: formatSpeakerList(row.over) })}
+                ><span class="sr-only">{$LL.viewer.meeting.transcript.simultaneous_sr({ names: formatSpeakerList(row.over) })}</span><span aria-hidden="true">({$LL.viewer.meeting.transcript.over({ names: formatSpeakerList(row.over) })})</span></span>
               {/if}
             </div>
 
@@ -2029,8 +2018,8 @@
                    title={isLikelyCrosstalkAcrossBlocks(member.blocks)
                      ? likelyCrosstalkTitle(member.speakerLabel)
                      : undefined}
-                 >{#if isLikelyCrosstalkAcrossBlocks(member.blocks)}<span class="sr-only select-none">Probably crosstalk. </span>{/if}<span class="sr-only select-none">Interjection by </span><span class="sr-only" aria-hidden="true">(</span><span
-                    class="mv-speaker-name mv-speaker-inline">{member.speakerLabel}</span><span class="sr-only">:</span>{#each member.blocks as chipBlock (chipBlock.id)}{' '}<span
+                 >{#if isLikelyCrosstalkAcrossBlocks(member.blocks)}<span class="sr-only select-none">{$LL.viewer.meeting.transcript.crosstalk_sr()} </span>{/if}<span class="sr-only select-none">{$LL.viewer.meeting.transcript.interjection_sr({ name: shownSpeakerLabel(member.speakerLabel) })}</span><span class="sr-only" aria-hidden="true">(</span><span
+                    class="mv-speaker-name mv-speaker-inline" aria-hidden="true">{shownSpeakerLabel(member.speakerLabel)}</span><span class="sr-only" aria-hidden="true">:</span>{#each member.blocks as chipBlock (chipBlock.id)}{' '}<span
                       class="rounded {activeSegmentIds.has(chipBlock.id) ? 'bg-base-content/15' : ''}"
                       id={segmentDomId(chipBlock.id)}
                     >{@render blockProse(chipBlock)}</span>{/each}<span class="sr-only" aria-hidden="true">)</span></span>{/if}{/each}</p>
@@ -2057,8 +2046,8 @@
         <div class="mv-fade-blur" aria-hidden="true">{#each [1, 2, 4, 8, 16] as radius, layer (radius)}<div style:--blur="{radius}px" style:--layer={layer}></div>{/each}</div>
         <div class="mv-tabrow" class:mv-tabrow-plain={!hasSummaryTab}>
           {#if hasSummaryTab}
-            <div role="tablist" aria-label="Meeting content" class="mv-tabs tabs tabs-box tabs-sm">
-              {#each [["summary", "Summary"], ["transcript", "Transcript"]] as [id, label] (id)}
+            <div role="tablist" aria-label={$LL.viewer.meeting.view.tabs_label()} class="mv-tabs tabs tabs-box tabs-sm">
+              {#each [["summary", $LL.viewer.meeting.view.tab_summary()], ["transcript", $LL.viewer.meeting.view.tab_transcript()]] as [id, label] (id)}
                 <button
                   type="button"
                   role="tab"
@@ -2078,7 +2067,7 @@
               bind:this={searchToggleEl}
               type="button"
               class="mv-search-toggle btn btn-sm btn-square btn-quiet"
-              aria-label={searchExpanded ? "Close search" : "Search the transcript"}
+              aria-label={searchExpanded ? $LL.viewer.meeting.view.search_close() : $LL.viewer.meeting.view.search_open()}
               aria-expanded={searchExpanded}
               on:click={toggleSearch}
             >
@@ -2105,14 +2094,14 @@
     >
       <div class="flex flex-col items-center gap-3 text-base-content">
         <span class="cassini-spinner text-primary" aria-hidden="true"></span>
-        <p class="text-base">Loading meeting…</p>
+        <p class="text-base">{$LL.viewer.meeting.view.loading()}</p>
       </div>
     </div>
   {:else if !transcriptIndex && !meeting && !bundled && !notFoundMessage && isDesktop}
     <div class="absolute inset-0 z-10 grid place-items-center pointer-events-none">
       <div class="flex flex-col items-center gap-2 text-base-content">
         <CassetteTape size={28} strokeWidth={1.5} aria-hidden="true" />
-        <p class="text-base">Select a meeting to view</p>
+        <p class="text-base">{$LL.viewer.meeting.view.select_prompt()}</p>
       </div>
     </div>
   {/if}
@@ -2147,10 +2136,10 @@
             on:timeupdate={handleTimeUpdate}
           >
             {#if captionsSrc}
-              <track kind="captions" src={captionsSrc} label="Captions" default />
+              <track kind="captions" src={captionsSrc} label={$LL.viewer.meeting.player.captions()} default />
             {/if}
             {#if chaptersSrc}
-              <track kind="chapters" src={chaptersSrc} label="Chapters" />
+              <track kind="chapters" src={chaptersSrc} label={$LL.viewer.meeting.player.chapters()} />
             {/if}
           </audio>
         {/key}
@@ -2168,7 +2157,7 @@
             class="mv-play btn btn-sm btn-square min-[981px]:btn-md"
             on:click={togglePlayback}
             type="button"
-            aria-label={playing ? "Pause" : "Play"}
+            aria-label={playing ? $LL.viewer.meeting.player.pause() : $LL.viewer.meeting.player.play()}
           >
             {#if playing}
               <Pause size={20} strokeWidth={0} fill="currentColor" aria-hidden="true" />
@@ -2185,22 +2174,22 @@
             <label
               class="mv-toggle flex items-center gap-1.5 h-8 px-2 rounded-lg cursor-pointer min-[981px]:h-10"
               class:on={followPlayback && !manualScrollLock}
-              title="Keep the transcript on the words being played"
+              title={$LL.viewer.meeting.player.follow_title()}
             >
               <input
                 type="checkbox"
                 class="toggle toggle-sm"
-                aria-label="Follow the audio in the transcript"
+                aria-label={$LL.viewer.meeting.player.follow_label()}
                 checked={followPlayback && !manualScrollLock}
                 on:change={toggleFollowPlayback}
               />
-              <span class="whitespace-nowrap text-xs min-[981px]:text-sm">Follow</span>
+              <span class="whitespace-nowrap text-xs min-[981px]:text-sm">{$LL.viewer.meeting.player.follow()}</span>
             </label>
           </div>
 
           <div class="order-2 grid min-w-0 gap-0.5">
             <input
-              aria-label="Seek within meeting"
+              aria-label={$LL.viewer.meeting.player.seek_label()}
               class="mv-scrub range range-sm w-full text-base-content"
               max={Math.max(clampedDurationMs, 1)}
               min="0"
@@ -2212,9 +2201,9 @@
             <!-- Elapsed and remaining are the pair that answers "where am I";
                  the total is their sum, so it is what a narrow bar drops. -->
             <div class="flex justify-between gap-3 text-base-content/70 text-xs tabular-nums">
-              <span>{formatClockTime(clampedCurrentTimeMs)} elapsed</span>
-              <span class="max-[720px]:hidden">{formatClockTime(clampedDurationMs)} total</span>
-              <span>-{formatClockTime(remainingMs)} remaining</span>
+              <span>{$LL.viewer.meeting.player.elapsed({ time: formatClockTime(clampedCurrentTimeMs) })}</span>
+              <span class="max-[720px]:hidden">{$LL.viewer.meeting.player.total({ time: formatClockTime(clampedDurationMs) })}</span>
+              <span>{$LL.viewer.meeting.player.remaining({ time: formatClockTime(remainingMs) })}</span>
             </div>
           </div>
         </div>

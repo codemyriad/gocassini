@@ -1,7 +1,9 @@
 <script lang="ts">
   import type { createWordHighlighter } from "../core/wordHighlight";
   import type { TranscriptWordPart } from "../core/wordInteraction";
+  import { LL } from "../i18n";
   import { formatClockTime } from "../core/transcript";
+  import { shownSpeakerLabel } from "../viewer/meetingExport";
   import { describeMark, type PlacedMark } from "./marking/session";
   import TagChip from "./tags/TagChip.svelte";
 
@@ -35,7 +37,7 @@
 {#each parts as part (part.id)}{#if part.prefix}<span class="cassini-gap" data-gap-for={part.id}>{part.prefix}</span>{/if}{#each chips?.get(part.id) ?? [] as mark (mark.item.id)}<button
     type="button"
     class="cassini-tag-start"
-    aria-label={`${describeMark(mark)}. Open it.`}
+    aria-label={$LL.viewer.meeting.marking.open_mark({ mark: describeMark(mark) })}
     on:click={() => openMark?.(mark)}
   ><TagChip label={mark.tag.label} color={mark.color} icon={mark.icon} /></button>{/each}{#if part.startMs !== undefined}<button
     type="button"
@@ -47,8 +49,8 @@
     data-speaker={speakerLabel}
     data-active="false"
     use:trackWord={part.id}
-    aria-label={`${part.text} — seek to ${formatClockTime(part.startMs)}, ${speakerLabel}`}
-    title={part.alignment === "interpolated" ? "Estimated word timing" : undefined}
+    aria-label={$LL.viewer.meeting.word.label({ word: part.text, time: formatClockTime(part.startMs), speaker: shownSpeakerLabel(speakerLabel) })}
+    title={part.alignment === "interpolated" ? $LL.viewer.meeting.word.estimated_title() : undefined}
     on:click={() => seek(part.startMs!)}
   >{part.text}</button>{:else}<span data-word-id={part.id}>{part.text}</span>{/if}{/each}
 

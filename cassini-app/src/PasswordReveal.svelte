@@ -1,6 +1,8 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
+  import { around } from "cassini-viewer/ui/richText";
   import { Check, Copy, KeyRound } from "@lucide/svelte";
+  import { LL } from "cassini-viewer/i18n";
 
   // The one time the service account's password is on screen (D-708).
   //
@@ -23,6 +25,12 @@
   export let resetOcc = "";
 
   const dispatch = createEventDispatcher<{ acknowledge: void }>();
+
+  // Sentences with the account name in them, cut where {user} goes so the
+  // name can be drawn as <code> without piecing the sentence together.
+  $: t = $LL.app.settings.password_reveal;
+  $: saveNow = around(t.save_now, "user");
+  $: onlyTime = around(t.only_time, "user");
 
   let copied = false;
   let copyFailed = false;
@@ -67,18 +75,16 @@
 <div
   class="grid gap-3 rounded-box border border-warning bg-warning/10 p-3"
   role="alertdialog"
-  aria-label="The Cassini service account's password"
+  aria-label={t.dialog_label()}
 >
   <div class="flex items-start gap-2">
     <KeyRound size={18} class="mt-0.5 shrink-0 text-warning" aria-hidden="true" />
     <div class="grid gap-1">
       <p class="text-sm font-semibold">
-        Save the password for the <code>{user}</code> account now.
+        {saveNow[0]}<code>{user}</code>{saveNow[1]}
       </p>
       <p class="text-xs break-words text-base-content/80">
-        This is the only time it's shown. Cassini doesn't store it and can't show it again. You only
-        need it to sign in as <code>{user}</code> yourself; Cassini connects another way. If you lose
-        it, set a new one here.
+        {onlyTime[0]}<code>{user}</code>{onlyTime[1]}
       </p>
     </div>
   </div>
@@ -93,35 +99,35 @@
       readonly
       bind:this={field}
       value={password}
-      aria-label="Generated password"
+      aria-label={t.field_label()}
       on:focus={(event) => event.currentTarget.select()}
     />
     <button class="btn btn-sm" type="button" on:click={copy}>
       {#if copied}
         <Check size={14} aria-hidden="true" />
-        Copied
+        {$LL.common.status.copied()}
       {:else}
         <Copy size={14} aria-hidden="true" />
-        Copy
+        {t.copy()}
       {/if}
     </button>
   </div>
 
   {#if copyFailed}
     <p class="text-xs break-words text-warning" role="status">
-      Your browser blocked copying. The password is selected above, so copy it with your keyboard.
+      {t.copy_blocked()}
     </p>
   {/if}
 
   {#if resetOcc}
     <details class="text-xs">
-      <summary class="cursor-pointer text-base-content/70">Or set one on the server instead</summary>
+      <summary class="cursor-pointer text-base-content/70">{t.set_on_server()}</summary>
       <pre
         class="m-0 mt-1 overflow-x-auto rounded-box bg-base-200 p-2 font-mono text-xs leading-relaxed">{resetOcc}</pre>
     </details>
   {/if}
 
   <button class="btn btn-sm btn-warning w-fit" type="button" on:click={() => dispatch("acknowledge")}>
-    I have saved it
+    {t.acknowledge()}
   </button>
 </div>

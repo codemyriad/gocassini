@@ -1,17 +1,16 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
   import { TriangleAlert } from "@lucide/svelte";
+  import { LL } from "cassini-viewer/i18n";
   import {
-    ACCEPT,
+    acceptLabel,
     accessLine,
     accessTitle,
-    ADMIN_FIX_LEAD,
-    ADMIN_FIX_PLAIN,
+    adminFixParts,
+    adminFixPlain,
     pendingRowMeta,
     pendingRowTitle,
-    SEND_LINK,
-    SEND_LINK_TITLE,
-    WHY_ACCEPT,
+    whyAccept,
     type AcceptSharesResult,
     type MeetingAccess,
   } from "./operator/sharingNotice";
@@ -44,7 +43,7 @@
       const result = await accept(ids);
       const refusals = result.failed.filter((entry) => ids.includes(entry.shareId));
       if (refusals.length > 0) {
-        failure = refusals.map((entry) => entry.reason).filter((reason) => reason !== "").join(" ") || "Nextcloud did not accept this share.";
+        failure = refusals.map((entry) => entry.reason).filter((reason) => reason !== "").join(" ") || $LL.app.shell.meeting_access.share_refused();
       }
       dispatch("accepted", result);
     } catch (error) {
@@ -53,32 +52,40 @@
       busy = false;
     }
   }
+
+  // Read through $LL, so every sentence follows the reader's language,
+  // including a change after the notice is drawn.
+  $: title = $LL && accessTitle(access);
+  $: line = $LL && accessLine(access);
+  $: fix = $LL && adminFixParts();
+  $: rowTitle = access.kind === "pending" ? $LL && pendingRowTitle(access.entry) : "";
+  $: rowMeta = access.kind === "pending" ? $LL && pendingRowMeta(access.entry) : "";
 </script>
 
 <div class="card bg-base-100 w-full max-w-md border border-base-300" class:access-refused={access.kind !== "pending"} role="status">
   <div class="card-body items-center text-center gap-3">
     {#if access.kind === "pending"}
-      <h2 class="text-lg font-bold">{accessTitle(access)}</h2>
+      <h2 class="text-lg font-bold">{title}</h2>
       <p class="text-base-content">
-        <strong class="font-medium">{pendingRowTitle(access.entry)}</strong>{#if pendingRowMeta(access.entry)}<span class="text-base-content/65">{" · "}{pendingRowMeta(access.entry)}</span>{/if}
+        <strong class="font-medium">{rowTitle}</strong>{#if rowMeta}<span class="text-base-content/65">{" · "}{rowMeta}</span>{/if}
       </p>
-      <p class="text-sm text-base-content/75">{accessLine(access)}</p>
+      <p class="text-sm text-base-content/75">{line}</p>
       <button type="button" class="btn btn-primary" disabled={busy} on:click={acceptIt}>
         {#if busy}
           <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
         {/if}
-        {ACCEPT}
+        {$LL && acceptLabel()}
       </button>
       {#if failure}
         <p class="text-sm text-error" role="alert">{failure}</p>
       {/if}
-      <p class="text-xs text-base-content/65">{WHY_ACCEPT}</p>
+      <p class="text-xs text-base-content/65">{$LL && whyAccept()}</p>
     {:else}
       <TriangleAlert size={20} class="text-warning" aria-hidden="true" />
-      <h2 class="text-lg font-bold">{accessTitle(access)}</h2>
+      <h2 class="text-lg font-bold">{title}</h2>
       <p class="text-base-content">
-        {accessLine(access)}
-        {#if appUrl}{ADMIN_FIX_LEAD} <a class="link link-primary" href={appUrl} title={SEND_LINK_TITLE}>{SEND_LINK}</a>.{:else}{ADMIN_FIX_PLAIN}{/if}
+        {line}
+        {#if appUrl}{fix.before}<a class="link link-primary" href={appUrl} title={fix.title}>{fix.link}</a>{fix.after}{:else}{$LL && adminFixPlain()}{/if}
       </p>
     {/if}
   </div>

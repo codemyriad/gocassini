@@ -4,12 +4,14 @@
   // keeps focus in and answers Escape; see focusLayer.ts.
   import { createEventDispatcher } from "svelte";
 
+  import { LL } from "../../i18n";
   import { focusLayer } from "./focusLayer";
 
   export let title: string;
   export let body = "";
-  export let confirmLabel = "Delete";
-  export let cancelLabel = "Cancel";
+  // Empty means "Delete" and "Cancel", in the reader's language.
+  export let confirmLabel = "";
+  export let cancelLabel = "";
   export let busy = false;
 
   const dispatch = createEventDispatcher<{ confirm: void; cancel: void }>();
@@ -26,7 +28,7 @@
   type="button"
   class="confirm-scrim"
   tabindex="-1"
-  aria-label={cancelLabel}
+  aria-label={cancelLabel || $LL.viewer.browse.ui.confirm_cancel()}
   on:click={() => dispatch("cancel")}
 ></button>
 <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
@@ -46,10 +48,10 @@
   <div class="confirm-actions">
     <!-- Cancel carries data-close so focusLayer lands on the safe answer. -->
     <button type="button" class="btn btn-sm" data-close disabled={busy} on:click={() => dispatch("cancel")}>
-      {cancelLabel}
+      {cancelLabel || $LL.viewer.browse.ui.confirm_cancel()}
     </button>
     <button type="button" class="btn btn-sm btn-error" disabled={busy} on:click={() => dispatch("confirm")}>
-      {confirmLabel}
+      {confirmLabel || $LL.viewer.browse.ui.confirm_delete()}
     </button>
   </div>
 </div>

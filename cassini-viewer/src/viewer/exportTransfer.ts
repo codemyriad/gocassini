@@ -1,3 +1,6 @@
+import { get } from "svelte/store";
+
+import { LL } from "../i18n";
 import type { MeetingCatalogEntry } from "./catalog";
 import { safeMeetingStem } from "./meetingExport";
 
@@ -46,9 +49,9 @@ function audioExtension(path: string, mime: string): string {
 
 export async function loadAudioFile(entry: Pick<MeetingCatalogEntry, "id" | "title" | "audioPath" | "meetingPath">): Promise<AudioFile> {
   const filePath = entry.meetingPath ?? entry.audioPath;
-  if (!filePath) throw new Error(`${entry.title} has no meeting file to download.`);
+  if (!filePath) throw new Error(get(LL).viewer.browse.export_transfer.no_file({ title: entry.title }));
   const response = await fetch(filePath, { cache: "no-store" });
-  if (!response.ok) throw new Error(`Couldn't download the meeting file for ${entry.title} (${response.status}).`);
+  if (!response.ok) throw new Error(get(LL).viewer.browse.export_transfer.download_failed({ title: entry.title, status: response.status }));
   const blob = await response.blob();
   const extension = filePath.split("?")[0].endsWith(".json") ? "json" : audioExtension(filePath, blob.type);
   return {
@@ -79,7 +82,7 @@ async function crc32(blob: Blob): Promise<number> {
 }
 
 export async function zipAudioFiles(files: readonly AudioFile[]): Promise<Blob> {
-  if (files.length === 0 || files.length > 0xffff) throw new Error("No meeting files to download.");
+  if (files.length === 0 || files.length > 0xffff) throw new Error(get(LL).viewer.browse.export_transfer.no_files());
   const encoder = new TextEncoder();
   const parts: BlobPart[] = [];
   const directory: BlobPart[] = [];
@@ -100,7 +103,7 @@ export async function zipAudioFiles(files: readonly AudioFile[]): Promise<Blob> 
     const name = encoder.encode(fileName);
     const size = file.blob.size;
     if (name.length > 0xffff || size > 0xffffffff || offset + size + name.length + 30 > 0xffffffff) {
-      throw new Error("The selected meeting files are too large for one download.");
+      throw new Error(get(LL).viewer.browse.export_transfer.too_large());
     }
     const crc = await crc32(file.blob);
     const local = new ArrayBuffer(30);
@@ -132,7 +135,7 @@ export async function zipAudioFiles(files: readonly AudioFile[]): Promise<Blob> 
     directorySize += 46 + name.length;
   }
   if (offset + directorySize + 22 > 0xffffffff) {
-    throw new Error("The selected meeting files are too large for one download.");
+    throw new Error(get(LL).viewer.browse.export_transfer.too_large());
   }
   const end = new ArrayBuffer(22);
   const e = new DataView(end);

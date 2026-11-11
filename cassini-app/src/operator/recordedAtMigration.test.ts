@@ -15,9 +15,8 @@ describe("normalizeRecordedAtMigration", () => {
     expect(migrationVisible(m)).toBe(false);
   });
 
-  it("keeps the operator's notification facts and sentences", () => {
-    const m = status({ state: "needed", needed: 3, notifications: { known: true, account: "cassini", activity_app: true, notifications_app: false, versioning: true, details: ["one", "", 4, "two"] } });
-    expect(m.notifications?.details).toEqual(["one", "two"]);
+  it("keeps the operator's notification facts", () => {
+    const m = status({ state: "needed", needed: 3, notifications: { known: true, account: "cassini", activity_app: true, notifications_app: false, versioning: true } });
     expect(notificationFacts(m.notifications)).toEqual([
       { label: "File versioning", value: "Enabled" },
       { label: "Activity app", value: "Enabled" },
@@ -26,7 +25,7 @@ describe("normalizeRecordedAtMigration", () => {
   });
 
   it("tells web push from browser push", () => {
-    const facts = (push: Record<string, boolean>) => notificationFacts(status({ state: "needed", needed: 1, notifications: { known: true, notifications_app: true, ...push, details: [] } }).notifications)
+    const facts = (push: Record<string, boolean>) => notificationFacts(status({ state: "needed", needed: 1, notifications: { known: true, notifications_app: true, ...push } }).notifications)
       .find(fact => fact.label === "Web push")?.value;
     expect(facts({ web_push: true, browser_push: false })).toBe("Allowed, not for browsers");
     expect(facts({ web_push: true, browser_push: true })).toBe("Allowed, browsers too");
@@ -35,7 +34,7 @@ describe("normalizeRecordedAtMigration", () => {
   });
 
   it("states no facts it could not read", () => {
-    const m = status({ state: "needed", needed: 3, notifications: { known: false, error: "could not read", details: ["defaults"] } });
+    const m = status({ state: "needed", needed: 3, notifications: { known: false, error: "could not read" } });
     expect(notificationFacts(m.notifications)).toEqual([]);
     expect(m.notifications?.activity_app).toBeUndefined();
   });
@@ -60,7 +59,7 @@ describe("what the panel offers", () => {
     expect(migrationButton(status({ state: "running", queued: 3 }))).toEqual({ action: "pause", label: "Pause", disabled: false });
     expect(migrationButton(status({ state: "pausing", in_progress: 1 }))).toBeNull();
     expect(migrationButton(status({ state: "paused", queued: 3 }))).toEqual({ action: "start", label: "Resume", disabled: false });
-    expect(migrationButton(status({ state: "blocked", blocked: 1 }))?.label).toBe("Retry the blocked recording");
+    expect(migrationButton(status({ state: "blocked", blocked: 1 }))?.label).toBe("Retry 1 blocked recording");
     expect(migrationButton(status({ state: "done", done: 4 }))).toBeNull();
   });
 

@@ -44,8 +44,10 @@ describe("defaultInsightName", () => {
       meeting({ id: "a", roomId: "r1", roomName: "Design", dateLabel: "2026-10-12 10:00" }),
       meeting({ id: "b", roomId: "r1", roomName: "Design", dateLabel: "2026-10-01 10:00" }),
     ];
-    expect(defaultInsightName({ templateName: "Summary", entries })).toBe(
-      "Summary · Design, 2 meetings, 1–12 Oct 2026",
+    // The span is Intl's formatRange, whose spacing around the dash differs
+    // between ICU versions ("1–12 Oct" here, "1 – 12 Oct" on CI's Node).
+    expect(defaultInsightName({ templateName: "Summary", entries })).toMatch(
+      /^Summary · Design, 2 meetings, 1 ?– ?12 Oct 2026$/,
     );
   });
 

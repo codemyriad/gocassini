@@ -1,0 +1,46 @@
+{
+  "common": {
+    "action": {
+      "cancel": "Anuluj",
+      "save": "Zapisz",
+      "saving": "Zapisywanie…",
+      "retry": "Spróbuj ponownie",
+      "retrying": "Ponawianie…",
+      "dismiss": "Odrzuć",
+      "delete": "Usuń",
+      "remove": "Usuń",
+      "edit": "Edytuj",
+      "close": "Zamknij",
+      "try_again": "Spróbuj ponownie"
+    },
+    "summary_request": {
+      "write": "Napisz podsumowanie",
+      "regenerate": "Wygeneruj podsumowanie ponownie",
+      "confirm_write_title": "Napisać podsumowanie tego spotkania?",
+      "confirm_replace_title": "Zastąpić podsumowanie tego spotkania?",
+      "cost": "{count:number|num} {{count:|wywołanie||wywołania|wywołań|wywołania}} do {target} · około {tokens:number|compact} {{tokens:|tokena wejściowego||tokenów wejściowych|tokenów wejściowych|tokena wejściowego}}, {words:number|num} {{words:|słowo||słowa|słów|słowa}}",
+      "cost_target_fallback": "modelu podsumowań",
+      "cost_target": "{model} ({provider})",
+      "endpoint_external": "Transkrypcja jest wysyłana do zewnętrznej usługi, która może za to pobierać opłaty.",
+      "endpoint_local": "Model działa w twojej własnej sieci."
+    },
+    "audience": {
+      "intro": "Pliki Nextcloud decydują, kto może czytać każde nagranie.",
+      "point_participants": "Każde nagranie jest udostępniane wszystkim uczestnikom pokoju Talk, niezależnie od tego, czy byli obecni na połączeniu.",
+      "point_guests": "Goście bez konta Nextcloud nie mogą go otworzyć.",
+      "point_public_links": "Cassini nigdy nie tworzy linku publicznego. W pokojach publicznych uczestnicy mogą ponownie udostępnić plik, jeśli ten Nextcloud na to pozwala."
+    },
+    "place": {
+      "operator": "Operator",
+      "publish_pipeline": "Potok publikacji",
+      "ai_providers": "Dostawcy AI",
+      "insight_templates": "Szablony analiz",
+      "doctor": "Doktor",
+      "storage": "Magazyn",
+      "help": "Pomoc"
+    },
+    "status": {
+      "copied": "Skopiowano"
+    }
+  }
+}

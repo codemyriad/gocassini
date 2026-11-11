@@ -24,6 +24,8 @@
 // formatting them through the runtime's default zone would let that zone shift
 // them a second time.
 
+import { dateFormat } from "../i18n/format";
+
 export interface MeetingTimeSource {
   dateLabel?: string;
   recordedAtUtc?: string;
@@ -192,13 +194,13 @@ export function formatMeetingStartShort(entry: MeetingTimeSource | null | undefi
 // "Wed 16 Sept 2026, 10:31".
 export function formatMeetingStartWithDay(entry: MeetingTimeSource | null | undefined, timeZone?: string): string {
   const wall = displayWall(entry, timeZone);
-  return wall ? `${WEEKDAY_FORMAT.format(wallDate(wall))} ${formatWallShort(wall)}` : (entry?.dateLabel ?? "");
+  return wall ? formatWall(wall, { weekday: "short" }) : (entry?.dateLabel ?? "");
 }
 
 // "13 Mar 2026", the day only.
 export function formatMeetingStartDay(entry: MeetingTimeSource | null | undefined, timeZone?: string): string {
   const wall = displayWall(entry, timeZone);
-  return wall ? SHORT_DATE_FORMAT.format(wallDate(wall)) : "";
+  return wall ? dateFormat(DAY_OPTIONS).format(wallDate(wall)) : "";
 }
 
 // The day the reader is shown, as "YYYY-MM-DD", or "" when there is none.
@@ -226,7 +228,7 @@ export function meetingStartMonth(
 export function wallClockMonth(wall: WallClock): { key: string; label: string } {
   return {
     key: `${wall.year}-${pad(wall.month)}`,
-    label: MONTH_FORMAT.format(new Date(Date.UTC(wall.year, wall.month - 1, 1))),
+    label: dateFormat(MONTH_OPTIONS).format(new Date(Date.UTC(wall.year, wall.month - 1, 1))),
   };
 }
 
@@ -334,9 +336,9 @@ export function hasMeetingDate(dateLabel: string): boolean {
   return /^(\d{4})-(\d{2})-(\d{2})/.test(dateLabel);
 }
 
-// "13 Mar 2026, 12:29" from a label's digits. Locale-pinned to en-GB so the
-// day-month-year order and the 24-hour clock are consistent regardless of the
-// viewer's browser locale (D-685).
+// "13 Mar 2026, 12:29" from a label's digits, written the way the reader's
+// locale writes a date and a time (i18n/format.ts): "Mar 13, 2026, 12:29 PM"
+// in the US, "13/03/2026, 12:29" in Portugal.
 export function formatMeetingDateShort(dateLabel: string): string {
   return formatMeetingStartShort({ dateLabel });
 }
@@ -346,11 +348,17 @@ export function formatMeetingDateWithDay(dateLabel: string): string {
 }
 
 function formatWallShort(wall: WallClock): string {
-  const day = SHORT_DATE_FORMAT.format(wallDate(wall));
+  return formatWall(wall);
+}
+
+// The wall clock's digits in the reader's date style, with its time when it has
+// one. Formatted as UTC because the digits are already the ones to show.
+function formatWall(wall: WallClock, extra: Intl.DateTimeFormatOptions = {}): string {
   if (wall.hour === undefined || wall.minute === undefined) {
-    return day;
+    return dateFormat({ ...DAY_OPTIONS, ...extra }).format(wallDate(wall));
   }
-  return `${day}, ${pad(wall.hour)}:${pad(wall.minute)}`;
+  const at = new Date(Date.UTC(wall.year, wall.month - 1, wall.day, wall.hour, wall.minute));
+  return dateFormat({ ...DAY_OPTIONS, ...TIME_OPTIONS, ...extra }).format(at);
 }
 
 function wallDate(wall: WallClock): Date {
@@ -361,21 +369,12 @@ function pad(value: number): string {
   return String(value).padStart(2, "0");
 }
 
-// Hoisted: the filter re-formats every catalog entry on each keystroke, and
-// Intl.DateTimeFormat construction is the expensive part. All pinned to UTC
-// because they format wall-clock digits already decided (see the top).
-const SHORT_DATE_FORMAT = new Intl.DateTimeFormat("en-GB", {
-  day: "numeric",
-  month: "short",
-  year: "numeric",
-  timeZone: "UTC",
-});
-const WEEKDAY_FORMAT = new Intl.DateTimeFormat("en-GB", { weekday: "short", timeZone: "UTC" });
-const MONTH_FORMAT = new Intl.DateTimeFormat("en-GB", {
-  month: "long",
-  year: "numeric",
-  timeZone: "UTC",
-});
+// All in UTC because they format wall-clock digits already decided (see the
+// top). dateFormat caches each formatter, since the filter re-formats every
+// catalog entry on each keystroke.
+export const DAY_OPTIONS: Intl.DateTimeFormatOptions = { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" };
+const TIME_OPTIONS: Intl.DateTimeFormatOptions = { hour: "2-digit", minute: "2-digit" };
+const MONTH_OPTIONS: Intl.DateTimeFormatOptions = { month: "long", year: "numeric", timeZone: "UTC" };
 
 const zonedFormats = new Map<string, Intl.DateTimeFormat>();
 
@@ -398,7 +397,7 @@ function zonedPartsFormat(timeZone: string): Intl.DateTimeFormat {
 }
 
 function zoneName(ms: number, timeZone?: string): string {
-  const parts = new Intl.DateTimeFormat("en-GB", {
+  const parts = dateFormat({
     timeZone,
     hour: "2-digit",
     timeZoneName: "short",

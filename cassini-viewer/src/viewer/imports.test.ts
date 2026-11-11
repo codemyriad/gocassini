@@ -2,6 +2,7 @@ import { describeImportSharing } from "./imports";
 import { describe, expect, it } from "vitest";
 
 import { formatImportDuration, importJobTerminal, parseImportPreview } from "./imports";
+import { durationFormat } from "../i18n";
 
 function fileOf(name: string, bytes: Uint8Array | string): File {
   const body = typeof bytes === "string" ? new TextEncoder().encode(bytes) : bytes;
@@ -52,9 +53,11 @@ describe("formatImportDuration", () => {
   it("reads as people say durations", () => {
     expect(formatImportDuration(0)).toBe("");
     expect(formatImportDuration(20_000)).toBe("under a minute");
-    expect(formatImportDuration(12 * 60_000)).toBe("12 min");
-    expect(formatImportDuration(60 * 60_000)).toBe("1 h");
-    expect(formatImportDuration(92 * 60_000)).toBe("1 h 32 min");
+    expect(formatImportDuration(12 * 60_000)).toBe(durationFormat({ hours: 0, minutes: 12 }));
+    expect(formatImportDuration(60 * 60_000)).toBe(durationFormat({ hours: 1 }));
+    expect(formatImportDuration(92 * 60_000)).toBe(durationFormat({ hours: 1, minutes: 32 }));
+    // In the locale's units, the same in every runtime.
+    expect(formatImportDuration(92 * 60_000)).toBe("1 hr 32 mins");
   });
 });
 
@@ -71,7 +74,7 @@ describe("describeImportSharing", () => {
         ],
       },
     });
-    expect(got.line).toBe("Shared with 5");
+    expect(got.line).toBe("Shared with 5 recipients");
     expect(got.title).toBe("you, Bob Lee, Design (group), Core (team), nolabel");
   });
   it("says so when the meeting is private", () => {
