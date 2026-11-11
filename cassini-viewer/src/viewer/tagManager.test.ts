@@ -3,7 +3,7 @@ import { get } from "svelte/store";
 
 import { AnnotationError, type TagJob, type VocabularyTag } from "./annotations";
 import {
-  BUSY,
+  busyNotice,
   changedLine,
   confirmLine,
   countsLine,
@@ -71,17 +71,17 @@ describe("row lines", () => {
   });
 
   it("tells time relative to now", () => {
-    expect(relativeTime(ago(30e3), NOW)).toBe("just now");
+    expect(relativeTime(ago(30e3), NOW)).toBe("now");
     expect(relativeTime(ago(5 * 6e4), NOW)).toBe("5 minutes ago");
     expect(relativeTime(ago(3 * 36e5), NOW)).toBe("3 hours ago");
     expect(relativeTime(ago(1.5 * DAY), NOW)).toBe("yesterday");
     expect(relativeTime(ago(15 * DAY), NOW)).toBe("2 weeks ago");
-    expect(relativeTime(ago(-60e3), NOW)).toBe("just now");
+    expect(relativeTime(ago(-60e3), NOW)).toBe("now");
   });
 
   it("confirms with one line about the caller's own meetings", () => {
     expect(confirmLine(9)).toBe("Updates 9 of your meetings. Meetings that are in rooms you can't access will keep the old tag.");
-    expect(confirmLine(1)).toMatch(/^Updates one of your meetings\./);
+    expect(confirmLine(1)).toMatch(/^Updates 1 of your meetings\./);
     expect(confirmLine(0)).toBe("None of your meetings use it.");
   });
 });
@@ -182,7 +182,7 @@ describe("createJobTracker", () => {
 
     const status = jobStatus(get(tracker), "tag_b");
     expect(status).toEqual({
-      text: "2 couldn't be updated",
+      text: "2 meetings couldn't be updated",
       failed: ["Daily standup — 11 Sept", "Pricing workshop"],
       rerun: merge,
     });
@@ -225,7 +225,7 @@ describe("createJobTracker", () => {
     provider.loadTagJob.mockResolvedValueOnce(job({ id: "job_0", tagId: "tag_h", done: 2 }));
     await tracker.run({ kind: "delete", tagId: "tag_b" });
     await vi.advanceTimersByTimeAsync(0);
-    expect(get(tracker).notice).toBe(BUSY);
+    expect(get(tracker).notice).toBe(busyNotice());
     expect(jobStatus(get(tracker), "tag_h")?.text).toBe("Updating 2 of 9…");
   });
 

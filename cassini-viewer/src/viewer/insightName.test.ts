@@ -44,8 +44,10 @@ describe("defaultInsightName", () => {
       meeting({ id: "a", roomId: "r1", roomName: "Design", dateLabel: "2026-10-12 10:00" }),
       meeting({ id: "b", roomId: "r1", roomName: "Design", dateLabel: "2026-10-01 10:00" }),
     ];
-    expect(defaultInsightName({ templateName: "Summary", entries })).toBe(
-      "Summary · Design, 2 meetings, 1–12 Oct 2026",
+    // The span is Intl's formatRange, whose spacing around the dash differs
+    // between ICU versions ("1–12 Oct" here, "1 – 12 Oct" on CI's Node).
+    expect(defaultInsightName({ templateName: "Summary", entries })).toMatch(
+      /^Summary · Design, 2 meetings, 1 ?– ?12 Oct 2026$/,
     );
   });
 
@@ -80,6 +82,18 @@ describe("defaultInsightName", () => {
     const name = defaultInsightName({ templateName: "Summary", entries: [meeting({ id: "a", title: "x".repeat(300) })] });
     expect(Array.from(name)).toHaveLength(INSIGHT_NAME_MAX);
     expect(name.endsWith("…")).toBe(true);
+  });
+});
+
+describe("defaultInsightName with a recording instant", () => {
+  it("names the day the reader's clock shows", () => {
+    // 23:30Z on 31 January is 1 February in Rome (the suite's zone).
+    const late = meeting({ id: "a", title: "Late call", dateLabel: "2026-01-31 23:30", recordedAtUtc: "2026-01-31T23:30:00Z" });
+    expect(defaultInsightName({ templateName: "Summary", entries: [late] })).toBe("Summary · Late call, 1 Feb 2026");
+    const earlier = meeting({ id: "b", title: "Planning", dateLabel: "2026-01-20 10:00" });
+    expect(defaultInsightName({ templateName: "Summary", entries: [late, earlier] })).toBe(
+      "Summary · 2 meetings, 20 Jan – 1 Feb 2026",
+    );
   });
 });
 

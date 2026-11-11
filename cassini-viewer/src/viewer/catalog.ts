@@ -1,9 +1,39 @@
+import { get } from "svelte/store";
+
+import { LL } from "../i18n";
+import { dateFormat, durationFormat } from "../i18n/format";
 import { readViewerBase, resolveAppBaseUrl } from "./appBase";
+import {
+  formatMeetingStartShort,
+  formatMeetingStartWithDay,
+  compareStartOrder,
+  meetingStartDayKey,
+  meetingStartOrder,
+  parseRecordedAtUtc,
+} from "./meetingTime";
+
+// The label formatters moved to meetingTime.ts with the rest of "when did this
+// meeting start"; re-exported so existing imports keep working.
+export {
+  formatMeetingDateShort,
+  formatMeetingDateWithDay,
+  hasMeetingDate,
+  parseDateLabelMs,
+} from "./meetingTime";
 
 export interface MeetingCatalogEntry {
   id: string;
   title: string;
+  // The legacy, zone-less start label ("YYYY-MM-DD[ HH:MM]"). Still required,
+  // and still what old clients read; a newer producer that knows the instant
+  // also writes recordedAtUtc below, and this viewer prefers that.
   dateLabel: string;
+  // When the recording started, as an RFC 3339 UTC instant ending in Z — the
+  // moment of playback position 0. Optional and additive in catalog.v1. When
+  // present it is the meeting's start for display, sorting, grouping and
+  // filtering, rendered in the reader's own zone (meetingTime.ts); when absent
+  // the entry falls back to dateLabel exactly as before.
+  recordedAtUtc?: string;
   artifactPath?: string;
   audioPath?: string;
   meetingPath?: string;
@@ -86,9 +116,7 @@ export async function loadMeetingCatalog(
     if (response.status === 404) {
       return null;
     }
-    throw new Error(
-      `Could not load the meeting list (HTTP ${response.status}).`,
-    );
+    throw new Error(get(LL).viewer.browse.catalog.load_failed({ status: response.status }));
   }
   return materializeCatalog(await response.json(), response.url);
 }
@@ -187,7 +215,7 @@ async function meetingsListErrorMessage(response: Response): Promise<string> {
     // A non-JSON body (a proxy error page, a truncated response) is not worth
     // reporting verbatim; fall through to the status.
   }
-  return `Could not load the meeting list (HTTP ${response.status}).`;
+  return get(LL).viewer.browse.catalog.load_failed({ status: response.status });
 }
 
 export function validateMeetingCatalog(value: unknown): MeetingCatalog {
@@ -248,6 +276,9 @@ function validateMeetingCatalogEntry(
     meetingPath,
     title,
     dateLabel,
+    // Lenient like the room fields below: a malformed instant is dropped and
+    // the entry falls back to its dateLabel, rather than failing the catalog.
+    ...optionalRecordedAtUtc(value.recordedAtUtc),
     speakerCount: optionalNumber(
       value.speakerCount,
       `catalog entry ${index} speakerCount`,
@@ -283,6 +314,11 @@ function validateMeetingCatalogEntry(
     hasSummary: optionalBoolean(value.hasSummary),
     wordCount: optionalWordCount(value.wordCount),
   };
+}
+
+function optionalRecordedAtUtc(value: unknown): { recordedAtUtc?: string } {
+  const recordedAtUtc = parseRecordedAtUtc(value);
+  return recordedAtUtc === undefined ? {} : { recordedAtUtc };
 }
 
 // optionalBoolean reads an optional flag. Only a real boolean is an answer;
@@ -325,74 +361,40 @@ function optionalRoomString(value: unknown): string | undefined {
   return trimmed === "" ? undefined : trimmed;
 }
 
-// Newest first. Entries whose dateLabel cannot be parsed (e.g. legacy catalogs
+// Newest first, by the start the reader is shown (meetingTime.ts): two
+// entries with recordedAtUtc by instant, otherwise the instant's local wall
+// clock against the label's digits. Entries with neither (e.g. legacy catalogs
 // that shipped a raw id as the label) sort after every dated entry instead of
 // wherever plain string comparison happens to land them.
 export function sortMeetingCatalogEntries(
   meetings: MeetingCatalogEntry[],
 ): MeetingCatalogEntry[] {
   return [...meetings].sort((left, right) => {
-    const leftMs = parseDateLabelMs(left.dateLabel);
-    const rightMs = parseDateLabelMs(right.dateLabel);
-    if (leftMs !== null && rightMs !== null && leftMs !== rightMs) {
-      return rightMs - leftMs;
+    const leftStart = meetingStartOrder(left);
+    const rightStart = meetingStartOrder(right);
+    if (leftStart !== null && rightStart !== null) {
+      const order = compareStartOrder(rightStart, leftStart);
+      if (order !== 0) {
+        return order;
+      }
     }
-    if (leftMs !== null && rightMs === null) {
+    if (leftStart !== null && rightStart === null) {
       return -1;
     }
-    if (leftMs === null && rightMs !== null) {
+    if (leftStart === null && rightStart !== null) {
       return 1;
     }
     return compareDescending(right.id, left.id);
   });
 }
 
-// parseDateLabelMs parses the catalog's "YYYY-MM-DD" / "YYYY-MM-DD HH:MM[:SS]"
-// date labels into a comparable timestamp, or null when the label does not
-// follow that shape or its fields are out of range (Date.UTC would silently
-// roll "2026-13-05" over into 2027 and sort it above real meetings). Labels
-// carry no timezone, so UTC is used consistently — only the relative order
-// matters here.
-export function parseDateLabelMs(dateLabel: string): number | null {
-  const match =
-    /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?/.exec(
-      dateLabel.trim(),
-    );
-  if (!match) {
-    return null;
-  }
-  const [, year, month, day, hour, minute, second] = match;
-  const monthNum = Number(month);
-  const dayNum = Number(day);
-  const hourNum = hour !== undefined ? Number(hour) : 0;
-  const minuteNum = minute !== undefined ? Number(minute) : 0;
-  const secondNum = second !== undefined ? Number(second) : 0;
-  if (
-    monthNum < 1 ||
-    monthNum > 12 ||
-    dayNum < 1 ||
-    dayNum > 31 ||
-    hourNum > 23 ||
-    minuteNum > 59 ||
-    secondNum > 59
-  ) {
-    return null;
-  }
-  const ms = Date.UTC(
-    Number(year),
-    monthNum - 1,
-    dayNum,
-    hourNum,
-    minuteNum,
-    secondNum,
-  );
-  return Number.isFinite(ms) ? ms : null;
-}
-
 // filterMeetingCatalogEntries narrows the list with a case-insensitive
-// substring match against the title, the raw date label ("2026-03-09 21:11"),
-// and the short rendered date ("9 Mar 2026") so users can type dates the way
-// the cards display them.
+// substring match against the title and the dates as the cards display them
+// ("9 Mar 2026", "Mon 9 Mar 2026, 21:11") — for an entry with recordedAtUtc
+// that is its local time, so typing what a card shows always finds it. An ISO
+// date ("2026-03") is matched against the raw dateLabel for an entry without an
+// instant — the same digits its card shows — and against the LOCAL day for one
+// with an instant, whose dateLabel holds UTC digits the reader never sees.
 export function filterMeetingCatalogEntries(
   meetings: MeetingCatalogEntry[],
   query: string,
@@ -404,30 +406,16 @@ export function filterMeetingCatalogEntries(
   return meetings.filter((meeting) =>
     [
       meeting.title,
-      meeting.dateLabel,
-      formatMeetingDateShort(meeting.dateLabel),
-      formatMeetingDateWithDay(meeting.dateLabel),
+      meeting.recordedAtUtc ? meetingStartDayKey(meeting) : meeting.dateLabel,
+      formatMeetingStartShort(meeting),
+      formatMeetingStartWithDay(meeting),
     ].some((haystack) => haystack.toLowerCase().includes(needle)),
   );
 }
 
-// Catalog `dateLabel` ships as ISO-ish "YYYY-MM-DD" or "YYYY-MM-DD HH:MM" and
-// carries NO timezone: producers stamp it from different clocks (filename
-// wall-clock, UTC-derived job ids). Render the label's own digits in the user's
-// locale (e.g. "Fri, Mar 13, 2026, 12:29 PM"), but do NOT attach a
-// `timeZoneName` — the label doesn't know its zone, so a "GMT+1" suffix would
-// assert an instant we can't actually justify (a UTC-stamped "21:11" would
-// display as "9:11 PM GMT+1" to a CET viewer, an hour off and falsely precise).
-// We show the wall-clock digits as-is and make no timezone claim (D-484).
-// Whether a catalog entry's dateLabel is a date at all. formatMeetingDate
-// returns the label unchanged when it cannot parse it, which is right for a
-// formatter and wrong for a caller deciding whether to show a date at all — a
-// meeting whose id stood in for its date rendered that id under a calendar
-// icon (D-775).
-export function hasMeetingDate(dateLabel: string): boolean {
-  return /^(\d{4})-(\d{2})-(\d{2})/.test(dateLabel);
-}
-
+// formatMeetingDate renders a label's own digits in the user's locale (e.g.
+// "Fri, Mar 13, 2026, 12:29 PM") with no timeZoneName: the label carries no
+// zone (D-484). See meetingTime.ts for the entry-aware formatters.
 export function formatMeetingDate(dateLabel: string): string {
   const match = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}))?/.exec(
     dateLabel,
@@ -447,7 +435,7 @@ export function formatMeetingDate(dateLabel: string): string {
   if (Number.isNaN(date.getTime())) {
     return dateLabel;
   }
-  return new Intl.DateTimeFormat(undefined, {
+  return dateFormat({
     weekday: "short",
     month: "short",
     day: "numeric",
@@ -456,73 +444,14 @@ export function formatMeetingDate(dateLabel: string): string {
   }).format(date);
 }
 
-// Hoisted: the filter re-formats every catalog entry on each keystroke, and
-// Intl.DateTimeFormat construction is the expensive part.
-const SHORT_DATE_FORMAT = new Intl.DateTimeFormat("en-GB", {
-  day: "numeric",
-  month: "short",
-  year: "numeric",
-});
-
-// Compact variant of formatMeetingDate for places with little space
-// (e.g. catalog cards). "13 Mar 2026, 12:29" — day, short month, year, and the
-// meeting's start time when the label carries one (D-685). Locale-pinned to
-// en-GB so the day-month-year order and the 24-hour clock are consistent
-// regardless of the viewer's browser locale.
-//
-// The time is appended from the label's own digits rather than through Intl:
-// like formatMeetingDate, this makes no timezone claim (D-484), and hour12
-// would otherwise turn a compact "12:29" into "12:29 pm" on a card that has
-// none of that room.
-export function formatMeetingDateShort(dateLabel: string): string {
-  const match = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}))?/.exec(dateLabel);
-  if (!match) {
-    return dateLabel;
-  }
-  const [, y, m, d, h, mn] = match;
-  const date = new Date(Number(y), Number(m) - 1, Number(d));
-  if (Number.isNaN(date.getTime())) {
-    return dateLabel;
-  }
-  const day = SHORT_DATE_FORMAT.format(date);
-  if (h === undefined || mn === undefined) {
-    return day;
-  }
-  if (Number(h) > 23 || Number(mn) > 59) {
-    return day;
-  }
-  return `${day}, ${h}:${mn}`;
-}
-
-// The weekday, for surfaces with room for it. "Wed 16 Sept 2026, 10:31" reads
-// as a day somebody was in a meeting, where the compact form reads as a record.
-const WEEKDAY_FORMAT = new Intl.DateTimeFormat("en-GB", { weekday: "short" });
-
-export function formatMeetingDateWithDay(dateLabel: string): string {
-  const short = formatMeetingDateShort(dateLabel);
-  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(dateLabel);
-  if (!match || short === dateLabel) {
-    return short;
-  }
-  const [, y, m, d] = match;
-  const date = new Date(Number(y), Number(m) - 1, Number(d));
-  if (Number.isNaN(date.getTime())) {
-    return short;
-  }
-  return `${WEEKDAY_FORMAT.format(date)} ${short}`;
-}
-
 // formatMeetingDuration renders a catalog entry's duration the way the browse
-// list wants it: a coarse "46m" / "1h 5m", not a clock time. The list is a
+// list wants it: a coarse "46m" / "1h 5m" (the locale's narrow units), not a clock time. The list is a
 // scanning surface — the exact seconds belong to the player, which shows them.
 // Rounds to the nearest minute, and floors at "1m" so a short-but-real
 // recording never reads as an empty one.
 export function formatMeetingDuration(durationMs: number): string {
   const minutes = Math.max(1, Math.round(durationMs / 60000));
-  if (minutes < 60) {
-    return `${minutes}m`;
-  }
-  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+  return durationFormat({ hours: Math.floor(minutes / 60), minutes: minutes % 60 }, "narrow");
 }
 
 function requireNonEmptyString(value: unknown, label: string): string {

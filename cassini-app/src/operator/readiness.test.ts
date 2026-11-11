@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readinessTitle, readinessHealthKey, readinessRows, checkStateLabel, checkTone, describeRefreshFailure, formatAge, hpbGuideURL, labelParts, repairLabel, rowActions, rowGuide, sharedCheckTime, testFollowUp, talkRoomURL, talkSettingsURL, testInFlight, toneClasses, reportTone, type ReadinessCheck, type RecordingReadiness } from "./readiness";
+import { readinessTitle, readinessHealthKey, readinessRows, checkStateLabel, checkTone, describeRefreshFailure, formatAge, hpbGuideURL, labelParts, repairLabel, rowActions, rowGuide, sharedCheckTime, testFollowUp, talkRoomURL, talkSettingsURL, testInFlight, toneClasses, reportTone, unsharedSummary, shareLimitedSummary, type ReadinessCheck, type RecordingReadiness } from "./readiness";
 import { readSetupHealth } from "./setupHealth";
 
 describe("recording setup", () => {
@@ -130,8 +130,8 @@ describe("how old a check is", () => {
   const now = new Date("2026-09-22T12:00:00Z");
   const ago = (ms: number) => new Date(now.getTime() - ms).toISOString();
 
-  it("says just now inside the first minute", () => {
-    expect(formatAge(ago(5_000), now)).toBe("just now");
+  it("says now inside the first minute", () => {
+    expect(formatAge(ago(5_000), now)).toBe("now");
   });
 
   it("counts minutes, hours and days", () => {
@@ -148,7 +148,7 @@ describe("how old a check is", () => {
   // A clock skewed forward must not produce "in 3 minutes"; the reader only
   // needs to know the check is current.
   it("does not go negative on a skewed clock", () => {
-    expect(formatAge(new Date(now.getTime() + 180_000).toISOString(), now)).toBe("just now");
+    expect(formatAge(new Date(now.getTime() + 180_000).toISOString(), now)).toBe("now");
   });
 
   it("says nothing it cannot parse", () => {
@@ -505,5 +505,43 @@ describe("a refresh that failed", () => {
 
   it("passes on what Cassini said for anything else", () => {
     expect(describeRefreshFailure(http(500))).toBe("Cassini answered with an error: 500");
+  });
+});
+
+// The Recording sharing row's count of what is currently unshared (D-885).
+describe("what is currently unshared", () => {
+  const now = new Date("2026-11-04T12:00:00Z");
+  it("counts recordings, people and groups with their singulars", () => {
+    expect(unsharedSummary({ jobs: 7, users: 3, groups: 1, since: "2026-10-12T12:00:00Z" }, now))
+      .toBe("7 recordings since 12 Oct were not shared with everyone. Missing: 3 people and 1 group.");
+    expect(unsharedSummary({ jobs: 1, users: 1, groups: 2, since: "2026-10-12T12:00:00Z" }, now))
+      .toBe("1 recording since 12 Oct was not shared with everyone. Missing: 1 person and 2 groups.");
+  });
+  it("omits a kind with none, and a date it does not have", () => {
+    expect(unsharedSummary({ jobs: 2, users: 0, groups: 1, since: "2026-10-12T12:00:00Z" }, now))
+      .toBe("2 recordings since 12 Oct were not shared with everyone. Missing: 1 group.");
+    expect(unsharedSummary({ jobs: 2, users: 4, groups: 0 }, now)).toBe("2 recordings were not shared with everyone. Missing: 4 people.");
+    expect(unsharedSummary({ jobs: 2, users: 4, groups: 0, since: "soon" }, now)).toBe("2 recordings were not shared with everyone. Missing: 4 people.");
+    expect(unsharedSummary({ jobs: 2, users: 0, groups: 0 }, now)).toBe("2 recordings were not shared with everyone.");
+  });
+  it("names the year only when it is not this one", () => {
+    expect(unsharedSummary({ jobs: 3, users: 1, groups: 0, since: "2025-12-30T12:00:00Z" }, now))
+      .toBe("3 recordings since 30 Dec 2025 were not shared with everyone. Missing: 1 person.");
+  });
+});
+
+// Nextcloud's limit on new shares (D-885): the meetings with someone still
+// waiting, each reached by a re-share from its run.
+describe("what Nextcloud's share limit held back", () => {
+  const now = new Date("2026-11-06T15:00:00Z");
+  it("counts the recordings still waiting, with its singular and since when", () => {
+    expect(shareLimitedSummary({ jobs: 2, since: "2026-11-06T13:33:00Z" }, now))
+      .toBe("Nextcloud's share limit held back recipients of 2 recordings since 6 Nov. Re-share each from its run, or raise the limit.");
+    expect(shareLimitedSummary({ jobs: 1, since: "2025-12-30T12:00:00Z" }, now))
+      .toBe("Nextcloud's share limit held back recipients of 1 recording since 30 Dec 2025. Re-share each from its run, or raise the limit.");
+  });
+  it("leaves since out when the operator did not know it", () => {
+    expect(shareLimitedSummary({ jobs: 1 }, now))
+      .toBe("Nextcloud's share limit held back recipients of 1 recording. Re-share each from its run, or raise the limit.");
   });
 });

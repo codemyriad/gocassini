@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { sameHeadlineText, stripLeadingHeading } from "./insights";
 import type { MeetingCatalogEntry } from "./catalog";
-import { NO_ROOM_KEY, UNDATED_MONTH_LABEL } from "./rooms";
+import { NO_ROOM_KEY, undatedMonthLabel } from "./rooms";
 import {
   ALL_BROWSE_TYPES,
   buildBrowseFeed,
   describeInsightFailure,
   insightRetryable,
-  INSIGHT_FAILURE_COPY,
+  INSIGHT_REASONS,
+  insightFailureCopy,
   insightReasonOf,
   filterInsights,
   filterInsightsByRoom,
@@ -356,15 +357,17 @@ describe("groupBrowseFeedByMonth", () => {
     );
 
     expect(groups).toHaveLength(1);
-    expect(groups[0].label).toBe(UNDATED_MONTH_LABEL);
+    expect(groups[0].label).toBe(undatedMonthLabel());
   });
 
   it("keeps the headings in order for a reader west of UTC", () => {
     // The list orders by one clock, so the grouping has to key off that same
     // clock or a heading can be hoisted above a later one. An insight created
     // just after UTC midnight on the 1st displays the previous month in New
-    // York; filing it there put "August 2026" above "September 2026" in a list
-    // whose whole promise is newest-first.
+    // York. Filing it there while ordering it by UTC put "August 2026" above
+    // "September 2026" in a list whose whole promise is newest-first. Now it is
+    // both ordered and filed by the 31 Aug 21:00 its row prints: below the
+    // label-only meeting whose digits say 1 Sep, under August.
     const realTZ = process.env.TZ;
     process.env.TZ = "America/New_York";
     try {
@@ -380,14 +383,46 @@ describe("groupBrowseFeedByMonth", () => {
       );
 
       expect(groups.map((group) => group.label)).toEqual(["September 2026", "August 2026"]);
-      expect(groups[0].items.map((item) => item.key)).toEqual([
+      expect(groups[0].items.map((item) => item.key)).toEqual(["meeting:sep1"]);
+      expect(groups[1].items.map((item) => item.key)).toEqual([
         "insight:i1",
-        "meeting:sep1",
+        "meeting:aug31",
       ]);
-      expect(groups[1].items.map((item) => item.key)).toEqual(["meeting:aug31"]);
     } finally {
       process.env.TZ = realTZ;
     }
+  });
+
+  it("places an insight against an instant meeting by instant across a DST fall-back", () => {
+    // Rome, 25 Oct 2026: the meeting at 00:50Z reads 02:50 CEST; the insight at
+    // 01:05Z reads 02:05 CET, fifteen minutes later, so it goes above.
+    const feed = buildBrowseFeed({
+      meetings: [meeting({ id: "m", dateLabel: "2026-10-25 00:50", recordedAtUtc: "2026-10-25T00:50:00Z" })],
+      insights: [insight({ id: "i", createdAt: "2026-10-25T01:05:00Z" })],
+      types: ALL_BROWSE_TYPES,
+    });
+    expect(feed.map((item) => item.key)).toEqual(["insight:i", "meeting:m"]);
+  });
+
+  it("orders and files an instant meeting by the reader's clock, with the insights", () => {
+    // A meeting at 23:30Z on 31 Jan prints 00:30 on 1 Feb in Rome. An insight
+    // created at 23:45Z prints 00:45 on 1 Feb: newer, so above it, and both
+    // under February. A label-only meeting reading 2026-01-31 23:50 is a later
+    // time of day but an earlier day on screen, so it goes below, in January.
+    const feed = buildBrowseFeed({
+      meetings: [
+        meeting({ id: "instant", dateLabel: "2026-01-31 23:30", recordedAtUtc: "2026-01-31T23:30:00Z" }),
+        meeting({ id: "label", dateLabel: "2026-01-31 23:50" }),
+      ],
+      insights: [insight({ id: "i1", createdAt: "2026-01-31T23:45:00Z" })],
+      types: ALL_BROWSE_TYPES,
+    });
+    expect(feed.map((item) => item.key)).toEqual(["insight:i1", "meeting:instant", "meeting:label"]);
+    const groups = groupBrowseFeedByMonth(feed);
+    expect(groups.map((group) => [group.label, group.items.map((item) => item.key)])).toEqual([
+      ["February 2026", ["insight:i1", "meeting:instant"]],
+      ["January 2026", ["meeting:label"]],
+    ]);
   });
 
   it("groups a meeting by the month its own label shows", () => {
@@ -482,7 +517,7 @@ describe("what a failed run says (D-749)", () => {
     // September). `error` carries the same token and is not read when
     // `reason` is set.
     const said = describeInsightFailure(failed("provider-refused"));
-    expect(said).toEqual(INSIGHT_FAILURE_COPY["provider-refused"]);
+    expect(said).toEqual(insightFailureCopy("provider-refused"));
     expect(said.title).toBe("The endpoint refused the request");
     expect(said.line).toBe("Check its key, quota or model name under Operator › AI providers.");
     expect(describeInsightFailure(failed("interrupted")).title).toBe(
@@ -510,7 +545,8 @@ describe("what a failed run says (D-749)", () => {
   });
 
   it("gives every reason a title and a line that do not repeat each other", () => {
-    for (const [reason, copy] of Object.entries(INSIGHT_FAILURE_COPY)) {
+    for (const reason of INSIGHT_REASONS) {
+      const copy = insightFailureCopy(reason);
       expect(copy.title, reason).not.toBe("");
       expect(copy.line, reason).not.toBe("");
       expect(copy.title, reason).not.toBe(copy.line);

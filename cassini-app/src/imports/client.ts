@@ -9,6 +9,8 @@
 // The operator later pulls the staged file AS THE CALLER and removes it after
 // a successful import.
 
+import { get } from "svelte/store";
+import { LL } from "cassini-viewer/i18n";
 import { resolvePublishedUrl } from "cassini-viewer/dataProvider";
 import type { ImportFileRequest, ImportJobRecord, ImportSharee, ImportSharingRequest } from "cassini-viewer/imports";
 
@@ -37,7 +39,7 @@ function currentUserId(): string {
   const oc = nextcloudGlobals();
   const uid = oc?.getCurrentUser?.()?.uid ?? oc?.currentUser ?? "";
   if (!uid) {
-    throw new Error("Import needs a Nextcloud session, and this page has none.");
+    throw new Error(get(LL).app.shell.imports_client.no_session());
   }
   return uid;
 }
@@ -98,7 +100,7 @@ async function ensureStagingDir(): Promise<void> {
   });
   // 405 is "it already exists" — the normal case after the first import.
   if (!response.ok && response.status !== 405) {
-    throw new Error(`Could not prepare the staging folder (HTTP ${response.status}).`);
+    throw new Error(get(LL).app.shell.imports_client.staging_failed({ status: response.status }));
   }
 }
 
@@ -118,7 +120,7 @@ export async function stageImportUpload(
     files: [{ stagedPath, sourceName: file.name, expectedBytes: file.size, ...sharing }],
   });
   const job = prepared.imports[0];
-  if (!job) throw new Error("Could not register the upload.");
+  if (!job) throw new Error(get(LL).app.shell.imports_client.register_failed());
   try {
     await ensureStagingDir();
     const url = `${davBase()}/${encodeURIComponent(STAGING_DIR)}/${encodeURIComponent(name)}`;
@@ -134,16 +136,17 @@ export async function stageImportUpload(
       };
       // Set before xhr.abort() so the rejection says why the browser gave up.
       let abortReason = "";
-      xhr.onerror = () => reject(new Error("The upload failed — check the connection and try again."));
-      xhr.onabort = () => reject(new Error(abortReason || "The upload was interrupted."));
+      const t = get(LL).app.shell.imports_client;
+      xhr.onerror = () => reject(new Error(t.upload_failed()));
+      xhr.onabort = () => reject(new Error(abortReason || t.upload_interrupted()));
       xhr.onload = () => {
         if (xhr.status >= 200 && xhr.status < 300) {
           onProgress?.(file.size, file.size);
           resolve();
         } else if (xhr.status === 507) {
-          reject(new Error("Not enough space in your Nextcloud Files for this upload."));
+          reject(new Error(t.not_enough_space()));
         } else {
-          reject(new Error(`The upload was refused (HTTP ${xhr.status}).`));
+          reject(new Error(t.upload_refused({ status: xhr.status })));
         }
       };
       let heartbeatPending = false;
@@ -159,8 +162,8 @@ export async function stageImportUpload(
           if (heartbeatVerdict(error, misses) === "abort") {
             abortReason =
               requestStatus(error) === 409 || requestStatus(error) === 404
-                ? "This upload is no longer registered with Cassini; add the file again."
-                : "Cassini stopped answering during the upload, so it was interrupted; add the file again.";
+                ? t.upload_unregistered()
+                : t.upload_unanswered();
             xhr.abort();
           }
         } finally {
@@ -238,14 +241,16 @@ async function describeImportFailure(response: Response): Promise<string> {
   } catch {
     // Not JSON: the status is all there is.
   }
+  // The operator's own sentence, shown as it was sent.
   if (served) return served;
+  const t = get(LL).app.shell.imports_client;
   switch (response.status) {
     case 404:
-      return "This deployment does not serve meeting imports.";
+      return t.imports_not_served();
     case 502:
-      return "Cassini could not verify who you are; reload and try again.";
+      return t.identity_unverified();
     default:
-      return `The import request failed (HTTP ${response.status}).`;
+      return t.request_failed({ status: response.status });
   }
 }
 
@@ -288,7 +293,7 @@ export async function searchImportSharees(query: string): Promise<ImportSharee[]
     },
   });
   if (!response.ok) {
-    throw new Error(`People search failed (HTTP ${response.status}).`);
+    throw new Error(get(LL).app.shell.imports_client.people_search_failed({ status: response.status }));
   }
   const payload = (await response.json()) as OcsShareesPayload;
   const data = payload.ocs?.data;

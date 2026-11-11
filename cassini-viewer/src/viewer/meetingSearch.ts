@@ -21,8 +21,12 @@
 // what this account may see, and re-filtering it against a stale local catalog
 // could only ever hide rows that are legitimately visible.
 
+import { get } from "svelte/store";
+
+import { LL } from "../i18n";
 import { readViewerBase } from "./appBase";
 import type { MeetingCatalogEntry } from "./catalog";
+import { parseRecordedAtUtc } from "./meetingTime";
 
 const SEARCH_PATH = "published/search";
 
@@ -31,6 +35,10 @@ export interface MeetingSearchHit {
   readonly meetingId: string;
   readonly title: string;
   readonly dateLabel: string;
+  // The meeting's start as an instant, when the server knows it. Rows render
+  // the catalog entry a hit is grouped onto, not the hit; carried so a hit is a
+  // complete description of its meeting on its own.
+  readonly recordedAtUtc?: string;
   readonly roomId: string;
   readonly roomName: string;
   readonly roomDisplayName?: string;
@@ -149,7 +157,7 @@ export async function searchMeetingTranscripts(
     if (isAbortError(error)) {
       throw error;
     }
-    return { status: "failed", message: "Could not reach the search index." };
+    return { status: "failed", message: get(LL).viewer.browse.search.unreachable() };
   }
 
   if (response.status === 404) {
@@ -158,26 +166,26 @@ export async function searchMeetingTranscripts(
   if (response.status === 429) {
     return {
       status: "rateLimited",
-      message: await errorMessage(response, "Too many searches just now — try again in a moment."),
+      message: await errorMessage(response, get(LL).viewer.browse.search.rate_limited()),
     };
   }
   if (response.status === 503) {
     return {
       status: "indexUnavailable",
-      message: await errorMessage(response, "The search index is not ready yet."),
+      message: await errorMessage(response, get(LL).viewer.browse.search.not_ready()),
     };
   }
   if (!response.ok) {
     return {
       status: "failed",
-      message: await errorMessage(response, `Could not search the meetings (HTTP ${response.status}).`),
+      message: await errorMessage(response, get(LL).viewer.browse.search.failed({ status: response.status })),
     };
   }
 
   try {
     return materializeSearchResponse(await response.json());
   } catch {
-    return { status: "failed", message: "The search index answered something this viewer cannot read." };
+    return { status: "failed", message: get(LL).viewer.browse.search.unreadable() };
   }
 }
 
@@ -208,6 +216,7 @@ export function materializeSearchResponse(value: unknown): MeetingSearchOutcome 
       meetingId,
       title: optionalString(raw.title) ?? "",
       dateLabel: optionalString(raw.dateLabel) ?? "",
+      ...(parseRecordedAtUtc(raw.recordedAtUtc) ? { recordedAtUtc: raw.recordedAtUtc as string } : {}),
       roomId: optionalString(raw.roomId) ?? "",
       roomName: optionalString(raw.roomName) ?? "",
       roomDisplayName: optionalString(raw.roomDisplayName),

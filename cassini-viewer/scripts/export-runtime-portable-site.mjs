@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   describeMeeting,
+  portableRecordedAtUtc,
   readPortableMeeting,
 } from "./export-static-meetings.mjs";
 
@@ -30,13 +31,17 @@ export function main(argv = process.argv.slice(2)) {
     .sort((a, b) => a.name.localeCompare(b.name))
     .map((entry) => {
       const meetingId = entry.name.slice(0, -extname(entry.name).length) || "meeting";
-      readPortableMeeting(join(sourceDir, entry.name));
-      const summary = describeMeeting(meetingId);
+      const { manifest, tags } = readPortableMeeting(join(sourceDir, entry.name));
+      // The file's own start instant, when it states one; otherwise the entry
+      // is described from its id alone, as it always was.
+      const recordedAtUtc = portableRecordedAtUtc(manifest, tags);
+      const summary = describeMeeting(meetingId, "", "", recordedAtUtc);
       return {
         id: meetingId,
         audioPath: toCatalogPath(relative(outputDir, join(sourceDir, entry.name))),
         title: summary.title,
         dateLabel: summary.dateLabel,
+        ...(recordedAtUtc ? { recordedAtUtc } : {}),
       };
     });
 

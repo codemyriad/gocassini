@@ -78,9 +78,6 @@ type ffprobeOutput struct {
 	} `json:"streams"`
 	Format struct {
 		DurationStr string `json:"duration"`
-		Tags        struct {
-			RecordedAtLocal string `json:"RECORDED_AT_LOCAL"`
-		} `json:"tags"`
 	} `json:"format"`
 }
 
@@ -90,11 +87,19 @@ func ProbeMKV(mkv string) ([]AudioStream, int64, error) {
 	return streams, duration, err
 }
 
-// probeMKV also reads the recording-site timestamp in the same metadata probe.
+// probeMKV also returns the instant at playback position 0 of the meeting
+// timeline (RFC 3339 UTC, see recordedAtUTCFromStreams), or "" when the MKV
+// carries no wall-clock anchor.
+//
+// It deliberately no longer reads the container's recorded_at_local tag. The
+// only producer of that tag was the Talk session (internal/talk/
+// session_artifact.go), which formats time.Now() in the container's zone; no
+// ExApp install sets TZ, so the value was UTC digits presented as a local
+// label. The instant replaces it.
 func probeMKV(mkv string) ([]AudioStream, int64, string, error) {
 	cmd := exec.Command("ffprobe",
 		"-v", "error",
-		"-show_entries", "stream=index,codec_type,codec_name,sample_rate,channels,start_time:stream_tags=title,participant_id,participant_name,first_packet_wall_ms,first_timeline_ns,clock_rate:format=duration:format_tags=recorded_at_local",
+		"-show_entries", "stream=index,codec_type,codec_name,sample_rate,channels,start_time:stream_tags=title,participant_id,participant_name,first_packet_wall_ms,first_timeline_ns,clock_rate:format=duration",
 		"-of", "json",
 		mkv,
 	)
@@ -160,7 +165,7 @@ func probeMKV(mkv string) ([]AudioStream, int64, string, error) {
 		}
 		streams[i].FirstDecodedFrameTimeMS = firstFrameTimeMS
 	}
-	return streams, durationMs, probe.Format.Tags.RecordedAtLocal, nil
+	return streams, durationMs, recordedAtUTCFromStreams(streams), nil
 }
 
 // probeFirstPacketTimeMS reads only the first packet selected for one stream.

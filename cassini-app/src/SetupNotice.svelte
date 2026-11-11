@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
   import { Info, TriangleAlert } from "@lucide/svelte";
+  import { LL, operatorPlace } from "cassini-viewer/i18n";
   import type { SetupNotice, SetupNoticeTone } from "./operator/setupHealth";
 
   // What the Cassini shell shows when recordings cannot be saved. It renders a
@@ -77,7 +78,7 @@
       {#if hasDetails}
         <div class="flex flex-wrap gap-2 py-1">
           <button class="btn btn-xs" type="button" disabled={busy} on:click={() => dispatch("retry")}>
-            {busy ? "Checking…" : "Try again"}
+            {busy ? $LL.app.shell.setup_notice.checking() : $LL.common.action.try_again()}
           </button>
           <button
             class="btn btn-xs btn-ghost"
@@ -85,12 +86,12 @@
             aria-expanded={detailsOpen}
             on:click={() => (detailsOpen = !detailsOpen)}
           >
-            Show details
+            {$LL.app.shell.setup_notice.show_details()}
           </button>
         </div>
 
         <details class="text-sm" bind:open={detailsOpen}>
-          <summary class="cursor-pointer font-medium">Details for administrators</summary>
+          <summary class="cursor-pointer font-medium">{$LL.app.shell.setup_notice.details_heading()}</summary>
           <div class="mt-2 flex flex-col gap-3">
             {#if notice.detail}
               <p class="font-mono text-xs break-words opacity-80">{notice.detail}</p>
@@ -107,7 +108,7 @@
                     type="button"
                     on:click={() => dispatch("navigate", "settings")}
                   >
-                    Open Operator › Publish pipeline
+                    {$LL.app.shell.setup_notice.open_publish_pipeline({ place: operatorPlace("publish_pipeline") })}
                   </button>
                 {/if}
                 {#if step.commands.length > 0}

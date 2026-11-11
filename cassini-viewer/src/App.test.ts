@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { get } from "svelte/store";
+
+import { LL } from "./i18n";
 
 import appSource from "./App.svelte?raw";
 
@@ -84,7 +87,8 @@ describe("the shell's insight rename", () => {
 
   it("says, rather than swallows, a rename asked while another is saving", () => {
     expect(appSource).toContain('if (renamingInsightId !== "") {');
-    expect(appSource).toContain("Another rename is still saving. Try again in a moment.");
+    expect(appSource).toContain("message: get(LL).viewer.browse.app.insight_rename_busy() };");
+    expect(get(LL).viewer.browse.app.insight_rename_busy()).toBe("Another rename is still saving. Try again in a moment.");
   });
 
   it("keeps a refusal only while the sheet it was shown in is open", () => {
@@ -159,5 +163,28 @@ describe("optimistic selection tagging", () => {
     expect(appSource).toContain("on:retryTag={() => listTagSession.retry()}");
     expect(appSource).not.toContain("createBulkTagSession");
     expect(appSource).not.toContain("tagBusy={");
+  });
+});
+
+// D-885: two slots forwarded to the shell, like Prepare's readiness slot. The
+// list's refresh rides down with them so the shell can re-read the list after
+// an acceptance changes what the reader can see — the same path an import
+// takes — rather than remounting the viewer.
+describe("the list's host slots", () => {
+  it("forwards both slots with the catalog refresh and the listed meetings as slot props", () => {
+    expect(appSource).toContain("export let listEmptyFilled = false;");
+    expect(appSource).toContain("{listEmptyFilled}");
+    expect(appSource).toContain('<svelte:fragment slot="list-empty"><slot name="list-empty" refresh={refreshCatalog} meetings={catalogMeetings} /></svelte:fragment>');
+    expect(appSource).toContain('<svelte:fragment slot="list-notice"><slot name="list-notice" refresh={refreshCatalog} meetings={catalogMeetings} /></svelte:fragment>');
+  });
+
+  it("forwards the meeting's not-found card, for the meetings the shell can explain", () => {
+    expect(appSource).toContain("export let notFoundFilledFor: readonly string[] = [];");
+    expect(appSource).toContain("notFoundFilled={!!selectedMeetingId && notFoundFilledFor.includes(selectedMeetingId)}");
+    expect(appSource).toContain('{#snippet notFound()}<slot name="meeting-not-found" meetingId={selectedMeetingId} refresh={refreshCatalog} />{/snippet}');
+  });
+
+  it("re-reads the list through the path an import uses", () => {
+    expect(appSource).toContain("on:imported={() => void refreshCatalog()}");
   });
 });

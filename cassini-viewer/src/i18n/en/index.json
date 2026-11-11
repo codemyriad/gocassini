@@ -1,0 +1,46 @@
+{
+  "common": {
+    "action": {
+      "cancel": "Cancel",
+      "save": "Save",
+      "saving": "Saving…",
+      "retry": "Retry",
+      "retrying": "Retrying…",
+      "dismiss": "Dismiss",
+      "delete": "Delete",
+      "remove": "Remove",
+      "edit": "Edit",
+      "close": "Close",
+      "try_again": "Try again"
+    },
+    "summary_request": {
+      "write": "Write summary",
+      "regenerate": "Regenerate summary",
+      "confirm_write_title": "Write a summary for this meeting?",
+      "confirm_replace_title": "Replace this meeting's summary?",
+      "cost": "{count:number|num} {{count:call|calls}} to {target} · about {tokens:number|compact} input {{tokens:token|tokens}}, {words:number|num} {{words:word|words}}",
+      "cost_target_fallback": "the summary model",
+      "cost_target": "{model} ({provider})",
+      "endpoint_external": "The transcript is sent to an external service, which may bill for it.",
+      "endpoint_local": "The model runs on your own network."
+    },
+    "audience": {
+      "intro": "Nextcloud Files controls who can read each recording.",
+      "point_participants": "Each recording is shared with all of the Talk room's participants, whether they were present on the call or not.",
+      "point_guests": "Guests without a Nextcloud account can't open it.",
+      "point_public_links": "Cassini never creates a public link. In public rooms, people can reshare the file if this Nextcloud allows it."
+    },
+    "place": {
+      "operator": "Operator",
+      "publish_pipeline": "Publish pipeline",
+      "ai_providers": "AI providers",
+      "insight_templates": "Insight templates",
+      "doctor": "Doctor",
+      "storage": "Storage",
+      "help": "Help"
+    },
+    "status": {
+      "copied": "Copied"
+    }
+  }
+}

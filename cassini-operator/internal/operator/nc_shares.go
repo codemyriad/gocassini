@@ -35,7 +35,13 @@ type ncShare struct {
 	FileTarget   string    `json:"file_target"`
 	Path         string    `json:"path"`
 	UIDFileOwner string    `json:"uid_file_owner"`
-	ItemType     string    `json:"item_type"`
+	// UIDOwner is who made the share; for a reshare it differs from the
+	// file's owner.
+	UIDOwner string `json:"uid_owner"`
+	ItemType string `json:"item_type"`
+	// Note is the text Cassini puts on every recording share (D-885). It
+	// comes back on the share and on the pending share.
+	Note string `json:"note"`
 }
 
 // ncShareError distinguishes a recipient or policy refusal from an outage.
@@ -48,6 +54,18 @@ type ncShareError struct {
 
 func (e *ncShareError) Error() string {
 	return fmt.Sprintf("Nextcloud share API: HTTP %d, OCS %d: %s", e.HTTPStatus, e.OCSStatus, oneLineListField(e.Message))
+}
+
+// errShareRateLimited is Nextcloud refusing a new share because the account
+// making it reached its limit: the share API allows each account 20 new
+// shares in any 10 minutes, and Cassini makes every recording share as its
+// own account. It says nothing about who may receive the recording, so it is
+// neither a refusal nor an outage: those recipients are shared with later.
+// Nextcloud answers it with HTTP 429 and an empty body.
+var errShareRateLimited = errors.New("Nextcloud's limit on new shares was reached: it allows 20 new shares every 10 minutes for each account")
+
+func shareRateLimited(err error) bool {
+	return errors.Is(err, errShareRateLimited)
 }
 
 func recipientShareRefusal(err error) bool {
@@ -99,8 +117,23 @@ func (c ExAppConfig) shareAPIURL() string {
 }
 
 // shareRequest validates both HTTP and OCS status. Nextcloud can put a refusal
-// in an HTTP 200 response, so neither status alone is sufficient.
+// in an HTTP 200 response, so neither status alone is sufficient. A reply
+// that carries no data is an error here: every read and create expects some.
 func (c ExAppConfig) shareRequest(ctx context.Context, client *http.Client, actor, method, rawURL string, form url.Values) (json.RawMessage, error) {
+	data, err := c.shareCall(ctx, client, actor, method, rawURL, form)
+	if err != nil {
+		return nil, err
+	}
+	if len(data) == 0 || string(data) == "null" {
+		return nil, fmt.Errorf("Nextcloud share API %s returned no data", method)
+	}
+	return data, nil
+}
+
+// shareCall is shareRequest without the data requirement, for a call whose
+// success is the status alone — accepting a pending share answers with an
+// empty data element.
+func (c ExAppConfig) shareCall(ctx context.Context, client *http.Client, actor, method, rawURL string, form url.Values) (json.RawMessage, error) {
 	var body io.Reader
 	if form != nil {
 		body = strings.NewReader(form.Encode())
@@ -125,6 +158,11 @@ func (c ExAppConfig) shareRequest(ctx context.Context, client *http.Client, acto
 	if len(raw) > ncShareReplyMax {
 		return nil, fmt.Errorf("Nextcloud share response exceeds %d bytes", ncShareReplyMax)
 	}
+	// Checked before decoding: the reply has no body to decode, and a decode
+	// error would pass for an outage.
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return nil, fmt.Errorf("Nextcloud share API %s: HTTP 429: %w", method, errShareRateLimited)
+	}
 	var envelope struct {
 		OCS struct {
 			Meta struct {
@@ -143,9 +181,6 @@ func (c ExAppConfig) shareRequest(ctx context.Context, client *http.Client, acto
 		(meta.StatusCode != 100 && meta.StatusCode != 200) ||
 		strings.EqualFold(meta.Status, "failure") {
 		return nil, &ncShareError{HTTPStatus: resp.StatusCode, OCSStatus: meta.StatusCode, Message: meta.Message}
-	}
-	if len(envelope.OCS.Data) == 0 || string(envelope.OCS.Data) == "null" {
-		return nil, fmt.Errorf("Nextcloud share API %s returned no data", method)
 	}
 	return envelope.OCS.Data, nil
 }
@@ -171,6 +206,28 @@ func (c ExAppConfig) receivedShares(ctx context.Context, client *http.Client, ca
 	return shares, nil
 }
 
+// pendingShares lists the shares waiting for the caller's acceptance, as the
+// caller. A pending share has permissions 0 until it is accepted, and its
+// path is the owner's; neither grants anything, which is the point: the
+// caller is told what is waiting, and accepts it themselves (D-885).
+func (c ExAppConfig) pendingShares(ctx context.Context, client *http.Client, caller string) ([]ncShare, error) {
+	if strings.TrimSpace(caller) == "" {
+		return nil, fmt.Errorf("Nextcloud caller is required")
+	}
+	data, err := c.shareRequest(ctx, client, caller, http.MethodGet, c.shareAPIURL()+"/pending", nil)
+	if err != nil {
+		return nil, err
+	}
+	var shares []ncShare
+	if err := json.Unmarshal(data, &shares); err != nil {
+		return nil, fmt.Errorf("decode pending shares: %w", err)
+	}
+	if shares == nil {
+		shares = []ncShare{}
+	}
+	return shares, nil
+}
+
 func (c ExAppConfig) ownerSharesForPath(ctx context.Context, client *http.Client, relPath string) ([]ncShare, error) {
 	u := c.shareAPIURL() + "?path=" + url.QueryEscape("/"+strings.TrimPrefix(relPath, "/"))
 	data, err := c.shareRequest(ctx, client, ncRecordingsOwner, http.MethodGet, u, nil)
@@ -184,7 +241,10 @@ func (c ExAppConfig) ownerSharesForPath(ctx context.Context, client *http.Client
 	return shares, nil
 }
 
-func (c ExAppConfig) createRecordingShare(ctx context.Context, client *http.Client, relPath string, principal sharePrincipal, permissions int) (ncShare, error) {
+// createRecordingShare makes one share as the recordings owner. note is the
+// text the recipient sees on it in Files and in Cassini's own list of
+// recordings waiting for them (D-885); empty sends none.
+func (c ExAppConfig) createRecordingShare(ctx context.Context, client *http.Client, relPath string, principal sharePrincipal, permissions int, note string) (ncShare, error) {
 	shareType := -1
 	switch principal.Type {
 	case "user":
@@ -199,12 +259,16 @@ func (c ExAppConfig) createRecordingShare(ctx context.Context, client *http.Clie
 	if principal.ID == "" || (permissions != ncShareRead && permissions != ncShareRead|ncShareReshare) {
 		return ncShare{}, fmt.Errorf("invalid recording share")
 	}
-	data, err := c.shareRequest(ctx, client, ncRecordingsOwner, http.MethodPost, c.shareAPIURL(), url.Values{
+	form := url.Values{
 		"path":        {"/" + strings.TrimPrefix(relPath, "/")},
 		"shareType":   {strconv.Itoa(shareType)},
 		"shareWith":   {principal.ID},
 		"permissions": {strconv.Itoa(permissions)},
-	})
+	}
+	if note = strings.TrimSpace(note); note != "" {
+		form.Set("note", note)
+	}
+	data, err := c.shareRequest(ctx, client, ncRecordingsOwner, http.MethodPost, c.shareAPIURL(), form)
 	if err != nil {
 		return ncShare{}, err
 	}
@@ -244,18 +308,72 @@ func shareCoversPrincipal(shares []ncShare, principal sharePrincipal) bool {
 	return false
 }
 
+// starterShareRefusedError is Nextcloud refusing to share a recording with
+// the person who started it. A meeting its own starter cannot open is not
+// published (D-885); everyone else is best effort.
+type starterShareRefusedError struct {
+	Starter string
+	Err     error
+}
+
+// starterRefusedMarker is in every starter refusal's message, so a job's error
+// says whether that refusal is still why it failed.
+const starterRefusedMarker = "could not be shared with its starter"
+
+func (e *starterShareRefusedError) Error() string {
+	return fmt.Sprintf("the recording %s, %s: %v", starterRefusedMarker, e.Starter, e.Err)
+}
+
+func (e *starterShareRefusedError) Unwrap() error { return e.Err }
+
+// shareMode says which refusals a reconciliation cannot do without.
+type shareMode int
+
+const (
+	// sharePublish: the recording's starter must receive it; anyone else
+	// Nextcloud refuses, a group or a Team included, is skipped and reported.
+	sharePublish shareMode = iota
+	// shareImport: the importer must receive it, and so must any group or
+	// Team chosen, as before D-885 — the Import tab cannot show what was
+	// skipped yet, so a refused group would vanish silently.
+	shareImport
+	// shareReapply: the meeting is published already, so no refusal can
+	// unpublish it; every refusal is reported.
+	shareReapply
+)
+
 // reconcileRecordingShares adds only missing audience members. Existing shares
 // are left exactly as an administrator or recipient changed them. This is used
-// for a first publish or an interrupted first publish; completed republishes
-// must skip it, since removing a recipient is an intentional audience edit.
-func (c ExAppConfig) reconcileRecordingShares(ctx context.Context, client *http.Client, relPath string, audience []sharePrincipal, public bool) error {
+// for a first publish or an interrupted first publish, and for an
+// administrator's explicit re-share; completed republishes must skip it, since
+// removing a recipient is an intentional audience edit.
+//
+// Nextcloud refusing a recipient — a sharing policy, a user or group that no
+// longer exists — skips that recipient and reports it, unless the mode needs
+// that recipient: a refused starter is a *starterShareRefusedError. Anything
+// else (the server unreachable, a share that did not land) fails, as it says
+// nothing about who may receive the recording.
+//
+// Nextcloud's limit on new shares (errShareRateLimited) stops the creates for
+// this run, outside an import: the recipient it refused and everyone after
+// them not yet covered are returned as deferred entries (shareLimitDeferred),
+// neither refused nor an error, the starter included, for an administrator's
+// re-share to reach later. Nothing is retried after it, since every attempt,
+// a refused one too, counts against the same limit. An import fails on it,
+// as on any other error it does not name a recipient for.
+//
+// note goes on every share made here; see meetingFacts.shareNote.
+func (c ExAppConfig) reconcileRecordingShares(ctx context.Context, client *http.Client, relPath string, audience []sharePrincipal, public bool, mode shareMode, note string) ([]skippedShare, error) {
 	if len(audience) == 0 || audience[0].Type != "user" || audience[0].ID == "" || audience[0].ID == ncRecordingsOwner {
-		return fmt.Errorf("recording has no local starter to share with")
+		return nil, fmt.Errorf("recording has no local starter to share with")
 	}
 	existing, err := c.ownerSharesForPath(ctx, client, relPath)
 	if err != nil {
-		return fmt.Errorf("list recording shares: %w", err)
+		c.supportShare(ctx, "share_list", "", "", err, 0)
+		return nil, fmt.Errorf("list recording shares: %w", err)
 	}
+	skipped := []skippedShare{}
+	limited := false
 	seen := map[string]bool{}
 	required := []sharePrincipal{}
 	permissions := ncShareRead
@@ -269,7 +387,7 @@ func (c ExAppConfig) reconcileRecordingShares(ctx context.Context, client *http.
 			continue
 		}
 		if _, ok := shareTypeForPrincipal(principal.Type); !ok {
-			return fmt.Errorf("unsupported recording recipient type %q", principal.Type)
+			return nil, fmt.Errorf("unsupported recording recipient type %q", principal.Type)
 		}
 		key := principal.Type + "\x00" + principal.ID
 		if seen[key] {
@@ -280,24 +398,36 @@ func (c ExAppConfig) reconcileRecordingShares(ctx context.Context, client *http.
 			required = append(required, principal)
 			continue
 		}
+		if limited {
+			skipped = append(skipped, skippedShare{Type: principal.Type, ID: principal.ID, ShareLimit: shareLimitDeferred})
+			continue
+		}
 		var createErr error
 		for attempt := 0; attempt < 3; attempt++ {
 			var share ncShare
-			share, createErr = c.createRecordingShare(ctx, client, relPath, principal, permissions)
+			share, createErr = c.createRecordingShare(ctx, client, relPath, principal, permissions, note)
+			c.supportShare(ctx, "share_create", principal.Type, principal.ID, createErr, attempt+1)
 			if createErr != nil && public && resharePermissionRefusal(createErr) {
 				// Respect instance policy: read access can still work when
 				// resharing is disabled for this recipient.
-				share, createErr = c.createRecordingShare(ctx, client, relPath, principal, ncShareRead)
+				share, createErr = c.createRecordingShare(ctx, client, relPath, principal, ncShareRead, note)
+				c.supportShare(ctx, "share_create", principal.Type, principal.ID, createErr, attempt+1)
 			}
 			if createErr == nil {
 				existing = append(existing, share)
+				break
+			}
+			// Nextcloud made no share, so there is nothing to re-list, and a
+			// retry would only spend the limit again.
+			if shareRateLimited(createErr) {
 				break
 			}
 			// The server may have committed a share before the reply was lost.
 			// Re-list before retrying so we never intentionally duplicate it.
 			refreshed, listErr := c.ownerSharesForPath(ctx, client, relPath)
 			if listErr != nil {
-				return fmt.Errorf("share %s %s: %w (and re-list failed: %v)", principal.Type, principal.ID, createErr, listErr)
+				c.supportShare(ctx, "share_list", principal.Type, principal.ID, listErr, attempt+1)
+				return nil, fmt.Errorf("share %s %s: %w (and re-list failed: %v)", principal.Type, principal.ID, createErr, listErr)
 			}
 			existing = refreshed
 			if shareCoversPrincipal(existing, principal) {
@@ -310,19 +440,37 @@ func (c ExAppConfig) reconcileRecordingShares(ctx context.Context, client *http.
 			if attempt < 2 {
 				select {
 				case <-ctx.Done():
-					return ctx.Err()
+					return nil, ctx.Err()
 				case <-time.After(time.Duration(attempt+1) * time.Second):
 				}
 			}
 		}
+		if createErr != nil && shareRateLimited(createErr) && mode != shareImport {
+			// Not a share warning for the storage details: nothing is wrong
+			// with the storage, and the outcome records who is waiting.
+			limited = true
+			c.supportShare(ctx, "share_skipped", principal.Type, principal.ID, createErr, 1)
+			skipped = append(skipped, skippedShare{Type: principal.Type, ID: principal.ID, ShareLimit: shareLimitDeferred})
+			continue
+		}
 		if createErr != nil {
-			// A missing individual can be reported and skipped. A failed
-			// group or Team share would omit a whole audience, so fail the job.
-			if index > 0 && principal.Type == "user" && recipientShareRefusal(createErr) {
-				ncAccessSubstrate.warnShare(fmt.Sprintf("recording %s: share skipped for %s %s: %v", path.Base(relPath), principal.Type, principal.ID, createErr))
-				continue
+			if !recipientShareRefusal(createErr) {
+				return nil, fmt.Errorf("share %s %s: %w", principal.Type, principal.ID, createErr)
 			}
-			return fmt.Errorf("share %s %s: %w", principal.Type, principal.ID, createErr)
+			skip := skippedShare{Type: principal.Type, ID: principal.ID, Reason: shareRefusalReason(createErr)}
+			if index == 0 && mode != shareReapply {
+				return []skippedShare{skip}, &starterShareRefusedError{Starter: principal.ID, Err: createErr}
+			}
+			if mode == shareImport && principal.Type != "user" {
+				return nil, fmt.Errorf("share %s %s: %w", principal.Type, principal.ID, createErr)
+			}
+			// Anyone else is skipped and named, a group or a Team included:
+			// the meeting still reaches everyone Nextcloud does allow, and the
+			// run says who it does not (D-885).
+			c.supportShare(ctx, "share_skipped", principal.Type, principal.ID, createErr, 1)
+			ncAccessSubstrate.warnShare(fmt.Sprintf("recording %s: share skipped for %s %s: %v", path.Base(relPath), principal.Type, principal.ID, createErr))
+			skipped = append(skipped, skip)
+			continue
 		}
 		required = append(required, principal)
 	}
@@ -330,12 +478,15 @@ func (c ExAppConfig) reconcileRecordingShares(ctx context.Context, client *http.
 	// that every expected share actually landed.
 	verified, err := c.ownerSharesForPath(ctx, client, relPath)
 	if err != nil {
-		return fmt.Errorf("verify recording shares: %w", err)
+		c.supportShare(ctx, "share_list", "", "", err, 0)
+		return nil, fmt.Errorf("verify recording shares: %w", err)
 	}
 	for _, principal := range required {
 		if !shareCoversPrincipal(verified, principal) {
-			return fmt.Errorf("recording share for %s %s is missing after publication", principal.Type, principal.ID)
+			c.supportShare(ctx, "share_verify", principal.Type, principal.ID, fmt.Errorf("missing after publication"), len(required))
+			return nil, fmt.Errorf("recording share for %s %s is missing after publication", principal.Type, principal.ID)
 		}
 	}
-	return nil
+	c.supportShare(ctx, "share_verify", "", "", nil, len(required))
+	return skipped, nil
 }

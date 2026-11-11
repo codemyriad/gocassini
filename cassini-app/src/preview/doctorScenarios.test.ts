@@ -32,7 +32,7 @@ it("offers the test recording only where its prerequisites hold", () => {
     const row = report.checks.find(check => check.id === "test");
     if (!row) continue;
     const blockers = report.checks.filter(check =>
-      ["storage", "talk.hpb", "talk.discovery", "talk.handoff"].includes(check.id) &&
+      ["storage", "storage.sharing", "talk.hpb", "talk.discovery", "talk.handoff"].includes(check.id) &&
       check.state === "needs_action");
     if (blockers.length > 0 && row.action) {
       throw new Error(`${scenario.id} invites a test recording while ${blockers[0].id} needs attention`);
@@ -43,7 +43,7 @@ it("offers the test recording only where its prerequisites hold", () => {
 // A designer reading row order in the gallery must be reading the product's
 // order. Every fixture had drifted from it before this was pinned.
 it("renders every scenario in the order the operator sends rows", () => {
-  const order = ["configuration", "host", "host.workdir", "host.tmpdir.writable", "storage",
+  const order = ["configuration", "host", "host.workdir", "host.tmpdir.writable", "storage", "storage.sharing",
     "talk.hpb", "talk.discovery", "talk.handoff", "test", "archive.search"];
   for (const scenario of doctorScenarios) {
     const ranks = scenarioReport(scenario.id).checks.map(check => {
@@ -72,7 +72,7 @@ it("marks the rows the product marks as checkable", () => {
   for (const scenario of doctorScenarios) {
     for (const check of scenarioReport(scenario.id).checks) {
       const probed = ["storage", "talk.hpb", "talk.discovery", "archive.search"].includes(check.id)
-        || check.id.startsWith("host.");
+        || check.id.startsWith("host.") || check.id.startsWith("storage.");
       if (check.code === "check_blocked") {
         expect(check.checkable, `${scenario.id}/${check.id} offers a check it cannot run`).toBeFalsy();
         continue;
@@ -129,4 +129,24 @@ it("has valid independent fixtures for every listed URL and rejects unknown ones
     expect(report.test).toBeDefined();
   }
   expect(() => scenarioReport("invalid")).toThrow("Unknown Doctor preview");
+});
+
+// The migration previews show the section; every other scenario reports
+// not_needed, which the panel hides. Start and pause are simulated the way
+// the operator answers them.
+it("simulates the recording-time migration only in its own scenarios", async () => {
+  for (const scenario of doctorScenarios) {
+    const state = (await createPreviewClient(scenario.id).getRecordedAtMigration()).state;
+    if (scenario.id.startsWith("recorded-at-")) expect(state).not.toBe("not_needed");
+    else expect(state).toBe("not_needed");
+  }
+  vi.useFakeTimers();
+  const client = createPreviewClient("recorded-at-needed");
+  const started = client.startRecordedAtMigration();
+  await vi.runAllTimersAsync();
+  expect(await started).toMatchObject({ state: "running", needed: 0, in_progress: 2, queued: 35 });
+  const paused = client.pauseRecordedAtMigration();
+  await vi.runAllTimersAsync();
+  expect(await paused).toMatchObject({ state: "pausing", in_progress: 2 });
+  expect(await client.getRecordedAtMigration()).toMatchObject({ state: "paused", in_progress: 0, done: 2, queued: 35 });
 });

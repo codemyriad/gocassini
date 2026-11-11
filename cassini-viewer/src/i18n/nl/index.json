@@ -1,0 +1,46 @@
+{
+  "common": {
+    "action": {
+      "cancel": "Annuleren",
+      "save": "Opslaan",
+      "saving": "Opslaan…",
+      "retry": "Opnieuw proberen",
+      "retrying": "Opnieuw proberen…",
+      "dismiss": "Verbergen",
+      "delete": "Verwijderen",
+      "remove": "Verwijderen",
+      "edit": "Bewerken",
+      "close": "Sluiten",
+      "try_again": "Probeer opnieuw"
+    },
+    "summary_request": {
+      "write": "Samenvatting schrijven",
+      "regenerate": "Samenvatting opnieuw maken",
+      "confirm_write_title": "Een samenvatting voor deze vergadering schrijven?",
+      "confirm_replace_title": "De samenvatting van deze vergadering vervangen?",
+      "cost": "{count:number|num} {{count:aanroep|aanroepen}} naar {target} · ongeveer {tokens:number|compact} {{tokens:invoertoken|invoertokens}}, {words:number|num} {{words:woord|woorden}}",
+      "cost_target_fallback": "het samenvattingsmodel",
+      "cost_target": "{model} ({provider})",
+      "endpoint_external": "De transcriptie wordt naar een externe dienst gestuurd, die daarvoor kosten kan rekenen.",
+      "endpoint_local": "Het model draait op je eigen netwerk."
+    },
+    "audience": {
+      "intro": "Nextcloud Bestanden bepaalt wie elke opname kan lezen.",
+      "point_participants": "Elke opname wordt gedeeld met alle deelnemers van de Talk-ruimte, of ze nu bij het gesprek aanwezig waren of niet.",
+      "point_guests": "Gasten zonder Nextcloud-account kunnen hem niet openen.",
+      "point_public_links": "Cassini maakt nooit een openbare link. In openbare ruimtes kunnen mensen het bestand opnieuw delen als deze Nextcloud dat toestaat."
+    },
+    "place": {
+      "operator": "Operator",
+      "publish_pipeline": "Publicatiepijplijn",
+      "ai_providers": "AI-aanbieders",
+      "insight_templates": "Inzichtsjablonen",
+      "doctor": "Diagnose",
+      "storage": "Opslag",
+      "help": "Hulp"
+    },
+    "status": {
+      "copied": "Gekopieerd"
+    }
+  }
+}

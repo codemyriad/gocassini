@@ -2,6 +2,8 @@
   import { createEventDispatcher, onDestroy, onMount } from "svelte";
   import { cubicOut } from "svelte/easing";
   import { fade } from "svelte/transition";
+  import { get } from "svelte/store";
+  import { LL } from "./i18n";
   import type { PortableMeetingSummary } from "./viewer/loadArtifact";
   import {
     filterMeetingCatalogEntries,
@@ -71,6 +73,7 @@
   import ImportButton from "./components/import/ImportButton.svelte";
   import ImportPanel from "./components/import/ImportPanel.svelte";
   import type { ImportStatus } from "./components/import/importStatus";
+  import ConnectAgentPanel from "./components/ConnectAgentPanel.svelte";
   import InsightDocument from "./components/InsightDocument.svelte";
   import MeetingList from "./components/MeetingList.svelte";
   import MeetingView from "./components/MeetingView.svelte";
@@ -80,8 +83,9 @@
   import type { RoomNameState } from "./viewer/roomNames";
   import ConfirmDialog from "./components/ui/ConfirmDialog.svelte";
   import RoomsRail from "./components/RoomsRail.svelte";
+  import SupportPanel from "./components/SupportPanel.svelte";
   import SelectionBar from "./components/SelectionBar.svelte";
-  import { focusLayer } from "./components/ui/focusLayer";
+  import { focusLayer, focusLayerWhile } from "./components/ui/focusLayer";
 
   // The shell (D-420, re-laid-out in D-654): owns the catalog/list, which room
   // is selected, which meeting is open, the `meeting` hash param, theme, and
@@ -113,6 +117,21 @@
   // and a standalone export does not have. "" is "nobody said", and the chip
   // renders nothing.
   export let audience: "" | "participants" = "";
+
+  // Whether the shell fills the list's `list-empty` slot (D-885): see the prop
+  // of the same name on MeetingList. Forwarded, not decided, like the slot.
+  export let listEmptyFilled = false;
+
+  // The meeting ids the shell fills the `meeting-not-found` slot for (D-885):
+  // a deep link (Talk's chat, a Nextcloud notification) to a meeting the
+  // reader's list does not have, which the shell can explain — a share
+  // waiting for them to accept, or one a sharing setting refused. Any other
+  // missing meeting keeps the plain not-found card.
+  export let notFoundFilledFor: readonly string[] = [];
+  // Whether the shell fills the Help sheet (D-910). A slot cannot be
+  // provided conditionally, so the viewer is told; without it the rail shows
+  // no Help section.
+  export let supportOffered = false;
 
   let catalogMeetings: MeetingCatalogEntry[] = [];
   let selectedMeetingId = "";
@@ -160,6 +179,11 @@
   // next click — and a selection is a thing you are doing, not a place you are.
   let selection: MeetingSelection = EMPTY_SELECTION;
   let prepareOpen = false;
+  // The Connect an agent panel (D-813), opened from the rooms rail's footer.
+  let agentOpen = false;
+  // Help, opened from the rooms rail footer (D-910).
+  let supportOpen = false;
+  $: if (!supportOffered) supportOpen = false;
   // The floating bar's real height, so the list can leave exactly that much
   // room under its last row.
   let selectionDockHeight = 0;
@@ -178,10 +202,12 @@
   // into view, not a thing over it, and the tabs stay usable while it is open.
   $: overlayOpen = prepareOpen || tagManagerOpen || Boolean(selectedInsight || selectedMeetingId);
   // Which layer is on top, in the order they stack: the meeting sheet, then
-  // Prepare, then the rooms drawer (only ever open on a phone), then Manage
-  // tags. Everything under it is inert, so neither Tab nor a screen reader
-  // wanders into a page the reader cannot see for the drawer over it.
-  $: topLayer = deleteConfirm ? 5 : tagManagerOpen ? 4 : railOpen ? 3 : prepareOpen ? 2 : selectedInsight || selectedMeetingId ? 1 : 0;
+  // Prepare or Connect an agent, then the rooms drawer (only ever open on a
+  // phone), then Manage tags. Everything under it is inert, so neither Tab nor
+  // a screen reader wanders into a page the reader cannot see for the drawer
+  // over it. Prepare and Connect an agent share a level: each is opened from a
+  // control the other makes inert, so they are never open together.
+  $: topLayer = deleteConfirm ? 5 : tagManagerOpen ? 4 : railOpen ? 3 : prepareOpen || agentOpen || supportOpen ? 2 : selectedInsight || selectedMeetingId ? 1 : 0;
   $: dispatch("overlay", overlayOpen);
   $: if (prepareOpen) {
     dispatch("prepareOpen");
@@ -502,7 +528,7 @@
     const entry = async () => {
       const found = catalogMeetings.find((meeting) => meeting.id === meetingId);
       if (!found) {
-        throw new Error(`Meeting not found in catalog: ${meetingId}`);
+        throw new Error(get(LL).viewer.browse.app.meeting_not_found({ id: meetingId }));
       }
       return found;
     };
@@ -534,7 +560,7 @@
   function loadSelectedBundle(): Promise<string> {
     const provider = dataProvider;
     if (!provider.loadContextBundle) {
-      return Promise.reject(new Error("This build cannot assemble a context bundle."));
+      return Promise.reject(new Error(get(LL).viewer.browse.app.no_context_bundle()));
     }
     return provider.loadContextBundle(pickedMeetings);
   }
@@ -551,6 +577,14 @@
     }
     if (prepareOpen) {
       prepareOpen = false;
+      return;
+    }
+    if (agentOpen) {
+      agentOpen = false;
+      return;
+    }
+    if (supportOpen) {
+      supportOpen = false;
       return;
     }
     if (importOpen) {
@@ -576,6 +610,14 @@
     }
     if (prepareOpen) {
       prepareOpen = false;
+      return;
+    }
+    if (agentOpen) {
+      agentOpen = false;
+      return;
+    }
+    if (supportOpen) {
+      supportOpen = false;
       return;
     }
     if (importOpen) {
@@ -613,7 +655,7 @@
       const found = catalogMeetings.find((entry) => entry.id === urlMeetingId);
       selectedMeetingId = urlMeetingId;
       if (!found) {
-        notFoundMessage = `Meeting not found in catalog: ${urlMeetingId}`;
+        notFoundMessage = get(LL).viewer.browse.app.meeting_not_found({ id: urlMeetingId });
       }
     } else {
       selectedMeetingId = "";
@@ -737,7 +779,7 @@
       }
       if (run === searchRun) {
         searchState = "failed";
-        searchMessage = "Could not search the meetings.";
+        searchMessage = get(LL).viewer.browse.app.search_failed();
       }
       return;
     }
@@ -864,8 +906,8 @@
       catalogMeetings = sortMeetingCatalogEntries([...restored.values()]);
       deleteNotice =
         failed.length === 1
-          ? `“${failed[0].title}” could not be deleted.`
-          : `${failed.length} meetings could not be deleted.`;
+          ? get(LL).viewer.browse.app.delete_failed_named({ title: failed[0].title })
+          : get(LL).viewer.browse.app.delete_failed({ count: failed.length });
     }
     deleteFailed = failed;
     deleteBusy = false;
@@ -1034,7 +1076,7 @@
       } else if (selectedMeetingId) {
         notFoundMessage = listedMeetings.some((entry) => entry.id === selectedMeetingId)
           ? ""
-          : `Meeting not found in catalog: ${selectedMeetingId}`;
+          : get(LL).viewer.browse.app.meeting_not_found({ id: selectedMeetingId });
       }
       pendingMeetingId = null;
     } catch (error) {
@@ -1159,7 +1201,7 @@
     if (renamingInsightId !== "") {
       // Said, not swallowed: the sheet keeps its input open on an error, and a
       // request that was never sent must not close it as if it had been.
-      insightRenameError = { id: record.id, message: "Another rename is still saving. Try again in a moment." };
+      insightRenameError = { id: record.id, message: get(LL).viewer.browse.app.insight_rename_busy() };
       return;
     }
     renamingInsightId = record.id;
@@ -1299,7 +1341,14 @@
     tagMatch,
   );
   $: bulkTagState = wholeTagState(meetingTags, selection.ids);
-  $: annotationCalls = bindAnnotations(dataProvider, selectedMeetingId);
+  // Marks are read only for a meeting the catalog has. A link to one it does
+  // not have (deleted, or not shared with the reader yet) has no marks to
+  // read, and asking anyway put "Meeting not found in catalog" in the list's
+  // notice line, over whatever the meeting view says about it (D-885). A
+  // string, so a catalog refresh that keeps the meeting does not rebind;
+  // one that brings it (a share just accepted) does.
+  $: marksMeetingId = selectedMeetingId && catalogMeetings.some((meeting) => meeting.id === selectedMeetingId) ? selectedMeetingId : "";
+  $: annotationCalls = bindAnnotations(dataProvider, marksMeetingId);
 
   // A picked meeting can leave the archive under a 15-second refresh; run this
   // against every catalog the shell observes.
@@ -1349,6 +1398,13 @@
     importOpen = false;
   }
   $: catalogIds = new Set(catalogMeetings.map((meeting) => meeting.id));
+  // "Connect an agent" (D-813) exists only where a provider knows the MCP
+  // endpoint: the in-Nextcloud build. Same rule as Import — no way in at all
+  // rather than instructions that cannot work.
+  $: agentConnection = typeof dataProvider.agentConnection === "function" ? dataProvider.agentConnection() : null;
+  $: if (!agentConnection) {
+    agentOpen = false;
+  }
   // Which kinds the browse list is showing. Owned here rather than in the list
   // because the control that changes it is in the rail: two components reading
   // one filter cannot each keep their own copy of it.
@@ -1408,11 +1464,12 @@
   $: selectedMeeting = selectedMeetingId
     ? catalogMeetings.find((entry) => entry.id === selectedMeetingId) ?? null
     : null;
+  $: appText = $LL.viewer.browse.app;
   $: documentTitle = selectedMeeting
-    ? `${selectedMeeting.title} | Cassini Viewer`
+    ? appText.document_title_meeting({ title: selectedMeeting.title })
     : catalogMeetings.length > 0
-      ? "Cassini Meetings"
-      : "Cassini Viewer";
+      ? appText.document_title_list()
+      : appText.document_title_default();
 
   onMount(async () => {
     window.addEventListener("popstate", handlePopState);
@@ -1533,7 +1590,7 @@
   <title>{documentTitle}</title>
   <meta
     name="description"
-    content="Static audio and transcript viewer for transcript.words.v1 meeting artifacts."
+    content={appText.meta_description()}
   />
 </svelte:head>
 
@@ -1593,6 +1650,12 @@
       on:toggleTag={(event) => toggleTagFilter(event.detail)}
       on:tagMatch={(event) => (tagMatch = event.detail)}
       on:manageTags={() => (tagManagerOpen = true)}
+      agentOffered={agentConnection !== null}
+      {agentOpen}
+      on:connectAgent={() => (agentOpen = true)}
+      helpOffered={supportOffered}
+      {supportOpen}
+      on:openSupport={() => (supportOpen = true)}
     />
     </div>
 
@@ -1607,6 +1670,7 @@
       {insightsLoaded}
       {insightsError}
       {insightSourceCounts}
+      {listEmptyFilled}
       insightsRetryable={canRetryInsight}
       {retryingInsightId}
       {insightRetryError}
@@ -1661,6 +1725,17 @@
       on:dismissTagNotice={() => annotationNotice ? meetingMarks.dismiss(annotationNotice.meetingId) : listTagSession.dismissNotice()}
       on:retryTag={() => annotationNotice ? meetingMarks.retry(annotationNotice.meetingId) : listTagSession.retry()}
     >
+      <!-- Forwarded, not decided, like Prepare's readiness slot (D-722): what
+           a reader with an empty list should be told, and what sits above a
+           full one, are facts about the deployment around this viewer — the
+           Cassini shell knows them and a standalone export has none. The
+           refresh rides down as a slot prop so the shell can re-read the list
+           after it changes what the reader can see, through the same path an
+           import takes, without remounting anything; the listed meetings ride
+           with it, so the shell can tell when one it was warning about has
+           arrived (D-885). -->
+      <svelte:fragment slot="list-empty"><slot name="list-empty" refresh={refreshCatalog} meetings={catalogMeetings} /></svelte:fragment>
+      <svelte:fragment slot="list-notice"><slot name="list-notice" refresh={refreshCatalog} meetings={catalogMeetings} /></svelte:fragment>
       <svelte:fragment slot="search-actions">
         {#if importsOffered}
           <ImportButton status={importStatus} expanded={importOpen} on:click={() => (importOpen = !importOpen)} />
@@ -1670,7 +1745,7 @@
     </div>
 
     {#if importsOffered}
-      <aside class="import-sheet" class:import-sheet-closed={!importOpen} aria-label="Import meetings" inert={topLayer > 0}>
+      <aside class="import-sheet" class:import-sheet-closed={!importOpen} aria-label={appText.import_sheet_label()} inert={topLayer > 0}>
         <ImportPanel
           {dataProvider}
           open={importOpen}
@@ -1720,7 +1795,7 @@
         class="shell-scrim rail-scrim"
         tabindex="-1"
         inert={topLayer > 3}
-        aria-label="Close the room list"
+        aria-label={appText.close_room_list()}
         transition:fade={scrimFade()}
         on:click={() => (railOpen = false)}
       ></button>
@@ -1739,7 +1814,7 @@
         class="shell-scrim sheet-scrim"
         tabindex="-1"
         inert={topLayer > 1}
-        aria-label={selectedInsight ? "Close the insight" : "Close the meeting"}
+        aria-label={selectedInsight ? appText.close_insight() : appText.close_meeting()}
         transition:fade={scrimFade()}
         on:click={closeSheet}
       ></button>
@@ -1791,6 +1866,7 @@
             {prefersReducedMotion}
             hasCatalog={catalogMeetings.length > 0}
             {notFoundMessage}
+            notFoundFilled={!!selectedMeetingId && notFoundFilledFor.includes(selectedMeetingId)}
             {linkedInsights}
             {insightSourceCounts}
             on:back={handleBackToList}
@@ -1804,7 +1880,11 @@
             applyAnnotations={annotationCalls.apply}
             marksSession={annotationCalls.session}
             on:tagsChanged={(event) => reconcileMeetingTags(event.detail)}
-          />
+          >
+            <!-- Forwarded, not decided, like the list's slots: refresh re-reads
+                 the catalog, so a share accepted here opens the meeting. -->
+            {#snippet notFound()}<slot name="meeting-not-found" meetingId={selectedMeetingId} refresh={refreshCatalog} />{/snippet}
+          </MeetingView>
         {/if}
       </aside>
     {/if}
@@ -1815,7 +1895,7 @@
         class="shell-scrim prepare-scrim"
         tabindex="-1"
         inert={topLayer > 2}
-        aria-label="Close Prepare"
+        aria-label={appText.close_prepare()}
         transition:fade={scrimFade()}
         on:click={() => (prepareOpen = false)}
       ></button>
@@ -1846,6 +1926,51 @@
       </aside>
     {/if}
 
+    <!-- Opened from the rail's footer (D-813). Its scrim is clear rather than
+         dimmed: the panel is a reference card read beside the list, not a step
+         that takes the page over, but a click beside it still closes it. -->
+    {#if agentOpen && agentConnection}
+      <button
+        type="button"
+        class="shell-scrim agent-scrim"
+        tabindex="-1"
+        inert={topLayer > 2}
+        aria-label={appText.close_connect_agent()}
+        on:click={() => (agentOpen = false)}
+      ></button>
+      <aside class="agent-sheet" inert={topLayer > 2} use:focusLayer transition:sheetSlide={{}}>
+        <ConnectAgentPanel connection={agentConnection} on:close={() => (agentOpen = false)} />
+      </aside>
+    {/if}
+
+    <!-- Help (D-910), opened from the rail footer. Same sheet geometry and
+         clear scrim as Connect an agent; the body is the shell's. Hidden rather
+         than unmounted when closed, like Import: a download started before
+         closing must not be cancelled by closing. -->
+    {#if supportOpen}
+      <button
+        type="button"
+        class="shell-scrim agent-scrim"
+        tabindex="-1"
+        inert={topLayer > 2}
+        aria-label={appText.close_help()}
+        on:click={() => (supportOpen = false)}
+      ></button>
+    {/if}
+    {#if supportOffered}
+      <aside
+        class="agent-sheet"
+        class:support-sheet-closed={!supportOpen}
+        aria-label={appText.help_sheet_label()}
+        inert={!supportOpen || topLayer > 2}
+        use:focusLayerWhile={supportOpen}
+      >
+        <SupportPanel on:close={() => (supportOpen = false)}>
+          <slot name="support" close={() => (supportOpen = false)} />
+        </SupportPanel>
+      </aside>
+    {/if}
+
     <!-- Kept mounted while closed, so a job started before closing still reports. -->
     {#if dataProvider.updateTag}
       <TagManager
@@ -1862,10 +1987,10 @@
     {#if deleteConfirm}
       <ConfirmDialog
         title={deleteConfirm.length === 1
-          ? `Delete “${deleteConfirm[0].title}”?`
-          : `Delete ${deleteConfirm.length} meetings?`}
-        body="Deleting removes the recording, transcript and tags for everyone who can see it. This cannot be undone."
-        confirmLabel={deleteConfirm.length === 1 ? "Delete meeting" : `Delete ${deleteConfirm.length} meetings`}
+          ? appText.delete_confirm_title_named({ title: deleteConfirm[0].title })
+          : appText.delete_confirm_title({ count: deleteConfirm.length })}
+        body={appText.delete_confirm_body()}
+        confirmLabel={appText.delete_confirm_button({ count: deleteConfirm.length })}
         busy={deleteBusy}
         on:cancel={() => (deleteConfirm = null)}
         on:confirm={confirmDeleteMeetings}
@@ -1912,7 +2037,8 @@
     border-left: 1px solid var(--color-base-300);
     box-shadow: -8px 0 30px oklch(0% 0 0 / 0.22);
   }
-  .import-sheet-closed {
+  .import-sheet-closed,
+  .support-sheet-closed {
     display: none;
   }
 
@@ -1992,6 +2118,24 @@
     box-shadow: -8px 0 30px oklch(0% 0 0 / 0.22);
   }
 
+  /* Same level as Prepare (see topLayer), and narrower still: three steps and
+     an address. The scrim catches the click beside it without dimming. */
+  .agent-scrim {
+    z-index: 34;
+    background-color: transparent;
+  }
+  .agent-sheet {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 35;
+    width: min(400px, 100%);
+    background-color: var(--color-base-100);
+    border-left: 1px solid var(--color-base-300);
+    box-shadow: -8px 0 24px oklch(0% 0 0 / 0.12);
+  }
+
   @media (max-width: 720px) {
     /* The rail is out of flow down here (it is the drawer), so the list gets
        the whole shell rather than being squeezed beside an empty track. */
@@ -2003,7 +2147,8 @@
       left: 8px;
       right: 8px;
     }
-    .prepare-sheet {
+    .prepare-sheet,
+    .agent-sheet {
       top: auto;
       left: 0;
       right: 0;

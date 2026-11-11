@@ -10,28 +10,63 @@ import (
 	"time"
 )
 
-// recordedAtLocal has no timezone: retain its calendar date without a local
-// timezone conversion. createdAtUtc is required even when the recording date exists.
+// The age sources a meeting's retention can be anchored on, in the order they
+// are preferred: recordedAtUtc is when the meeting happened, an instant;
+// recordedAtLocal has no timezone, so its calendar date is kept without a
+// local timezone conversion; createdAtUtc (when the file was packed) is the
+// fallback and is required even when a recording date exists. A lifecycle row
+// anchored on any of them is adopted: its age never moves again.
+const (
+	ageSourceRecordedAtUTC   = "recordedAtUtc"
+	ageSourceRecordedAtLocal = "recordedAtLocal"
+	ageSourceCreatedAtUTC    = "createdAtUtc"
+)
+
+const meetingAgeFrozenSourcesSQL = `('` + ageSourceRecordedAtUTC + `','` + ageSourceRecordedAtLocal + `','` + ageSourceCreatedAtUTC + `')`
+
+func meetingAgeSourceFrozen(source string) bool {
+	return source == ageSourceRecordedAtUTC || source == ageSourceRecordedAtLocal || source == ageSourceCreatedAtUTC
+}
+
 func setMeetingRetentionAge(m *meetingLifecycle) error {
 	created, err := time.Parse(time.RFC3339Nano, m.CreatedAtUTC)
 	if err != nil {
 		return fmt.Errorf("invalid createdAtUtc: %w", err)
 	}
-	anchor, source := created, "createdAtUtc"
-	if m.RecordedAtLocal != "" {
+	anchor, source := created, ageSourceCreatedAtUTC
+	if m.RecordedAtUTC != "" {
+		at, ok := parseRecordedAtUTC(m.RecordedAtUTC)
+		if !ok {
+			return fmt.Errorf("invalid recordedAtUtc %q", m.RecordedAtUTC)
+		}
+		anchor, source = at, ageSourceRecordedAtUTC
+	} else if m.RecordedAtLocal != "" {
 		anchor, err = time.Parse("2006-01-02T15:04:05", m.RecordedAtLocal)
 		if err != nil {
 			return fmt.Errorf("invalid recordedAtLocal: %w", err)
 		}
-		source = "recordedAtLocal"
+		source = ageSourceRecordedAtLocal
 	}
 	m.Anchor, m.AnchorSource = anchor.UTC().Format(time.RFC3339Nano), source
 	return nil
 }
 
+// meetingTimes is the dates part of a catalog entry and of
+// `cassini inspect --meeting-times`.
+type meetingTimes struct {
+	CreatedAtUTC    string `json:"createdAtUtc"`
+	RecordedAtLocal string `json:"recordedAtLocal"`
+	RecordedAtUTC   string `json:"recordedAtUtc"`
+}
+
+func (t meetingTimes) applyTo(m *meetingLifecycle) {
+	m.CreatedAtUTC, m.RecordedAtLocal, m.RecordedAtUTC = t.CreatedAtUTC, t.RecordedAtLocal, t.RecordedAtUTC
+}
+
 func (s *annotationService) loadMeetingRetentionAge(ctx context.Context, m *meetingLifecycle) error {
-	// Once adopted, annotations and republishing do not reset the original age.
-	if m.AnchorSource == "createdAtUtc" || m.AnchorSource == "recordedAtLocal" {
+	// Once adopted, annotations, republishing and the recordedAtUtc backfill
+	// do not reset the original age: the row's own stored dates re-derive it.
+	if meetingAgeSourceFrozen(m.AnchorSource) {
 		return setMeetingRetentionAge(m)
 	}
 	entries, err := s.exapp.meetingMetadata.EntriesFor(ctx, []int64{m.FileID})
@@ -39,14 +74,11 @@ func (s *annotationService) loadMeetingRetentionAge(ctx context.Context, m *meet
 		return err
 	}
 	if raw := entries[m.FileID]; len(raw) > 0 {
-		var dates struct {
-			CreatedAtUTC    string `json:"createdAtUtc"`
-			RecordedAtLocal string `json:"recordedAtLocal"`
-		}
+		var dates meetingTimes
 		if err := json.Unmarshal(raw, &dates); err != nil {
 			return err
 		}
-		m.CreatedAtUTC, m.RecordedAtLocal = dates.CreatedAtUTC, dates.RecordedAtLocal
+		dates.applyTo(m)
 		if dates.CreatedAtUTC != "" {
 			return setMeetingRetentionAge(m)
 		}
@@ -73,13 +105,10 @@ func (s *annotationService) loadMeetingRetentionAge(ctx context.Context, m *meet
 	if err != nil {
 		return err
 	}
-	var dates struct {
-		CreatedAtUTC    string `json:"createdAtUtc"`
-		RecordedAtLocal string `json:"recordedAtLocal"`
-	}
+	var dates meetingTimes
 	if err := json.Unmarshal(raw, &dates); err != nil {
 		return err
 	}
-	m.CreatedAtUTC, m.RecordedAtLocal = dates.CreatedAtUTC, dates.RecordedAtLocal
+	dates.applyTo(m)
 	return setMeetingRetentionAge(m)
 }

@@ -18,7 +18,10 @@
 // GenerateCard.svelte, for the reason setupHealth.ts gives: the copy is the
 // part worth testing. The card renders decisions it did not make.
 
+import { get } from "svelte/store";
+import { LL } from "cassini-viewer/i18n";
 import { resolvePublishedUrl } from "cassini-viewer/dataProvider";
+import { readServedMessage } from "../servedMessage";
 
 // The status vocabulary is fixed by internal/insight's package doc, and this is
 // a reading of it rather than a second copy: a build that invented a fifth
@@ -66,7 +69,7 @@ export interface InsightRun {
   documentFileId: string;
   // Why the latest attempt failed, as one of the operator's reason tokens
   // ("" while it has not). The words for each token live in the viewing
-  // layer (cassini-viewer/insights, INSIGHT_FAILURE_COPY), so the browse card
+  // layer (cassini-viewer/insights, insightFailureCopy), so the browse card
   // and the document sheet describe one failure one way (D-749).
   reason: string;
   // The same token, kept for one release; a run from before tokens existed
@@ -179,8 +182,8 @@ export async function listInsightTemplates(
     throw new InsightRequestError(
       response.status,
       served !== ""
-        ? `The insight templates could not be listed: ${served}`
-        : `The insight templates could not be listed (HTTP ${response.status}).`,
+        ? get(LL).app.insights.client.templates_failed_served({ error: served })
+        : get(LL).app.insights.client.templates_failed_status({ status: response.status }),
     );
   }
   const payload: unknown = await response.json();
@@ -253,11 +256,11 @@ async function sendAI(
 // the generic "AI providers could not be read (HTTP 502)" it used to be
 // replaced with told the reader neither which request nor why.
 export function describeAIFailure(path: string, status: number, served: string): string {
-  const subject =
-    path === "providers"
-      ? "The AI endpoints could not be listed"
-      : "This endpoint's model list could not be read";
-  return served !== "" ? `${subject}: ${served}` : `${subject} (HTTP ${status}).`;
+  const t = get(LL).app.insights.client;
+  if (path === "providers") {
+    return served !== "" ? t.providers_failed_served({ error: served }) : t.providers_failed_status({ status });
+  }
+  return served !== "" ? t.models_failed_served({ error: served }) : t.models_failed_status({ status });
 }
 
 
@@ -334,7 +337,7 @@ export async function createInsight(
   if (meetingIds.length === 0) {
     // Refused here rather than at the operator: an empty selection is not a
     // question anyone asked, and a round trip to be told so is a round trip.
-    throw new InsightRequestError(null, "Pick at least one meeting first.");
+    throw new InsightRequestError(null, get(LL).app.insights.client.pick_a_meeting());
   }
   const body: Record<string, unknown> = { meetingIds };
   const workflow = request.workflow?.trim() ?? "";
@@ -375,7 +378,7 @@ export async function listInsights(fetchImpl: typeof fetch = fetch): Promise<Ins
   const payload = await send("list", resolveInsightsUrl(), fetchImpl);
   const rows = isRecord(payload) ? payload.insights : null;
   if (!Array.isArray(rows)) {
-    throw new InsightRequestError(null, "Cassini could not read the list of insights.");
+    throw new InsightRequestError(null, get(LL).app.insights.client.list_unreadable());
   }
   return rows.map((row) => readRun(row));
 }
@@ -453,7 +456,7 @@ async function send(
   try {
     return await response.json();
   } catch {
-    throw new InsightRequestError(response.status, "Cassini could not read the operator's answer.");
+    throw new InsightRequestError(response.status, get(LL).app.insights.client.answer_unreadable());
   }
 }
 
@@ -463,14 +466,14 @@ async function send(
 // going or poll a finished one forever, and both are worse than saying so.
 export function readRun(value: unknown): InsightRun {
   if (!isRecord(value)) {
-    throw new InsightRequestError(null, "Cassini could not read the operator's answer.");
+    throw new InsightRequestError(null, get(LL).app.insights.client.answer_unreadable());
   }
   const id = asString(value.id);
   const status = value.status;
   if (id === "" || !INSIGHT_STATUSES.includes(status as InsightStatus)) {
     throw new InsightRequestError(
       null,
-      `Cassini does not understand this insight record (status ${JSON.stringify(status)}).`,
+      get(LL).app.insights.client.record_not_understood({ status: JSON.stringify(status) }),
     );
   }
   return {
@@ -517,28 +520,21 @@ export function pollDelayMs(round: number): number {
 
 function describeTransportFailure(action: InsightAction, error: unknown): string {
   const detail = error instanceof Error && error.message !== "" ? ` (${error.message})` : "";
-  return `Could not reach Cassini to ${VERBS[action]}${detail}.`;
+  return get(LL).app.insights.client.unreachable[action]({ detail });
 }
-
-const VERBS: Record<InsightAction, string> = {
-  create: "start the insight",
-  list: "list your insights",
-  read: "read the insight",
-  retry: "retry the insight",
-  rename: "rename the insight",
-};
 
 export function describeRequestFailure(
   action: InsightAction,
   status: number,
   served: string,
 ): string {
+  const t = get(LL).app.insights.client;
   switch (status) {
     case 400:
       // Only here is the served message worth repeating: the operator knows
       // what was wrong — which template is unknown, how many meetings is too
       // many — and nothing this side of it can say that.
-      return served || "Cassini could not read that request for an insight.";
+      return served || t.request_unreadable();
     case 404:
       // Whether it exists and whether this caller may read it are deliberately
       // one answer, so that asking cannot be used to find out. The sentence
@@ -546,57 +542,29 @@ export function describeRequestFailure(
       // all, which 404s identically.
       switch (action) {
         case "create":
-          return "One of these meetings is not available to you, or this deployment cannot create insights.";
+          return t.create_unavailable();
         case "list":
           // A caller's own list always exists, so the only thing a 404 can mean
           // here is an operator that does not serve these routes. That is not
           // "you have no insights", and it must not read as it.
-          return "Insights could not be listed.";
+          return t.list_unavailable();
         case "rename":
           // The route is newer than the others: an operator that creates and
           // reads insights can still lack it, and "cannot create insights"
           // would be false in exactly that case.
-          return "That insight is not available to you, or this deployment cannot rename insights.";
+          return t.rename_unavailable();
         default:
-          return "That insight is not available to you, or this deployment cannot create insights.";
+          return t.insight_unavailable();
       }
     case 409:
       // The operator says which state refused the retry: still running, or
       // already answered. Its sentence is the answer, so it is repeated.
-      return served || "This insight is already running.";
+      return served || t.already_running();
     case 502:
-      return `Cassini could not ${VERBS[action]}.`;
+      return t.cassini_failed[action]();
     default:
-      return `Could not ${VERBS[action]} (HTTP ${status}).`;
+      return t.failed_status[action]({ status });
   }
-}
-
-// readServedMessage reads the operator's own explanation out of its JSON error
-// envelope, or out of the plain-text line Go's http.Error writes. Anything
-// longer or multi-line is a page, not a message, and is discarded rather than
-// pasted into the panel.
-async function readServedMessage(response: Response): Promise<string> {
-  let body: string;
-  try {
-    body = (await response.text()).trim();
-  } catch {
-    return "";
-  }
-  if (body === "") {
-    return "";
-  }
-  try {
-    const payload = JSON.parse(body) as { error?: unknown };
-    if (typeof payload.error === "string" && payload.error.trim() !== "") {
-      return payload.error.trim();
-    }
-  } catch {
-    // Not JSON; fall through to the plain-text form.
-  }
-  if (body.length <= 200 && !body.includes("\n") && !body.startsWith("<")) {
-    return body;
-  }
-  return "";
 }
 
 function asString(value: unknown): string {

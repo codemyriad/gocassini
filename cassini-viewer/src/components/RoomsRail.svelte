@@ -2,7 +2,8 @@
   import { Pencil } from "@lucide/svelte";
   import { createEventDispatcher } from "svelte";
   import { fade } from "svelte/transition";
-  import { Lock, Settings } from "@lucide/svelte";
+  import { LifeBuoy, Lock, Plug, Settings } from "@lucide/svelte";
+  import { LL } from "../i18n";
   import type { RoomBucket } from "../viewer/rooms";
   import { isLastBrowseType, type BrowseType, type BrowseTypeFilter } from "../viewer/insights";
   import { matchTags, type VocabularyTag } from "../viewer/annotations";
@@ -52,6 +53,16 @@
   export let selectedTagIds: readonly string[] = [];
   export let tagMatch: TagMatch = "any";
 
+  // Whether this build serves an MCP endpoint (D-813), and whether its panel is
+  // open. The footer is the way in: setting up an agent is done once, so it
+  // sits under the narrowings rather than beside them.
+  export let agentOffered = false;
+  export let agentOpen = false;
+  // Help (D-910), in the footer: offered only when the shell has something to put
+  // in the sheet; a standalone export does not.
+  export let helpOffered = false;
+  export let supportOpen = false;
+
   const dispatch = createEventDispatcher<{
     select: string | null;
     rename: string;
@@ -60,6 +71,8 @@
     toggleTag: string;
     tagMatch: TagMatch;
     manageTags: void;
+    connectAgent: void;
+    openSupport: void;
   }>();
 
   const TAG_MATCHES: TagMatch[] = ["any", "all"];
@@ -106,19 +119,16 @@
   $: if (tagRows) remember(TAGS_KEY, tagRows.length);
 
   export let audience: "" | "participants" = "";
-  const AUDIENCE = {
+  $: text = $LL.viewer.browse.rooms_rail;
+  $: AUDIENCE = {
     participants: {
-      label: "Shared with participants",
-      // Same points as "Who can see recordings" in Operator › Publish pipeline
-      // (cassini-app DirectShareAccessPanel.svelte); change both together.
-      points: [
-        "Each recording is shared with all of the Talk room's participants, whether they were present on the call or not.",
-        "Guests without a Nextcloud account can't open it.",
-        "Cassini never creates a public link. In public rooms, people can reshare the file if this Nextcloud allows it.",
-      ],
+      label: text.audience_participants(),
+      // The same points as "Who can see recordings" in Operator › Publish
+      // pipeline (cassini-app DirectShareAccessPanel.svelte): common.audience.
+      points: [$LL.common.audience.point_participants(), $LL.common.audience.point_guests(), $LL.common.audience.point_public_links()],
     },
-  } as const;
-  const AUDIENCE_LEAD = "Nextcloud Files controls who can read each recording.";
+  };
+  $: AUDIENCE_LEAD = $LL.common.audience.intro();
   let audienceEl: HTMLElement;
   let audienceOpen = false;
   // Placed from the label each time it shows: the rail scrolls, so a popover
@@ -143,9 +153,9 @@
 
 <svelte:window on:click={closeAudienceOutside} />
 
-<nav aria-label="Rooms" class="rooms-rail" data-open={open}>
+<nav aria-label={text.nav_label()} class="rooms-rail" data-open={open}>
   <div class="rail-head rail-head-row rooms-head">
-    <h2>Rooms</h2>
+    <h2>{text.rooms_heading()}</h2>
     {#if audience}
       <span class="audience" bind:this={audienceEl} on:mouseenter={placeAudience} on:focusin={placeAudience}>
         <button
@@ -189,7 +199,7 @@
       aria-pressed={selectedRoomKey === null}
       class="room-button"
     >
-      <span class="room-name">All meetings</span>
+      <span class="room-name">{text.all_meetings()}</span>
       <span class="room-count">{roomsLoading ? "" : totalCount}</span>
     </button>
 
@@ -210,7 +220,7 @@
           <span class="room-count">{room.count}</span>
         </button>
         {#if editable && room.roomId}
-          <button type="button" class="room-edit" aria-label={`Rename room ${room.name}`} title="Rename room"
+          <button type="button" class="room-edit" aria-label={text.rename_room_named({ name: room.name })} title={text.rename_room()}
             on:click={() => dispatch("rename", room.roomId!)}><Pencil size={14} aria-hidden="true" /></button>
         {/if}
       </div>
@@ -219,19 +229,19 @@
 
   {#if tagsOffered}
     <div class="rail-head rail-head-sub rail-head-row">
-      <h2>Tags</h2>
+      <h2>{text.tags_heading()}</h2>
       <button
         type="button"
         class="manage-tags"
-        aria-label="Manage tags"
-        title="Manage tags"
+        aria-label={text.manage_tags()}
+        title={text.manage_tags()}
         on:click={() => dispatch("manageTags")}
       >
         <Settings size={14} aria-hidden="true" />
       </button>
     </div>
     {#if tagRows}
-      <div class="rail-list" role="group" aria-label="Filter by tag">
+      <div class="rail-list" role="group" aria-label={text.filter_by_tag()}>
         {#each tagRows as tag (tag.tagId)}
           <label class="type-row" data-tag-color={colorFor(tag)} in:fade={{ duration: SWAP_MS }}>
             <input
@@ -246,27 +256,27 @@
             <span class="room-count">{tag.meetings}</span>
           </label>
         {:else}
-          <p class="rail-note">No tags yet.</p>
+          <p class="rail-note">{text.no_tags()}</p>
         {/each}
       </div>
       {#if selectedTagIds.length >= 2}
         <div class="tag-match">
-          <span class="tag-match-label" aria-hidden="true">Match</span>
-          <div class="segmented" role="group" aria-label="Show meetings with">
+          <span class="tag-match-label" aria-hidden="true">{text.match()}</span>
+          <div class="segmented" role="group" aria-label={text.match_group()}>
             {#each TAG_MATCHES as mode}
               <button
                 type="button"
                 aria-pressed={tagMatch === mode}
-                aria-label={`${mode} of the ticked tags`}
+                aria-label={mode === "any" ? text.match_any_label() : text.match_all_label()}
                 class="segment"
-                on:click={() => dispatch("tagMatch", mode)}>{mode}</button
+                on:click={() => dispatch("tagMatch", mode)}>{mode === "any" ? text.match_any() : text.match_all()}</button
               >
             {/each}
           </div>
         </div>
       {/if}
     {:else if tagsFailed}
-      <p class="rail-note">Tags are unavailable right now.</p>
+      <p class="rail-note">{text.tags_unavailable()}</p>
     {:else if tagsLoading}
       <div class="rail-list" aria-hidden="true" out:swapOut>
         {#each SKELETON_WIDTHS.slice(0, tagPlaceholders) as width, index (index)}
@@ -280,8 +290,8 @@
   {/if}
 
   {#if insightsOffered}
-    <h2 class="rail-head rail-head-sub">Show</h2>
-    <div class="rail-list" role="group" aria-label="Show">
+    <h2 class="rail-head rail-head-sub">{text.show_heading()}</h2>
+    <div class="rail-list" role="group" aria-label={text.show_heading()}>
       <!-- The last one standing cannot be turned off: an empty list is not a
            filter state anyone wants to land in, and it is reached in one click
            from here. -->
@@ -294,7 +304,7 @@
           disabled={isLastBrowseType(types, "meetings")}
           on:change={() => dispatch("toggleType", "meetings")}
         />
-        <span class="room-name">Meetings</span>
+        <span class="room-name">{text.show_meetings()}</span>
         <span class="room-count">{roomsLoading ? "" : meetingCount}</span>
       </label>
       <label class="type-row">
@@ -306,9 +316,47 @@
           disabled={isLastBrowseType(types, "insights")}
           on:change={() => dispatch("toggleType", "insights")}
         />
-        <span class="room-name">Insights</span>
+        <span class="room-name">{text.show_insights()}</span>
         <span class="room-count">{insightsLoading ? "" : insightCount}</span>
       </label>
+    </div>
+  {/if}
+
+  {#if helpOffered || agentOffered}
+    <!-- Help and Connect an agent share the footer: both are things done
+         once in a while, not ways through the archive, so they sit below
+         every list rather than as a section among them (D-910). -->
+    <div class="rail-foot">
+      {#if helpOffered}
+        <button
+          type="button"
+          class="rail-foot-link"
+          aria-haspopup="dialog"
+          aria-expanded={supportOpen}
+          on:click={() => {
+            dispatch("openSupport");
+            dispatch("close");
+          }}
+        >
+          <LifeBuoy size={14} aria-hidden="true" />
+          {text.help()}
+        </button>
+      {/if}
+      {#if agentOffered}
+        <button
+          type="button"
+          class="rail-foot-link rail-foot-end"
+          aria-haspopup="dialog"
+          aria-expanded={agentOpen}
+          on:click={() => {
+            dispatch("connectAgent");
+            dispatch("close");
+          }}
+        >
+          <Plug size={14} aria-hidden="true" />
+          {text.connect_agent()}
+        </button>
+      {/if}
     </div>
   {/if}
 </nav>
@@ -453,14 +501,23 @@
     }
   }
 
+  /* The chip drops under the heading when both don't fit on one line
+     (German "Unterhaltungen" + "Mit Teilnehmern geteilt"), rather than
+     breaking its own text across lines. */
   .rail-head-row.rooms-head {
     position: relative;
+    flex-wrap: wrap;
     gap: 6px;
+  }
+  .audience {
+    max-width: 100%;
   }
   .audience-note {
     display: inline-flex;
     align-items: center;
     gap: 4px;
+    max-width: 100%;
+    white-space: nowrap;
     margin: -3px 0;
     padding: 2px 6px;
     cursor: help;
@@ -542,6 +599,39 @@
   .manage-tags:hover {
     color: var(--color-base-content);
     background-color: color-mix(in oklch, var(--color-base-content) 6%, transparent);
+  }
+  /* Pinned to the rail's bottom edge whatever the lists above it hold: pushed
+     there by the auto margin when they are short, held there by sticky when
+     they scroll. */
+  .rail-foot {
+    position: sticky;
+    bottom: 0;
+    margin-top: auto;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 10px 0;
+    background-color: var(--color-base-200);
+  }
+  .rail-foot-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+    cursor: pointer;
+    background: none;
+    border: 0;
+    border-radius: 6px;
+    font-size: 0.78rem;
+    color: color-mix(in oklch, var(--color-base-content) 70%, transparent);
+  }
+  /* Connect an agent keeps the right-hand corner it always had; Help, when
+     offered, takes the left. */
+  .rail-foot-end { margin-left: auto; }
+  .rail-foot-link:hover,
+  .rail-foot-link[aria-expanded="true"] {
+    background-color: color-mix(in oklch, var(--color-primary) 18%, transparent);
+    color: var(--color-base-content);
   }
   .rail-note {
     padding: 4px 16px;

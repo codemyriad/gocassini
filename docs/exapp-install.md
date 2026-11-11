@@ -653,8 +653,10 @@ pulls `<image-tag>-cuda` automatically and attaches the host's NVIDIA GPUs to
 the container via Docker device requests. The Docker engine running the ExApp
 needs the NVIDIA driver + [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/);
 verify with `docker run --rm --gpus all nvidia/cuda:12.9.1-base-ubuntu22.04 nvidia-smi`
-on that engine before registering the app. The `-cuda` image runs CUDA 12.9, so the host driver must support it: 575 or
-newer (data-centre GPUs also on the 535, 550, 560, 565 or 570 branches).
+on that engine before registering the app: it lists the GPU if the driver is new
+enough. The `-cuda` image runs CUDA 12.9. A GeForce card needs driver 575 or
+newer; data-centre, professional and virtual GPUs also work with the 535, 550,
+560, 565 and 570 drivers. With an older driver, the image won't start.
 
 CPU transcription is supported on amd64 and arm64. Transcription starts Off;
 recordings remain playable without a model. In Settings, choose a quality/device,

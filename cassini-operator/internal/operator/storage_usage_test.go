@@ -102,8 +102,8 @@ func TestStorageUsageHandlerReadsAndRefreshesTheIndex(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode refreshed storage usage: %v", err)
 	}
-	if body.MeasuredAt == "" || len(body.Sources) != 3 {
-		t.Fatalf("refreshed response = %+v, want timestamp and the three regular sources", body)
+	if body.MeasuredAt == "" || len(body.Sources) != 4 {
+		t.Fatalf("refreshed response = %+v, want timestamp and the four regular sources", body)
 	}
 
 	rec = httptest.NewRecorder()

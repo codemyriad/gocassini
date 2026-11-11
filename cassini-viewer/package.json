@@ -12,11 +12,14 @@
     "./annotations": "./src/viewer/annotations.ts",
     "./tagPalette": "./src/viewer/tagPalette.ts",
     "./tags/*": "./src/components/tags/*",
+    "./ui/richText": "./src/components/ui/richText.ts",
+    "./ui/*": "./src/components/ui/*",
     "./insights": "./src/viewer/insights.ts",
     "./insightName": "./src/viewer/insightName.ts",
     "./imports": "./src/viewer/imports.ts",
     "./meetingSummary": "./src/viewer/meetingSummary.ts",
-    "./app.css": "./src/app.css"
+    "./app.css": "./src/app.css",
+    "./i18n": "./src/i18n/index.ts"
   },
   "scripts": {
     "audit:portable-token": "node ./scripts/audit-portable-token-audio.mjs",
@@ -34,7 +37,11 @@
     "preview": "vite preview",
     "test": "vitest run",
     "build:public": "vite build --config vite.public.config.ts && node ./scripts/assert-embedded-single-bundle.mjs --dir dist/public --js viewer.js --css viewer.css",
-    "demo:embed": "node ./scripts/serve-embed-demo.mjs"
+    "demo:embed": "node ./scripts/serve-embed-demo.mjs",
+    "i18n": "typesafe-i18n",
+    "i18n:generate": "typesafe-i18n --no-watch",
+    "i18n:sync": "node --experimental-strip-types --no-warnings scripts/i18n-sync.mjs",
+    "i18n:explain": "node scripts/i18n-explain.mjs"
   },
   "devDependencies": {
     "@lucide/svelte": "^1.11.0",
@@ -52,6 +59,7 @@
   "dependencies": {
     "@types/dompurify": "^3.0.5",
     "dompurify": "^3.4.1",
-    "marked": "^18.0.2"
+    "marked": "^18.0.2",
+    "typesafe-i18n": "^5.27.1"
   }
 }

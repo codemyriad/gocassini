@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { get } from "svelte/store";
+
+import { LL } from "../i18n";
 import type { MeetingCatalogEntry } from "./catalog";
 import {
   NO_ROOM_KEY,
-  NO_ROOM_LABEL,
-  UNDATED_MONTH_LABEL,
+  noRoomLabel,
+  undatedMonthLabel,
   buildRoomBuckets,
   filterMeetingsByRoom,
   hasRoom,
@@ -59,7 +62,7 @@ describe("roomLabelOf", () => {
   });
 
   it("distinguishes an unnamed room from no room at all", () => {
-    expect(roomLabelOf(meeting({ id: "a" }))).toBe(NO_ROOM_LABEL);
+    expect(roomLabelOf(meeting({ id: "a" }))).toBe(noRoomLabel());
   });
 });
 
@@ -84,7 +87,7 @@ describe("buildRoomBuckets", () => {
     ]);
     expect(buckets.at(-1)).toEqual({
       key: NO_ROOM_KEY,
-      name: NO_ROOM_LABEL,
+      name: noRoomLabel(),
       count: 2,
       hasRoom: false,
     });
@@ -164,8 +167,10 @@ describe("groupMeetingsByMonth", () => {
     ]);
     expect(groups.map((group) => group.label)).toEqual([
       "August 2026",
-      UNDATED_MONTH_LABEL,
+      undatedMonthLabel(),
     ]);
+    expect(undatedMonthLabel()).toBe(get(LL).viewer.browse.rooms.undated());
+    expect(noRoomLabel()).toBe("No room");
   });
 
   it("does not straddle a month boundary at the end of a day", () => {
@@ -175,6 +180,33 @@ describe("groupMeetingsByMonth", () => {
       meeting({ id: "a", dateLabel: "2026-07-31 23:30" }),
     ]);
     expect(groups[0].key).toBe("2026-07");
+  });
+
+  it("files an instant by the month the reader's clock shows", () => {
+    // 23:30 UTC on 31 January is 00:30 on 1 February in Rome (the suite's
+    // zone): the row prints 1 Feb, so the heading says February. The label-only
+    // entry with the same digits stays in January, as its row prints.
+    const groups = groupMeetingsByMonth([
+      meeting({ id: "instant", dateLabel: "2026-01-31 23:30", recordedAtUtc: "2026-01-31T23:30:00Z" }),
+      meeting({ id: "label", dateLabel: "2026-01-31 23:30" }),
+    ]);
+    expect(groups.map((group) => [group.label, group.meetings.map((m) => m.id)])).toEqual([
+      ["February 2026", ["instant"]],
+      ["January 2026", ["label"]],
+    ]);
+  });
+
+  it("files the same instant in January for a reader west of UTC", () => {
+    const realTZ = process.env.TZ;
+    process.env.TZ = "America/New_York";
+    try {
+      const groups = groupMeetingsByMonth([
+        meeting({ id: "instant", dateLabel: "2026-01-31 23:30", recordedAtUtc: "2026-01-31T23:30:00Z" }),
+      ]);
+      expect(groups[0].key).toBe("2026-01");
+    } finally {
+      process.env.TZ = realTZ;
+    }
   });
 
   it("returns nothing for an empty list", () => {

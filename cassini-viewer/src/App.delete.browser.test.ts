@@ -88,18 +88,29 @@ for (const width of [1440, 390]) {
       const dialog = page.getByRole("alertdialog");
       await expect.element(dialog.getByRole("button", { name: "Cancel", exact: true })).toHaveFocus();
 
-      const confirm = host.querySelector(".confirm-dialog .btn-error") as HTMLElement;
-      const rect = confirm.getBoundingClientRect();
-      expect(confirm.contains(paintedElementAt(rect.x + rect.width / 2, rect.y + rect.height / 2))).toBe(true);
-      const scrim = host.querySelector(".confirm-scrim") as HTMLElement;
-      const backdrop = scrim.getBoundingClientRect();
-      expect(paintedElementAt(backdrop.x + 8, backdrop.bottom - 8)).toBe(scrim);
+      // Poll: opening a meeting slides the sheet in, so on a busy runner the
+      // first hit-test can land mid-transition. A dialog that really ends up
+      // under the page still fails once the poll times out.
+      await expect.poll(() => {
+        const confirm = host.querySelector<HTMLElement>(".confirm-dialog .btn-error");
+        if (!confirm) return "no Delete button";
+        const rect = confirm.getBoundingClientRect();
+        const painted = paintedElementAt(rect.x + rect.width / 2, rect.y + rect.height / 2);
+        return confirm.contains(painted) ? "Delete button on top" : `covered by ${painted?.className || painted?.tagName}`;
+      }).toBe("Delete button on top");
+      await expect.poll(() => {
+        const scrim = host.querySelector<HTMLElement>(".confirm-scrim");
+        if (!scrim) return "no scrim";
+        const backdrop = scrim.getBoundingClientRect();
+        const painted = paintedElementAt(backdrop.x + 8, backdrop.bottom - 8);
+        return painted === scrim ? "scrim on top" : `covered by ${painted?.className || painted?.tagName}`;
+      }).toBe("scrim on top");
 
       await userEvent.keyboard("{Escape}");
       await expect.poll(() => host.querySelector(".confirm-dialog")).toBeNull();
       expect(provider.deleteMeeting).not.toHaveBeenCalled();
       await openDelete();
-      await page.getByRole("alertdialog").getByRole("button", { name: "Delete meeting", exact: true }).click();
+      await page.getByRole("alertdialog").getByRole("button", { name: "Delete 1 meeting", exact: true }).click();
       await expect.poll(() => provider.deleteMeeting.mock.calls.length).toBe(1);
       await expect.poll(() => host.querySelectorAll(".meeting-row").length).toBe(2);
     });

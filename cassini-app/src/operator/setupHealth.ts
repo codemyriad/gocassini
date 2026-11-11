@@ -1,3 +1,5 @@
+import { get } from "svelte/store";
+import { LL, operatorPlace } from "cassini-viewer/i18n";
 import type { OperatorPanel } from "../surfaceRouting";
 
 export interface SetupFeatures { summaries: boolean; insights: boolean }
@@ -9,6 +11,59 @@ export interface SetupHealth {
   mode: string;
   cause: string;
   features: SetupFeatures | null;
+  // The caller's own recording shares (D-885): null on an operator too old to
+  // report them, which must read as "nobody said" and not as "nothing waiting".
+  sharing: SharingStatus | null;
+}
+
+// A published meeting whose share the caller has not accepted yet. Nextcloud
+// keeps a share out of the recipient's files until they accept it, and nothing
+// in Cassini ever accepts on their behalf.
+export interface PendingRecording {
+  // One entry per meeting, but a person can hold both a user share and a group
+  // share of the same file: accepting the meeting means accepting every id.
+  shareIds: string[];
+  jobId: string;
+  // "" when the operator no longer knows the job; the row then shows the date
+  // alone, or "A recording" when there is no date either.
+  title: string;
+  // ISO 8601, or "" when unknown.
+  startedAt: string;
+  // 0 when unknown.
+  durationSeconds: number;
+}
+
+// What `GET operator/setup` says about the caller's recording shares (D-885).
+//
+// `checked` false means the reads as the caller failed or timed out: the
+// counts are then zero because nothing was established, not because nothing is
+// waiting, and the app shows nothing rather than guess.
+export interface SharingStatus {
+  checked: boolean;
+  pending: PendingRecording[];
+  // Published meetings the caller was in the room for, whose share to them
+  // Nextcloud refused, one per meeting, newest first.
+  refused: RecordingNotice[];
+  // Recordings the caller started that were not published because Nextcloud
+  // refused to share them with the caller, one per meeting, newest first.
+  unpublished: RecordingNotice[];
+  // Neither list carries a meeting whose notice the caller dismissed. Those
+  // are these job ids, of each kind: the list says nothing more about them,
+  // but the meeting opened from a link still says why it is not there.
+  dismissedRefused: string[];
+  dismissedUnpublished: string[];
+}
+
+// One meeting Browse tells the reader about by name: a recording Nextcloud
+// refused them, or one they started that was not published. One that was
+// never published usually has no title; the room and the time are what the
+// person recognises it by.
+export interface RecordingNotice {
+  jobId: string;
+  title: string;
+  roomName: string;
+  // ISO 8601, or "" when unknown.
+  startedAt: string;
 }
 export interface RecordingsAccess {
   ok: boolean;
@@ -53,7 +108,80 @@ export function readSetupHealth(body: unknown): SetupHealth | null {
     mode: typeof body.mode === "string" ? body.mode : "",
     cause: typeof body.cause === "string" ? body.cause : "",
     features: readSetupFeatures(body.features),
+    sharing: readSharing(body.sharing),
   };
+}
+
+// readSharing reads the `sharing` object defensively: a missing or malformed
+// one is null (an operator that predates it), and a `checked: false` one keeps
+// its counts at zero whatever else it carries, because the operator says it
+// established nothing. A malformed entry in `pending`, `refused_meetings` or
+// `refused_started_meetings` is dropped rather than failing the whole object;
+// an entry with no usable share id is nothing the app could accept, so it is
+// dropped too.
+export function readSharing(value: unknown): SharingStatus | null {
+  if (!isRecord(value) || typeof value.checked !== "boolean") return null;
+  if (!value.checked) return { checked: false, pending: [], refused: [], unpublished: [], dismissedRefused: [], dismissedUnpublished: [] };
+  const pending = Array.isArray(value.pending)
+    ? value.pending.flatMap((entry) => {
+        const recording = readPendingRecording(entry);
+        return recording ? [recording] : [];
+      })
+    : [];
+  return {
+    checked: true,
+    pending,
+    refused: readRecordingNotices(value.refused_meetings),
+    unpublished: readRecordingNotices(value.refused_started_meetings),
+    dismissedRefused: readJobIds(value.dismissed_refused),
+    dismissedUnpublished: readJobIds(value.dismissed_refused_started),
+  };
+}
+
+// readJobIds keeps the non-empty strings; an operator that predates the
+// field sends none, and that is an empty list.
+function readJobIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((id): id is string => typeof id === "string" && id.trim() !== "").map((id) => id.trim());
+}
+
+function readRecordingNotices(value: unknown): RecordingNotice[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    const notice = readRecordingNotice(entry);
+    return notice ? [notice] : [];
+  });
+}
+
+// An entry without a job id could be neither dismissed nor matched to the
+// meeting once the reader can see it, so it is dropped.
+function readRecordingNotice(value: unknown): RecordingNotice | null {
+  if (!isRecord(value) || typeof value.job_id !== "string" || value.job_id === "") return null;
+  return {
+    jobId: value.job_id,
+    title: typeof value.title === "string" ? value.title : "",
+    roomName: typeof value.room_name === "string" ? value.room_name : "",
+    startedAt: typeof value.started_at === "string" ? value.started_at : "",
+  };
+}
+
+function readPendingRecording(value: unknown): PendingRecording | null {
+  if (!isRecord(value)) return null;
+  const shareIds = Array.isArray(value.share_ids)
+    ? value.share_ids.filter((id): id is string => typeof id === "string" && id !== "")
+    : [];
+  if (shareIds.length === 0) return null;
+  return {
+    shareIds,
+    jobId: typeof value.job_id === "string" ? value.job_id : "",
+    title: typeof value.title === "string" ? value.title : "",
+    startedAt: typeof value.started_at === "string" ? value.started_at : "",
+    durationSeconds: readCount(value.duration_seconds),
+  };
+}
+
+function readCount(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
 }
 
 // A missing setup answer leaves the audience unknown. Every current recording
@@ -86,14 +214,28 @@ export function shareableAppUrl(href: string): string {
 }
 
 const APP_ID = "gocassini";
-const RERUN_SETUP: SetupNoticeStep = {
-  label: "Re-run Cassini's setup by disabling and enabling the app",
+// Functions rather than constants, so each notice is in the reader's language.
+const rerunSetup = (): SetupNoticeStep => ({
+  label: get(LL).app.shell.setup_notice.step_rerun_setup(),
   commands: [`occ app_api:app:disable ${APP_ID}`, `occ app_api:app:enable ${APP_ID}`],
-};
-const SETTINGS_OFFER: SetupNoticeStep = {
-  label: "Open Operator › Publish pipeline to check the recordings account",
+});
+const settingsOffer = (): SetupNoticeStep => ({
+  label: get(LL).app.shell.setup_notice.step_open_settings({ place: operatorPlace("publish_pipeline") }),
   commands: [], action: "settings",
-};
+});
+
+// What failed, by the operator's step (storage_causes.go, its administrator
+// wording); "" for a step not listed there.
+function stepCause(step: string): string {
+  const t = get(LL).app.shell.setup_notice.cause;
+  switch (step) {
+    case "nextcloud_probe": return t.nextcloud_probe();
+    case "private_archive": return t.private_archive();
+    case "sharing_api": return t.sharing_api();
+    case "owner_account": return t.owner_account();
+    default: return "";
+  }
+}
 
 export function buildSetupNotice(options: {
   health: SetupHealth | null;
@@ -108,31 +250,37 @@ export function buildSetupNotice(options: {
   // it, so the notice never replaces the meeting list (D-849). It promises
   // browsing, not that every read succeeds: a Nextcloud outage that fails this
   // check can fail a reader's share scan too, and the list reports that itself.
+  const t = get(LL).app.shell.setup_notice;
   const failing = verdict.state !== "unknown";
-  const summary = failing
-    ? "You can still browse recordings. Calls will still run, but their recordings will fail until this is fixed."
-    : "You can still browse recordings, but new ones will fail until this check runs.";
+  const summary = failing ? t.summary_failing() : t.summary_unchecked();
   const base: SetupNotice = {
     tone: failing ? "warning" : "neutral",
-    title: failing ? "Cassini can't save recordings right now" : "Cassini hasn't checked that it can save recordings",
+    title: failing ? t.title_failing() : t.title_unchecked(),
     summary, cause: "", steps: [], detail: "", note: "", shareLabel: "", shareUrl: "", reference: "",
   };
   if (!isAdmin) {
-    return { ...base, shareLabel: "Send this link to an administrator for setup instructions.", shareUrl: appUrl };
+    return { ...base, shareLabel: t.share_label(), shareUrl: appUrl };
   }
   const step = access?.step ?? "";
   const steps: SetupNoticeStep[] = step === "owner_account"
-    ? [SETTINGS_OFFER, { label: "Create the cassini account in Nextcloud", commands: ["occ user:add cassini"] }, RERUN_SETUP]
+    ? [settingsOffer(), { label: t.step_create_account({ user: "cassini" }), commands: ["occ user:add cassini"] }, rerunSetup()]
     : step === "administrator"
-      ? [{ label: "Set CASSINI_NC_ADMIN_USER to a Nextcloud administrator", commands: [] }, RERUN_SETUP]
-      : [SETTINGS_OFFER, RERUN_SETUP];
+      ? [{ label: t.step_set_admin_user({ variable: "CASSINI_NC_ADMIN_USER" }), commands: [] }, rerunSetup()]
+      : [settingsOffer(), rerunSetup()];
   return {
     ...base,
-    cause: access?.cause || health?.cause || "Cassini could not confirm its recordings setup.",
+    // The cause is worded here from the failing step, in the reader's
+    // language; for a step this app does not know, the operator's own
+    // sentence, in English. detail is the operator's raw state text, in
+    // English. /setup sends no step, so its cause (health.cause) stays the
+    // operator's sentence too.
+    cause: stepCause(access?.step ?? "") || access?.cause || health?.cause || t.cause_unknown(),
     steps,
-    detail: access?.detail || `The operator reported ${verdict.state}${step ? ` at ${step}` : ""}.`,
-    note: "occ is however your deployment invokes it, for example sudo -u www-data php occ.",
-    reference: "See GET /operator/status for the full recordings access report.",
+    detail: access?.detail || (step
+      ? t.detail_state_at_step({ state: verdict.state, step })
+      : t.detail_state({ state: verdict.state })),
+    note: t.note_occ({ command: "occ", example: "sudo -u www-data php occ" }),
+    reference: t.reference({ endpoint: "GET /operator/status" }),
   };
 }
 
@@ -175,12 +323,9 @@ export interface FeatureNotice {
 const AI_PANEL: OperatorPanel = "endpoints";
 
 // Only an administrator can act, and only they are told there is somewhere to
-// go — see FeatureNotice.panel.
-const ADMIN_ACTION = "Open AI providers";
-// The button on the compact card. Same words as the button on the panel it
-// opens, so the second press is the one the first one promised.
-const ADMIN_ACTION_SHORT = "Add a provider";
-const NOT_YOURS_TO_FIX = " Ask a Nextcloud administrator.";
+// go — see FeatureNotice.panel. The compact card's button (action_short) is the
+// same words as the button on the panel it opens, so the second press is the
+// one the first one promised.
 
 // buildFeatureNotice returns what to say about a capability this deployment does
 // not have, or null when there is nothing to say — which is BOTH "it is
@@ -196,25 +341,22 @@ export function buildFeatureNotice(options: {
   if (features === null || features[feature]) {
     return null;
   }
-  const summary =
-    feature === "insights"
-      ? "Insights need an AI endpoint, and this deployment has none."
-      : "Summaries need an AI endpoint and the summarise step switched on.";
+  const t = get(LL).app.operator.feature_notice;
+  const insights = feature === "insights";
   return {
-    title:
-      feature === "insights" ? "No AI endpoint is available" : "Meetings are not being summarised",
-    summary: isAdmin ? summary : summary + NOT_YOURS_TO_FIX,
+    title: insights ? t.insights_title() : t.summaries_title(),
+    summary: insights
+      ? isAdmin ? t.insights_summary() : t.insights_summary_ask_admin()
+      : isAdmin ? t.summaries_summary() : t.summaries_summary_ask_admin(),
     panel: isAdmin ? AI_PANEL : "",
-    actionLabel: isAdmin ? ADMIN_ACTION : "",
-    actionTitle: isAdmin
-      ? feature === "insights"
-        ? "Add a provider to create insights"
-        : "Add a provider to write summaries"
-      : undefined,
-    actionShortLabel: isAdmin ? ADMIN_ACTION_SHORT : undefined,
+    actionLabel: isAdmin ? t.action({ place: get(LL).common.place.ai_providers() }) : "",
+    actionTitle: isAdmin ? (insights ? t.insights_action_title() : t.summaries_action_title()) : undefined,
+    actionShortLabel: isAdmin ? t.action_short() : undefined,
   };
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+// The one object guard for the operator's answers; sharingNotice.ts reads the
+// accept answer with it too.
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }

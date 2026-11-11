@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { get } from "svelte/store";
+
+import { LL } from "../i18n";
 
 import meetingFactsSource from "./MeetingFacts.svelte?raw";
 import meetingViewSource from "./MeetingView.svelte?raw";
@@ -16,7 +19,8 @@ describe("MeetingView header", () => {
       meetingViewSource.indexOf("<header class=\"mv-header"),
       meetingViewSource.indexOf("</header>"),
     );
-    expect(header).toContain('{meeting ? meeting.title : "Meeting transcript viewer"}');
+    expect(header).toContain("{meeting ? meeting.title : $LL.viewer.meeting.view.no_meeting_heading()}");
+    expect(get(LL).viewer.meeting.view.no_meeting_heading()).toBe("Meeting transcript viewer");
     expect(header).toContain("<MeetingTags session={marks} vocabulary={tagVocabulary} preview={previewTags} />");
     // When it happened, where, how long and who was in it sit behind one chip
     // in the header that opens them in a popover, instead of a block of facts
@@ -43,7 +47,7 @@ describe("MeetingView header", () => {
     expect(meetingFactsSource).toContain("{#if durationMs > 0}");
     expect(meetingFactsSource).toContain("{#if people.voices > 0}");
     expect(meetingFactsSource).toContain("{#if room}");
-    expect(meetingFactsSource).toContain("$: dated = hasMeetingDate(dateLabel);");
+    expect(meetingFactsSource).toContain("$: dated = hasMeetingStart(start);");
     expect(meetingFactsSource).toContain("{#if hasAny}");
   });
 
@@ -65,7 +69,8 @@ describe("MeetingView renaming (D-862)", () => {
       meetingViewSource.indexOf("</header>"),
     );
     expect(header).toContain("{#if canRename}");
-    expect(header).toContain('aria-label="Rename meeting"');
+    expect(header).toContain("aria-label={$LL.viewer.meeting.view.rename()}");
+    expect(get(LL).viewer.meeting.view.rename()).toBe("Rename meeting");
   });
 
   it("writes the rename through the annotations route and tells the shell", () => {
@@ -123,7 +128,8 @@ describe("MeetingView tagging", () => {
 describe("MeetingView linked insights", () => {
   it("ends the summary with the insights this meeting fed, above the transcript", () => {
     const summaryAt = meetingViewSource.indexOf("{@html summaryHtml}");
-    const insightsAt = meetingViewSource.indexOf('<h2 class="mv-summary-insights-title">Insights</h2>');
+    const insightsAt = meetingViewSource.indexOf('<h2 class="mv-summary-insights-title">{$LL.viewer.meeting.view.insights_heading()}</h2>');
+    expect(get(LL).viewer.meeting.view.insights_heading()).toBe("Insights");
     const transcriptAt = meetingViewSource.indexOf('<div class="mv-transcript">');
     expect(summaryAt).toBeGreaterThan(-1);
     expect(insightsAt).toBeGreaterThan(summaryAt);

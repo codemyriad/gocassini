@@ -297,7 +297,7 @@ func (c ExAppConfig) ncFilesProxy(logger *log.Logger, search searchDeps) ncFiles
 				logger.Printf("nc files read: missing caller identity path=%s — failing closed", relPath)
 			}
 			switch relPath {
-			case "catalog.json", meetingsListPath, searchURLPath:
+			case "catalog.json", meetingsListPath, meetingsRoomsPath, searchURLPath:
 				writeJSONError(w, http.StatusBadGateway,
 					"your Nextcloud identity did not reach Cassini; this is not an empty result")
 			default:
@@ -314,6 +314,10 @@ func (c ExAppConfig) ncFilesProxy(logger *log.Logger, search searchDeps) ncFiles
 		}
 		if relPath == meetingsListPath {
 			c.serveMeetingsList(r.Context(), w, r, client, caller, search, logger)
+			return true
+		}
+		if relPath == meetingsRoomsPath {
+			c.serveMeetingsRooms(r.Context(), w, r, client, caller, search, logger)
 			return true
 		}
 		if relPath == searchURLPath {

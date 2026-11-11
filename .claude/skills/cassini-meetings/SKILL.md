@@ -13,6 +13,17 @@ Access is **Nextcloud's decision, not Cassini's**: every request is made as a
 Nextcloud user, and the account sees exactly the recordings Nextcloud says it may
 read. You cannot widen that from here, and you should not try.
 
+## If a `cassini` MCP server is connected, use it
+
+When the tools `rooms`, `list`, `search`, `context`, `tags` and `annotations`
+are available from a server named `cassini`, use them instead of the commands
+below: they are the same reads, return the same documents as `--json`, and need
+no CLI or environment. The workflow and the rules in this skill still apply —
+`search` gives references, `context` gives the words; cite the minute; a
+meeting you cannot read is the same answer as one that does not exist. The
+tools only read: marking (`meetings annotate`), renaming and downloading the
+file stay CLI-only. A tool error is a failure to report, never an empty answer.
+
 ## Setup check
 
 The commands need three environment variables. Check them first:
@@ -55,9 +66,12 @@ all the work, and they combine:
 
 ```text
 rooms=2 caller=alice source=nextcloud-files
-room=rm_9f2a1c3d4e5b6a70 name=Weekly Sync meetings=12 latest=2026-08-11 10:32 earliest=2026-05-05 10:30
+room=rm_9f2a1c3d4e5b6a70 name=Weekly Sync meetings=12 latest=2026-11-09T12:31+01:00 earliest=2026-05-05 10:30
 room=rm_11bb22cc33dd44ee name=Old Standup meetings=3 latest=2026-07-02 09:00 earliest=2026-06-18 09:00
 ```
+
+`latest=` and `earliest=` follow the same two shapes as `list`'s `date=` (see
+below): a recording start in your zone with its offset, or a zone-less label.
 
 The `room=` value is the **only** thing `--room` accepts — copy it, do not
 retype it. It is an opaque derived id, not the conversation's name and not its
@@ -83,15 +97,18 @@ may say some meetings carry no room whatsoever — those are real meetings that
 about one of them, list without `--room`.
 
 To pick a room programmatically, use `--json` — and do, because the text form
-above is even less parseable than `list`'s: `latest=2026-08-11 10:32` contains a
-space, so a naive split on `key=value` mis-reads a perfectly ordinary row.
+above is even less parseable than `list`'s: a legacy `latest=2026-08-11 10:32`
+contains a space, so a naive split on `key=value` mis-reads a perfectly
+ordinary row.
 
 ```bash
 ./bin/cassini meetings rooms --json | jq -r '.rooms[] | "\(.room)\t\(.meetings)\t\(.roomName)"'
 ```
 
 Each room carries `room` (the selector), `roomId` and `roomName` (either may be
-absent), `meetings`, `latest` and `earliest`. The document also carries
+absent), `meetings`, `latest` and `earliest` (the labels), and `latestRecordedAtUtc` /
+`earliestRecordedAtUtc` when those meetings know their start instant. The
+document also carries
 `unattributed` — the meetings in no room at all — and the same `skipped` you
 must check on `list`.
 
@@ -107,12 +124,23 @@ Newest first, one line per meeting:
 
 ```text
 meetings=2 caller=alice source=nextcloud-files
+meeting=01KA3H7Q2R5T8V0X2Z4B6D8F0H date=2026-11-09T12:31+01:00 room=rm_9f2a1c3d4e5b6a70 title=Weekly Sync speakers=4 segments=210 duration_ms=2700000 fetchable=yes
 meeting=01JZ8K3M4N5P6Q7R8S9T0VWXYZ date=2026-08-11 10:32 room=rm_9f2a1c3d4e5b6a70 title=Daily Standup speakers=3 segments=120 duration_ms=1800000 fetchable=yes
 ```
 
+`date=` is when the recording started. A meeting that knows its start instant
+shows it in your local time zone, offset written out, as one token:
+`date=2026-11-09T12:31+01:00`. An older meeting that only has a label shows it
+exactly as published, `date=2026-08-11 10:32`, with **no offset**: that is a
+wall clock whose zone nobody recorded, so do not convert it or claim a zone for
+it. The offset is how you tell the two apart. In `--json` the instant is the
+entry's `recordedAtUtc` (RFC 3339 UTC); `dateLabel` is the label.
+
 All three filters are optional and they AND together. Dates are written as
-`2026-08-11`, `2026-08-11 14:30` or `2026-08-11 14:30:05`, carry **no
-timezone**, and a bare date covers the whole day at both ends — so
+`2026-08-11`, `2026-08-11 14:30` or `2026-08-11 14:30:05`, with **no
+timezone**: they are read in your local time zone, the zone `date=` is shown
+in. A meeting with only a label is compared by its digits, as before. A bare
+date covers the whole day at both ends — so
 `--from 2026-08-01 --to 2026-08-31` is all of August. A range whose ends are
 backwards is rejected outright (exit 2) rather than silently matching nothing.
 
@@ -208,6 +236,18 @@ Adds `[MM:SS]` (or `[H:MM:SS]` past an hour) beside each passage's speaker. Off
 by default. Use it whenever the user will want to check you against the
 recording — a contested decision, a quote, anything you are asked to cite. It is
 cheaper than reading `--json` segments to find a timing.
+
+### Reading just a stretch
+
+```bash
+./bin/cassini meetings context <meeting-id> --from 12:00 --to 15:00 --timestamps
+```
+
+Only the passages overlapping that stretch (milliseconds, `MM:SS` or
+`H:MM:SS`). Use it after `meetings search`: start a minute before the hit's
+`startMs` and read a few minutes, rather than the whole meeting. The document
+says it is a window; say so too if you answer from one, and widen it before
+concluding something was *not* said.
 
 ### Meeting files you already have
 
@@ -346,7 +386,7 @@ shaped plan and tracked issues:
 | A room in `rooms` you cannot select | You mistyped the id. `--room` matches exactly and takes the `room=` value verbatim. | Copy the value from `meetings rooms`; there is no substring matching. |
 | Two rooms with the same `name=` | One conversation identified two ways — from its Talk conversation, and from its name for recordings this installation has no job history for. Cassini cannot prove they are the same. | Query both and say the archive is split. Repairing it is an administrator action: `scripts/backfill-catalog-rooms.sh` first, then `scripts/reattribute-catalog-room.sh` for whatever remains. |
 | `--room` returns nothing but the meeting is in `list` | The meeting records no room at all (`room=-`), which no `--room` value reaches. | List without `--room`. Say the meeting predates room metadata rather than that it is missing; an administrator can often recover it with `scripts/backfill-catalog-rooms.sh`. |
-| `list configuration error: --from …` (exit 2) | The date is not one of the accepted forms, or the range runs backwards. | Rewrite it as `2026-08-11` (optionally with ` 14:30`), and do not add a timezone. |
+| `list configuration error: --from …` (exit 2) | The date is not one of the accepted forms, or the range runs backwards. | Rewrite it as `2026-08-11` (optionally with ` 14:30`), and do not add a timezone: the bounds are read in your local zone. |
 | `no recording you can read at that id` | Absent, **or** present and not readable by this account. Answered identically on purpose, so that a recording you cannot see never reveals it exists. | Run `meetings list`. Never tell the user the meeting "doesn't exist" or that they are "not allowed" — you cannot know which. |
 | `Nextcloud rejected the credentials` | The app password is wrong or revoked. | Ask the user to generate a new one. Never print the value. |
 | `Nextcloud Files is unavailable` | An outage on the Nextcloud side, not permissions. | Retrying later is reasonable. Re-checking the password is not. |

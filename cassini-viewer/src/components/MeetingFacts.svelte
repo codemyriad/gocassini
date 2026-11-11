@@ -1,18 +1,28 @@
 <script lang="ts">
+  import { LL, dateFormat } from "../i18n";
   import { tick } from "svelte";
+  import { get } from "svelte/store";
   import { slide } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
   import { Calendar, Check, ChevronRight, Clock, Copy, MessageSquare, Users } from "@lucide/svelte";
 
   import { formatClockTime } from "../core/transcript";
   import { countPeople, type SpeakerGroup, type VoiceSample } from "../core/speakers";
-  import { formatMeetingDateShort, formatMeetingDateWithDay, hasMeetingDate } from "../viewer/catalog";
+  import { peopleCountText } from "../viewer/speakerEdits";
+  import {
+    formatMeetingStartDay,
+    formatMeetingStartWithDay,
+    hasMeetingStart,
+    type MeetingTimeSource,
+  } from "../viewer/meetingTime";
   import { popover } from "./tags/popover";
   import PeoplePanel from "./speakers/PeoplePanel.svelte";
   import type { SpeakersSession } from "./speakers/session";
   import type { ArtifactRecordingFacts, ArtifactTimingPrecision } from "../viewer/loadArtifact";
 
-  export let dateLabel = "";
+  // When the meeting started: the instant when known, else the legacy label
+  // (meetingTime.ts decides which, and in which clock).
+  export let start: MeetingTimeSource | null = null;
   export let room: string | null = null;
   export let durationMs = 0;
   // The meeting's devices with any voices separated from them (groupSpeakers).
@@ -32,19 +42,17 @@
   let anchor: HTMLButtonElement;
   let panel: HTMLDivElement;
 
-  $: dated = hasMeetingDate(dateLabel);
+  $: dated = hasMeetingStart(start);
   // The meeting's people are the same whichever transcript is shown, so the
   // header counts what the People panel lists.
   $: people = countPeople(speakerGroups);
   $: hasAny = dated || Boolean(room) || durationMs > 0 || people.voices > 0;
-  $: peopleTitle = people.split
-    ? `${people.voices} voices on ${people.devices} ${people.devices === 1 ? "device" : "devices"}`
-    : `${people.voices} ${people.voices === 1 ? "participant" : "participants"}`;
+  $: peopleTitle = peopleCountText(people);
   $: transcribed = formatProcessed(recording?.processedAtUtc ?? null);
   $: model = recording?.model ?? "";
   $: size = [
-    recording?.words != null ? `${recording.words.toLocaleString()} words` : "",
-    recording?.passages != null ? `${recording.passages.toLocaleString()} passages` : "",
+    recording?.words != null ? countText(recording.words, "words") : "",
+    recording?.passages != null ? countText(recording.passages, "passages") : "",
   ].filter(Boolean).join(" · ");
   $: roughTiming = timing && timing.level !== "word" ? timing : null;
   $: meetingId = recording?.meetingId ?? "";
@@ -54,19 +62,23 @@
   let copied = false;
   let copiedTimer: ReturnType<typeof setTimeout> | undefined;
 
-  const PROCESSED_FORMAT = new Intl.DateTimeFormat("en-GB", {
+  const PROCESSED_OPTIONS: Intl.DateTimeFormatOptions = {
     day: "numeric",
     month: "short",
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
-    hour12: false,
-  });
+  };
 
   function formatProcessed(iso: string | null): string {
     if (!iso) return "";
     const date = new Date(iso);
-    return Number.isNaN(date.getTime()) ? "" : PROCESSED_FORMAT.format(date);
+    return Number.isNaN(date.getTime()) ? "" : dateFormat(PROCESSED_OPTIONS).format(date);
+  }
+
+  function countText(n: number, what: "words" | "passages"): string {
+    const t = get(LL).viewer.meeting.facts;
+    return what === "words" ? t.words({ count: n }) : t.passages({ count: n });
   }
 
   function shortId(id: string): string {
@@ -100,13 +112,13 @@
     class="mf-chip"
     aria-haspopup="dialog"
     aria-expanded={open}
-    aria-label="Meeting details"
+    aria-label={$LL.viewer.meeting.facts.chip_label()}
     on:click={toggle}
   >
     {#if dated}
       <span class="mf-chip-part">
         <Calendar size={12} aria-hidden="true" />
-        {formatMeetingDateShort(dateLabel.slice(0, 10))}
+        {formatMeetingStartDay(start)}
       </span>
     {:else if room}
       <span class="mf-chip-part min-w-0">
@@ -134,26 +146,26 @@
       class="tag-popover mf-panel"
       class:mf-wide={speakerSession !== null}
       role="dialog"
-      aria-label="Meeting details"
+      aria-label={$LL.viewer.meeting.facts.panel_label()}
       tabindex="-1"
     >
       {#if dated || room || durationMs > 0}
         <dl class="mf-facts">
           {#if dated}
             <div class="mf-fact">
-              <dt><Calendar size={14} aria-hidden="true" /><span class="sr-only">Date</span></dt>
-              <dd>{formatMeetingDateWithDay(dateLabel)}</dd>
+              <dt><Calendar size={14} aria-hidden="true" /><span class="sr-only">{$LL.viewer.meeting.facts.date()}</span></dt>
+              <dd>{formatMeetingStartWithDay(start)}</dd>
             </div>
           {/if}
           {#if durationMs > 0}
             <div class="mf-fact">
-              <dt><Clock size={14} aria-hidden="true" /><span class="sr-only">Duration</span></dt>
+              <dt><Clock size={14} aria-hidden="true" /><span class="sr-only">{$LL.viewer.meeting.facts.duration()}</span></dt>
               <dd class="tabular-nums">{formatClockTime(durationMs)}</dd>
             </div>
           {/if}
           {#if room}
             <div class="mf-fact">
-              <dt><MessageSquare size={14} aria-hidden="true" /><span class="sr-only">Room</span></dt>
+              <dt><MessageSquare size={14} aria-hidden="true" /><span class="sr-only">{$LL.viewer.meeting.facts.room()}</span></dt>
               <dd class="truncate">{room}</dd>
             </div>
           {/if}
@@ -181,32 +193,32 @@
             aria-controls="mf-about-rows"
             on:click={() => (aboutOpen = !aboutOpen)}
           >
-            <span class="mf-about-label">About this recording</span>
+            <span class="mf-about-label">{$LL.viewer.meeting.facts.about()}</span>
             <ChevronRight size={14} class="mf-about-caret" aria-hidden="true" />
           </button>
           {#if aboutOpen}
             <dl id="mf-about-rows" class="mf-about-rows" transition:slide={{ duration: 180, easing: cubicOut }}>
               {#if transcribed}
-                <dt>Transcribed</dt>
+                <dt>{$LL.viewer.meeting.facts.transcribed()}</dt>
                 <dd>{transcribed}</dd>
               {/if}
               {#if model}
-                <dt>Model</dt>
+                <dt>{$LL.viewer.meeting.facts.model()}</dt>
                 <dd>{model}</dd>
               {/if}
               {#if size}
-                <dt>Length</dt>
+                <dt>{$LL.viewer.meeting.facts.size()}</dt>
                 <dd class="tabular-nums">{size}</dd>
               {/if}
               {#if roughTiming}
-                <dt>Timing</dt>
+                <dt>{$LL.viewer.meeting.facts.timing()}</dt>
                 <dd title={roughTiming.detail}>{roughTiming.label}</dd>
               {/if}
               {#if meetingId}
-                <dt>ID</dt>
+                <dt>{$LL.viewer.meeting.facts.id()}</dt>
                 <dd class="mf-id">
                   <code title={meetingId}>{shortId(meetingId)}</code>
-                  <button type="button" class="mf-copy" aria-label={copied ? "Meeting ID copied" : "Copy meeting ID"} title={copied ? "Copied" : "Copy meeting ID"} on:click={copyId}>
+                  <button type="button" class="mf-copy" aria-label={copied ? $LL.viewer.meeting.facts.id_copied() : $LL.viewer.meeting.facts.copy_id()} title={copied ? $LL.common.status.copied() : $LL.viewer.meeting.facts.copy_id()} on:click={copyId}>
                     {#if copied}<Check size={12} aria-hidden="true" />{:else}<Copy size={12} aria-hidden="true" />{/if}
                   </button>
                 </dd>

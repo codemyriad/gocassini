@@ -505,6 +505,8 @@ func TestNewestMigrationHasARollbackTest(t *testing.T) {
 		"import_staging":           true,
 		"attempt_models":           true,
 		"attempt_summary_times":    true,
+		"job_share_outcomes":       true,
+		"share_notice_dismissals":  true,
 	}
 	newest := migrations[len(migrations)-1].Name
 	if !covered[newest] {
@@ -603,5 +605,88 @@ func TestMigrateDownImportStagingPreservesHistory(t *testing.T) {
 	upload, ok, err := store.ImportJob(ctx, "upload")
 	if err != nil || !ok || upload.State != importStateFailed || upload.ExpectedBytes != 0 || upload.StagingState != "" {
 		t.Fatal(upload, err)
+	}
+}
+
+// A rollback past 0025 forgets who published meetings could not be shared
+// with: the runs stop saying so, and nothing else changes — the shares
+// themselves live in Nextcloud. The re-upgrade brings the table back empty,
+// and the next publish or re-share fills it again.
+func TestMigrateDownDropsJobShareOutcomesAndKeepsTheJob(t *testing.T) {
+	t.Setenv("CASSINI_REPO_ROOT", filepath.Clean(filepath.Join("..", "..", "..")))
+	migrations, err := loadMigrations()
+	if err != nil {
+		t.Fatalf("loadMigrations() error = %v", err)
+	}
+	at := migrationIndex(migrations, "job_share_outcomes")
+	if at < 0 {
+		t.Fatal("no job_share_outcomes migration")
+	}
+	store, err := OpenStore(filepath.Join(t.TempDir(), "jobs.sqlite3"))
+	if err != nil {
+		t.Fatalf("OpenStore() error = %v", err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	insertJob(t, store.db, "SHARED1", nowUTCString())
+	if err := store.RecordJobShareOutcome(ctx, "SHARED1", shareOutcomePartial, []skippedShare{{Type: "user", ID: "bob"}}); err != nil {
+		t.Fatalf("RecordJobShareOutcome() error = %v", err)
+	}
+
+	if err := store.migrateDownTo(migrations[at].Version - 1); err != nil {
+		t.Fatalf("migrateDownTo(%d) error = %v", migrations[at].Version-1, err)
+	}
+	if _, err := store.db.Exec(`SELECT job_id FROM job_share_outcomes`); err == nil {
+		t.Fatal("job_share_outcomes survived the down migration")
+	}
+	if _, err := store.GetJob(ctx, "SHARED1"); err != nil {
+		t.Fatalf("the job did not survive the down migration: %v", err)
+	}
+	if err := store.ensureSchema(); err != nil {
+		t.Fatalf("ensureSchema() error = %v", err)
+	}
+	if outcome, err := store.JobShareOutcome(ctx, "SHARED1"); err != nil || outcome != nil {
+		t.Fatalf("JobShareOutcome() after re-upgrade = %+v, %v; want an empty, working table", outcome, err)
+	}
+}
+
+// A rollback past 0026 forgets which Browse notices people dismissed: they
+// come back once, and nothing else changes. The re-upgrade brings the table
+// back empty.
+func TestMigrateDownDropsShareNoticeDismissalsAndKeepsTheJob(t *testing.T) {
+	t.Setenv("CASSINI_REPO_ROOT", filepath.Clean(filepath.Join("..", "..", "..")))
+	migrations, err := loadMigrations()
+	if err != nil {
+		t.Fatalf("loadMigrations() error = %v", err)
+	}
+	at := migrationIndex(migrations, "share_notice_dismissals")
+	if at < 0 {
+		t.Fatal("no share_notice_dismissals migration")
+	}
+	store, err := OpenStore(filepath.Join(t.TempDir(), "jobs.sqlite3"))
+	if err != nil {
+		t.Fatalf("OpenStore() error = %v", err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	insertJob(t, store.db, "DISMISSED1", nowUTCString())
+	if err := store.DismissShareNotices(ctx, "alice", []string{"DISMISSED1"}); err != nil {
+		t.Fatalf("DismissShareNotices() error = %v", err)
+	}
+
+	if err := store.migrateDownTo(migrations[at].Version - 1); err != nil {
+		t.Fatalf("migrateDownTo(%d) error = %v", migrations[at].Version-1, err)
+	}
+	if _, err := store.db.Exec(`SELECT job_id FROM share_notice_dismissals`); err == nil {
+		t.Fatal("share_notice_dismissals survived the down migration")
+	}
+	if _, err := store.GetJob(ctx, "DISMISSED1"); err != nil {
+		t.Fatalf("the job did not survive the down migration: %v", err)
+	}
+	if err := store.ensureSchema(); err != nil {
+		t.Fatalf("ensureSchema() error = %v", err)
+	}
+	if dismissed, err := store.dismissedShareNotices(ctx, "alice"); err != nil || len(dismissed) != 0 {
+		t.Fatalf("dismissedShareNotices() after re-upgrade = %v, %v; want an empty, working table", dismissed, err)
 	}
 }

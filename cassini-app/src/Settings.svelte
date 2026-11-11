@@ -16,8 +16,11 @@
   import StorageUsagePanel from "./StorageUsagePanel.svelte";
   import RetentionPanel from "./RetentionPanel.svelte";
   import RecordingSetup from "./RecordingSetup.svelte";
+  import RecordedAtMigration from "./RecordedAtMigration.svelte";
   import LLMSettingsPanel from "./LLMSettingsPanel.svelte";
   import InsightTemplatesPanel from "./InsightTemplatesPanel.svelte";
+  import SupportPanel from "./SupportPanel.svelte";
+  import HelpPanel from "./HelpPanel.svelte";
   import { applyJob, applyPanel, type OperatorPanel } from "./surfaceRouting";
 
   export let panel: OperatorPanel = "endpoints";
@@ -64,7 +67,10 @@
          pipeline because that is where recording setup was configured, which
          made the one screen that answers "is this working" the hardest one to
          find. -->
-    <RecordingSetup {operatorClient} on:openStorage={() => dispatch("panel", "pipeline")} on:openRun={(event) => openRun(event.detail)} />
+    <RecordingSetup {operatorClient} on:openStorage={() => dispatch("panel", "pipeline")} on:openRun={(event) => openRun(event.detail)} on:openRuns={() => dispatch("panel", "recordings")} />
+    <!-- Below the checks: not a check, a one-off migration an administrator
+         starts (and can pause) once they have read what it does. -->
+    {#if operatorClient}<RecordedAtMigration {operatorClient} />{/if}
   {:else if panel === "endpoints"}
     <LLMSettingsPanel {operatorClient} />
   {:else if panel === "pipeline"}
@@ -84,6 +90,10 @@
       on:openProviders={() => dispatch("panel", "endpoints")}
       on:openPipeline={(event) => openPipeline(event.detail)}
     />
+  {:else if panel === "help"}
+    <HelpPanel />
+  {:else if panel === "support"}
+    <SupportPanel />
   {:else}
     <!-- Unreachable: the operator surface renders the run console itself and
          only mounts this host for a Settings panel. Saying so beats a blank

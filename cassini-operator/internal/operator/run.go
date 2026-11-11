@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/oklog/ulid/v2"
@@ -87,6 +88,11 @@ type Config struct {
 }
 
 type Runtime struct {
+	supportJournal *supportJournal
+	supportGate    supportGate
+	// requestLog is the operator logger without the support journal tee.
+	// Per-request lines carry no diagnostic signal and would dominate it.
+	requestLog        *log.Logger
 	remoteRetentionMu sync.RWMutex
 	remoteRetention   *annotationService
 	retention         *retentionConfig
@@ -126,6 +132,23 @@ type Runtime struct {
 	// meetingMetadata is a disposable description index. Visibility always
 	// comes from the caller's current Nextcloud shares, never from these rows.
 	meetingMetadata *meetingMetadataStore
+	// recordedAtFiles writes recordedAtUtc back into delivered files
+	// (recorded_at_files.go); nil where no file can be rewritten.
+	// recordingAnchorProbe reads a run bundle's recording.mkv anchors; nil
+	// means ffprobe. Tests stub it.
+	recordedAtFiles      atomic.Pointer[recordedAtFileWorker]
+	recordingAnchorProbe recordingAnchorProbe
+	// recordedAtIndexWait is the meeting index backfill's wait between two
+	// passes (sleepCtx when nil); recordedAtIndexBeforeStamp, when set (tests
+	// only), runs before each entry is stamped; recordedAtBeforeRepublishStamp
+	// (tests only) runs after a publish's entry is read, before it is stamped.
+	recordedAtIndexWait            func(ctx context.Context, d time.Duration) bool
+	recordedAtIndexBeforeStamp     func(row recordedAtIndexRow)
+	recordedAtBeforeRepublishStamp func()
+	// recordedAtIndexChecked is set once a meeting index pass has completed
+	// since this start: from then on the needed count is the enumeration of
+	// files to rewrite, not a partial one.
+	recordedAtIndexChecked atomic.Bool
 	// roomNameRetry backs off reconcile passes per room when its default keeps
 	// failing to reach a terminal source, bounding the repeated lineage proofs
 	// (full-file digest + CLI exec) for rooms that may never resolve.
@@ -314,6 +337,9 @@ type jobDetailResponse struct {
 	// It is not a grant: the operator page asks Nextcloud, as the signed-in
 	// admin, whether they can open it, and links to Files only if they can.
 	RecordingFileID int64 `json:"recording_file_id,omitempty"`
+	// Sharing is who the published meeting could not be shared with (D-885);
+	// absent when no reconciliation was recorded for it.
+	Sharing *jobShareOutcome `json:"sharing,omitempty"`
 }
 
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -388,6 +414,8 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 
 	runtime := NewRuntime(ctx, store, cfg, logger, stdout, stderr)
+	logger = runtime.logger
+	exappCfg.supportJournal = runtime.supportJournal
 	exappCfg.meetingMetadata = runtime.meetingMetadata
 	exappCfg.lifecycle = store
 	// Conditional, so a missing store stays a nil interface rather than a
@@ -823,28 +851,34 @@ func normalizeBasePath(value string) (string, error) {
 }
 
 func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logger, stdout, stderr io.Writer) *Runtime {
+	cleanupSupportTemps(os.TempDir(), time.Now())
+	journal := newSupportJournal(cfg.WorkRoot)
+	requestLog := logger
+	logger = log.New(io.MultiWriter(logger.Writer(), journal), logger.Prefix(), logger.Flags())
 	queueCapacity := cfg.MaxBuildWorkers * 16
 	if queueCapacity < 16 {
 		queueCapacity = 16
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	rt := &Runtime{
-		retention:    newRetentionConfig(filepath.Join(filepath.Dir(cfg.DBPath), "retention_settings.json")),
-		ctx:          ctx,
-		cancel:       cancel,
-		store:        store,
-		cfg:          cfg,
-		logger:       logger,
-		stdout:       stdout,
-		stderr:       stderr,
-		recordSlots:  make(chan struct{}, cfg.MaxRecordWorkers),
-		buildQueue:   make(chan buildTask, queueCapacity),
-		sealQueue:    make(chan sealTask, queueCapacity),
-		publishQueue: make(chan publishTask, 16),
-		events:       newEventHub(),
-		recordJobs:   map[string]*recordProcessState{},
-		talkRooms:    map[string]*talkRoomState{},
-		talkJobs:     map[string]*talkRoomState{},
+		supportJournal: journal,
+		requestLog:     requestLog,
+		retention:      newRetentionConfig(filepath.Join(filepath.Dir(cfg.DBPath), "retention_settings.json")),
+		ctx:            ctx,
+		cancel:         cancel,
+		store:          store,
+		cfg:            cfg,
+		logger:         logger,
+		stdout:         stdout,
+		stderr:         stderr,
+		recordSlots:    make(chan struct{}, cfg.MaxRecordWorkers),
+		buildQueue:     make(chan buildTask, queueCapacity),
+		sealQueue:      make(chan sealTask, queueCapacity),
+		publishQueue:   make(chan publishTask, 16),
+		events:         newEventHub(),
+		recordJobs:     map[string]*recordProcessState{},
+		talkRooms:      map[string]*talkRoomState{},
+		talkJobs:       map[string]*talkRoomState{},
 
 		recordStopAckGrace:      recordStopAckGrace,
 		recordStopFinalizeGrace: recordStopFinalizeGrace,
@@ -1022,7 +1056,13 @@ func operatorAPIRoutes(rt *Runtime, exappCfg ExAppConfig) []struct {
 		{"/summaries/missing", http.HandlerFunc(rt.missingSummariesHandler)},
 		{"/events", http.HandlerFunc(rt.eventsHandler)},
 		{"/status", http.HandlerFunc(rt.statusHandler)},
+		{supportAdminPath, rt.supportBundleHandler(exappCfg, true)},
 		{"/setup", http.HandlerFunc(rt.setupHandler)},
+		// USER: accept the recording shares waiting for the caller (D-885).
+		{"/shares/accept", http.HandlerFunc(rt.sharesAcceptHandler)},
+		// USER: dismiss the caller's own Browse notices for recordings they
+		// started that could not be published (D-885).
+		{"/shares/dismiss", http.HandlerFunc(rt.sharesDismissHandler)},
 		{"/ai/providers", http.HandlerFunc(rt.aiProvidersHandler)},
 		// The template names every caller may pick from (D-819), USER at the
 		// proxy; the instruction bytes stay on /settings/workflows (ADMIN).
@@ -1061,6 +1101,9 @@ func operatorAPIRoutes(rt *Runtime, exappCfg ExAppConfig) []struct {
 		{"/health/check", http.HandlerFunc(rt.readinessHandler)},
 		{"/health/repair", http.HandlerFunc(rt.readinessHandler)},
 		{"/talk/setup", http.HandlerFunc(rt.recordingSetupHandler)},
+		// ADMIN: start and pause rewriting recordedAtUtc into delivered
+		// files; progress is on /status (recorded_at_migration.go).
+		{recordedAtMigrationPath + "/", http.HandlerFunc(rt.recordedAtMigrationHandler)},
 	}
 }
 
@@ -1083,6 +1126,7 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	}
 
 	root := http.NewServeMux()
+	root.Handle(supportUserPath, rt.supportBundleHandler(exappCfg, false))
 	exappCfg.lifecycle = rt.store
 	exappCfg.meetingMetadata = rt.meetingMetadata
 	if exappCfg.appAPIActive() && exappCfg.PublishSink == publishSinkNextcloudFiles {
@@ -1136,6 +1180,25 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 				}
 			}()
 		}
+		// Delivered files are rewritten through the annotation pipeline's
+		// client and locks, so only where that pipeline runs.
+		if files := newRecordedAtFileWorker(rt, exappCfg, annotations.client, logger); files != nil {
+			rt.recordedAtFiles.Store(files)
+			files.startWorkers()
+		}
+	}
+	// Past recordings get their instant in the meeting index in the
+	// background; their files are only enumerated, and rewritten by the
+	// worker above once an administrator asks (recorded_at_migration.go).
+	rt.startRecordedAtIndexBackfill(logger)
+	// The MCP server (D-813): agents outside Cassini read meetings as the
+	// person who connected them. A sibling of insights on the ROOT mux —
+	// appinfo/info.xml declares `^mcp\/?$`, POST, USER — so it sits inside the
+	// AppAPI middleware that names the caller. Nil, and unmounted, wherever no
+	// caller could be named (see newMCPHandler).
+	if mcp := newMCPHandler(exappCfg, search, annotations, logger); mcp != nil {
+		root.Handle(mcpURLPath, mcp)
+		root.Handle(mcpURLPath+"/{$}", mcp)
 	}
 	// Operator JSON API under BasePath ("/" or "/operator", etc).
 	mountBasePathOnto(root, rt.cfg.BasePath, apiHandler, patterns)
@@ -1151,7 +1214,13 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	outer.HandleFunc("/api/v1/room/", rt.talkRoomHandler)
 	outer.Handle("/", exappCfg.wrap(root, logger))
 
-	return requestLogger(logger, outer)
+	// Keep request lines out of the support journal. A caller-supplied logger
+	// that is not the runtime's own (tests) is used as given.
+	requestLog := logger
+	if rt.requestLog != nil && logger == rt.logger {
+		requestLog = rt.requestLog
+	}
+	return requestLogger(requestLog, outer)
 }
 
 // mountBasePathOnto registers the operator api mux under basePath on the given
@@ -1239,9 +1308,22 @@ func (rt *Runtime) jobsHandler(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusInternalServerError, "load meeting lifecycle")
 			return
 		}
+		unshared, err := rt.store.partiallySharedJobs(r.Context())
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "load share outcomes")
+			return
+		}
+		retired, err := rt.store.retiredMeetingJobs(r.Context())
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "load meeting lifecycle")
+			return
+		}
 		for i := range jobs {
 			jobs[i].SourceExpired = expired[jobs[i].ID]
 			jobs[i].MeetingDeleted = deleted[jobs[i].ID]
+			if !retired[jobs[i].ID] {
+				jobs[i].UnsharedCount = unshared[jobs[i].ID]
+			}
 			jobs[i].MediaCleanup = rt.mediaCleanupStatus(jobs[i], jobs[i].MeetingDeleted)
 		}
 		rt.projectJobRoomNames(r.Context(), jobs)
@@ -1573,15 +1655,19 @@ func (s *Store) Close() error {
 }
 
 type Job struct {
-	MediaCleanup         *mediaCleanupStatus `json:"media_cleanup,omitempty"`
-	SourceExpired        bool                `json:"source_expired,omitempty"`
-	MeetingDeleted       bool                `json:"meeting_deleted,omitempty"`
-	ID                   string              `json:"id"`
-	Provider             string              `json:"provider"`
-	RequestJSON          string              `json:"request_json"`
-	Stage                string              `json:"stage"`
-	State                string              `json:"state"`
-	CurrentAttemptNumber int                 `json:"current_attempt_number"`
+	MediaCleanup   *mediaCleanupStatus `json:"media_cleanup,omitempty"`
+	SourceExpired  bool                `json:"source_expired,omitempty"`
+	MeetingDeleted bool                `json:"meeting_deleted,omitempty"`
+	// UnsharedCount is how many of the room's audience a published meeting
+	// could not be shared with (D-885), for the run list's flag. Who they are
+	// is in the job detail.
+	UnsharedCount        int    `json:"unshared_count,omitempty"`
+	ID                   string `json:"id"`
+	Provider             string `json:"provider"`
+	RequestJSON          string `json:"request_json"`
+	Stage                string `json:"stage"`
+	State                string `json:"state"`
+	CurrentAttemptNumber int    `json:"current_attempt_number"`
 	// CurrentTriggerKind is what the current attempt does (record, rerun,
 	// refine, summarize), so a reader can name its stages: a summarize's
 	// build stage writes a summary and transcribes nothing.
@@ -2107,6 +2193,14 @@ func (rt *Runtime) jobDetailHandler(w http.ResponseWriter, r *http.Request) {
 		rt.handleRerunJob(w, r, id)
 		return
 	}
+	if action == "reshare" {
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w, http.MethodPost)
+			return
+		}
+		rt.handleReshareJob(w, r, id)
+		return
+	}
 	if action == "summary" {
 		rt.handleJobSummary(w, r, id)
 		return
@@ -2143,9 +2237,10 @@ func (rt *Runtime) jobDetailHandler(w http.ResponseWriter, r *http.Request) {
 	rt.projectJobRoomNames(r.Context(), projectedJobs)
 	job = projectedJobs[0]
 	job.MeetingDeleted = rt.store.meetingDeleted(r.Context(), job.ID)
+	sharing := rt.jobSharing(r.Context(), &job)
 	availability := rt.artifactAvailability(job)
 	rt.fillPublishedStepOutcomes(id, availability.PublishedAttempt, attempts)
-	writeJSON(w, http.StatusOK, jobDetailResponse{Job: job, Attempts: attempts, Availability: availability, RecordingFileID: rt.recordingFileID(r.Context(), id)})
+	writeJSON(w, http.StatusOK, jobDetailResponse{Job: job, Attempts: attempts, Availability: availability, RecordingFileID: rt.recordingFileID(r.Context(), id), Sharing: sharing})
 }
 
 // fillPublishedStepOutcomes reads the outcomes of a published attempt built

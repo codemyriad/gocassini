@@ -40,10 +40,13 @@ describe("describeMeeting", () => {
   });
 
   it("derives the date from ULID meeting ids instead of echoing the id", () => {
-    // 01KKA70QN0 encodes 2026-03-09T21:11:00Z.
+    // 01KKA70QN0 encodes 2026-03-09T21:11:00Z. That is a real UTC instant, so
+    // it comes back as recordedAtUtc too and renders in the reader's clock;
+    // the dateLabel keeps the legacy UTC digits.
     expect(describeMeeting("01KKA70QN0ABCDEFGHJKMNPQRS")).toEqual({
       title: "Untitled meeting",
       dateLabel: "2026-03-09 21:11",
+      recordedAtUtc: "2026-03-09T21:11:00.000Z",
     });
   });
 
@@ -51,7 +54,13 @@ describe("describeMeeting", () => {
     expect(describeMeeting("01KKA70QN0ABCDEFGHJKMNPQRS--stt-whisper-large-v3")).toEqual({
       title: "Untitled meeting",
       dateLabel: "2026-03-09 21:11",
+      recordedAtUtc: "2026-03-09T21:11:00.000Z",
     });
+  });
+
+  it("gives a filename stamp no instant: its digits name no zone", () => {
+    expect(describeMeeting("daily-meeting--2026-03-05--12:38:29")).not.toHaveProperty("recordedAtUtc");
+    expect(describeMeeting("standup--20260918T152131")).not.toHaveProperty("recordedAtUtc");
   });
 
   it("keeps the plain-id fallback for ULID lookalikes with implausible timestamps", () => {

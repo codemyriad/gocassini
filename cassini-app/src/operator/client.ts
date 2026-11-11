@@ -1,6 +1,7 @@
 import type { RecordingReadiness, RecordingSetupUpdate } from "./readiness";
 import type { LogStage } from "./attemptModels";
 import type { RetentionSettings } from "./retention";
+import { normalizeRecordedAtMigration, type RecordedAtMigration } from "./recordedAtMigration";
 import type {
   InsightTemplateDraft,
   InsightWorkflow,
@@ -41,6 +42,7 @@ export interface OperatorStateChangeEvent {
   at: string;
   job: Job;
   attempt?: JobAttempt;
+  sharing?: JobDetailResponse["sharing"];
 }
 
 interface OperatorStreamHandlers {
@@ -117,6 +119,34 @@ export class OperatorClient {
     });
   }
 
+  // The recordedAtUtc file migration (recorded_at_migration.go). Read from
+  // /status, which answers 503 with the same body when something ELSE is
+  // unhealthy — the migration's block is still the answer then.
+  async getRecordedAtMigration(): Promise<RecordedAtMigration> {
+    const response = await fetch(`${this.#baseUrl}/status`, { headers: { Accept: "application/json" }, cache: "no-store" });
+    let payload: unknown = null;
+    try {
+      payload = await response.json();
+    } catch {
+      // not the operator's status body
+    }
+    const block = payload && typeof payload === "object" ? (payload as Record<string, unknown>).recorded_at_migration : undefined;
+    if (!response.ok && block === undefined) {
+      const message = payload && typeof payload === "object" && typeof (payload as { error?: unknown }).error === "string"
+        ? (payload as { error: string }).error : `${response.status} ${response.statusText}`;
+      throw new OperatorHttpError(response.status, message);
+    }
+    return normalizeRecordedAtMigration(block);
+  }
+
+  async startRecordedAtMigration(): Promise<RecordedAtMigration> {
+    return normalizeRecordedAtMigration(await this.#request<unknown>("/migrations/recorded-at/start", { method: "POST" }));
+  }
+
+  async pauseRecordedAtMigration(): Promise<RecordedAtMigration> {
+    return normalizeRecordedAtMigration(await this.#request<unknown>("/migrations/recorded-at/pause", { method: "POST" }));
+  }
+
   async listJobs(): Promise<Job[]> {
     return this.#request<Job[]>("/jobs");
   }
@@ -187,6 +217,14 @@ export class OperatorClient {
 
   async rerunJob(jobId: string): Promise<RerunJobResponse> {
     return this.#request<RerunJobResponse>(`/jobs/${encodeURIComponent(jobId)}/rerun`, {
+      method: "POST",
+    });
+  }
+
+  /** Shares a published meeting with its room's audience again, adding only
+   * who is missing (D-885). Answers with the new share outcome. */
+  async reshareJob(jobId: string): Promise<{ sharing?: JobDetailResponse["sharing"] }> {
+    return this.#request<{ sharing?: JobDetailResponse["sharing"] }>(`/jobs/${encodeURIComponent(jobId)}/reshare`, {
       method: "POST",
     });
   }

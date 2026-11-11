@@ -66,6 +66,16 @@ network acquisition. See the [model operator guide](proposals/optional-transcrip
 
 ## What Cassini stores
 
+You can explicitly [download a support bundle](support-bundles.md) to inspect and
+share diagnostic information. It is downloaded locally and never uploaded
+automatically. Ordinary users receive their own access diagnostics; administrators
+also receive bounded job history, health metadata and diagnostic logs.
+Original diagnostics are the default and may contain names, URLs, credentials or
+meeting text. Users can review/edit the ZIP themselves or explicitly select
+**Scrub sensitive information**, which exports filtered diagnostics instead.
+A bounded operator/share journal retains original diagnostic text locally across
+restarts and follows the Logs retention policy.
+
 A recorded meeting moves through capture → build → publish, and each stage writes
 artifacts:
 

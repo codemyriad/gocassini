@@ -44,7 +44,12 @@
         },
         "sourceTranscriptFormat": { "type": "string" },
         "language": { "type": "string" },
-        "wordCount": { "type": "integer", "minimum": 0 },
+        "wordCount": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Words in the whole meeting, window or not."
+        },
+        "window": { "$ref": "#/$defs/window" },
         "segments": {
           "type": "array",
           "description": "The transcript as speaker-attributed paragraphs, in chronological order. Always present: a meeting with no transcribed speech carries an empty array, which is a different fact from the field being absent.",
@@ -64,7 +69,32 @@
           "description": "The id the caller asked for, which is the id the published catalog indexes by. It is deliberately not the recording manifest's own meeting id: that one is content-derived, a hash of the audio, and cannot be used to correlate the bundle with the catalog entry it came from."
         },
         "title": { "type": "string" },
-        "createdAtUtc": { "type": "string", "format": "date-time" },
+        "createdAtUtc": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the recording file was built. Not when the meeting happened."
+        },
+        "recordedAtUtc": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$",
+          "description": "When the recording started: the instant at position 0 of the audio, so a segment's wall-clock time is recordedAtUtc + startMs. Absent when the recording does not know it."
+        },
+        "recordedAtLocal": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}$",
+          "description": "The recording's wall-clock label at the recording site, with no time zone. A label, never to be converted to an instant. Readers prefer recordedAtUtc."
+        },
+        "meetingStart": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source", "value"],
+          "description": "When the meeting happened, picked by the portable format's rule: recordedAtUtc, else the file's DATE tag when it carries an offset and is not the build time, else the recordedAtLocal label. Absent when the recording does not say.",
+          "properties": {
+            "source": { "enum": ["recordedAtUtc", "DATE", "recordedAtLocal"] },
+            "value": { "type": "string", "minLength": 1, "description": "The chosen field's text as the recording carries it. An instant for recordedAtUtc and DATE; a zone-less label for recordedAtLocal." }
+          }
+        },
         "durationMs": { "type": "integer", "minimum": 0 },
         "roomId": {
           "type": "string",
@@ -86,6 +116,16 @@
           "type": "string",
           "description": "The speaker's display label, falling back to the raw id so an unlabelled speaker is still attributed rather than dropped."
         }
+      }
+    },
+    "window": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fromMs"],
+      "description": "Present only when the caller asked for a stretch of the meeting (`--from`/`--to`): segments then holds only the passages overlapping it, and everything else — the meeting, its speakers, its summary, its word count — still describes the whole meeting. Its presence is what tells a reader the transcript is partial on purpose.",
+      "properties": {
+        "fromMs": { "type": "integer", "minimum": 0, "description": "Start of the stretch, in milliseconds from the start of the recording." },
+        "toMs": { "type": "integer", "minimum": 0, "description": "End of the stretch; absent means to the end of the meeting." }
       }
     },
     "segment": {

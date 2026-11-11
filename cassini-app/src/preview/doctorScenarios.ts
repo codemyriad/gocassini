@@ -9,6 +9,7 @@
 // probe agreeing), not the wording.
 import type { OperatorClient } from "../operator/client";
 import { checkLabels, type CheckState, type ReadinessCheck, type RecordingReadiness } from "../operator/readiness";
+import { normalizeRecordedAtMigration, type RecordedAtMigration } from "../operator/recordedAtMigration";
 
 export const doctorScenarios = [
   { id: "healthy", title: "Healthy recording setup", description: "Every check passing, a saved credential, and a test recording someone played back." },
@@ -24,6 +25,9 @@ export const doctorScenarios = [
   { id: "test-published", title: "Test recording: confirm playback", description: "The recording published. Only a person pressing play can finish this check." },
   { id: "test-failed", title: "Test recording failed", description: "The one check whose failure is a finding rather than a missing verdict." },
   { id: "storage-blocked", title: "Recording storage is blocked", description: "Recording cannot start. The storage action explains its destination." },
+  { id: "sharing-restricted", title: "Sharing limited to group members", description: "Nextcloud only lets accounts share within their groups and Cassini is only in admin: a warning naming the groups it can reach, with the two ways out and what is unshared meanwhile." },
+  { id: "sharing-share-limit", title: "Nextcloud's share limit held some back", description: "Sharing settings pass, but large meetings reached Nextcloud's 20-shares-per-10-minutes limit: one recording is still being finished, with the way to raise the limit behind a disclosure." },
+  { id: "sharing-blocked", title: "Cassini can share with nobody", description: "Sharing is limited to group members and Cassini is in no group, so every recording share would be refused." },
   { id: "setup-unreadable", title: "Saved configuration is unreadable", description: "Persistent setup needs repair; credentials cannot be confirmed." },
   { id: "search-partial", title: "Archive search is incomplete", description: "Audio is ready. Re-index now simulates progress and completion in this tab." },
   { id: "search-running", title: "Re-indexing is running", description: "Repair progress appears without a duplicate repair button." },
@@ -31,10 +35,14 @@ export const doctorScenarios = [
   { id: "search-failed-index", title: "Re-index failed: search index unavailable", description: "A retry would fail the same way, so the row offers steps, not a button." },
   { id: "search-failed-environment", title: "Re-index failed: AppAPI settings missing", description: "Cassini is running without the settings AppAPI gives it. No retry, a deployment step instead." },
   { id: "old-findings", title: "Passing checks are two days old", description: "Age is shown separately from the verdict; simulated checks refresh timestamps." },
+  { id: "recorded-at-needed", title: "Past recordings lack their recording time", description: "The migration is found but not started: the count, what rewriting does in Nextcloud (versions, activity, notifications) as Nextcloud reports it, and the button. Starting simulates progress." },
+  { id: "recorded-at-running", title: "Writing recording times into files", description: "The migration is running, with a Pause button. Pausing settles the files in progress first." },
+  { id: "recorded-at-paused", title: "Recording-time migration paused", description: "Paused with files left, offering Resume." },
+  { id: "recorded-at-blocked", title: "Some recordings could not be rewritten", description: "Everything else is done; the blocked recordings are named with what to fix, and Retry. Nextcloud's capabilities could not be read, so the report falls back to Nextcloud's defaults." },
   { id: "refresh-error", title: "Refreshing diagnostics fails", description: "Cassini stops answering after the first read. The callout says why and offers to try again, and the rows keep their last results." },
 ] as const;
 
-type DoctorClient = Pick<OperatorClient, "getReadiness" | "checkReadiness" | "repairReadiness" | "updateRecordingSetup">;
+type DoctorClient = Pick<OperatorClient, "getReadiness" | "checkReadiness" | "repairReadiness" | "updateRecordingSetup" | "getRecordedAtMigration" | "startRecordedAtMigration" | "pauseRecordedAtMigration">;
 const delay = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 const rank: Record<CheckState, number> = { passed: 0, not_verified: 1, warn: 2, needs_action: 3 };
 function verdict(checks: ReadinessCheck[]): CheckState {
@@ -63,6 +71,7 @@ const rowOrder = [
   "configuration",
   "host", "host.workdir", "host.tmpdir.writable",
   "storage",
+  "storage.sharing",
   "talk.hpb",
   "talk.discovery",
   "talk.handoff",
@@ -97,6 +106,21 @@ function blocked(id: string, blocker: string, unchecked = false): ReadinessCheck
       : `Not checked: this depends on ${blocker}, which needs attention first.` };
 }
 
+// The Recording sharing row's wording, as nc_sharing_policy.go writes it
+// (D-885): VERDICT, then the setting by its Nextcloud name and that Cassini
+// shares from its cassini account, then the consequence. Steps are full
+// sentences.
+const sharingPermitted = "Nextcloud's sharing settings let Cassini share recordings with everyone in a meeting. Whether each person has accepted the share is theirs to decide; anyone with recordings waiting sees them in Browse.";
+const restrictOff = { label: "Turn off “Restrict users to only share with users in their groups” under Administration settings › Sharing." };
+const sharingRestrictedSteps = [
+  restrictOff,
+  { label: "Or add `cassini` to every group whose members should receive recordings. A group everyone is in covers everybody; `cassini` does not need to be an administrator. Keep it there: removing it later makes Nextcloud remove people's access to recordings already shared through that group." },
+];
+const sharingBlockedSteps = [
+  restrictOff,
+  { label: "Or add `cassini` to a group everyone who records is in. It does not need to be an administrator. Keep it there: removing it later makes Nextcloud remove people's access to recordings already shared through that group." },
+];
+
 export function scenarioReport(id: string, now = new Date()): RecordingReadiness {
   if (!doctorScenarios.some(item => item.id === id)) throw new Error(`Unknown Doctor preview: ${id}`);
   const checked_at = new Date(now.getTime() - (id === "old-findings" ? 172800000 : 120000)).toISOString();
@@ -111,7 +135,8 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
     checks: [
       { id: "host.workdir", state: "passed", code: "workdir", message: "working directory is writable", checked_at },
       { id: "host.tmpdir.writable", state: "passed", code: "tmpdir.writable", message: "temporary directory is writable", checked_at },
-      { id: "storage", state: "passed", code: "storage_ready", message: "Cassini can store and share recordings in Nextcloud: its own account exists, its recordings folder is writable, and Nextcloud's sharing API answers.", checked_at },
+      { id: "storage", state: "passed", code: "storage_ready", message: "Cassini can store recordings in Nextcloud: its own account exists, its recordings folder is writable, and Nextcloud's sharing API answers. Whether its shares are accepted is the Recording sharing check.", checked_at },
+      { id: "storage.sharing", state: "passed", code: "sharing_permitted", message: sharingPermitted, checked_at },
       // Keeps its credential action even while passing: the form has to stay
       // reachable, or the secret can never be rotated from the panel again.
       { id: "talk.hpb", state: "passed", code: "hpb_authenticated", message: "The signaling server accepted Cassini and advertises media support. A test recording verifies the actual call path.", action: "configure_talk", checked_at },
@@ -144,6 +169,7 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
         { id: "host.workdir", state: "not_verified", code: "host_not_checked", message: "Not checked yet.", action: "recheck" },
         { id: "host.tmpdir.writable", state: "not_verified", code: "host_not_checked", message: "Not checked yet.", action: "recheck" },
         { id: "storage", state: "not_verified", code: "storage_not_checked", message: "Nextcloud storage has not been checked yet.", action: "recheck" },
+        { id: "storage.sharing", state: "not_verified", code: "sharing_not_checked", message: "Nextcloud's sharing settings have not been checked yet.", action: "recheck" },
         uncheckedBackend(),
         { id: "talk.discovery", state: "not_verified", code: "connection_not_checked", message: "The Talk connection has not been checked yet.", action: "recheck" },
         { id: "archive.search", state: "not_verified", code: "search_coverage_not_checked", message: "Archive search coverage has not been checked yet.", action: "recheck" },
@@ -203,7 +229,24 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
       set(blocked("test", "Recording credential"));
       break;
     case "storage-blocked":
-      set({ id: "storage", state: "needs_action", code: "storage_admission_blocked", message: "Cassini currently blocks recording on its stored storage status. Review the storage details below and check again after repairing them.", action: "setup_storage", checked_at }); break;
+      set({ id: "storage", state: "needs_action", code: "storage_admission_blocked", message: "Cassini currently blocks recording on its stored storage status. Review the storage details below and check again after repairing them.", action: "setup_storage", checked_at });
+      set(blocked("storage.sharing", "Recording storage"));
+      break;
+    case "sharing-restricted":
+      set({ id: "storage.sharing", state: "warn", code: "sharing_limited_to_groups", checked_at, steps: sharingRestrictedSteps,
+        message: "Only administrators can receive recordings. Nextcloud's “Restrict users to only share with users in their groups” is on, and Cassini shares from its cassini account, which is only in “admin”, the administrators' group. Anyone who is not an administrator cannot open the recordings of their meetings, and a recording they start is not published at all.",
+        // What the setting has already cost, from job_share_outcomes.
+        unshared: { jobs: 7, users: 3, groups: 1, since: "2026-10-12T09:14:00Z" } });
+      break;
+    case "sharing-share-limit":
+      set({ id: "storage.sharing", state: "passed", code: "sharing_permitted", checked_at,
+        message: "Nextcloud's sharing settings let Cassini share recordings with everyone in a meeting. Whether each person has accepted the share is theirs to decide; anyone with recordings waiting sees them in Browse.",
+        share_limited: { jobs: 2, since: "2026-11-06T13:33:00Z" } });
+      break;
+    case "sharing-blocked":
+      set({ id: "storage.sharing", state: "needs_action", code: "sharing_no_common_group", checked_at, steps: sharingBlockedSteps,
+        message: "Nobody can receive recordings. Nextcloud's “Restrict users to only share with users in their groups” is on, and Cassini shares from its cassini account, which is in no group. Every share is refused, so no new meetings can be published." });
+      break;
     case "setup-unreadable":
       set({ id: "configuration", state: "needs_action", code: "setup_store_unreadable", message: "Cassini could not read its saved recording setup, so its Talk credentials cannot be confirmed.", action: "repair_configuration", steps: [
         { label: "Check that Cassini's persistent volume is mounted and writable, then restore recording-setup.json from a backup if it is missing" },
@@ -261,7 +304,10 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
       return !!row && (row.state === "passed" || row.state === "warn");
     };
     const chain = ["storage", "talk.hpb", "talk.discovery"];
-    const blocker = chain.find(id => report.checks.find(check => check.id === id)?.state === "needs_action") ?? chain.find(id => !proven(id));
+    const failed = (id: string) => report.checks.find(check => check.id === id)?.state === "needs_action";
+    // Recording sharing blocks only when it needs action: a warning leaves the
+    // test's own starter reachable.
+    const blocker = chain.find(failed) ?? chain.find(id => !proven(id)) ?? (failed("storage.sharing") ? "storage.sharing" : undefined);
     report.checks.push(blocker
       ? blocked("test", checkLabels[blocker] ?? blocker, report.checks.find(check => check.id === blocker)?.state !== "needs_action")
       : { id: "test", state: "not_verified", code: "test_not_run", action: "test_recording",
@@ -275,7 +321,8 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
   for (const check of report.checks) {
     const probe = check.id === "host" || check.id.startsWith("host.") ? "host"
       : check.id.startsWith("archive.") ? "archive"
-      : ({ storage: "storage", "talk.hpb": "talk", "talk.discovery": "talk" } as Record<string, string>)[check.id] ?? "";
+      : check.id === "storage" || check.id.startsWith("storage.") ? "storage"
+      : ({ "talk.hpb": "talk", "talk.discovery": "talk" } as Record<string, string>)[check.id] ?? "";
     // A blocked row is not checkable: running its probe cannot succeed while
     // its prerequisite is unmet, so offering the button invites a failure.
     if (probe && check.code !== "check_blocked") {
@@ -288,13 +335,57 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
   return report;
 }
 
-// Deliberately implements only Doctor's four calls, with no fetch, credentials,
+// What the operator found for a Nextcloud with Activity, Notifications and
+// versioning enabled (recordedAtNotices in recorded_at_migration.go); the
+// panel words it (operator/recordedAtNotices.ts).
+const noticesEnabled = {
+  known: true, account: "cassini", nextcloud_version: "33.0.9", activity_app: true, notifications_app: true, web_push: false, browser_push: false, versioning: true,
+};
+// The same when the capabilities could not be read.
+const noticesUnknown = {
+  known: false, account: "cassini", error: "Cassini could not read Nextcloud's capabilities, so it cannot tell whether the Activity and Notifications apps or file versioning are enabled.",
+};
+
+// /status's recorded_at_migration for a scenario. Every scenario not about the
+// migration reports not_needed, which the panel does not show.
+export function scenarioMigration(id: string): RecordedAtMigration {
+  const base = { applicable: true, checked: true, paused: false, needed: 0, queued: 0, settling: 0, in_progress: 0, done: 0, blocked: 0, blocked_items: [], workers: 2, pace_seconds: 30 };
+  switch (id) {
+    case "recorded-at-needed":
+      return normalizeRecordedAtMigration({ ...base, state: "needed", needed: 37, notifications: noticesEnabled });
+    case "recorded-at-running":
+      return normalizeRecordedAtMigration({ ...base, state: "running", queued: 21, in_progress: 2, done: 14, notifications: noticesEnabled });
+    case "recorded-at-paused":
+      return normalizeRecordedAtMigration({ ...base, state: "paused", paused: true, queued: 21, done: 16, notifications: noticesEnabled });
+    case "recorded-at-blocked":
+      return normalizeRecordedAtMigration({ ...base, state: "blocked", done: 35, blocked: 2, notifications: noticesUnknown, blocked_items: [
+        { meeting: "01KXQT6N0000000000000000AA.opus", title: "Weekly sync", date_label: "2026-07-17 10:33", reason: "recording is missing; restore it and retry" },
+        { meeting: "01KXQT6N0000000000000000BB.opus", title: "Design review", date_label: "2026-07-21 15:00", reason: "the cassini CLI cannot set recordedAtUtc; upgrade it and retry" },
+      ] });
+    default:
+      return normalizeRecordedAtMigration({ ...base, state: "not_needed" });
+  }
+}
+
+// Deliberately implements only Doctor's calls, with no fetch, credentials,
 // operator URL or persistence. New tabs and reloads always get a fresh fixture.
 export function createPreviewClient(id: string): DoctorClient {
   let report = scenarioReport(id);
   let repairStarted = 0;
   let initialCheck = true;
   let readCount = 0;
+  let migration = scenarioMigration(id);
+  // A started migration finishes the files in progress on each read, as the
+  // panel polls, and takes the next ones unless paused.
+  const advance = () => {
+    if (migration.state !== "running" && migration.state !== "pausing") return;
+    migration.done += migration.in_progress;
+    migration.in_progress = 0;
+    if (migration.state === "pausing") { migration.state = migration.queued > 0 ? "paused" : "done"; return; }
+    migration.in_progress = Math.min(2, migration.queued);
+    migration.queued -= migration.in_progress;
+    if (migration.in_progress === 0) migration.state = migration.blocked > 0 ? "blocked" : "done";
+  };
   const read = () => {
     if (repairStarted && Date.now() - repairStarted >= 4000) {
       const healthy = scenarioReport("healthy");
@@ -307,6 +398,21 @@ export function createPreviewClient(id: string): DoctorClient {
     return structuredClone(report);
   };
   return {
+    async getRecordedAtMigration() {
+      advance();
+      return structuredClone(migration);
+    },
+    async startRecordedAtMigration() {
+      await delay(250);
+      const queued = migration.needed + migration.blocked + migration.queued;
+      migration = { ...migration, state: "running", paused: false, needed: 0, blocked: 0, blocked_items: [], queued: Math.max(0, queued - 2), in_progress: Math.min(2, queued) };
+      return structuredClone(migration);
+    },
+    async pauseRecordedAtMigration() {
+      await delay(250);
+      migration = { ...migration, paused: true, state: migration.in_progress > 0 ? "pausing" : "paused" };
+      return structuredClone(migration);
+    },
     async getReadiness() {
       if (id === "refresh-error" && readCount++ > 0) throw Object.assign(new Error("503 Service Unavailable"), { status: 503 });
       return read();

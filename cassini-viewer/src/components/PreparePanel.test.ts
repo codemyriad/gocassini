@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { get } from "svelte/store";
+
+import { LL } from "../i18n";
 
 import preparePanelSource from "./PreparePanel.svelte?raw";
 import appSource from "../App.svelte?raw";
@@ -57,8 +60,12 @@ describe("PreparePanel", () => {
     // would look like a bundle that came out empty, so each case names the way
     // through — and where the bytes are already assembled, that is a second
     // press rather than giving up on Copy.
-    expect(preparePanelSource).toContain("Clipboard unavailable here — use Export to download.");
-    expect(preparePanelSource).toContain(
+    expect(preparePanelSource).toContain("$LL.viewer.insights.prepare.clipboard_unavailable()");
+    expect(preparePanelSource).toContain("$LL.viewer.insights.prepare.clipboard_blocked()");
+    expect(get(LL).viewer.insights.prepare.clipboard_unavailable()).toBe(
+      "Clipboard unavailable here — use Export to download.",
+    );
+    expect(get(LL).viewer.insights.prepare.clipboard_blocked()).toBe(
       "Clipboard blocked here — use Export to copy again or download.",
     );
   });
@@ -68,7 +75,8 @@ describe("PreparePanel", () => {
     // where it becomes a meeting to unpick. Both use selectionModel's predicate
     // so the mark and the sentence cannot disagree about which meetings.
     expect(preparePanelSource).toContain("lacksPortableAudio(entry)");
-    expect(preparePanelSource).toContain("Blocks Prepare");
+    expect(preparePanelSource).toContain("$LL.viewer.insights.prepare.blocks_prepare()");
+    expect(get(LL).viewer.insights.prepare.blocks_prepare()).toBe("Blocks Prepare");
     expect(preparePanelSource).not.toContain("entry.audioPath");
   });
 
@@ -111,9 +119,12 @@ describe("PreparePanel", () => {
     // operator, and the viewing layer has neither. A standalone export fills
     // this slot with nothing and offers no card at all, which is the same
     // three-state discipline the readiness slot follows.
-    expect(preparePanelSource).not.toContain("insight");
-    expect(preparePanelSource).not.toContain("workflow");
-    expect(preparePanelSource).not.toContain("POST");
+    // Its words live in the insights dictionary, which is not the card's
+    // business; the keys are taken out before looking.
+    const code = preparePanelSource.replaceAll("$LL.viewer.insights.prepare.", "$LL.");
+    expect(code).not.toContain("insight");
+    expect(code).not.toContain("workflow");
+    expect(code).not.toContain("POST");
   });
 
   it("is not fixed to the viewport", () => {

@@ -50,18 +50,29 @@ const meetingsListPath = "meetings-list"
 // meetingsListFilter is the narrowing a request asks for. A zero value matches
 // everything, which is what a bare `published/meetings-list` means.
 type meetingsListFilter struct {
-	// from and to are INCLUSIVE bounds on a meeting's dateLabel, compared in
-	// the label's own zone-less wall-clock space.
+	// from and to are INCLUSIVE bounds on when a meeting happened.
 	//
-	// No timezone is parsed or applied, deliberately (D-484): dateLabel does not
-	// know its zone, so asserting one here would invent an instant the data
-	// cannot justify. The comparison space is therefore the same one the CLI
-	// already filters in, and server and client agree by construction rather
-	// than by coincidence.
-	from    time.Time
-	hasFrom bool
-	to      time.Time
-	hasTo   bool
+	// A bound may be an instant (RFC 3339 with Z or an offset) or a zone-less
+	// wall clock in a dateLabel layout, and is kept in both readings:
+	//
+	//   - from/to, the instant. A meeting that has recordedAtUtc is compared
+	//     against it. A zone-less bound is read as the UTC wall clock it was
+	//     always compared as (no zone is invented, D-484).
+	//   - fromWall/toWall, the bound's own wall-clock digits (in the offset it
+	//     was written with), as a UTC-located time. A meeting with only a
+	//     dateLabel, which deliberately does not know its zone, is compared
+	//     digit for digit against these, as every reader always did. Reading
+	//     the label as UTC against an offset instant would shift the range by
+	//     the caller's offset, and disagree with the CLI's own catalog
+	//     fallback, which compares the label in the caller's zone.
+	from        time.Time
+	fromWall    time.Time
+	hasFrom     bool
+	fromInstant bool
+	to          time.Time
+	toWall      time.Time
+	hasTo       bool
+	toInstant   bool
 	// room is a room id exactly as `cassini meetings rooms` prints it. Matched
 	// on equality only: the id is an opaque one-way derivation, so prefix or
 	// substring matching it would be meaningless.
@@ -96,17 +107,24 @@ func (e *meetingsListBadRequest) Error() string { return e.msg }
 
 // parseMeetingsListFilter validates query parameters into a filter.
 func parseMeetingsListFilter(query url.Values) (meetingsListFilter, error) {
+	return newMeetingsListFilter(query.Get("from"), query.Get("to"), query.Get("room"), query.Get("tag"))
+}
+
+// newMeetingsListFilter validates the narrowing a caller asked for, whichever
+// surface it arrived through: the list route's query string or an MCP tool's
+// arguments. Every error it returns is the caller's to fix.
+func newMeetingsListFilter(from, to, room, tag string) (meetingsListFilter, error) {
 	var filter meetingsListFilter
 	var err error
-	if raw := strings.TrimSpace(query.Get("from")); raw != "" {
-		filter.from, err = parseMeetingsListBound(raw, false)
+	if raw := strings.TrimSpace(from); raw != "" {
+		filter.from, filter.fromWall, filter.fromInstant, err = parseMeetingsListBound(raw, false)
 		if err != nil {
 			return meetingsListFilter{}, fmt.Errorf("from: %w", err)
 		}
 		filter.hasFrom = true
 	}
-	if raw := strings.TrimSpace(query.Get("to")); raw != "" {
-		filter.to, err = parseMeetingsListBound(raw, true)
+	if raw := strings.TrimSpace(to); raw != "" {
+		filter.to, filter.toWall, filter.toInstant, err = parseMeetingsListBound(raw, true)
 		if err != nil {
 			return meetingsListFilter{}, fmt.Errorf("to: %w", err)
 		}
@@ -119,37 +137,57 @@ func parseMeetingsListFilter(query url.Values) (meetingsListFilter, error) {
 		// round".
 		return meetingsListFilter{}, &meetingsListBadRequest{fmt.Sprintf(
 			"from %s is after to %s, which can never match anything; did you swap them?",
-			filter.from.Format(meetingsListStampLayout), filter.to.Format(meetingsListStampLayout))}
+			filter.fromEcho(), filter.toEcho())}
 	}
-	filter.room = strings.TrimSpace(query.Get("room"))
-	if filter.tag, err = parseTagParam(query); err != nil {
+	filter.room = strings.TrimSpace(room)
+	if filter.tag, err = validateTagParam(tag); err != nil {
 		return meetingsListFilter{}, err
 	}
 	return filter, nil
 }
 
-// parseMeetingsListBound parses one end of the range, accepting exactly the
-// layouts the catalog's own dateLabel uses.
+// parseMeetingsListBound parses one end of the range: an instant in RFC 3339
+// (with Z or an offset, answered instant=true), or exactly the zone-less
+// layouts the catalog's own dateLabel uses. It answers the instant and the
+// bound's wall-clock digits (see meetingsListFilter); for a zone-less bound
+// the two are the same.
 //
 // A bare date means the whole day: 00:00:00 at the start of a range and
 // 23:59:59 at the end. `from=2026-08-01&to=2026-08-31` has to mean August,
 // which is what anyone writing it intends; a `to` that stopped at midnight
 // would silently drop the last day.
-func parseMeetingsListBound(value string, endOfRange bool) (time.Time, error) {
+func parseMeetingsListBound(value string, endOfRange bool) (instant, wall time.Time, isInstant bool, err error) {
+	if at, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		wall := time.Date(at.Year(), at.Month(), at.Day(), at.Hour(), at.Minute(), at.Second(), at.Nanosecond(), time.UTC)
+		return at.UTC(), wall, true, nil
+	}
 	for _, layout := range meetingsListDateLayouts {
 		at, err := time.Parse(layout, value)
 		if err != nil {
 			continue
 		}
 		if endOfRange && layout == "2006-01-02" {
-			return at.Add(24*time.Hour - time.Second), nil
+			at = at.Add(24*time.Hour - time.Second)
 		}
-		return at, nil
+		return at, at, false, nil
 	}
-	return time.Time{}, &meetingsListBadRequest{fmt.Sprintf(
+	return time.Time{}, time.Time{}, false, &meetingsListBadRequest{fmt.Sprintf(
 		"%q is not a date this catalog uses; write it as 2026-08-11, "+
-			"2026-08-11 14:30 or 2026-08-11 14:30:05 (no timezone — meeting dates do not carry one)",
+			"2026-08-11 14:30 or 2026-08-11 14:30:05, or as an instant "+
+			"with its offset, 2026-08-11T14:30:05+02:00",
 		oneLineListField(value))}
+}
+
+// fromEcho and toEcho write a parsed bound back the way it was given: an
+// instant in RFC 3339 UTC, a wall clock in the stamp layout.
+func (f meetingsListFilter) fromEcho() string { return meetingsListBoundEcho(f.from, f.fromInstant) }
+func (f meetingsListFilter) toEcho() string   { return meetingsListBoundEcho(f.to, f.toInstant) }
+
+func meetingsListBoundEcho(at time.Time, instant bool) string {
+	if instant {
+		return at.UTC().Format(time.RFC3339Nano)
+	}
+	return at.Format(meetingsListStampLayout)
 }
 
 // oneLineListField keeps a echoed-back value from breaking the response or a
@@ -222,11 +260,12 @@ func applyMeetingsListFilter(entries []json.RawMessage, filter meetingsListFilte
 
 	for _, entry := range entries {
 		var probe struct {
-			DateLabel    string `json:"dateLabel"`
-			RoomID       string `json:"roomId"`
-			AudioPath    string `json:"audioPath"`
-			MeetingPath  string `json:"meetingPath"`
-			ArtifactPath string `json:"artifactPath"`
+			DateLabel     string `json:"dateLabel"`
+			RecordedAtUTC string `json:"recordedAtUtc"`
+			RoomID        string `json:"roomId"`
+			AudioPath     string `json:"audioPath"`
+			MeetingPath   string `json:"meetingPath"`
+			ArtifactPath  string `json:"artifactPath"`
 		}
 		// A malformed entry is not this endpoint's to adjudicate — the exporter
 		// owns the shape. It simply cannot be placed in time or in a room, so an
@@ -248,17 +287,24 @@ func applyMeetingsListFilter(entries []json.RawMessage, filter meetingsListFilte
 			continue
 		}
 		if dated {
-			at, ok := parseMeetingsListDateLabel(probe.DateLabel)
+			// An instant against the bound's instant; a label's digits
+			// against the bound's digits (see meetingsListFilter).
+			from, to := filter.from, filter.to
+			at, ok := parseRecordedAtUTC(probe.RecordedAtUTC)
+			if !ok {
+				at, ok = parseMeetingsListDateLabel(probe.DateLabel)
+				from, to = filter.fromWall, filter.toWall
+			}
 			if !ok {
 				excluded.Total++
 				excluded.Undated++
 				continue
 			}
-			if filter.hasFrom && at.Before(filter.from) {
+			if filter.hasFrom && at.Before(from) {
 				excluded.Total++
 				continue
 			}
-			if filter.hasTo && at.After(filter.to) {
+			if filter.hasTo && at.After(to) {
 				excluded.Total++
 				continue
 			}
@@ -283,16 +329,7 @@ func parseMeetingsListDateLabel(label string) (time.Time, bool) {
 }
 
 // serveMeetingsList answers `published/meetings-list` for one caller.
-//
-// The visible set comes from resolveCatalogForCaller — the same resolution
-// catalog.json uses, so this endpoint adds a query surface and NOT a second
-// access-control path. What differs is only how an outcome maps to a status:
-// here every substrate failure is loud, and 200 with an empty list means one
-// thing only, that the caller may genuinely read no matching meeting.
-// tags is the tag index, nil when it could not be opened: a `tag` request is
-// then 503, never an unnarrowed list.
 func (c ExAppConfig) serveMeetingsList(ctx context.Context, w http.ResponseWriter, r *http.Request, client *http.Client, caller string, deps searchDeps, logger *log.Logger) {
-	tags := deps.annotations
 	filter, err := parseMeetingsListFilter(r.URL.Query())
 	if err != nil {
 		// Validated BEFORE the network calls: a malformed date is the caller's
@@ -301,15 +338,48 @@ func (c ExAppConfig) serveMeetingsList(ctx context.Context, w http.ResponseWrite
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if filter.tag != "" && tags == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, tagIndexUnavailableMessage)
+	response, err := c.meetingsList(ctx, client, caller, filter, deps, logger)
+	if err != nil {
+		writeReadFailure(w, r, err)
 		return
+	}
+	body, err := json.Marshal(response)
+	if err != nil {
+		if logger != nil {
+			logger.Printf("meetings list: encode response caller=%s: %v", caller, err)
+		}
+		writeJSONError(w, http.StatusInternalServerError, "could not encode the meeting list")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	// The list changes after every publish, and AppAPI's proxy would otherwise
+	// give this response a one-hour browser freshness window — hiding newly
+	// published meetings, and pinning a stale visible set after a revocation.
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set(ncFilesSourceHeader, ncFilesSourceValue)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
+}
+
+// meetingsList is the caller's meetings, narrowed by filter.
+//
+// The visible set comes from resolveCatalogForCaller — the same resolution
+// catalog.json uses, so this adds a query surface and NOT a second
+// access-control path. What differs is only how an outcome maps to a status:
+// here every substrate failure is loud, and an empty list means one thing
+// only, that the caller may genuinely read no matching meeting.
+// deps.annotations is the tag index, nil when it could not be opened: a `tag`
+// request is then 503, never an unnarrowed list. Every failure is a
+// *readFailure.
+func (c ExAppConfig) meetingsList(ctx context.Context, client *http.Client, caller string, filter meetingsListFilter, deps searchDeps, logger *log.Logger) (meetingsListResponse, error) {
+	tags := deps.annotations
+	if filter.tag != "" && tags == nil {
+		return meetingsListResponse{}, readFail(http.StatusServiceUnavailable, tagIndexUnavailableMessage)
 	}
 
 	resolved, err := c.resolveCatalogForCaller(ctx, client, caller, logger)
 	if err != nil {
-		writeJSONError(w, http.StatusBadGateway, "could not determine which recordings you may read; this is not an empty result")
-		return
+		return meetingsListResponse{}, readFail(http.StatusBadGateway, "could not determine which recordings you may read; this is not an empty result")
 	}
 
 	var envelope struct {
@@ -323,8 +393,7 @@ func (c ExAppConfig) serveMeetingsList(ctx context.Context, w http.ResponseWrite
 		if logger != nil {
 			logger.Printf("meetings list: parse resolved catalog caller=%s: %v", caller, err)
 		}
-		writeJSONError(w, http.StatusBadGateway, "the recordings archive could not be read; this is not an empty result")
-		return
+		return meetingsListResponse{}, readFail(http.StatusBadGateway, "the recordings archive could not be read; this is not an empty result")
 	}
 
 	response := meetingsListResponse{Version: envelope.Version, Meetings: envelope.Meetings}
@@ -345,8 +414,7 @@ func (c ExAppConfig) serveMeetingsList(ctx context.Context, w http.ResponseWrite
 			if logger != nil {
 				logger.Printf("meetings list: tag narrowing failed caller=%s: %v", caller, err)
 			}
-			writeJSONError(w, http.StatusBadGateway, tagIndexUnreadableMessage)
-			return
+			return meetingsListResponse{}, readFail(http.StatusBadGateway, tagIndexUnreadableMessage)
 		}
 	}
 	if filter.active() {
@@ -355,10 +423,10 @@ func (c ExAppConfig) serveMeetingsList(ctx context.Context, w http.ResponseWrite
 		response.Excluded = &excluded
 		echo := meetingsListFilterEcho{Room: filter.room, Tag: filter.tag}
 		if filter.hasFrom {
-			echo.From = filter.from.Format(meetingsListStampLayout)
+			echo.From = filter.fromEcho()
 		}
 		if filter.hasTo {
-			echo.To = filter.to.Format(meetingsListStampLayout)
+			echo.To = filter.toEcho()
 		}
 		response.Filter = &echo
 	}
@@ -367,21 +435,5 @@ func (c ExAppConfig) serveMeetingsList(ctx context.Context, w http.ResponseWrite
 	if response.Meetings == nil {
 		response.Meetings = []json.RawMessage{}
 	}
-
-	body, err := json.Marshal(response)
-	if err != nil {
-		if logger != nil {
-			logger.Printf("meetings list: encode response caller=%s: %v", caller, err)
-		}
-		writeJSONError(w, http.StatusInternalServerError, "could not encode the meeting list")
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	// The list changes after every publish, and AppAPI's proxy would otherwise
-	// give this response a one-hour browser freshness window — hiding newly
-	// published meetings, and pinning a stale visible set after a revocation.
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set(ncFilesSourceHeader, ncFilesSourceValue)
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(body)
+	return response, nil
 }

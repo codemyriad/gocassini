@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
 
+  import { LL } from "../../i18n";
   import type { ViewerTimeRange } from "../../viewer/hashRouting";
   import type { FindStop } from "../../core/find";
   import {
@@ -921,7 +922,7 @@
             tabindex="0"
             data-pin
             class:tf-pin-dragging={pinDrag === edge}
-            aria-label={edge === "from" ? "Where the section begins" : "Where the section ends"}
+            aria-label={edge === "from" ? $LL.viewer.meeting.marking.edge_from() : $LL.viewer.meeting.marking.edge_to()}
             aria-valuemin={0}
             aria-valuemax={durationMs}
             aria-valuenow={ms}
@@ -995,7 +996,7 @@
         style:left="{RAIL_NARROW}px"
         style:right="calc(17px - var(--tf-bleed, 8px))"
         role="group"
-        aria-label="Tagged sections"
+        aria-label={$LL.viewer.meeting.marking.sections_label()}
       >
         {#if stretchProps}
           <StretchToolbar row bind:this={stretchToolbar} {...stretchProps} on:tag={tagStretch} on:save={saveMove} on:remove={removeMark} on:clear={clearSelection} on:copy={copyStretch} on:edit={unlockMark} />

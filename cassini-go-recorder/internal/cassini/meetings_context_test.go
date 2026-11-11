@@ -15,6 +15,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
+	_ "time/tzdata" // the zone tests must not depend on the host's zoneinfo
 
 	inspectpkg "gocassini/internal/inspect"
 	"gocassini/internal/meetingcontext"
@@ -195,7 +197,7 @@ func TestWriteMeetingContextMarkdown(t *testing.T) {
 	for _, want := range []string{
 		"# Daily Standup",
 		"- Meeting id: `M1`",
-		"- Recorded (UTC): 2026-08-11T10:32:00Z",
+		"- Started: unknown (the file was built 2026-08-11T10:32:00Z)",
 		"- Duration: 1:02:05",
 		"- Speakers: Erlich, Monica",
 		"- Transcript source: `derived-from-words`",
@@ -504,6 +506,17 @@ func TestBuildMeetingContextMatchesSpeakerLabelsDespiteWhitespace(t *testing.T) 
 // shape visible.
 var updateContextGolden = flag.Bool("update-golden", false, "rewrite the context golden fixtures from the current output")
 
+// contextTestZone pins where the goldens render the recording start. A zone
+// with a non-zero offset, so a start shown in UTC would fail them; injected
+// through RenderOpts rather than by changing time.Local.
+var contextTestZone = func() *time.Location {
+	loc, err := time.LoadLocation("Europe/Rome")
+	if err != nil {
+		panic(err)
+	}
+	return loc
+}()
+
 // goldenContextFixture is the representative meeting the golden files pin.
 //
 // It is its own fixture rather than a reuse of standupWords(): the goldens
@@ -517,7 +530,11 @@ func goldenContextFixture() meetingContext {
 	words = append(words, wordsAt("spk2", 12_400, 200, "agreed", "let's", "do", "it")...)
 	words = append(words, wordsAt("spk1", 3_642_000, 200, "then", "we", "are", "done")...)
 	summary := "## Decisions\n\n- Ship the agent surface.\n\n## Actions\n\n- Erlich: open the PR.\n"
-	return buildMeetingContext("MEETING-GOLDEN-1", extractedMeetingFixture(words, summary), meetingsCatalogEntry{
+	meeting := extractedMeetingFixture(words, summary)
+	// A Talk recording that knows when it started, ninety seconds before
+	// its build was stamped.
+	meeting.Manifest.Meeting.RecordedAtUTC = "2026-08-11T10:30:30.250Z"
+	return buildMeetingContext("MEETING-GOLDEN-1", meeting, meetingsCatalogEntry{
 		RoomID: "rm_9f2a1c3d4e5b6a70", RoomName: "Weekly Sync",
 	})
 }
@@ -564,7 +581,7 @@ func assertContextGolden(t *testing.T, name string, got []byte) {
 // it is given one id, so the assertions above stay about the bytes rather than
 // about bundle plumbing.
 func writeOneMeetingContext(out io.Writer, bundle meetingContext, asJSON bool) error {
-	return writeMeetingContext(out, meetingcontext.Bundle{Meetings: []meetingContext{bundle}}, asJSON, meetingcontext.RenderOpts{})
+	return writeMeetingContext(out, meetingcontext.Bundle{Meetings: []meetingContext{bundle}}, asJSON, meetingcontext.RenderOpts{Location: contextTestZone})
 }
 
 // goldenContextBundle is the many-meeting document the bundle goldens pin.
@@ -582,6 +599,8 @@ func goldenContextBundle() meetingcontext.Bundle {
 	review := extractedMeetingFixture(wordsAt("spk2", 900, 200, "different", "meeting", "same", "room"), "# Backlog\n\n- Cut the stale cards.\n")
 	review.Manifest.Meeting.Title = "Backlog Review"
 	review.Manifest.Meeting.CreatedAtUTC = "2026-08-25T14:05:00Z"
+	// An imported desktop file: a wall-clock label, no instant.
+	review.Manifest.Meeting.RecordedAtLocal = "2026-08-25T15:40:00"
 	review.Manifest.Meeting.DurationMS = 1_500_000
 
 	return meetingcontext.Bundle{Meetings: []meetingContext{
@@ -596,7 +615,7 @@ func goldenContextBundle() meetingcontext.Bundle {
 func TestMeetingContextGoldenMarkdownWithTimestamps(t *testing.T) {
 	rendered, err := meetingcontext.RenderMarkdown(
 		meetingcontext.Bundle{Meetings: []meetingContext{goldenContextFixture()}},
-		meetingcontext.RenderOpts{Timestamps: true},
+		meetingcontext.RenderOpts{Timestamps: true, Location: contextTestZone},
 	)
 	if err != nil {
 		t.Fatalf("RenderMarkdown: %v", err)
@@ -606,7 +625,7 @@ func TestMeetingContextGoldenMarkdownWithTimestamps(t *testing.T) {
 
 func TestMeetingContextBundleGoldenMarkdown(t *testing.T) {
 	var out bytes.Buffer
-	if err := writeMeetingContext(&out, goldenContextBundle(), false, meetingcontext.RenderOpts{}); err != nil {
+	if err := writeMeetingContext(&out, goldenContextBundle(), false, meetingcontext.RenderOpts{Location: contextTestZone}); err != nil {
 		t.Fatalf("writeMeetingContext: %v", err)
 	}
 	assertContextGolden(t, "context/three-meetings.md", out.Bytes())
@@ -614,7 +633,7 @@ func TestMeetingContextBundleGoldenMarkdown(t *testing.T) {
 
 func TestMeetingContextBundleGoldenJSON(t *testing.T) {
 	var out bytes.Buffer
-	if err := writeMeetingContext(&out, goldenContextBundle(), true, meetingcontext.RenderOpts{}); err != nil {
+	if err := writeMeetingContext(&out, goldenContextBundle(), true, meetingcontext.RenderOpts{Location: contextTestZone}); err != nil {
 		t.Fatalf("writeMeetingContext: %v", err)
 	}
 	assertContextGolden(t, "context/three-meetings.json", out.Bytes())
@@ -662,7 +681,7 @@ func TestContextBundleKeysAreDeclaredBySchema(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if err := writeMeetingContext(&out, goldenContextBundle(), true, meetingcontext.RenderOpts{}); err != nil {
+	if err := writeMeetingContext(&out, goldenContextBundle(), true, meetingcontext.RenderOpts{Location: contextTestZone}); err != nil {
 		t.Fatalf("writeMeetingContext: %v", err)
 	}
 	var document map[string]json.RawMessage
@@ -1199,5 +1218,91 @@ func TestMeetingContextListsSeparatedVoicesNotTheirParticipant(t *testing.T) {
 	}
 	if want := []string{"Erlich", "Room laptop · Speaker 2", "Monica"}; !reflect.DeepEqual(labels, want) {
 		t.Errorf("speakers = %v, want %v", labels, want)
+	}
+}
+
+func TestParseMeetingPosition(t *testing.T) {
+	for value, want := range map[string]int64{
+		"754000": 754_000, "0": 0, "12:34": 754_000, "1:02:03": 3_723_000, "00:05": 5_000,
+	} {
+		got, err := parseMeetingPosition(value)
+		if err != nil || got != want {
+			t.Errorf("parseMeetingPosition(%q) = %d, %v; want %d", value, got, err, want)
+		}
+	}
+	for _, value := range []string{"", "-5", "12:60", "1:2:3", "noon", "1:02:03:04", "12:3"} {
+		if _, err := parseMeetingPosition(value); err == nil {
+			t.Errorf("parseMeetingPosition(%q) was accepted", value)
+		}
+	}
+	if _, _, err := parseMeetingContextWindow("2:00", "1:00"); err == nil {
+		t.Error("a window ending before it starts was accepted")
+	}
+	if _, set, err := parseMeetingContextWindow("", ""); set || err != nil {
+		t.Errorf("no flags made a window: set=%v err=%v", set, err)
+	}
+}
+
+// The window is a field of the published format, so the schema must declare
+// it like every other key a produced bundle can carry.
+func TestContextWindowIsDeclaredBySchema(t *testing.T) {
+	schemaPath := "../../../spec/cassini-meetings-context-v1.schema.json"
+	raw, err := os.ReadFile(schemaPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", schemaPath, err)
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		t.Fatalf("parse %s: %v", schemaPath, err)
+	}
+	to := int64(90_000)
+	var out bytes.Buffer
+	bundle := goldenContextBundle().WithWindow(meetingcontext.Window{FromMS: 30_000, ToMS: &to})
+	if err := writeMeetingContext(&out, bundle, true, meetingcontext.RenderOpts{Location: contextTestZone}); err != nil {
+		t.Fatalf("writeMeetingContext: %v", err)
+	}
+	var container struct {
+		Meetings []map[string]json.RawMessage `json:"meetings"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &container); err != nil || len(container.Meetings) == 0 {
+		t.Fatalf("parse the produced bundle: %v", err)
+	}
+	for _, meeting := range container.Meetings {
+		if _, ok := meeting["window"]; !ok {
+			t.Fatal("a windowed bundle does not say it is one")
+		}
+		assertSchemaDeclares(t, schema, schemaPath, "meetingContext", meeting)
+		assertNestedSchemaDeclares(t, schema, schemaPath, "window", meeting["window"])
+	}
+}
+
+// --from and --to narrow a real run, and refuse a window that holds nothing
+// before reading any file.
+func TestMeetingsContextLocalWindow(t *testing.T) {
+	requireFFMediaTools(t)
+	published := packedOpusForContext(t)
+	paths := stageLocalMeetingFiles(t, t.TempDir(), published, "MEETING1")
+
+	code, stdout, stderr := runMeetingsCLIRaw(t, "meetings", "context", "--local", "--json", "--from", "0", "--to", "0:01", paths[0])
+	if code != 0 {
+		t.Fatalf("exit=%d stderr=%q", code, stderr)
+	}
+	bundle, err := meetingcontext.DecodeJSON([]byte(stdout))
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	got := bundle.Meetings[0]
+	if got.Window == nil || got.Window.ToMS == nil || *got.Window.ToMS != 1_000 {
+		t.Fatalf("window = %+v", got.Window)
+	}
+	for _, segment := range got.Segments {
+		if segment.StartMS >= 1_000 {
+			t.Errorf("a passage starting at %d ms is outside the window", segment.StartMS)
+		}
+	}
+
+	code, _, stderr = runMeetingsCLIRaw(t, "meetings", "context", "--local", "--from", "2:00", "--to", "1:00", paths[0])
+	if code != 2 || !strings.Contains(stderr, "must end after it starts") {
+		t.Fatalf("exit=%d stderr=%q", code, stderr)
 	}
 }

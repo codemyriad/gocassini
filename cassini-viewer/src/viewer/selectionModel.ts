@@ -1,3 +1,7 @@
+import { get } from "svelte/store";
+
+import { LL } from "../i18n";
+import { numberFormat } from "../i18n/format";
 import type { MeetingCatalogEntry } from "./catalog";
 
 // Which meetings are PICKED, for the context bundle Prepare hands over (D-626).
@@ -207,29 +211,26 @@ export function summarizeSelection(entries: readonly MeetingCatalogEntry[]): Sel
   return totals;
 }
 
-// Pinned to en-GB for the same reason the catalog's date formatters are: the
-// grouping separator should not change with the browser's locale in a panel
-// whose numbers are compared against the CLI's.
-const WORD_COUNT_FORMAT = new Intl.NumberFormat("en-GB");
-
 // formatWordCount renders one meeting's size. An entry with no wordCount says
 // so; it does not read as a short meeting.
 export function formatWordCount(wordCount: number | undefined): string {
+  const text = get(LL).viewer.browse.selection;
   if (typeof wordCount !== "number") {
-    return "Length not recorded";
+    return text.length_not_recorded();
   }
-  return `${WORD_COUNT_FORMAT.format(wordCount)} words`;
+  return text.words({ count: wordCount });
 }
 
 // formatSelectionWordCount renders the selection's total, saying "at least"
 // whenever some of it is unknown — a total that silently omits the meetings it
 // could not measure understates the bundle an agent is about to be handed.
 export function formatSelectionWordCount(totals: SelectionTotals): string {
+  const text = get(LL).viewer.browse.selection;
   if (totals.meetingsWithWordCount === 0) {
-    return "Length not recorded";
+    return text.length_not_recorded();
   }
-  const words = `${WORD_COUNT_FORMAT.format(totals.wordCount)} words`;
-  return totals.meetingsWithoutWordCount > 0 ? `At least ${words}` : words;
+  const count = totals.wordCount;
+  return totals.meetingsWithoutWordCount > 0 ? text.at_least_words({ count }) : text.words({ count });
 }
 
 // describeSelectionGaps is the Prepare panel's disclosure: what this bundle
@@ -242,14 +243,13 @@ export function formatSelectionWordCount(totals: SelectionTotals): string {
 // one" are different claims about different meetings, and getting that pairing
 // wrong is the failure this panel exists to prevent.
 export function describeSelectionGaps(totals: SelectionTotals): string[] {
+  const text = get(LL).viewer.browse.selection;
   const gaps: string[] = [];
   // First, because it is the one gap that stops everything: the operator
   // refuses a bundle, and a question, over more than this many meetings.
   if (totals.count > MAX_SELECTED_MEETINGS) {
     const excess = totals.count - MAX_SELECTED_MEETINGS;
-    gaps.push(
-      `You can work with up to ${MAX_SELECTED_MEETINGS} meetings at once. Unpick ${excess === 1 ? "one" : excess}.`,
-    );
+    gaps.push(text.over_cap({ max: MAX_SELECTED_MEETINGS, count: excess }));
   }
   // summaryUnknown is deliberately NOT a sentence, though it is still counted.
   //
@@ -274,11 +274,7 @@ export function describeSelectionGaps(totals: SelectionTotals): string[] {
     // it" left the reader to discover both the certainty and the scope from an
     // error that blames availability. The panel marks the rows, so the meeting
     // to unpick can be found without counting.
-    gaps.push(
-      totals.withoutPortableAudio === 1
-        ? "One of these predates the single-file format (marked in the list). Unpick it to prepare."
-        : `${totals.withoutPortableAudio} of these predate the single-file format (marked in the list). Unpick them to prepare.`,
-    );
+    gaps.push(text.no_portable_audio({ count: totals.withoutPortableAudio }));
   }
   return gaps;
 }

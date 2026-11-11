@@ -1,4 +1,7 @@
+import { get } from "svelte/store";
+import { LL } from "cassini-viewer/i18n";
 import { requestRoomName } from "./roomNames";
+import { recordCatalogDiagnostic } from "./support/client";
 import {
   StaticCatalogProvider,
   OperatorListProvider,
@@ -46,7 +49,8 @@ import {
   startImports as postImports,
 } from "./imports/client";
 import { nextcloudRootPath } from "./operator/ncSetup";
-import type { ImportFileRequest, ImportJobRecord, ImportSharee, ImportSharingRequest } from "cassini-viewer/dataProvider";
+import { readServedMessage } from "./servedMessage";
+import type { AgentConnection, ImportFileRequest, ImportJobRecord, ImportSharee, ImportSharingRequest } from "cassini-viewer/dataProvider";
 
 // The in-Nextcloud shell's data provider (D-626).
 //
@@ -66,8 +70,16 @@ export class AppDataProvider extends StaticCatalogProvider {
   // Keep static asset loading/search, and the list's older-operator fallback.
   private readonly listing = new OperatorListProvider();
 
-  override loadCatalog() {
-    return this.listing.loadCatalog();
+  override async loadCatalog() {
+    recordCatalogDiagnostic("loading");
+    try {
+      const catalog = await this.listing.loadCatalog();
+      recordCatalogDiagnostic("loaded");
+      return catalog;
+    } catch (error) {
+      recordCatalogDiagnostic("failed", error instanceof TypeError, error instanceof Error ? error.message : String(error));
+      throw error;
+    }
   }
 
   // GET published/meetings-context?ids=…,… — the same document
@@ -81,7 +93,7 @@ export class AppDataProvider extends StaticCatalogProvider {
   // makes Prepare cheap enough to be a button in the browse list.
   async loadContextBundle(entries: readonly MeetingCatalogEntry[]): Promise<string> {
     if (entries.length === 0) {
-      throw new Error("Pick at least one meeting first.");
+      throw new Error(get(LL).app.shell.data_provider.bundle_needs_meetings());
     }
     const url = new URL(resolvePublishedUrl("meetings-context"));
     // ONE comma-separated `ids`, in pick order, because the document prints its
@@ -107,6 +119,18 @@ export class AppDataProvider extends StaticCatalogProvider {
       throw new Error(await describeBundleFailure(response));
     }
     return response.text();
+  }
+
+  // The MCP endpoint (D-813) is a sibling of the published archive, like the
+  // insight routes, so its address is derived from the archive's: one rule for
+  // "where is the server" on a proxied deployment. App passwords are made in
+  // Nextcloud's own security settings, at the instance's root.
+  agentConnection(): AgentConnection {
+    const endpoint = new URL("../mcp", resolvePublishedUrl("")).toString();
+    const root = nextcloudRootPath();
+    const appPasswordsUrl =
+      root === null ? null : new URL(`${root}/index.php/settings/user/security`, window.location.href).toString();
+    return { endpoint, appPasswordsUrl };
   }
 
   // GET insights — this caller's own runs, newest first (D-721/D-700).
@@ -359,6 +383,7 @@ async function readAnnotationError(response: Response): Promise<AnnotationError>
 
 // describeBundleFailure turns a refusal into something a reader can act on.
 async function describeBundleFailure(response: Response): Promise<string> {
+  const t = get(LL).app.shell.data_provider;
   switch (response.status) {
     case 400:
       // Only here is the served message worth repeating: the endpoint knows
@@ -367,7 +392,7 @@ async function describeBundleFailure(response: Response): Promise<string> {
       // other statuses answer in fixed terms ("404 page not found") that would
       // be worse than the sentence below.
       return (
-        (await readServedMessage(response)) || "Cassini could not read that request for a bundle."
+        (await readServedMessage(response)) || t.bundle_bad_request()
       );
     case 404:
       // Whether a meeting exists and whether this caller may read it are
@@ -378,42 +403,14 @@ async function describeBundleFailure(response: Response): Promise<string> {
       // to the published file server and 404s identically, so the sentence
       // names that too rather than sending an administrator hunting a
       // permissions problem that is not there.
-      return "One of these meetings is not available to you, or this deployment cannot assemble bundles.";
+      return t.bundle_not_found();
     case 502:
       // Both of this status's causes — no verified caller identity, and a
       // failed scan — are the operator being unable to read Nextcloud as this
       // user, which is what the sentence says. Neither is anything the reader
       // can fix from here, so it does not pretend to be actionable.
-      return "Cassini could not read these meetings from Nextcloud.";
+      return t.bundle_nextcloud_unreadable();
     default:
-      return `Could not prepare the bundle (HTTP ${response.status}).`;
+      return t.bundle_failed({ status: response.status });
   }
-}
-
-// readServedMessage reads the endpoint's own explanation, whether it arrives as
-// a JSON error envelope (the operator API's shape) or as the plain-text line
-// Go's http.Error writes. Anything longer or multi-line is a page, not a
-// message, and is discarded rather than pasted into the panel.
-async function readServedMessage(response: Response): Promise<string> {
-  let body: string;
-  try {
-    body = (await response.text()).trim();
-  } catch {
-    return "";
-  }
-  if (body === "") {
-    return "";
-  }
-  try {
-    const payload = JSON.parse(body) as { error?: unknown };
-    if (typeof payload.error === "string" && payload.error.trim() !== "") {
-      return payload.error.trim();
-    }
-  } catch {
-    // Not JSON; fall through to the plain-text form.
-  }
-  if (body.length <= 200 && !body.includes("\n") && !body.startsWith("<")) {
-    return body;
-  }
-  return "";
 }

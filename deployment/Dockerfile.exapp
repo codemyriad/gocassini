@@ -38,7 +38,7 @@ COPY deployment/ffmpeg /tmp/cassini-ffmpeg-build
 RUN FFMPEG_BUILD_JOBS="${FFMPEG_BUILD_JOBS}" \
     /tmp/cassini-ffmpeg-build/build.sh "${FFMPEG_VERSION}" /out/ffmpeg
 
-FROM golang:1.24-bookworm AS go-builder
+FROM golang:1.25-bookworm AS go-builder
 ARG TARGETARCH
 WORKDIR /src
 
@@ -161,6 +161,7 @@ COPY --from=frpc-fetcher /out/frpc /usr/local/bin/frpc
 COPY cassini-publisher/bin/export-static-meetings.sh /opt/cassini/cassini-publisher/bin/export-static-meetings.sh
 COPY cassini-viewer/package.json /opt/cassini/cassini-viewer/package.json
 COPY cassini-viewer/scripts/export-static-meetings.mjs /opt/cassini/cassini-viewer/scripts/export-static-meetings.mjs
+COPY cassini-viewer/scripts/meeting-start.mjs /opt/cassini/cassini-viewer/scripts/meeting-start.mjs
 COPY --from=web-builder /src/cassini-viewer/dist /opt/cassini/cassini-viewer/dist
 COPY --from=web-builder /src/cassini-app/dist /opt/cassini/cassini-app/dist
 COPY deployment/exapp-start.sh /usr/local/bin/cassini-exapp-entrypoint.sh

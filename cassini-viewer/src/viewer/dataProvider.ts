@@ -70,6 +70,14 @@ export interface LoadMeetingOptions {
   fresh?: boolean;
 }
 
+// AgentConnection is what a person needs to connect an agent: the MCP
+// endpoint, and where Nextcloud makes the app password it authenticates with
+// (null when the page cannot tell).
+export interface AgentConnection {
+  endpoint: string;
+  appPasswordsUrl: string | null;
+}
+
 // DataProvider mirrors ONLY what App.svelte actually calls. Every method is
 // keyed off a MeetingCatalogEntry (or nothing) so the caller never has to know
 // whether a meeting is a packed `.opus` (audioPath) or a loose artifact
@@ -255,6 +263,12 @@ export interface DataProvider {
   // named by its staged path only; sharing was decided at registration.
   startImports?(files: ImportFileRequest[]): Promise<ImportJobRecord[]>;
   listImports?(): Promise<ImportJobRecord[]>;
+  // Where an agent outside Cassini connects to read meetings as this person
+  // (D-813), for the "Connect an agent" panel. Optional like every capability
+  // here: only an operator behind Nextcloud serves the MCP endpoint, so a
+  // standalone export, the public view and a bundled artifact offer no way in
+  // rather than instructions that cannot work.
+  agentConnection?(): AgentConnection;
   cancelImport?(id: string): Promise<void>;
   retryImport?(id: string): Promise<void>;
   removeImport?(id: string): Promise<void>;

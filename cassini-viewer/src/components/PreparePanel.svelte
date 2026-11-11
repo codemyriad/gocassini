@@ -3,6 +3,7 @@
   import { FileText, TriangleAlert, X } from "@lucide/svelte";
   import ExportMenu from "./ExportMenu.svelte";
   import CloseButton from "./ui/CloseButton.svelte";
+  import { LL } from "../i18n";
   import type { MeetingCatalogEntry } from "../viewer/catalog";
   import type { LoadedArtifact } from "../viewer/loadArtifact";
   import { displaySegmentsForArtifact, transcriptMarkdown } from "../viewer/meetingExport";
@@ -53,8 +54,6 @@
   let transcriptsText: string | null = null;
   let transcriptsKey = "";
 
-  const WORD_COUNT_FORMAT = new Intl.NumberFormat("en-GB");
-
   // The picked set, as one string. When it changes — the list is still live
   // behind this panel — the cached bytes describe a set nobody asked for any
   // more, and so does "Copied 12,000 characters".
@@ -88,7 +87,7 @@
     const key = selectionKey;
     const text = await loadBundle();
     if (key !== selectionKey) {
-      throw new Error("The selection changed while the bundle was being prepared — press again.");
+      throw new Error($LL.viewer.insights.prepare.selection_changed_bundle());
     }
     bundleText = text;
     bundleKey = key;
@@ -106,7 +105,7 @@
     const sections: string[] = [];
     for (const entry of selected) {
       const artifact = await loadMeeting(entry);
-      if (key !== selectionKey) throw new Error("The selection changed — press again.");
+      if (key !== selectionKey) throw new Error($LL.viewer.insights.prepare.selection_changed());
       sections.push(transcriptMarkdown(entry, displaySegmentsForArtifact(artifact)));
     }
     const text = sections.join("\n---\n\n");
@@ -117,10 +116,10 @@
 
   async function handleTranscriptCopy() {
     busy = true;
-    status = { tone: "ok", text: "Preparing transcripts…" };
+    status = { tone: "ok", text: $LL.viewer.insights.prepare.preparing_transcripts() };
     const clipboard = navigator.clipboard;
     if (!clipboard?.writeText) {
-      status = { tone: "warn", text: "Clipboard unavailable here — use Export to download." };
+      status = { tone: "warn", text: $LL.viewer.insights.prepare.clipboard_unavailable() };
       busy = false;
       return;
     }
@@ -140,10 +139,10 @@
     try {
       const text = await pending;
       if (!copied) await clipboard.writeText(text);
-      status = { tone: "ok", text: "Transcripts copied." };
+      status = { tone: "ok", text: $LL.viewer.insights.prepare.transcripts_copied() };
     } catch (error) {
       // A refused async clipboard can succeed on a second press from the cache.
-      status = { tone: "warn", text: `Couldn't copy transcripts: ${describeError(error)}. Press again or download them.` };
+      status = { tone: "warn", text: $LL.viewer.insights.prepare.transcripts_copy_failed({ error: describeError(error) }) };
     } finally {
       busy = false;
     }
@@ -151,10 +150,10 @@
 
   async function handleTranscriptDownload() {
     busy = true;
-    status = { tone: "ok", text: "Preparing transcripts…" };
+    status = { tone: "ok", text: $LL.viewer.insights.prepare.preparing_transcripts() };
     try {
       saveTranscript(await ensureTranscripts(), `cassini-transcripts-${new Date().toISOString().slice(0, 10)}.md`);
-      status = { tone: "ok", text: "Transcripts downloaded." };
+      status = { tone: "ok", text: $LL.viewer.insights.prepare.transcripts_downloaded() };
     } catch (error) {
       status = { tone: "error", text: describeError(error) };
     } finally {
@@ -164,7 +163,7 @@
 
   async function handleAudioDownload() {
     busy = true;
-    status = { tone: "ok", text: "Preparing meeting files…" };
+    status = { tone: "ok", text: $LL.viewer.insights.prepare.preparing_files() };
     const key = selectionKey;
     const selected = [...entries];
     try {
@@ -178,8 +177,8 @@
         saveBlob(await zipAudioFiles(files), `cassini-meeting-files-${new Date().toISOString().slice(0, 10)}.zip`);
       }
       status = { tone: "ok", text: key === selectionKey
-        ? files.length === 1 ? "Meeting file downloaded." : "Meeting files downloaded."
-        : "Meeting files from the earlier selection downloaded." };
+        ? files.length === 1 ? $LL.viewer.insights.prepare.file_downloaded() : $LL.viewer.insights.prepare.files_downloaded()
+        : $LL.viewer.insights.prepare.earlier_files_downloaded() };
     } catch (error) {
       status = { tone: "error", text: describeError(error) };
     } finally {
@@ -189,7 +188,7 @@
 
   async function handleCopy() {
     busy = true;
-    status = { tone: "ok", text: "Preparing…" };
+    status = { tone: "ok", text: $LL.viewer.insights.prepare.preparing() };
     // The clipboard is not available everywhere this runs: the embedded app
     // lives in a shadow root inside Nextcloud, an insecure-origin deployment
     // has no navigator.clipboard at all, and a browser may simply refuse. Each
@@ -197,7 +196,7 @@
     // silently did nothing would look like a bundle that came out empty.
     const clipboard = navigator.clipboard;
     if (!clipboard || typeof clipboard.writeText !== "function") {
-      status = { tone: "warn", text: "Clipboard unavailable here — use Export to download." };
+      status = { tone: "warn", text: $LL.viewer.insights.prepare.clipboard_unavailable() };
       busy = false;
       return;
     }
@@ -218,7 +217,7 @@
         const copied = await pending;
         status = {
           tone: "ok",
-          text: `Copied ${WORD_COUNT_FORMAT.format(copied.length)} characters.`,
+          text: $LL.viewer.insights.prepare.copied_characters({ count: copied.length }),
         };
         busy = false;
         return;
@@ -240,13 +239,13 @@
       await clipboard.writeText(text);
       status = {
         tone: "ok",
-        text: `Copied ${WORD_COUNT_FORMAT.format(text.length)} characters.`,
+        text: $LL.viewer.insights.prepare.copied_characters({ count: text.length }),
       };
     } catch {
       // The bytes are assembled and cached by now, so a second press writes
       // them inside its own gesture — which is exactly what a browser that
       // refused this one is asking for. Download stays the way out.
-      status = { tone: "warn", text: "Clipboard blocked here — use Export to copy again or download." };
+      status = { tone: "warn", text: $LL.viewer.insights.prepare.clipboard_blocked() };
     } finally {
       busy = false;
     }
@@ -254,11 +253,11 @@
 
   async function handleDownload() {
     busy = true;
-    status = { tone: "ok", text: "Preparing…" };
+    status = { tone: "ok", text: $LL.viewer.insights.prepare.preparing() };
     try {
       const text = await ensureBundle();
       saveBlob(new Blob([text], { type: "text/markdown;charset=utf-8" }), downloadName);
-      status = { tone: "ok", text: `Downloaded ${downloadName}.` };
+      status = { tone: "ok", text: $LL.viewer.insights.prepare.downloaded({ file: downloadName }) };
     } catch (error) {
       status = { tone: "error", text: describeError(error) };
     } finally {
@@ -271,9 +270,9 @@
 <!-- A drawer over the list, like the meeting sheet but narrower: this is a
      review step, not a reading surface. Positioned against the browse shell
      rather than the viewport for the same reason the sheet is — see App.svelte. -->
-<aside class="prepare-panel" aria-label="Prepare context">
+<aside class="prepare-panel" aria-label={$LL.viewer.insights.prepare.region_label()}>
   <header class="prep-head">
-    <h2>Prepare context</h2>
+    <h2>{$LL.viewer.insights.prepare.title()}</h2>
     <div class="prep-head-actions">
       <ExportMenu
         includeContext
@@ -282,21 +281,21 @@
         canDownloadTranscript={!busy && !blocked}
         canDownloadAudio={!busy && !blocked}
         plural={entries.length !== 1}
-        label="Export selected meetings"
+        label={$LL.viewer.insights.prepare.export_label()}
         on:copyContext={handleCopy}
         on:context={handleDownload}
         on:copy={handleTranscriptCopy}
         on:transcript={handleTranscriptDownload}
         on:audio={handleAudioDownload}
       />
-      <CloseButton label="Close Prepare" on:click={() => dispatch("close")} />
+      <CloseButton label={$LL.viewer.insights.prepare.close_label()} on:click={() => dispatch("close")} />
     </div>
   </header>
 
   <div class="prep-body">
     <!-- 1. What was picked. -->
     <section class="prep-section prep-card">
-      <h3 class="prep-eyebrow">In this bundle</h3>
+      <h3 class="prep-eyebrow">{$LL.viewer.insights.prepare.in_bundle()}</h3>
       <ul class="prep-list">
         {#each entries as entry (entry.id)}
           <li class="prep-row">
@@ -309,15 +308,15 @@
               {#if lacksPortableAudio(entry)}
                 <span class="prep-row-flag">
                   <TriangleAlert size={12} aria-hidden="true" />
-                  Blocks Prepare
+                  {$LL.viewer.insights.prepare.blocks_prepare()}
                 </span>
               {/if}
               <!-- A row says the length it knows, or a dash where nobody
                    recorded one: the sentence belongs on the total, where it is
                    said once instead of on every row that is missing it. -->
               {#if entry.wordCount === undefined}
-                <span class="prep-row-words unknown" title="Length not recorded"
-                  aria-label="Length not recorded">—</span
+                <span class="prep-row-words unknown" title={$LL.viewer.insights.prepare.length_unknown()}
+                  aria-label={$LL.viewer.insights.prepare.length_unknown()}>—</span
                 >
               {:else}
                 <span class="prep-row-words">{formatWordCount(entry.wordCount)}</span>
@@ -328,7 +327,7 @@
               <button
                 type="button"
                 class="prep-row-drop"
-                aria-label={`Unpick ${entry.title}`}
+                aria-label={$LL.viewer.insights.prepare.unpick({ title: entry.title })}
                 on:click={() => dispatch("unpick", entry)}
               >
                 <X size={13} aria-hidden="true" />
@@ -338,7 +337,7 @@
         {/each}
       </ul>
       <p class="prep-total">
-        <span>Total</span>
+        <span>{$LL.viewer.insights.prepare.total()}</span>
         <span class:unknown={totals.meetingsWithoutWordCount > 0}
           >{formatSelectionWordCount(totals)}</span
         >

@@ -1,10 +1,10 @@
 <script lang="ts">
   import { Plus, Trash2, TriangleAlert } from "@lucide/svelte";
 
+  import { LL } from "../../i18n";
   import {
     WHOLE_MEETING,
     markRequest,
-    plural,
     removeRequest,
     untagMeetingRequest,
     type MeetingTag,
@@ -49,14 +49,14 @@
 </script>
 
 {#if $session.status !== "off"}
-  <div class="flex flex-wrap items-center gap-1.5 text-xs" role="group" aria-label="Tags on the whole meeting" aria-busy={$session.status === "loading"}>
+  <div class="flex flex-wrap items-center gap-1.5 text-xs" role="group" aria-label={$LL.viewer.meeting.tags.group_label()} aria-busy={$session.status === "loading"}>
     {#if $session.status === "loading"}
       {#each preview.filter((entry) => entry.whole) as { tag } (tag.tagId)}
         <TagChip label={tag.label} color={colorFor(tag)} icon={tag.icon} />
       {/each}
       {#if $session.editable}
         <button type="button" class="add-tag" disabled>
-          <Plus size={11} aria-hidden="true" />Add tag
+          <Plus size={11} aria-hidden="true" />{$LL.viewer.meeting.tags.add_tag()}
         </button>
       {/if}
     {:else if $session.status === "ready"}
@@ -67,7 +67,7 @@
             class="meeting-tag"
             aria-haspopup="menu"
             aria-expanded={openTagId === look.tag.id}
-            aria-label={`${look.tag.label} tag options`}
+            aria-label={$LL.viewer.meeting.tags.tag_options({ tag: look.tag.label })}
             on:click={(event) => toggleTag(look.tag.id, event)}
           >
             <TagChip label={look.tag.label} color={look.color} icon={look.icon} />
@@ -86,49 +86,49 @@
           disabled={$session.busy}
           on:click={() => (adding = !adding)}
         >
-          <Plus size={11} aria-hidden="true" />Add tag
+          <Plus size={11} aria-hidden="true" />{$LL.viewer.meeting.tags.add_tag()}
         </button>
       {/if}
       {#if lost > 0}
         <span class="inline-flex items-center gap-1.5 rounded-field bg-warning/15 px-2 py-0.5">
           <TriangleAlert size={12} class="text-warning" aria-hidden="true" />
-          {plural(lost, "mark")} can't be placed on this recording
+          {$LL.viewer.meeting.tags.lost({ count: lost })}
           {#if $session.editable}
             <button type="button" class="link" disabled={$session.busy} on:click={() => session.write(removeRequest(view.lost.map((item) => item.id)))}>
-              Remove {lost === 1 ? "it" : "them"}
+              {$LL.viewer.meeting.tags.remove_lost({ count: lost })}
             </button>
           {/if}
         </span>
       {/if}
       {#if $session.saving}
-        <span class="text-base-content/60" role="status">{$session.retryable ? "Annotation updates waiting to retry" : "Saving annotations…"}</span>
+        <span class="text-base-content/60" role="status">{$session.retryable ? $LL.viewer.meeting.tags.waiting_to_retry() : $LL.viewer.meeting.tags.saving()}</span>
       {:else if $session.annotations?.sync && $session.annotations.sync.state !== "saved"}
         <span class="text-base-content/60" role="status">
           {#if $session.annotations.sync.state === "pending"}
-            Tags saved · updating recording…
+            {$LL.viewer.meeting.tags.sync_pending()}
           {:else if $session.annotations.sync.state === "delayed"}
-            Tags saved · recording update delayed
+            {$LL.viewer.meeting.tags.sync_delayed()}
           {:else}
-            Tags saved · recording needs attention
+            {$LL.viewer.meeting.tags.sync_blocked()}
           {/if}
         </span>
         {#if $session.annotations.sync.state === "delayed" || $session.annotations.sync.state === "blocked"}
           <span class="text-base-content/60">{$session.annotations.sync.error}</span>
-          <button type="button" class="link" disabled={$session.busy} on:click={() => session.retrySync()}>Retry recording update</button>
+          <button type="button" class="link" disabled={$session.busy} on:click={() => session.retrySync()}>{$LL.viewer.meeting.tags.retry_sync()}</button>
         {/if}
       {/if}
       {#if $session.error}
         <span class="text-error" role="alert">{$session.error}</span>
         {#if $session.retryable}
-          <button type="button" class="link" on:click={() => session.retryWrite()}>Retry saving annotations</button>
+          <button type="button" class="link" on:click={() => session.retryWrite()}>{$LL.viewer.meeting.tags.retry_saving()}</button>
         {:else}
-          <button type="button" class="link" on:click={() => session.dismissError()}>Dismiss</button>
+          <button type="button" class="link" on:click={() => session.dismissError()}>{$LL.common.action.dismiss()}</button>
         {/if}
       {/if}
     {:else if $session.status === "preparing"}
-      <span class="text-base-content/60">Tags are being prepared…</span>
+      <span class="text-base-content/60">{$LL.viewer.meeting.tags.preparing()}</span>
     {:else}
-      <span class="text-base-content/60">Tags aren't available right now: {$session.error}</span>
+      <span class="text-base-content/60">{$LL.viewer.meeting.tags.unavailable({ error: $session.error })}</span>
     {/if}
   </div>
 {/if}
@@ -138,11 +138,11 @@
     use:focusFirst
     role="menu"
     tabindex="-1"
-    aria-label={`${openLook.tag.label} tag options`}
+    aria-label={$LL.viewer.meeting.tags.tag_options({ tag: openLook.tag.label })}
     class="tag-popover grid p-1"
   >
-    <button type="button" role="menuitem" class="mt-item mt-remove" disabled={$session.busy} aria-label={`Remove ${openLook.tag.label}`} on:click={removeOpenTag}>
-      <Trash2 size={12} aria-hidden="true" />Remove
+    <button type="button" role="menuitem" class="mt-item mt-remove" disabled={$session.busy} aria-label={$LL.viewer.meeting.tags.remove_tag({ tag: openLook.tag.label })} on:click={removeOpenTag}>
+      <Trash2 size={12} aria-hidden="true" />{$LL.common.action.remove()}
       <TagChip label={openLook.tag.label} color={openLook.color} icon={openLook.icon} />
     </button>
   </div>
@@ -150,7 +150,7 @@
 {#if adding}
   <TagPicker
     tags={vocabulary}
-    label="Tag the whole meeting"
+    label={$LL.viewer.meeting.tags.picker_label()}
     anchor={addButton}
     on:pick={(event) => ((adding = false), session.write(markRequest(event.detail, WHOLE_MEETING)))}
     on:close={() => (adding = false)}

@@ -742,6 +742,9 @@ func TestNewRuntimeDoesNotGuessAPublishSink(t *testing.T) {
 		SiteRoot:    filepath.Join(tmp, "site"),
 		PublishSink: publishSinkNextcloudFiles,
 	}, logger, ioDiscard{}, ioDiscard{})
+	// Join the workers before reading their log buffer or removing their
+	// persistent diagnostic directory at the end of the test.
+	rt.Shutdown()
 
 	if got := logged.String(); strings.Contains(got, "publish sink") {
 		t.Errorf("NewRuntime said something about the publish sink: %q", got)

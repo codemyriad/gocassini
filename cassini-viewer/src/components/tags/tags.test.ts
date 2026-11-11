@@ -77,7 +77,9 @@ describe("TagPicker", () => {
     expect(picker).toContain(">HR</span>");
     expect(picker).toContain(">hiring</span>");
     expect(picker).not.toContain(">budget</span>");
-    expect(picker).toMatch(/Create <b[^>]*>“h”<\/b>/);
+    // The sentence is the dictionary's, with the name in bold where the
+    // translation puts it (SSR leaves its block markers between the parts).
+    expect(picker.replace(/<!--[^>]*-->/g, "")).toMatch(/Create <b[^>]*>“h”<\/b>/);
     expect(picker).toContain(`aria-label="Colour: ${leastUsedColor(tags).replace(/^./, (c) => c.toUpperCase())}"`);
   });
 

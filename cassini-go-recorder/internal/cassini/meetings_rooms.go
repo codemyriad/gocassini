@@ -9,6 +9,7 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"time"
 )
 
 // meetingsRoom is one row of `cassini meetings rooms`: a distinct conversation
@@ -29,8 +30,19 @@ type meetingsRoom struct {
 	Meetings        int    `json:"meetings"`
 	// Latest and Earliest are the dateLabels of the newest and oldest readable
 	// meeting in the room, empty when none of them carried a usable label.
+	// Kept as labels for consumers that parse them as such.
 	Latest   string `json:"latest,omitempty"`
 	Earliest string `json:"earliest,omitempty"`
+	// LatestRecordedAtUTC and EarliestRecordedAtUTC are those meetings'
+	// recording starts, when their entries carry one.
+	LatestRecordedAtUTC   string `json:"latestRecordedAtUtc,omitempty"`
+	EarliestRecordedAtUTC string `json:"earliestRecordedAtUtc,omitempty"`
+
+	// latest and earliest are the entries themselves, for the text output's
+	// zone-aware rendering and for ordering rooms on the time axis.
+	latest, earliest       meetingsCatalogEntry
+	latestAt               time.Time
+	hasLatest, hasEarliest bool
 }
 
 func runMeetingsRooms(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -76,7 +88,9 @@ Two rows can share a display name. Their distinct room ids are kept separate.
 	}
 	warnAboutInsecureTLS(stderr, cfg)
 
+	loc := meetingsLocation(ctx)
 	client := newMeetingsClient(cfg)
+	client.loc = loc
 	// Unfiltered, but through the same loud path `list` uses: a room listing
 	// built from an empty catalog looks identical whether the account may read
 	// nothing or the archive is unreachable, and answering "no rooms" to an
@@ -119,8 +133,8 @@ Two rows can share a display name. Their distinct room ids are kept separate.
 			blankMeetingsDash(room.Selector),
 			blankMeetingsDash(firstNonBlank(room.RoomDisplayName, room.RoomName)),
 			room.Meetings,
-			blankMeetingsDash(room.Latest),
-			blankMeetingsDash(room.Earliest),
+			blankMeetingsDash(room.latestDisplay(loc)),
+			blankMeetingsDash(room.earliestDisplay(loc)),
 		)
 	}
 	if unattributed > 0 {
@@ -173,18 +187,22 @@ func groupMeetingsByRoom(listing meetingsListing) (rooms []meetingsRoom, unattri
 		if !item.dated {
 			continue
 		}
-		if room.Latest == "" {
+		if !room.hasLatest {
+			room.hasLatest, room.latest, room.latestAt = true, item.entry, item.at
 			room.Latest = strings.TrimSpace(item.entry.DateLabel)
+			room.LatestRecordedAtUTC = strings.TrimSpace(item.entry.RecordedAtUTC)
 		}
+		room.hasEarliest, room.earliest = true, item.entry
 		room.Earliest = strings.TrimSpace(item.entry.DateLabel)
+		room.EarliestRecordedAtUTC = strings.TrimSpace(item.entry.RecordedAtUTC)
 	}
 	// Most recently active first, which is the order the meeting list is in and
 	// so the order someone scanning both expects. Rooms whose meetings are all
 	// undated sort last; ties break by selector so the output is deterministic.
 	sort.SliceStable(rooms, func(i, j int) bool {
 		left, right := rooms[i], rooms[j]
-		leftAt, leftDated := parseMeetingDateLabel(left.Latest)
-		rightAt, rightDated := parseMeetingDateLabel(right.Latest)
+		leftAt, leftDated := left.latestAt, left.hasLatest
+		rightAt, rightDated := right.latestAt, right.hasLatest
 		switch {
 		case leftDated && rightDated:
 			if !leftAt.Equal(rightAt) {
@@ -225,4 +243,18 @@ func writeMeetingsRoomsJSON(out io.Writer, listing meetingsListing, rooms []meet
 	encoder := json.NewEncoder(out)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(document)
+}
+
+func (r meetingsRoom) latestDisplay(loc *time.Location) string {
+	if !r.hasLatest {
+		return ""
+	}
+	return meetingDisplayDate(r.latest, loc)
+}
+
+func (r meetingsRoom) earliestDisplay(loc *time.Location) string {
+	if !r.hasEarliest {
+		return ""
+	}
+	return meetingDisplayDate(r.earliest, loc)
 }

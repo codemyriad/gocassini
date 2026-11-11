@@ -1,3 +1,7 @@
+import { get } from "svelte/store";
+
+import { LL } from "../i18n";
+
 // The tag palette (D-746). The colour values live in app.css as custom
 // properties; `data-tag-color="<id>"` on an element sets its --tag, --tag-bg
 // and --tag-border.
@@ -44,9 +48,11 @@ function isTagColor(value: unknown): value is TagColorId {
   return TAG_COLORS.includes(value as TagColorId);
 }
 
-// "teal" → "Teal", for a colour or an icon.
+// A colour's or an icon's name, in the reader's language. In a component,
+// prefer $LL.viewer.browse.tags.colors[id]() so it follows a language change.
 export function styleName(id: TagColorId | TagIconId): string {
-  return id.charAt(0).toUpperCase() + id.slice(1);
+  const text = get(LL).viewer.browse.tags;
+  return isTagColor(id) ? text.colors[id]() : text.icons[id as TagIconId]();
 }
 
 type TagColorSource = { tagId: string; color?: string } | { id: string; color?: string };

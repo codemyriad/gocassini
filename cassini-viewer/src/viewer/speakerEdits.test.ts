@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { get } from "svelte/store";
+
+import { durationFormat, LL } from "../i18n";
 
 import {
   applyPending,
@@ -82,7 +85,7 @@ describe("speaker edits documents", () => {
     expect(describeSpeakerEditsError(new SpeakerEditsError(503, "diarization-unavailable"))).toMatch(/administrator can download it in Cassini's Settings/);
     // The operator's refusal for a meeting whose participant audio has gone.
     expect(describeSpeakerEditsError(new SpeakerEditsError(409, "unavailable", { reason: "no-source-audio" }))).toBe(
-      "Each participant's own audio was not kept for this recording.",
+      get(LL).viewer.meeting.speaker_edits.reason_no_source_audio(),
     );
     // A rerun that was never published: who can fix it, and where.
     expect(describeSpeakerEditsError(new SpeakerEditsError(409, "unavailable", { reason: "unpublished-rebuild" }))).toMatch(
@@ -91,10 +94,12 @@ describe("speaker edits documents", () => {
     expect(describeSpeakerEditsError(new SpeakerEditsError(409, "unavailable", { reason: "later" }))).toMatch(/cannot be changed/);
     // Too many saves: when to try again, in whole minutes, never "0 min".
     const limited = (retryAfterMs?: number) => describeSpeakerEditsError(new SpeakerEditsError(429, "rate-limited", { retryAfterMs }));
-    expect(limited(125_000)).toBe("Too many changes in a short time. Try again in 3 min.");
-    expect(limited(60_000)).toBe("Too many changes in a short time. Try again in 1 min.");
-    expect(limited(0)).toBe("Too many changes in a short time. Try again in 1 min.");
-    expect(limited(undefined)).toBe("Too many changes in a short time. Try again later.");
+    const t = get(LL).viewer.meeting.speaker_edits;
+    expect(limited(125_000)).toBe(t.error_rate_limited_in({ minutes: "3" }));
+    expect(limited(60_000)).toBe(t.error_rate_limited_in({ minutes: "1" }));
+    expect(limited(0)).toBe(t.error_rate_limited_in({ minutes: "1" }));
+    expect(limited(undefined)).toBe(t.error_rate_limited());
+    expect(t.error_rate_limited_in({ minutes: "3" })).toBe("Too many changes in a short time. Try again in 3 min.");
   });
 
   it("locks every save on a meeting the operator cannot republish, and only new splits without the diarizer", () => {
@@ -138,21 +143,26 @@ describe("an apply's progress", () => {
   });
 
   it("says the time left as a rough figure, and almost done once it is up", () => {
-    expect(remainingText(50_000)).toBe("about 50 s left");
-    expect(remainingText(46_200)).toBe("about 50 s left");
-    expect(remainingText(1)).toBe("about 5 s left");
-    expect(remainingText(55_000)).toBe("about 55 s left");
-    expect(remainingText(55_001)).toBe("about 1 min left");
-    expect(remainingText(89_000)).toBe("about 1 min left");
-    expect(remainingText(100_000)).toBe("about 2 min left");
-    expect(remainingText(0)).toBe("almost done");
-    expect(remainingText(-12_000)).toBe("almost done");
+    const t = get(LL).viewer.meeting.speaker_edits;
+    expect(remainingText(50_000)).toBe(t.time_left({ duration: durationFormat({ seconds: 50 }) }));
+    expect(remainingText(46_200)).toBe(t.time_left({ duration: durationFormat({ seconds: 50 }) }));
+    expect(remainingText(1)).toBe(t.time_left({ duration: durationFormat({ seconds: 5 }) }));
+    expect(remainingText(55_000)).toBe(t.time_left({ duration: durationFormat({ seconds: 55 }) }));
+    expect(remainingText(55_001)).toBe(t.time_left({ duration: durationFormat({ minutes: 1 }) }));
+    expect(remainingText(89_000)).toBe(t.time_left({ duration: durationFormat({ minutes: 1 }) }));
+    expect(remainingText(100_000)).toBe(t.time_left({ duration: durationFormat({ minutes: 2 }) }));
+    expect(remainingText(0)).toBe(t.almost_done());
+    expect(remainingText(-12_000)).toBe(t.almost_done());
+    // The English itself, the same in every runtime.
+    expect(remainingText(50_000)).toBe("about 50 secs left");
   });
 
   it("names each phase", () => {
-    expect(phaseText("starting")).toBe("Starting…");
-    expect(phaseText("queued")).toBe("Waiting for other recordings…");
-    expect(phaseText("separating")).toBe("Separating voices…");
-    expect(phaseText("updating")).toBe("Updating the recording…");
+    const t = get(LL).viewer.meeting.speaker_edits;
+    expect(phaseText("starting")).toBe(t.phase_starting());
+    expect(phaseText("queued")).toBe(t.phase_queued());
+    expect(phaseText("separating")).toBe(t.phase_separating());
+    expect(phaseText("updating")).toBe(t.phase_updating());
+    expect(t.phase_queued()).toBe("Waiting for other recordings…");
   });
 });

@@ -28,6 +28,7 @@ export const docsNav: NavSection[] = [
       { label: "Agent access via the CLI", slug: "guides/agent-access" },
       { label: "Privacy and data processing", slug: "guides/privacy" },
       { label: "Troubleshooting", slug: "guides/troubleshooting" },
+      { label: "Help translate Cassini", slug: "guides/translate" },
     ],
   },
 ];

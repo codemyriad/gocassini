@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"gocassini/internal/portable"
 )
 
 // Version identifies the context bundle's shape. Bumping it is a breaking
@@ -51,7 +53,14 @@ type MeetingContext struct {
 	SourceTranscriptID     string `json:"sourceTranscriptId,omitempty"`
 	SourceTranscriptFormat string `json:"sourceTranscriptFormat,omitempty"`
 	Language               string `json:"language,omitempty"`
-	WordCount              int    `json:"wordCount"`
+	// WordCount is the whole meeting's, window or not.
+	WordCount int `json:"wordCount"`
+
+	// Window is set when the caller asked for a stretch of the meeting:
+	// Segments then holds only the passages overlapping it, and everything
+	// else still describes the whole meeting. Its presence is what tells a
+	// reader the transcript is partial on purpose.
+	Window *Window `json:"window,omitempty"`
 
 	Segments []Segment `json:"segments"`
 	Summary  Summary   `json:"summary"`
@@ -59,10 +68,23 @@ type MeetingContext struct {
 
 // Meeting is what the meeting was.
 type Meeting struct {
-	ID           string `json:"id"`
-	Title        string `json:"title"`
+	ID    string `json:"id"`
+	Title string `json:"title"`
+	// CreatedAtUTC is when the file was built, not when the meeting
+	// happened. Kept for consumers that already read it.
 	CreatedAtUTC string `json:"createdAtUtc,omitempty"`
-	DurationMS   int64  `json:"durationMs,omitempty"`
+	// RecordedAtUTC is when the recording started: the instant at position 0
+	// of the audio, so a segment's wall-clock time is RecordedAtUTC + startMs.
+	// RFC 3339 UTC. Absent when the file does not know it.
+	RecordedAtUTC string `json:"recordedAtUtc,omitempty"`
+	// RecordedAtLocal is the file's zone-less wall-clock label, carried only
+	// so a reader can show it as such. It is never converted to an instant.
+	RecordedAtLocal string `json:"recordedAtLocal,omitempty"`
+	// MeetingStart is when the meeting happened as the format's rule picks
+	// it (portable.MeetingStartOf), which can also come from the file's DATE
+	// tag. Absent when the file does not say.
+	MeetingStart *portable.MeetingStart `json:"meetingStart,omitempty"`
+	DurationMS   int64                  `json:"durationMs,omitempty"`
 	// RoomID and RoomName say which conversation this meeting came out of
 	// (D-640). Both optional — a meeting with no room is an ordinary state —
 	// and both are read from the catalog entry rather than from the file,
@@ -101,6 +123,60 @@ type Summary struct {
 	Format   string `json:"format,omitempty"`
 	Model    string `json:"model,omitempty"`
 	Markdown string `json:"markdown,omitempty"`
+}
+
+// Window is a stretch of a meeting, in milliseconds from the start of the
+// recording. ToMS nil means to the end.
+type Window struct {
+	FromMS int64  `json:"fromMs"`
+	ToMS   *int64 `json:"toMs,omitempty"`
+}
+
+// Contains reports whether a passage from startMS to endMS overlaps the
+// window. A passage straddling either edge is kept whole: cutting it would put
+// words in a speaker's mouth that the passage, read whole, does not say.
+func (w Window) Contains(startMS, endMS int64) bool {
+	// A passage that ends exactly where the window starts does not overlap
+	// it; an instantaneous one sitting on that edge does.
+	end := max(endMS, startMS)
+	if end < w.FromMS || (end == w.FromMS && startMS < end) {
+		return false
+	}
+	if w.ToMS != nil && startMS >= *w.ToMS {
+		return false
+	}
+	return true
+}
+
+// Validate refuses a window that can never hold anything.
+func (w Window) Validate() error {
+	if w.FromMS < 0 {
+		return fmt.Errorf("a window cannot start before the recording does")
+	}
+	if w.ToMS != nil && *w.ToMS <= w.FromMS {
+		return fmt.Errorf("a window must end after it starts")
+	}
+	return nil
+}
+
+// WithWindow returns the bundle narrowed to the passages overlapping w in
+// every meeting, each marked with the window. The meetings are copied; b is
+// left as it was.
+func (b Bundle) WithWindow(w Window) Bundle {
+	narrowed := Bundle{Meetings: make([]MeetingContext, 0, len(b.Meetings))}
+	for _, meeting := range b.Meetings {
+		window := w
+		meeting.Window = &window
+		kept := make([]Segment, 0, len(meeting.Segments))
+		for _, segment := range meeting.Segments {
+			if w.Contains(segment.StartMS, segment.EndMS) {
+				kept = append(kept, segment)
+			}
+		}
+		meeting.Segments = kept
+		narrowed.Meetings = append(narrowed.Meetings, meeting)
+	}
+	return narrowed
 }
 
 // Bundle is the document cassini.meetings.context.v1 describes: one or more
@@ -283,6 +359,11 @@ type BuildInput struct {
 	ID              string
 	Title           string
 	CreatedAtUTC    string
+	RecordedAtUTC   string
+	RecordedAtLocal string
+	// DateTag is the file's plain DATE tag, which says when the meeting
+	// happened when the manifest does not (see portable.MeetingStartOf).
+	DateTag         string
 	DurationMS      int64
 	RoomID          string
 	RoomName        string
@@ -312,6 +393,8 @@ func Build(in BuildInput) MeetingContext {
 			ID:              strings.TrimSpace(in.ID),
 			Title:           strings.TrimSpace(in.Title),
 			CreatedAtUTC:    strings.TrimSpace(in.CreatedAtUTC),
+			RecordedAtUTC:   strings.TrimSpace(in.RecordedAtUTC),
+			RecordedAtLocal: strings.TrimSpace(in.RecordedAtLocal),
 			DurationMS:      in.DurationMS,
 			RoomID:          strings.TrimSpace(in.RoomID),
 			RoomName:        strings.TrimSpace(in.RoomName),
@@ -327,7 +410,26 @@ func Build(in BuildInput) MeetingContext {
 		Segments: make([]Segment, 0, len(in.Segments)),
 		Summary:  in.Summary,
 	}
+	if start := bundle.Meeting.start(in.DateTag); start.Known() {
+		bundle.Meeting.MeetingStart = &start
+	}
 	bundle.Speakers = append(bundle.Speakers, in.Speakers...)
 	bundle.Segments = append(bundle.Segments, in.Segments...)
 	return bundle
+}
+
+// start is when the meeting happened: MeetingStart when the bundle carries
+// it, else the format's rule applied to the fields it has and dateTag.
+func (m Meeting) start(dateTag string) portable.MeetingStart {
+	if m.MeetingStart != nil {
+		// A decoded bundle carries the text only; recover the instant.
+		if start := portable.ParseMeetingStart(m.MeetingStart.Source, m.MeetingStart.Value); start.Known() {
+			return start
+		}
+	}
+	return portable.MeetingStartOf(portable.Meeting{
+		RecordedAtUTC:   m.RecordedAtUTC,
+		RecordedAtLocal: m.RecordedAtLocal,
+		CreatedAtUTC:    m.CreatedAtUTC,
+	}, dateTag)
 }

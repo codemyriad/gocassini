@@ -113,11 +113,18 @@ export interface ExtractedPortableManifest {
 }
 
 export async function extractTranscriptionDocument(value: unknown): Promise<ExtractedPortableManifest> {
-  const doc = value as {kind?: string; version?: number; source?: PortableMeetingManifest; bodies?: Record<string, unknown>};
+  const doc = value as {kind?: string; version?: number; source?: PortableMeetingManifest; bodies?: Record<string, unknown>; tags?: unknown};
   if (doc?.kind !== "cassini-transcription" || doc.version !== 1 || !doc.source || !doc.bodies) throw new Error("Unsupported transcription document");
   const manifest = doc.source;
   validatePortableIndexManifest(manifest);
+  // The tags the source file carried (DATE among them), so this document is
+  // read like the .opus it came from. Bodies below come from doc.bodies.
   const tags: Record<string, string> = {};
+  if (doc.tags && typeof doc.tags === "object") {
+    for (const [key, tagValue] of Object.entries(doc.tags as Record<string, unknown>)) {
+      if (typeof tagValue === "string") tags[key.toUpperCase()] = tagValue;
+    }
+  }
   for (const entry of [...manifest.transcripts!, ...(manifest.readableTranscripts ?? [])]) {
     if (!Object.hasOwn(doc.bodies, entry.id)) throw new Error(`Missing transcript ${entry.id}`);
     const raw = JSON.stringify(doc.bodies[entry.id]).replace(/[<>&\u2028\u2029]/g, c => "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0"));
@@ -1441,7 +1448,18 @@ function tokenHasTiming(token: DisplayTranscriptV1["blocks"][number]["tokens"][n
   return Boolean(token) && Number.isInteger(token.startMs) && Number.isInteger(token.endMs);
 }
 
-export function describeMeeting(meetingId: string): { title: string; dateLabel: string } {
+// describeMeeting reads a title and a start out of a bare meeting id, for a
+// recording opened without a catalog. Filename stamps are zone-less wall-clock
+// digits and come back as a dateLabel only. A ULID job id encodes a real UTC
+// instant, so it also comes back as recordedAtUtc and renders in the reader's
+// clock; its dateLabel keeps the UTC digits for anything that reads only that.
+// A ULID carries no name, so it gets `untitled`: the caller passes the
+// translated word (this module stays free of the i18n store, for the node
+// scripts that import it).
+export function describeMeeting(
+  meetingId: string,
+  untitled = "Untitled meeting",
+): { title: string; dateLabel: string; recordedAtUtc?: string } {
   const normalizedMeetingId = stripVariantSuffix(meetingId);
   const colonTimeStamp = parseTimestampFromDoubledDashParts(normalizedMeetingId, "--");
   if (colonTimeStamp) {
@@ -1469,11 +1487,12 @@ export function describeMeeting(meetingId: string): { title: string; dateLabel: 
   // Talk recordings are named by the operator's ULID job id, which carries no
   // human-readable name but does encode the recording start time. Surface that
   // timestamp instead of showing the raw id as both title and date (D-462).
-  const ulidDateLabel = dateLabelFromUlid(normalizedMeetingId);
-  if (ulidDateLabel) {
+  const ulidMs = timestampMsFromUlid(normalizedMeetingId);
+  if (ulidMs !== null) {
     return {
-      title: "Untitled meeting",
-      dateLabel: ulidDateLabel,
+      title: untitled,
+      dateLabel: utcDateLabel(ulidMs),
+      recordedAtUtc: new Date(ulidMs).toISOString(),
     };
   }
 
@@ -1494,19 +1513,24 @@ const CROCKFORD_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 const ULID_TIMESTAMP_MIN_MS = Date.UTC(2015, 0, 1);
 const ULID_TIMESTAMP_MAX_MS = Date.UTC(2100, 0, 1);
 
-// dateLabelFromUlid returns "YYYY-MM-DD HH:MM" (UTC) decoded from a ULID's
-// 48-bit timestamp prefix, or "" when the id is not a plausible ULID.
-function dateLabelFromUlid(meetingId: string): string {
+// timestampMsFromUlid decodes a ULID's 48-bit timestamp prefix (the job's
+// creation instant, UTC), or null when the id is not a plausible ULID.
+function timestampMsFromUlid(meetingId: string): number | null {
   if (!ULID_PATTERN.test(meetingId)) {
-    return "";
+    return null;
   }
   let ms = 0;
   for (const char of meetingId.slice(0, 10)) {
     ms = ms * 32 + CROCKFORD_ALPHABET.indexOf(char);
   }
   if (ms < ULID_TIMESTAMP_MIN_MS || ms > ULID_TIMESTAMP_MAX_MS) {
-    return "";
+    return null;
   }
+  return ms;
+}
+
+// utcDateLabel renders "YYYY-MM-DD HH:MM" in UTC: the legacy label shape.
+function utcDateLabel(ms: number): string {
   const date = new Date(ms);
   const pad = (value: number) => String(value).padStart(2, "0");
   return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())} ${pad(

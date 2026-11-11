@@ -31,7 +31,12 @@ import {
   type PortableTranscriptDescriptor,
   type PortableTranscriptEntry,
 } from "./portable";
+import { get } from "svelte/store";
+
+import { LL } from "../i18n";
 import { readViewerBase, resolveAppBaseUrl } from "./appBase";
+import { formatMeetingStartWithDay, parseRecordedAtUtc } from "./meetingTime";
+import { portableRecordedAtUtc } from "../../scripts/meeting-start.mjs";
 import { withoutSplitDevices } from "../core/speakers";
 import { readSummaryStatus, type SummaryStatus } from "./meetingSummary";
 
@@ -116,6 +121,10 @@ export interface ArtifactMetadataSection {
 }
 
 export interface ArtifactRecordingFacts {
+  // The file's own record of when the recording started, as a UTC instant:
+  // manifest meeting.recordedAtUtc, else a DATE tag that is not the pack stamp
+  // (scripts/meeting-start.mjs). Null when it states neither.
+  recordedAtUtc: string | null;
   processedAtUtc: string | null;
   model: string | null;
   words: number | null;
@@ -267,12 +276,13 @@ export async function loadPortableArtifactFromAudioPath(
   options: { fresh?: boolean } = {},
 ): Promise<LoadedArtifact> {
   const resolvedAudioPath = resolveDocumentAssetUrl(audioPath);
-  const { manifest } = await store.loadManifest(resolvedAudioPath, options);
+  const { manifest, tags } = await store.loadManifest(resolvedAudioPath, options);
   const availableTranscripts = listAvailableTranscripts(manifest);
   const currentTranscriptId = getDefaultTranscriptId(manifest);
   store.primeBodies(resolvedAudioPath, manifest, currentTranscriptId);
   return buildPortableLoadedArtifact({
     manifest,
+    tags,
     audioSrc: manifest.transcriptionOnly ? "" : resolvedAudioPath,
     availableTranscripts,
     currentTranscriptId,
@@ -356,6 +366,7 @@ export async function switchPortableTranscript(
   const availableTranscripts = listAvailableTranscripts(manifest);
   return buildPortableLoadedArtifact({
     manifest: swappedManifest,
+    tags,
     audioSrc: manifest.transcriptionOnly ? "" : resolvedAudioPath,
     availableTranscripts,
     currentTranscriptId: transcriptId,
@@ -364,11 +375,13 @@ export async function switchPortableTranscript(
 
 function buildPortableLoadedArtifact({
   manifest,
+  tags,
   audioSrc,
   availableTranscripts,
   currentTranscriptId,
 }: {
   manifest: PortableMeetingManifest;
+  tags: Record<string, string>;
   audioSrc: string;
   availableTranscripts: PortableTranscriptDescriptor[];
   currentTranscriptId: string;
@@ -404,6 +417,9 @@ function buildPortableLoadedArtifact({
         readableTranscript,
         currentTranscriptId,
       ),
+      // When the meeting happened by the format's rule: meeting.recordedAtUtc,
+      // else a DATE tag that is not the pack stamp (meeting-start.mjs).
+      portableRecordedAtUtc(manifest, tags) || null,
     ),
     transcriptionStatus: readTranscriptionStatus(manifest.processing),
     summaryStatus: readSummaryStatus(manifest.processing),
@@ -479,6 +495,8 @@ export function classifyArtifactTimingPrecision(
   transcript: TranscriptWordsV1,
   displayTranscript: DisplayTranscriptV1 | null,
 ): ArtifactTimingPrecision {
+  // Shown under "Timing" in the meeting's details, in the reader's language.
+  const t = get(LL).viewer.meeting.timing;
   if (displayTranscript) {
     const wordTokens = displayTranscript.blocks.flatMap((block) => block.tokens)
       .filter((token) => token.kind === "word");
@@ -488,21 +506,21 @@ export function classifyArtifactTimingPrecision(
     if (wordTokens.length === 0 || timedWordTokens.length === 0) {
       return {
         level: "segment",
-        label: "Passage-timed",
-        detail: "Seeking is precise to passages; visible words are not individually timed in this artifact.",
+        label: t.passage(),
+        detail: t.passage_detail_display(),
       };
     }
     if (timedWordTokens.length === wordTokens.length) {
       return {
         level: "word",
-        label: "Word-timed",
-        detail: "Playback highlighting can follow individual words throughout the displayed transcript.",
+        label: t.word(),
+        detail: t.word_detail_display(),
       };
     }
     return {
       level: "mixed",
-      label: "Mixed timing",
-      detail: "Some displayed words have individual timing, while rewritten or unmatched words remain passage-timed.",
+      label: t.mixed(),
+      detail: t.mixed_detail_display(),
     };
   }
 
@@ -511,21 +529,21 @@ export function classifyArtifactTimingPrecision(
   if (textWordCount === 0 || timedWordCount === 0) {
     return {
       level: "segment",
-      label: "Passage-timed",
-      detail: "This artifact exposes passage timing but not individual word timing.",
+      label: t.passage(),
+      detail: t.passage_detail(),
     };
   }
   if (timedWordCount >= textWordCount) {
     return {
       level: "word",
-      label: "Word-timed",
-      detail: "Playback highlighting can follow individual words throughout the transcript.",
+      label: t.word(),
+      detail: t.word_detail(),
     };
   }
   return {
     level: "mixed",
-    label: "Mixed timing",
-    detail: "Some transcript passages have word timing, while others only have passage timing.",
+    label: t.mixed(),
+    detail: t.mixed_detail(),
   };
 }
 
@@ -557,7 +575,7 @@ async function fetchPortableManifest(audioUrl: string, init: RequestInit = {}): 
   if (new URL(audioUrl).pathname.toLowerCase().endsWith(".json")) {
     // no-store already bypasses the HTTP cache, so it also covers a fresh load.
     const response = await fetch(audioUrl, {...init, cache: "no-store"});
-    if (!response.ok) throw new Error(`Could not load ${audioUrl}.`);
+    if (!response.ok) throw new Error(get(LL).viewer.meeting.load.could_not_load({ url: audioUrl }));
     return extractTranscriptionDocument(await response.json());
   }
 
@@ -568,7 +586,7 @@ async function fetchPortableManifest(audioUrl: string, init: RequestInit = {}): 
     },
   });
   if (!partialResponse.ok) {
-    throw new Error(`Could not load ${audioUrl}.`);
+    throw new Error(get(LL).viewer.meeting.load.could_not_load({ url: audioUrl }));
   }
 
   const partialBuffer = await partialResponse.arrayBuffer();
@@ -582,7 +600,7 @@ async function fetchPortableManifest(audioUrl: string, init: RequestInit = {}): 
 
   const fullResponse = await fetch(audioUrl, init);
   if (!fullResponse.ok) {
-    throw new Error(`Could not load ${audioUrl}.`);
+    throw new Error(get(LL).viewer.meeting.load.could_not_load({ url: audioUrl }));
   }
   return extractPortableManifestFromArrayBuffer(await fullResponse.arrayBuffer());
 }
@@ -763,15 +781,23 @@ function buildDirectoryMetadataRaw(
   };
 }
 
+// `recordedAtUtc` is the start the caller already resolved from the file (a
+// portable meeting reads it with its tags); left out, it is read from
+// raw.meeting.recordedAtUtc.
 function buildArtifactMetadata(
   sourceKind: string,
   raw: Record<string, unknown>,
+  recordedAtUtc?: string | null,
 ): ArtifactMetadata | null {
   const normalized = {
     sourceKind,
     ...raw,
   };
-  const sections = buildMetadataSections(normalized);
+  const start =
+    parseRecordedAtUtc(
+      recordedAtUtc === undefined ? asMaybeObject(raw.meeting)?.recordedAtUtc : recordedAtUtc,
+    ) ?? null;
+  const sections = buildMetadataSections(normalized, start);
   if (sections.length === 0) {
     return null;
   }
@@ -779,15 +805,16 @@ function buildArtifactMetadata(
     sourceKind,
     sections,
     rawJson: JSON.stringify(normalized, null, 2),
-    recording: buildRecordingFacts(normalized),
+    recording: buildRecordingFacts(normalized, start),
   };
 }
 
-function buildRecordingFacts(raw: Record<string, unknown>): ArtifactRecordingFacts {
+function buildRecordingFacts(raw: Record<string, unknown>, recordedAtUtc: string | null): ArtifactRecordingFacts {
   const meeting = asMaybeObject(raw.meeting);
   const stats = asMaybeObject(raw.stats);
   const speechToText = asMaybeObject(asMaybeObject(raw.provenance)?.speechToText);
   return {
+    recordedAtUtc,
     processedAtUtc:
       asNonEmptyString(meeting?.processedAtUtc) ??
       asNonEmptyString(meeting?.processedAtUTC) ??
@@ -799,9 +826,9 @@ function buildRecordingFacts(raw: Record<string, unknown>): ArtifactRecordingFac
   };
 }
 
-function buildMetadataSections(raw: Record<string, unknown>): ArtifactMetadataSection[] {
+function buildMetadataSections(raw: Record<string, unknown>, recordedAtUtc: string | null): ArtifactMetadataSection[] {
   const sections: ArtifactMetadataSection[] = [];
-  const meetingRows = buildMeetingMetadataRows(raw);
+  const meetingRows = buildMeetingMetadataRows(raw, recordedAtUtc);
   if (meetingRows.length > 0) {
     sections.push({ title: "Meeting", rows: meetingRows });
   }
@@ -822,7 +849,7 @@ function buildMetadataSections(raw: Record<string, unknown>): ArtifactMetadataSe
   return sections;
 }
 
-function buildMeetingMetadataRows(raw: Record<string, unknown>): ArtifactMetadataRow[] {
+function buildMeetingMetadataRows(raw: Record<string, unknown>, recordedAtUtc: string | null): ArtifactMetadataRow[] {
   const rows: ArtifactMetadataRow[] = [];
   const meeting = asMaybeObject(raw.meeting);
   const source = asMaybeObject(raw.source);
@@ -840,15 +867,22 @@ function buildMeetingMetadataRows(raw: Record<string, unknown>): ArtifactMetadat
   const speakerNames = normalizeSpeakerNames(raw.speakers);
   const passages = asFiniteNumber(stats?.passages);
 
-  if (recordedAtLocal) {
+  // recordedAtUtc is the start; recordedAtLocal is a label kept for files
+  // that carry nothing better, and is never converted.
+  if (recordedAtUtc) {
     rows.push({
       label: "Recorded",
-      value: formatLocalTimestamp(recordedAtLocal),
+      value: formatMeetingStartWithDay({ recordedAtUtc }),
+    });
+  } else if (recordedAtLocal) {
+    rows.push({
+      label: "Recorded",
+      value: formatMeetingStartWithDay({ dateLabel: recordedAtLocal }),
     });
   } else if (createdAtUtc) {
     rows.push({
       label: "Created",
-      value: formatUtcTimestamp(createdAtUtc),
+      value: formatInstantTimestamp(createdAtUtc),
     });
   }
   if (durationMs !== null) {
@@ -890,7 +924,7 @@ function buildProcessingMetadataRows(raw: Record<string, unknown>): ArtifactMeta
   if (processedAtUtc) {
     rows.push({
       label: "Processed",
-      value: formatUtcTimestamp(processedAtUtc),
+      value: formatInstantTimestamp(processedAtUtc),
     });
   }
 
@@ -1040,37 +1074,15 @@ function formatDurationMs(durationMs: number): string {
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
-function formatLocalTimestamp(value: string): string {
-  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(value.trim());
-  if (!match) {
+// The metadata rows render times with the same rule as every other surface
+// (meetingTime.ts): an instant in the reader's own clock, a zone-less label as
+// its own digits.
+function formatInstantTimestamp(value: string): string {
+  const ms = Date.parse(value);
+  if (!Number.isFinite(ms)) {
     return value;
   }
-  const [, year, month, day, hour, minute, second = "00"] = match;
-  const asDate = new Date(Date.UTC(
-    Number.parseInt(year, 10),
-    Number.parseInt(month, 10) - 1,
-    Number.parseInt(day, 10),
-    Number.parseInt(hour, 10),
-    Number.parseInt(minute, 10),
-    Number.parseInt(second, 10),
-  ));
-  return new Intl.DateTimeFormat("en-US", {
-    dateStyle: "long",
-    timeStyle: "short",
-    timeZone: "UTC",
-  }).format(asDate);
-}
-
-function formatUtcTimestamp(value: string): string {
-  const asDate = new Date(value);
-  if (Number.isNaN(asDate.getTime())) {
-    return value;
-  }
-  return `${new Intl.DateTimeFormat("en-US", {
-    dateStyle: "long",
-    timeStyle: "short",
-    timeZone: "UTC",
-  }).format(asDate)} UTC`;
+  return formatMeetingStartWithDay({ recordedAtUtc: new Date(ms).toISOString() });
 }
 
 function describeProcessingStep(step: Record<string, unknown> | null): string {
@@ -1101,12 +1113,13 @@ function formatAudioSummary(audio: Record<string, unknown> | null): string {
     parts.push(`${Math.round(sampleRate / 1000)} kHz`);
   }
   const channels = asFiniteNumber(audio.channels);
+  const t = get(LL).viewer.meeting.facts;
   if (channels === 1) {
-    parts.push("mono");
+    parts.push(t.audio_mono());
   } else if (channels === 2) {
-    parts.push("stereo");
+    parts.push(t.audio_stereo());
   } else if (channels !== null) {
-    parts.push(`${channels} channels`);
+    parts.push(t.audio_channels({ count: channels }));
   }
   return parts.join(" · ");
 }

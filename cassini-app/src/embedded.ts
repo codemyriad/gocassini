@@ -31,6 +31,7 @@
 
 import { mount } from "svelte";
 import App from "./AppEntry.svelte";
+import { browserLanguages, nextcloudLanguage, nextcloudLocale, useFormatLocale, useLocale } from "cassini-viewer/i18n";
 // The shell's stylesheet composes the viewing layer's app.css and adds a
 // @source for the shell's own components (nav + operator surface) — D-420 V3.
 import "./app.css";
@@ -256,6 +257,12 @@ function mountEmbeddedShell(): void {
     const themesStr = document.body.dataset.themes ?? enabledThemes?.join(" ") ?? "";
     ncMode = applyNextcloudTheme(shadowHost, themesStr, primaryColor);
   }
+  // The language the user chose in Nextcloud, not the browser's: the shell
+  // sits inside Nextcloud's page and should read like the rest of it.
+  appRoot.lang = useLocale([nextcloudLanguage(window), ...browserLanguages()]);
+  // Dates and times follow the user's Nextcloud locale, which can differ from
+  // their language, as they do everywhere else in Nextcloud.
+  useFormatLocale([nextcloudLocale(window), nextcloudLanguage(window), ...browserLanguages()]);
   mount(App, { target: appRoot, props: { ncMode } });
 }
 

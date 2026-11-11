@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { get } from "svelte/store";
+
+import { LL } from "../i18n";
 import { transcriptMarkdown, safeMeetingStem } from "./meetingExport";
 import type { JudgedDisplaySegment } from "../core/transcript";
 
@@ -23,6 +26,15 @@ describe("transcript export", () => {
     expect(text).toBe("# Planning — 2026-09-24\n\n**Ana** [0:01]\n\nLet's ship this.\n\n**Ben** [0:09]\n\nAgreed.\n");
   });
 
+  it("writes a known start in the reader's clock with its zone, not the UTC label", () => {
+    const text = transcriptMarkdown(
+      { title: "Planning", dateLabel: "2026-09-24 08:05", recordedAtUtc: "2026-09-24T08:05:00Z" },
+      [segment("a", "Ana", 1000, "Let's ship this.")],
+    );
+    // Rome is UTC+2 in September (the suite's zone).
+    expect(text.split("\n")[0]).toBe("# Planning — Thu, 24 Sept 2026, 10:05 CEST");
+  });
+
   it("keeps Markdown syntax in meeting text literal", () => {
     const markdown = transcriptMarkdown(
       { title: "Review [draft]", dateLabel: "" },
@@ -34,7 +46,9 @@ describe("transcript export", () => {
   });
 
   it("names an empty transcript and makes distinct safe file names", () => {
-    expect(transcriptMarkdown(null, [])).toBe("# Meeting transcript\n\nNo transcript available.\n");
+    const t = get(LL).viewer.meeting.export;
+    expect(transcriptMarkdown(null, [])).toBe(`# ${t.title_fallback()}\n\n${t.empty()}\n`);
+    expect(t.title_fallback()).toBe("Meeting transcript");
     expect(safeMeetingStem({ title: "Review / launch", id: "id:1" })).toBe("Review-launch-id-1");
     expect(safeMeetingStem({ title: "Qualitätssicherung", id: "one" })).toBe("Qualitätssicherung-one");
     expect(safeMeetingStem({ title: "Daily Standup", id: "Daily-Standup--2026-03-13" })).toBe("Daily-Standup--2026-03-13");

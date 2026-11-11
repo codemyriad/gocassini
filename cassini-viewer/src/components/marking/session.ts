@@ -1,4 +1,5 @@
 import { get, writable } from "svelte/store";
+import { LL } from "../../i18n";
 import { createWriteQueue } from "../../viewer/listTags";
 import { createMarkIdentities, identifier, markIntent, optimisticMarks, type MarkIntent } from "./optimistic";
 
@@ -228,11 +229,11 @@ export function createMarksSession(onChanged: (result: AnnotationResult) => void
     if (request.ops.some((op) => !["mark", "unmark", "unmark-tag"].includes(op.op))) return false;
     if (request.ops.some((op) => op.op === "mark") && request.ops.some((op) => op.op === "unmark" &&
       !current.annotations?.annotations?.items.some((item) => item.id === op.itemId))) {
-      state.update((s) => ({ ...s, error: "This section changed or was removed. Select it again before moving it.", errorFrom: from }));
+      state.update((s) => ({ ...s, error: get(LL).viewer.meeting.marking.section_changed(), errorFrom: from }));
       return false;
     }
     if (current.annotations.resolved === false && request.ops.some((op) => op.op === "mark")) {
-      state.update((s) => ({ ...s, error: "Remove the marks that can't be placed first.", errorFrom: from }));
+      state.update((s) => ({ ...s, error: get(LL).viewer.meeting.marking.remove_lost_first(), errorFrom: from }));
       return false;
     }
     const action: PendingMark = { intent: markIntent(request, current.annotations), from, scheduled: false };
@@ -327,8 +328,14 @@ interface MarksView {
   lost: AnnotationItem[];
 }
 
+// How a tagged section is named to a screen reader, in the reader's language.
 export const describeMark = (mark: PlacedMark) =>
-  `${mark.tag.label}, ${formatClockTime(mark.startMs)} to ${formatClockTime(mark.endMs)}, marked by ${mark.item.actor.id}`;
+  get(LL).viewer.meeting.marking.describe({
+    tag: mark.tag.label,
+    start: formatClockTime(mark.startMs),
+    end: formatClockTime(mark.endMs),
+    actor: mark.item.actor.id,
+  });
 
 // Stretches made against other audio are counted as lost and never placed.
 export function viewMarks(state: MarksState, vocabulary: readonly VocabularyTag[]): MarksView {

@@ -14,6 +14,10 @@
 #     CHANGELOG.md in version order;
 #   - deletes the fragments the release commit consumed (a cherry-pick keeps
 #     the fragment's filename, so the names match on main);
+#   - replaces main's release notes for the version (docs/release-notes.md),
+#     usually its draft, with the entries as tagged. The release commit took
+#     them out of draft, and the site deploys from main, so this is what puts
+#     them on gocassini.com;
 #   - when main's version isn't above the release, sets it to the next minor's
 #     X.(Y+1).0-alpha.0: the untagged version main is developing
 #     (docs/release.md#mains-version).
@@ -39,6 +43,20 @@ EOF
 }
 
 die() { echo "error: $*" >&2; exit 1; }
+
+# notes_version — print the `version:` of the release notes entry on stdin,
+# without surrounding quotes (as user-release-notes.sh reads it).
+notes_version() {
+  awk '
+    /^---[[:space:]]*$/ { if (++n == 2) exit; next }
+    n == 1 && index($0, "version:") == 1 {
+      v = substr($0, 9)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
+      if (v ~ /^".*"$/ || v ~ /^\047.*\047$/) v = substr(v, 2, length(v) - 2)
+      print v; exit
+    }
+  '
+}
 
 main() {
   local version=""
@@ -138,6 +156,31 @@ main() {
   done < <(git -C "$root" diff --name-only --diff-filter=D "$tag^" "$tag" -- changelog.d/)
 
   [[ "$removed" -eq 0 ]] || echo "Removed $removed released fragment(s)."
+
+  # Release notes: the tagged entries for this version replace main's.
+  # Without tagged entries, main's own (a draft that missed the release) stay.
+  local notes_rel="cassini-microsite/src/content/changelog" entry tagged=() mine=()
+  while IFS= read -r entry; do
+    [[ "$entry" == *.md ]] || continue
+    if [[ "$(git -C "$root" show "$tag:$entry" | notes_version)" == "$version" ]]; then
+      tagged+=("$entry")
+    fi
+  done < <(git -C "$root" ls-tree -r --name-only "$tag" -- "$notes_rel/")
+  while IFS= read -r entry; do
+    [[ "$entry" == *.md ]] || continue
+    if [[ "$(notes_version <"$root/$entry")" == "$version" ]]; then
+      mine+=("$entry")
+    fi
+  done < <(git -C "$root" ls-files -- "$notes_rel/")
+  if [[ "${#tagged[@]}" -gt 0 ]]; then
+    [[ "${#mine[@]}" -eq 0 ]] || git -C "$root" rm -q -- "${mine[@]}"
+    git -C "$root" checkout -q "$tag" -- "${tagged[@]}"
+    echo "Brought ${#tagged[@]} release notes entr$([[ ${#tagged[@]} -eq 1 ]] && echo y || echo ies) for $version."
+  elif [[ "${#mine[@]}" -gt 0 ]]; then
+    echo "note: $tag has no release notes for $version; main's (${mine[*]}) stay as they are"
+  elif [[ "$version" != *-* ]]; then
+    echo "note: $tag has no release notes for $version (docs/release-notes.md)"
+  fi
 
   # Main carries the version it is developing, above everything shipped; after
   # 0.2.1 that is 0.3.0-alpha.0 unless main already moved past it.

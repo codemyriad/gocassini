@@ -33,6 +33,10 @@ func TestPackedMeetingKeysAreDeclaredBySchema(t *testing.T) {
 	if err := writeReadyMeetingBundleFixture(bundleDir, "/tmp/source.mkv"); err != nil {
 		t.Fatalf("write fixture: %v", err)
 	}
+	// A Talk build records when the recording started; pack seals it as
+	// meeting.recordedAtUtc, so the schema must declare it and its pattern
+	// must accept the writer's value.
+	setBundleSourceRecordedAtUTC(t, bundleDir, "2026-11-09T11:31:48.250Z")
 	outPath := filepath.Join(tmp, "conformance.opus")
 	var stdout, stderr bytes.Buffer
 	code := Run(context.Background(), []string{
@@ -80,6 +84,43 @@ func TestPackedMeetingKeysAreDeclaredBySchema(t *testing.T) {
 	sort.Strings(undeclared)
 	if len(undeclared) > 0 {
 		t.Errorf("%s does not declare meeting field(s) a packed file emits: %v", schemaPath, undeclared)
+	}
+	var recordedAtUTC string
+	if err := json.Unmarshal(document.Meeting["recordedAtUtc"], &recordedAtUTC); err != nil {
+		t.Fatalf("packed meeting has no recordedAtUtc: %v", err)
+	}
+	property, _ := declared["recordedAtUtc"].(map[string]any)
+	pattern, _ := property["pattern"].(string)
+	if !compileSchemaPattern(t, pattern).MatchString(recordedAtUTC) {
+		t.Errorf("schema recordedAtUtc pattern %q rejects the writer's %q", pattern, recordedAtUTC)
+	}
+}
+
+// setBundleSourceRecordedAtUTC edits a meeting bundle's manifest.json the way
+// a Talk build writes it: source.recordedAtUtc from the MKV's anchors.
+func setBundleSourceRecordedAtUTC(t *testing.T, bundleDir, value string) {
+	t.Helper()
+	path := filepath.Join(bundleDir, "manifest.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	source, _ := doc["source"].(map[string]any)
+	if source == nil {
+		source = map[string]any{}
+		doc["source"] = source
+	}
+	source["recordedAtUtc"] = value
+	updated, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, updated, 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 

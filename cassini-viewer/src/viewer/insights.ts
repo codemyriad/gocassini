@@ -1,5 +1,19 @@
-import { parseDateLabelMs, type MeetingCatalogEntry } from "./catalog";
-import { NO_ROOM_KEY, UNDATED_MONTH_KEY, UNDATED_MONTH_LABEL } from "./rooms";
+import { get } from "svelte/store";
+
+import { LL, operatorPlace } from "../i18n";
+import type { TranslationFunctions } from "../i18n/i18n-types";
+import { dateFormat } from "../i18n/format";
+import type { MeetingCatalogEntry } from "./catalog";
+import {
+  compareStartOrder,
+  instantStartOrder,
+  instantWallClock,
+  meetingStartMonth,
+  meetingStartOrder,
+  type StartOrder,
+  wallClockMonth,
+} from "./meetingTime";
+import { NO_ROOM_KEY, UNDATED_MONTH_KEY, undatedMonthLabel } from "./rooms";
 
 // Insights in the browse catalogue (D-721). Pure, for the same reason rooms.ts
 // and selectionModel.ts are: the viewer's suite runs in node with no DOM, and
@@ -90,53 +104,40 @@ export type InsightReason =
   | "interrupted"
   | "unknown";
 
-// One entry per reason: the title says what happened, the line says what to
-// do, and neither repeats the other. Plain and short on purpose — these are
+// Every reason the operator can record. Each has an entry in the dictionary
+// (viewer.insights.failure): the title says what happened, the line says what
+// to do, and neither repeats the other. Plain and short on purpose — these are
 // the first words, not the last.
-export const INSIGHT_FAILURE_COPY: Record<InsightReason, { title: string; line: string }> = {
-  "bad-request": { title: "This request could not be run", line: "Check the app log." },
-  "no-provider": { title: "No AI endpoint", line: "Add one under Operator › AI providers." },
-  "provider-refused": {
-    title: "The endpoint refused the request",
-    line: "Check its key, quota or model name under Operator › AI providers.",
-  },
-  "model-failed": { title: "The model did not answer", line: "Retry, or pick fewer meetings." },
-  "template-changed": {
-    title: "The template changed before this insight ran",
-    line: "Generate it again to use the template as it is now.",
-  },
-  "write-failed": {
-    title: "The insight could not be written to disk",
-    line: "Check the app's storage.",
-  },
-  "deliver-failed": {
-    title: "The insight could not be saved to your Nextcloud files",
-    line: "Check your space, then retry.",
-  },
-  timeout: {
-    title: "Stopped after an hour",
-    line: "Retry with fewer meetings or a faster endpoint.",
-  },
-  "staging-failed": { title: "The meetings could not be staged", line: "Check the app's storage." },
-  "catalog-failed": { title: "Your meeting list could not be read", line: "Retry in a moment." },
-  "meeting-unavailable": {
-    title: "One of these meetings is no longer available to you",
-    line: "Unpick it and ask again.",
-  },
-  "download-failed": {
-    title: "A meeting could not be downloaded from Nextcloud",
-    line: "Retry in a moment.",
-  },
-  "assemble-failed": {
-    title: "The meetings could not be assembled into one document",
-    line: "Check the app log.",
-  },
-  interrupted: { title: "Cassini restarted before this insight finished", line: "Retry it." },
-  unknown: { title: "The insight failed", line: "Retry, or check the app log." },
-};
+export const INSIGHT_REASONS: readonly InsightReason[] = [
+  "bad-request",
+  "no-provider",
+  "provider-refused",
+  "model-failed",
+  "template-changed",
+  "write-failed",
+  "deliver-failed",
+  "timeout",
+  "staging-failed",
+  "catalog-failed",
+  "meeting-unavailable",
+  "download-failed",
+  "assemble-failed",
+  "interrupted",
+  "unknown",
+];
+
+// insightFailureCopy is one reason's title and line, in the reader's language.
+export function insightFailureCopy(reason: InsightReason): { title: string; line: string } {
+  const key = reason.replace(/-/g, "_") as keyof TranslationFunctions["viewer"]["insights"]["failure"];
+  const copy = get(LL).viewer.insights.failure[key];
+  // Two lines name a settings page as {place}; the rest take no arguments and
+  // ignore it.
+  const line = copy.line as (args: { place: string }) => string;
+  return { title: copy.title(), line: line({ place: operatorPlace("ai_providers") }) };
+}
 
 function isInsightReason(value: string): value is InsightReason {
-  return Object.prototype.hasOwnProperty.call(INSIGHT_FAILURE_COPY, value);
+  return (INSIGHT_REASONS as readonly string[]).includes(value);
 }
 
 // The four tokens the operator used to put on the front of a stored sentence.
@@ -168,11 +169,11 @@ export function insightRetryable(record: Pick<InsightRecord, "status" | "reason"
 }
 
 // describeInsightFailure is what a failed run's sheet renders: a title and one
-// line, from the table above and from nowhere else.
+// line, from the dictionary and from nowhere else.
 export function describeInsightFailure(
   record: Pick<InsightRecord, "reason" | "error">,
 ): { title: string; line: string } {
-  return INSIGHT_FAILURE_COPY[insightReasonOf(record)];
+  return insightFailureCopy(insightReasonOf(record));
 }
 
 // Which kinds of thing the browse list is showing. Both true is the default;
@@ -263,22 +264,22 @@ export function insightHeadline(record: InsightRecord): string {
     return name;
   }
   const question = record.question?.trim() ?? "";
-  return question !== "" ? question : record.workflowId || "Insight";
+  return question !== "" ? question : record.workflowId || get(LL).viewer.insights.headline_fallback();
 }
 
-// The four wire words, capitalised and otherwise untouched. An unrecognised
+// The four wire words, in the reader's language. An unrecognised
 // status is shown as it arrived rather than mapped to a guess: a status this
 // build does not know about is exactly the thing a reader needs to see.
 export function formatInsightStatus(status: string): string {
   switch (status) {
     case "queued":
-      return "Queued";
+      return get(LL).viewer.insights.status.queued();
     case "running":
-      return "Running";
+      return get(LL).viewer.insights.status.running();
     case "succeeded":
-      return "Succeeded";
+      return get(LL).viewer.insights.status.succeeded();
     case "failed":
-      return "Failed";
+      return get(LL).viewer.insights.status.failed();
     default:
       return status;
   }
@@ -292,28 +293,27 @@ export function insightTimestampMs(record: InsightRecord): number | null {
   return Number.isFinite(ms) ? ms : null;
 }
 
-const CREATED_DATE_FORMAT = new Intl.DateTimeFormat("en-GB", {
+const CREATED_DATE_OPTIONS: Intl.DateTimeFormatOptions = {
   day: "numeric",
   month: "short",
   year: "numeric",
   hour: "2-digit",
   minute: "2-digit",
-  hour12: false,
-});
+};
 
 // formatInsightCreated renders createdAt in the reader's own timezone.
 //
-// This deliberately differs from formatMeetingDateShort, which shows a catalog
-// label's digits and makes no timezone claim (D-484) — because a meeting's
-// dateLabel carries no zone and nobody knows which one it meant. An insight's
-// createdAt is RFC3339: it names an actual instant, so rendering it anywhere
-// but in the reader's own clock would be the less honest answer.
+// An insight's createdAt is RFC3339: it names an actual instant, so rendering
+// it anywhere but in the reader's own clock would be the less honest answer.
+// A meeting with recordedAtUtc is rendered the same way (meetingTime.ts); only
+// a meeting known by its zone-less dateLabel alone shows the label's digits
+// with no timezone claim (D-484).
 export function formatInsightCreated(record: InsightRecord): string {
   const ms = insightTimestampMs(record);
   if (ms === null) {
     return record.createdAt ?? "";
   }
-  return CREATED_DATE_FORMAT.format(new Date(ms));
+  return dateFormat(CREATED_DATE_OPTIONS).format(new Date(ms));
 }
 
 // stripInsightFrontMatter removes the YAML provenance block the recorder writes
@@ -511,6 +511,12 @@ export interface BrowseFeedGroup {
 //
 // An insight sorts above a meeting at the same instant: it was drawn FROM
 // meetings, so it is never older than the ones it read.
+//
+// Both sides are compared as the meetings were sorted (meetingTime.StartOrder):
+// by instant against a meeting with recordedAtUtc, otherwise on the wall
+// clock the reader is shown — the insight's local time against the label's
+// digits. That is the scale the meetings were sorted on and the one the month
+// headings are cut from, so the merge cannot put a row under the wrong heading.
 export function buildBrowseFeed(input: {
   meetings: readonly MeetingCatalogEntry[];
   insights: readonly InsightRecord[];
@@ -527,7 +533,7 @@ export function buildBrowseFeed(input: {
   while (meetingIndex < meetings.length && insightIndex < insights.length) {
     const meeting = meetings[meetingIndex];
     const insight = insights[insightIndex];
-    if (insightGoesFirst(insightTimestampMs(insight), parseDateLabelMs(meeting.dateLabel))) {
+    if (insightGoesFirst(insightStartOrder(insight), meetingStartOrder(meeting))) {
       items.push(insightItem(insight));
       insightIndex += 1;
     } else {
@@ -544,6 +550,11 @@ export function buildBrowseFeed(input: {
   return items;
 }
 
+function insightStartOrder(insight: InsightRecord): StartOrder | null {
+  const ms = insightTimestampMs(insight);
+  return ms === null ? null : instantStartOrder(ms);
+}
+
 function meetingItem(meeting: MeetingCatalogEntry): BrowseFeedItem {
   // Prefixed: a meeting id and an insight id share one keyed `{#each}`, and a
   // collision there would make Svelte reuse one row's DOM for the other kind.
@@ -556,14 +567,14 @@ function insightItem(insight: InsightRecord): BrowseFeedItem {
 
 // Undated sorts last, whichever kind it is: a row whose date could not be read
 // is the one row nobody is looking for at the top of the list.
-function insightGoesFirst(insightMs: number | null, meetingMs: number | null): boolean {
-  if (insightMs === null) {
+function insightGoesFirst(insight: StartOrder | null, meeting: StartOrder | null): boolean {
+  if (insight === null) {
     return false;
   }
-  if (meetingMs === null) {
+  if (meeting === null) {
     return true;
   }
-  return insightMs >= meetingMs;
+  return compareStartOrder(insight, meeting) >= 0;
 }
 
 function compareInsightsNewestFirst(left: InsightRecord, right: InsightRecord): number {
@@ -581,29 +592,21 @@ function compareInsightsNewestFirst(left: InsightRecord, right: InsightRecord): 
   return right.id < left.id ? -1 : right.id > left.id ? 1 : 0;
 }
 
-// Pinned to en-GB and UTC for the reason rooms.ts pins its month format: the
-// heading text must not change with the browser's locale, and it is built from
-// the year and month the row itself displays.
-const MONTH_FORMAT = new Intl.DateTimeFormat("en-GB", {
-  month: "long",
-  year: "numeric",
-  timeZone: "UTC",
-});
-
 // groupBrowseFeedByMonth puts the month headings in, without reordering.
 //
-// ONE CLOCK for both kinds, and it is UTC — the clock buildBrowseFeed already
-// ordered the list by. This grouping keeps insertion order, so it is only ever
-// correct while the month key is a monotone function of the sort key; filing
-// meetings by their label's own digits (UTC, as rooms.groupMeetingsByMonth
-// does) and insights by the reader's local clock broke exactly that. West of
-// UTC, an insight created just after midnight on the 1st displays the previous
-// month, so the first group emitted was "August", the next "September", and a
-// list whose whole promise is newest-first rendered an older heading above a
-// newer one with the rows to match. A boundary row whose printed local time
-// reads as the month before its heading is a much smaller lie than a heading
-// out of order, and it is the same approximation the meeting rows have always
-// made.
+// ONE CLOCK for both kinds: the wall clock each row displays. This grouping
+// keeps insertion order, so it is only ever correct while the month key is a
+// monotone function of the sort key buildBrowseFeed merged on. Filing meetings
+// by one clock and insights by another broke exactly that: west of UTC, an
+// insight created just after midnight on the 1st displayed the previous month
+// while its heading said the next, and a list whose whole promise is
+// newest-first rendered an older heading above a newer one. So an insight, and
+// a meeting with recordedAtUtc, are filed by the reader's local month — the one
+// their rows print — and a meeting known only by its label by the label's
+// digits, which are what its row prints. All three are the wall-clock scale
+// buildBrowseFeed merges on (meetingTime.StartOrder); it compares two instants
+// by instant instead, which can only differ inside a DST fall-back hour, never
+// across a month boundary.
 export function groupBrowseFeedByMonth(
   items: readonly BrowseFeedItem[],
 ): BrowseFeedGroup[] {
@@ -622,25 +625,11 @@ export function groupBrowseFeedByMonth(
 
 function monthOf(item: BrowseFeedItem): { key: string; label: string } {
   if (item.kind === "meeting") {
-    const ms = parseDateLabelMs(item.meeting.dateLabel);
-    if (ms === null) {
-      return { key: UNDATED_MONTH_KEY, label: UNDATED_MONTH_LABEL };
-    }
-    const date = new Date(ms);
-    return monthLabel(date.getUTCFullYear(), date.getUTCMonth());
+    return meetingStartMonth(item.meeting) ?? { key: UNDATED_MONTH_KEY, label: undatedMonthLabel() };
   }
   const ms = insightTimestampMs(item.insight);
   if (ms === null) {
-    return { key: UNDATED_MONTH_KEY, label: UNDATED_MONTH_LABEL };
+    return { key: UNDATED_MONTH_KEY, label: undatedMonthLabel() };
   }
-  const date = new Date(ms);
-  return monthLabel(date.getUTCFullYear(), date.getUTCMonth());
-}
-
-function monthLabel(year: number, monthIndex: number): { key: string; label: string } {
-  const month = String(monthIndex + 1).padStart(2, "0");
-  return {
-    key: `${year}-${month}`,
-    label: MONTH_FORMAT.format(new Date(Date.UTC(year, monthIndex, 1))),
-  };
+  return wallClockMonth(instantWallClock(ms));
 }

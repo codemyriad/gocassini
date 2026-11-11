@@ -1,4 +1,6 @@
+import { get } from "svelte/store";
 import { describe, expect, it } from "vitest";
+import { LL } from "cassini-viewer/i18n";
 
 import operatorSource from "./Operator.svelte?raw";
 import settingsSource from "./Settings.svelte?raw";
@@ -300,11 +302,11 @@ describe("Operator left nav (D-723)", () => {
   const navGroups: { label: string; items: { id: string; label: string }[] }[] = OPERATOR_NAV;
   const navPanels = navGroups.flatMap((group) => group.items.map((item) => item.id));
 
-  it("groups the rows as Console, Diagnostics, then Settings", () => {
+  it("groups the rows as Console, Diagnostics, Settings, then Support", () => {
     // Doctor is its own group rather than a Settings row: it answers "is this
     // working", which is not something you configure.
-    expect(navGroups.map((group) => group.label)).toEqual(["Console", "Diagnostics", "Settings"]);
-    expect(navPanels).toEqual(["recordings", "doctor", "endpoints", "pipeline", "templates", "storage"]);
+    expect(navGroups.map((group) => group.label)).toEqual(["Console", "Diagnostics", "Settings", "Support"]);
+    expect(navPanels).toEqual(["recordings", "doctor", "endpoints", "pipeline", "templates", "storage", "help", "support"]);
     expect(navGroups[1].items.map((item) => item.label)).toEqual(["Doctor"]);
     expect(navGroups[2].items.map((item) => item.label)).toEqual([
       "AI providers",
@@ -312,6 +314,7 @@ describe("Operator left nav (D-723)", () => {
       "Insight templates",
       "Storage",
     ]);
+    expect(navGroups[3].items.map((item) => item.label)).toEqual(["Help", "Support Cassini"]);
   });
 
   it("offers every routable panel exactly once", () => {
@@ -336,7 +339,8 @@ describe("Operator left nav (D-723)", () => {
     // rail as a drawer, as the viewing layer's rooms rail does; a native select
     // restyled the group headings differently on every platform.
     expect(operatorSource).not.toContain("<select");
-    expect(operatorSource).toContain('aria-label="Choose an Operator section"');
+    expect(operatorSource).toContain("aria-label={$LL.app.operator.console.nav.open_label()}");
+    expect(get(LL).app.operator.console.nav.open_label()).toBe("Choose an Operator section");
     expect(operatorSource).toContain("data-open={navOpen}");
     expect(operatorSource).toMatch(/\.op-nav\[data-open="true"\] \{[^}]*transform: none;/);
     expect(operatorSource).toContain("min-[721px]:grid-cols-[268px_minmax(0,1fr)]");

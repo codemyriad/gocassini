@@ -84,7 +84,7 @@ Negative:
 - part of the training data is licensed from third parties and not freely available
 
 Summaries and questions use whichever language model you connect, so their rating depends on that model. Learn more about the [Nextcloud Ethical AI Rating](https://nextcloud.com/blog/nextcloud-ethical-ai-rating/).]]></description>
-  <version>0.2.0</version>
+  <version>0.4.0-alpha.0</version>
   <licence>agpl</licence>
   <author homepage="https://codemyriad.io">Codemyriad</author>
   <namespace>Cassini</namespace>
@@ -109,6 +109,7 @@ Summaries and questions use whichever language model you connect, so their ratin
   <screenshot>https://raw.githubusercontent.com/codemyriad/gocassini/main/img/screenshots/04-insight.png</screenshot>
   <screenshot>https://raw.githubusercontent.com/codemyriad/gocassini/main/img/screenshots/05-publish.png</screenshot>
   <screenshot>https://raw.githubusercontent.com/codemyriad/gocassini/main/img/screenshots/06-doctor.png</screenshot>
+  <donation title="Support Cassini" type="stripe">https://donate.stripe.com/7sY7sE5fu5C2d3d4Vz7IY00</donation>
 
   <dependencies>
     <!-- Support bounds are enforced by ci/nextcloud-compatibility.json. -->
@@ -123,7 +124,7 @@ Summaries and questions use whichever language model you connect, so their ratin
            exact build this manifest was released with, never a moving
            `latest`. CI rejects a manifest where the two disagree; bump both
            together with scripts/bump-exapp-version.sh. -->
-      <image-tag>0.2.0</image-tag>
+      <image-tag>0.4.0-alpha.0</image-tag>
     </docker-install>
 
     <!--
@@ -245,6 +246,17 @@ Summaries and questions use whichever language model you connect, so their ratin
       -->
 
       <!-- ADMIN: operator JSON API -->
+      <!-- Support downloads have separate permission boundaries (D-897). -->
+      <route>
+        <url>^operator\/support-bundle$</url>
+        <verb>POST</verb>
+        <access_level>ADMIN</access_level>
+      </route>
+      <route>
+        <url>^support\/bundle$</url>
+        <verb>POST</verb>
+        <access_level>USER</access_level>
+      </route>
       <route>
         <url>^operator\/jobs\/?$</url>
         <verb>GET,POST</verb>
@@ -261,7 +273,7 @@ Summaries and questions use whichever language model you connect, so their ratin
         <access_level>ADMIN</access_level>
       </route>
       <route>
-        <url>^operator\/jobs\/[^\/]+\/(rerun|cleanup)\/?$</url>
+        <url>^operator\/jobs\/[^\/]+\/(rerun|cleanup|reshare)\/?$</url>
         <verb>POST</verb>
         <access_level>ADMIN</access_level>
       </route>
@@ -355,6 +367,15 @@ Summaries and questions use whichever language model you connect, so their ratin
         <verb>GET</verb>
         <access_level>ADMIN</access_level>
       </route>
+      <!-- ADMIN: start / pause rewriting recordedAtUtc into past recordings'
+           delivered files (each rewrite is a new Nextcloud version and a
+           "file changed" activity for recipients, so it never runs on its
+           own). Progress is reported by /status. -->
+      <route>
+        <url>^operator\/migrations\/recorded-at\/(start|pause)\/?$</url>
+        <verb>POST</verb>
+        <access_level>ADMIN</access_level>
+      </route>
       <!-- ADMIN: doctor/status endpoint (version, STT device usability,
            Talk config presence, DB/storage health — never secret values) -->
       <route>
@@ -399,6 +420,23 @@ Summaries and questions use whichever language model you connect, so their ratin
       <route>
         <url>^operator\/setup\/?$</url>
         <verb>GET</verb>
+        <access_level>USER</access_level>
+      </route>
+      <!-- USER: accept the recording shares waiting for the caller (D-885).
+           The operator accepts each share AS the caller, through Nextcloud's
+           own pending-share endpoint, and only shares in the caller's own
+           pending list. Nothing is ever accepted for anyone else. -->
+      <route>
+        <url>^operator\/shares\/accept\/?$</url>
+        <verb>POST</verb>
+        <access_level>USER</access_level>
+      </route>
+      <!-- USER: dismiss the caller's own Browse notices for recordings they
+           started that Nextcloud would not share with them (D-885). Keyed by
+           the caller; hides nothing from anyone else. -->
+      <route>
+        <url>^operator\/shares\/dismiss\/?$</url>
+        <verb>POST</verb>
         <access_level>USER</access_level>
       </route>
 
@@ -515,6 +553,20 @@ Summaries and questions use whichever language model you connect, so their ratin
       </route>
       <route>
         <url>^imports\/[^\/]+\/(cancel|retry|heartbeat|staged|upload-failed|remove|clear)\/?$</url>
+        <verb>POST</verb>
+        <access_level>USER</access_level>
+      </route>
+      <!--
+        USER: the MCP server (D-813). An agent outside Cassini reads meetings
+        as the person who connected it: Nextcloud checks their app password
+        and names them in the proxy headers, and every tool reads through the
+        same caller-visible set as published/… — so there is no second access
+        decision here. POST only: the server is stateless Streamable HTTP with
+        JSON replies, so GET (an event stream) and DELETE (a session) have
+        nothing to answer. Every tool is read-only.
+      -->
+      <route>
+        <url>^mcp\/?$</url>
         <verb>POST</verb>
         <access_level>USER</access_level>
       </route>

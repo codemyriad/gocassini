@@ -9,12 +9,14 @@
   // came here to do.
   import { createEventDispatcher } from "svelte";
   import { KeyRound } from "@lucide/svelte";
+  import { LL } from "cassini-viewer/i18n";
 
   export let title: string;
   // The mock says "Add OpenRouter key" because the prototype presumes
   // OpenRouter. Cassini takes any OpenAI-compatible endpoint, and this is the
-  // same words as the button on the panel it opens.
-  export let action = "Add a provider";
+  // same words as the button on the panel it opens. Empty means that default,
+  // in the reader's language.
+  export let action = "";
 
   const dispatch = createEventDispatcher<{ open: void }>();
 </script>
@@ -23,7 +25,7 @@
   <KeyRound size={20} class="needs-key-icon" aria-hidden="true" />
   <strong class="needs-key-title">{title}</strong>
   <button type="button" class="needs-key-go" on:click={() => dispatch("open")}>
-    {action}
+    {action || $LL.app.insights.needs_provider.action()}
   </button>
 </div>
 

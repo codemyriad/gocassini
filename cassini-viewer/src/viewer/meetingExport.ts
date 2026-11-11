@@ -1,10 +1,14 @@
-import { formatClockTime, judgedDisplaySegments, normalizeSpeakerLabel } from "../core/transcript";
+import { get } from "svelte/store";
+
+import { LL, locale } from "../i18n";
+import { formatClockTime, judgedDisplaySegments, normalizeSpeakerLabel, UNKNOWN_SPEAKER_LABEL } from "../core/transcript";
 import { tokensPreserveText } from "../core/wordInteraction";
 import { buildTranscriptRows, repairTurnFinalWordInflation, sortBlocksInReadingOrder } from "../core/overlap";
 import { buildDisplayTranscriptFromArtifacts } from "./portable";
 import type { JudgedDisplaySegment } from "../core/transcript";
 import type { LoadedArtifact } from "./loadArtifact";
 import type { MeetingCatalogEntry } from "./catalog";
+import { formatMeetingStartForExport } from "./meetingTime";
 
 /** The same display projection used by the meeting reader, including its selected transcript. */
 export function displaySegmentsForArtifact(artifact: Pick<LoadedArtifact, "index" | "readableTranscript" | "displayTranscript" | "wordEndsBoundedByAudio">): JudgedDisplaySegment[] {
@@ -33,7 +37,7 @@ export function displaySegmentsForArtifact(artifact: Pick<LoadedArtifact, "index
         .filter((value): value is NonNullable<typeof value> => Boolean(value));
       const speakerLabel = segment.speaker
         ? normalizeSpeakerLabel(index.speakersById.get(segment.speaker)?.label ?? segment.speaker)
-        : normalizeSpeakerLabel(sourceSegments[0]?.speakerLabel ?? "Unknown speaker");
+        : normalizeSpeakerLabel(sourceSegments[0]?.speakerLabel ?? UNKNOWN_SPEAKER_LABEL);
       return {
         id: segment.id,
         speaker: segment.speaker,
@@ -54,19 +58,44 @@ export function displaySegmentsForArtifact(artifact: Pick<LoadedArtifact, "index
   }));
 }
 
+/**
+ * A speaker's name as a reader sees it. The transcript code marks a passage
+ * with no speaker with UNKNOWN_SPEAKER_LABEL, in English, and compares against
+ * it; it is put in the reader's language only where it is shown.
+ */
+export function shownSpeakerLabel(label: string): string {
+  return label === UNKNOWN_SPEAKER_LABEL ? get(LL).viewer.meeting.transcript.unknown_speaker() : label;
+}
+
+/** Names as one list in the reader's language: "Ben and Cara", "Ana, Ben and Cara". */
+export function formatNameList(labels: readonly string[]): string {
+  const names = labels.map(shownSpeakerLabel);
+  try {
+    return new Intl.ListFormat(get(locale), { style: "long", type: "conjunction" }).format(names);
+  } catch {
+    return names.join(", ");
+  }
+}
+
 /** Markdown follows the reader's turn order and its inline interjections. */
-export function transcriptMarkdown(entry: Pick<MeetingCatalogEntry, "title" | "dateLabel"> | null, segments: JudgedDisplaySegment[]): string {
-  const heading = [entry?.title || "Meeting transcript", entry?.dateLabel].filter(Boolean).join(" — ");
+export function transcriptMarkdown(entry: Pick<MeetingCatalogEntry, "title" | "dateLabel" | "recordedAtUtc"> | null, segments: JudgedDisplaySegment[]): string {
+  // The speaker lines (`**name** [m:ss]`) keep their shape in every language;
+  // only the words a person reads are translated.
+  const t = get(LL).viewer.meeting.export;
+  // An instant start is written in the reader's clock with its zone named,
+  // since the copy is read elsewhere; a label-only start keeps its raw digits.
+  const when = entry?.recordedAtUtc ? formatMeetingStartForExport(entry) : entry?.dateLabel;
+  const heading = [entry?.title || t.title_fallback(), when].filter(Boolean).join(" — ");
   const rows = buildTranscriptRows(segments);
   const body = rows.map((row) => {
-    const over = row.over.length ? ` (over ${row.over.join(" and ")})` : "";
+    const over = row.over.length ? ` ${t.over({ names: formatNameList(row.over) })}` : "";
     const prose = row.members.map((member) => member.kind === "speech"
       ? member.block.text
-      : `(${member.speakerLabel}: ${member.blocks.map((block) => block.text).join(" ")})`
+      : `(${shownSpeakerLabel(member.speakerLabel)}: ${member.blocks.map((block) => block.text).join(" ")})`
     ).join(" ");
-    return `**${escapeMarkdown(row.speakerLabel)}** [${formatClockTime(row.startMs)}]${escapeMarkdown(over)}\n\n${escapeMarkdown(prose)}`;
+    return `**${escapeMarkdown(shownSpeakerLabel(row.speakerLabel))}** [${formatClockTime(row.startMs)}]${escapeMarkdown(over)}\n\n${escapeMarkdown(prose)}`;
   }).join("\n\n");
-  return `# ${escapeMarkdown(heading.replace(/\s*\n\s*/g, " "))}\n\n${body || "No transcript available."}\n`;
+  return `# ${escapeMarkdown(heading.replace(/\s*\n\s*/g, " "))}\n\n${body || t.empty()}\n`;
 }
 
 function escapeMarkdown(text: string): string {

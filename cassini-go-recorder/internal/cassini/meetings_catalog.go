@@ -45,9 +45,13 @@ type meetingsCatalog struct {
 // producer's type in cassini-viewer/src/viewer/catalog.ts. Unknown fields are
 // tolerated: the raw entry, not this struct, is what gets re-emitted.
 type meetingsCatalogEntry struct {
-	ID               string `json:"id"`
-	Title            string `json:"title"`
-	DateLabel        string `json:"dateLabel"`
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	DateLabel string `json:"dateLabel"`
+	// RecordedAtUTC is when the recording started (RFC 3339 UTC), when the
+	// catalog knows it. Preferred over DateLabel for sorting, filtering and
+	// display; DateLabel stays the zone-less fallback for entries without it.
+	RecordedAtUTC    string `json:"recordedAtUtc,omitempty"`
 	ArtifactPath     string `json:"artifactPath,omitempty"`
 	AudioPath        string `json:"audioPath,omitempty"`
 	MeetingPath      string `json:"meetingPath,omitempty"`
@@ -116,8 +120,12 @@ func (e meetingsCatalogEntry) roomSelector() string {
 type meetingsCatalogItem struct {
 	entry meetingsCatalogEntry
 	raw   json.RawMessage
-	at    time.Time
-	dated bool
+	// at is where the entry sits on the time axis (meetingTime): its
+	// recording start when instant, else its dateLabel read in the reader's
+	// zone. dated is false when it has neither.
+	at      time.Time
+	dated   bool
+	instant bool
 }
 
 // meetingsListing is a fetched catalog: the entries in display order plus where
@@ -165,7 +173,7 @@ func (c *meetingsClient) fetchCatalog(ctx context.Context) (meetingsListing, err
 	if err := json.Unmarshal(body, &catalog); err != nil {
 		return meetingsListing{}, fmt.Errorf("parse catalog from %s: %w", meetingsTargetLabel(target), err)
 	}
-	return decodeMeetingsListing(catalog, header, target)
+	return decodeMeetingsListing(catalog, header, target, c.location())
 }
 
 // errMeetingsListAbsent means the app does not serve the list route: one older
@@ -224,13 +232,21 @@ func (c *meetingsClient) fetchMeetings(ctx context.Context, filter meetingsFilte
 // an already-filtered set would report every count as zero and leave a short
 // list unexplained.
 func (c *meetingsClient) fetchFilteredListing(ctx context.Context, filter meetingsFilter) (meetingsListing, meetingsFilterResult, error) {
-	target, err := c.meetingsListURL(filter)
+	target, err := c.meetingsListURL(filter, true)
 	if err != nil {
 		return meetingsListing{}, meetingsFilterResult{}, err
 	}
 	body, header, err := c.readListing(ctx, target)
+	var httpErr *meetingsHTTPError
+	if err != nil && errors.As(err, &httpErr) && httpErr.Status == http.StatusBadRequest && (filter.hasFrom || filter.hasTo) {
+		// An app from before instants were accepted refuses an offset bound;
+		// ask again in the zone-less wall clock it compares labels in.
+		if target, err = c.meetingsListURL(filter, false); err != nil {
+			return meetingsListing{}, meetingsFilterResult{}, err
+		}
+		body, header, err = c.readListing(ctx, target)
+	}
 	if err != nil {
-		var httpErr *meetingsHTTPError
 		if errors.As(err, &httpErr) && httpErr.Status == http.StatusNotFound {
 			return meetingsListing{}, meetingsFilterResult{}, errMeetingsListAbsent
 		}
@@ -242,7 +258,7 @@ func (c *meetingsClient) fetchFilteredListing(ctx context.Context, filter meetin
 		return meetingsListing{}, meetingsFilterResult{}, fmt.Errorf(
 			"parse meeting list from %s: %w", meetingsTargetLabel(target), err)
 	}
-	listing, err := decodeMeetingsListing(envelope.meetingsCatalog, header, target)
+	listing, err := decodeMeetingsListing(envelope.meetingsCatalog, header, target, c.location())
 	if err != nil {
 		return meetingsListing{}, meetingsFilterResult{}, err
 	}
@@ -255,8 +271,11 @@ func (c *meetingsClient) fetchFilteredListing(ctx context.Context, filter meetin
 }
 
 // meetingsListURL is the list route with the filter encoded as query
-// parameters, in exactly the layout the server parses back.
-func (c *meetingsClient) meetingsListURL(filter meetingsFilter) (*url.URL, error) {
+// parameters, in exactly the layout the server parses back. With instants,
+// the bounds are RFC 3339 with the reader's offset, so the server compares a
+// meeting's recordedAtUtc against the moment the reader meant; without, they
+// are the zone-less stamp an older app accepts.
+func (c *meetingsClient) meetingsListURL(filter meetingsFilter, instants bool) (*url.URL, error) {
 	root, err := c.appRootURL()
 	if err != nil {
 		return nil, err
@@ -266,11 +285,15 @@ func (c *meetingsClient) meetingsListURL(filter meetingsFilter) (*url.URL, error
 		return nil, fmt.Errorf("build meeting list URL: %w", err)
 	}
 	query := url.Values{}
+	layout := meetingsFilterStampLayout
+	if instants {
+		layout = time.RFC3339
+	}
 	if filter.hasFrom {
-		query.Set("from", filter.from.Format(meetingsFilterStampLayout))
+		query.Set("from", filter.from.Format(layout))
 	}
 	if filter.hasTo {
-		query.Set("to", filter.to.Format(meetingsFilterStampLayout))
+		query.Set("to", filter.to.Format(layout))
 	}
 	if filter.room != "" {
 		query.Set("room", filter.room)
@@ -307,7 +330,7 @@ func (c *meetingsClient) readListing(ctx context.Context, target *url.URL) ([]by
 // decodeMeetingsListing turns a decoded envelope into the display-ordered
 // listing. Shared by both fetch paths so the two cannot disagree about version
 // checking, id trimming, skip counting or ordering.
-func decodeMeetingsListing(catalog meetingsCatalog, header http.Header, target *url.URL) (meetingsListing, error) {
+func decodeMeetingsListing(catalog meetingsCatalog, header http.Header, target *url.URL, loc *time.Location) (meetingsListing, error) {
 	if catalog.Version != meetingsCatalogVersion {
 		return meetingsListing{}, fmt.Errorf("unsupported catalog version %q (this build reads %q)", catalog.Version, meetingsCatalogVersion)
 	}
@@ -332,8 +355,8 @@ func decodeMeetingsListing(catalog meetingsCatalog, header http.Header, target *
 		// findable rather than listed-but-unfetchable. raw keeps the server's
 		// bytes untouched, so --json still re-emits exactly what was sent.
 		entry.ID = strings.TrimSpace(entry.ID)
-		at, dated := parseMeetingDateLabel(entry.DateLabel)
-		listing.Items = append(listing.Items, meetingsCatalogItem{entry: entry, raw: raw, at: at, dated: dated})
+		at, dated, instant := meetingTime(entry, loc)
+		listing.Items = append(listing.Items, meetingsCatalogItem{entry: entry, raw: raw, at: at, dated: dated, instant: instant})
 	}
 	sortMeetingsNewestFirst(listing.Items)
 	return listing, nil
@@ -426,7 +449,7 @@ func requireWithinPublishedTree(catalogURL *url.URL, resolved *url.URL, meetingI
 var meetingDateLabelLayouts = []string{"2006-01-02 15:04:05", "2006-01-02 15:04", "2006-01-02"}
 
 // sortMeetingsNewestFirst orders items the way the viewer lists them: newest
-// first by dateLabel, items with an unreadable label last, ties broken by id
+// first by recording start, or dateLabel where that is all an entry has, items with an unreadable label last, ties broken by id
 // descending. Stable, so two items that compare equal keep the catalog's order.
 func sortMeetingsNewestFirst(items []meetingsCatalogItem) {
 	sort.SliceStable(items, func(i, j int) bool {
@@ -444,12 +467,17 @@ func sortMeetingsNewestFirst(items []meetingsCatalogItem) {
 }
 
 func parseMeetingDateLabel(label string) (time.Time, bool) {
+	return parseMeetingDateLabelIn(label, time.UTC)
+}
+
+// parseMeetingDateLabelIn reads a zone-less dateLabel's digits in loc.
+func parseMeetingDateLabelIn(label string, loc *time.Location) (time.Time, bool) {
 	value := strings.TrimSpace(label)
 	if value == "" {
 		return time.Time{}, false
 	}
 	for _, layout := range meetingDateLabelLayouts {
-		if at, err := time.Parse(layout, value); err == nil {
+		if at, err := time.ParseInLocation(layout, value, loc); err == nil {
 			return at, true
 		}
 	}

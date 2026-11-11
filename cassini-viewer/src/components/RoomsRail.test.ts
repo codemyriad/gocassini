@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { render } from "svelte/server";
+import { get } from "svelte/store";
+
+import { LL } from "../i18n";
 
 import type { VocabularyTag } from "../viewer/annotations";
 import RoomsRail from "./RoomsRail.svelte";
@@ -10,7 +13,8 @@ describe("RoomsRail Show filter", () => {
     // Both are narrowings of the same archive, so they belong in the same
     // column — which is the design prototype's own arrangement. It was in the
     // list header while `types` was list-local state.
-    expect(roomsRailSource).toContain(">Show</h2>");
+    expect(roomsRailSource).toContain(">{text.show_heading()}</h2>");
+    expect(get(LL).viewer.browse.rooms_rail.show_heading()).toBe("Show");
     expect(roomsRailSource).toContain('data-type="meetings"');
     expect(roomsRailSource).toContain('data-type="insights"');
   });
@@ -20,7 +24,7 @@ describe("RoomsRail Show filter", () => {
     // narrows to a kind of thing which cannot exist here is a promise the build
     // cannot keep.
     expect(roomsRailSource).toContain("export let insightsOffered = false;");
-    expect(roomsRailSource).toMatch(/\{#if insightsOffered\}[\s\S]{0,200}>Show<\/h2>/);
+    expect(roomsRailSource).toMatch(/\{#if insightsOffered\}[\s\S]{0,200}>\{text\.show_heading\(\)\}<\/h2>/);
   });
 
   it("cannot be narrowed down to showing nothing at all", () => {
@@ -124,5 +128,25 @@ describe("RoomsRail audience notice", () => {
     const rail = html("");
     expect(rail).not.toContain("Visible to all users");
     expect(rail).not.toContain("Shared with participants");
+  });
+});
+
+describe("RoomsRail Help (D-910)", () => {
+  it("shows Help in the footer only when the shell offers it", () => {
+    // A standalone export has nothing to download, so no Help at all.
+    expect(render(RoomsRail as never, { props: {} } as never).body).not.toContain("rail-foot");
+    const offered = render(RoomsRail as never, { props: { helpOffered: true } } as never).body;
+    expect(offered).toMatch(/class="rail-foot[^"]*"[\s\S]*lucide-life-buoy[\s\S]*Help<\/button>/);
+  });
+
+  it("puts Help before Connect an agent in the one footer", () => {
+    const both = render(RoomsRail as never, { props: { helpOffered: true, agentOffered: true } } as never).body;
+    expect(both.match(/class="rail-foot /g)).toHaveLength(1);
+    expect(both.indexOf("Help</button>")).toBeLessThan(both.indexOf("Connect an agent"));
+  });
+
+  it("opens the sheet and closes the drawer", () => {
+    expect(roomsRailSource).toMatch(/dispatch\("openSupport"\);\s*dispatch\("close"\);/);
+    expect(roomsRailSource).toContain("aria-expanded={supportOpen}");
   });
 });

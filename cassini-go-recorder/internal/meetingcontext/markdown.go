@@ -3,6 +3,7 @@ package meetingcontext
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 // RenderOpts controls what the markdown rendering includes.
@@ -17,6 +18,12 @@ type RenderOpts struct {
 	// cite an axis it cannot see does not measure grounding; it measures which
 	// model invents the more plausible number.
 	Timestamps bool
+
+	// Location is the zone the recording start is shown in, with its offset
+	// written out. Nil means time.Local: the CLI renders for the person
+	// running it. A server rendering in a zone-less container gets +00:00,
+	// which is still an honest, unambiguous instant.
+	Location *time.Location
 }
 
 // meetingSeparator divides consecutive meetings in a many-meeting document.
@@ -75,8 +82,8 @@ func renderMeetingMarkdown(bundle MeetingContext, opts RenderOpts) string {
 			fmt.Fprintf(buf, "- Room: %s\n", roomName)
 		}
 	}
-	if bundle.Meeting.CreatedAtUTC != "" {
-		fmt.Fprintf(buf, "- Recorded (UTC): %s\n", bundle.Meeting.CreatedAtUTC)
+	if line := meetingStartLine(bundle.Meeting, opts.Location); line != "" {
+		fmt.Fprintln(buf, line)
 	}
 	if bundle.Meeting.DurationMS > 0 {
 		fmt.Fprintf(buf, "- Duration: %s\n", formatDuration(bundle.Meeting.DurationMS))
@@ -89,6 +96,15 @@ func renderMeetingMarkdown(bundle MeetingContext, opts RenderOpts) string {
 		fmt.Fprintf(buf, "- Speakers: %s\n", strings.Join(labels, ", "))
 	}
 	fmt.Fprintf(buf, "- Words: %d\n", bundle.WordCount)
+	if bundle.Window != nil {
+		// Said up front, because a transcript that starts mid-meeting reads
+		// as the whole of it otherwise.
+		end := "the end"
+		if bundle.Window.ToMS != nil {
+			end = formatTimestamp(*bundle.Window.ToMS)
+		}
+		fmt.Fprintf(buf, "- Window: %s to %s — only the passages overlapping it are below\n", formatTimestamp(bundle.Window.FromMS), end)
+	}
 	fmt.Fprintf(buf, "- Transcript source: `%s`\n\n", bundle.TranscriptSource)
 
 	fmt.Fprint(buf, "## Summary\n\n")
@@ -289,4 +305,30 @@ func formatTimestamp(offsetMS int64) string {
 		return fmt.Sprintf("%d:%02d:%02d", hours, minutes, seconds)
 	}
 	return fmt.Sprintf("%02d:%02d", minutes, seconds)
+}
+
+// StartLayout renders a recording start as one token with its offset written
+// out, e.g. 2026-11-09T12:31+01:00. Shared with the meetings list output so
+// an agent sees the same shape everywhere.
+const StartLayout = "2006-01-02T15:04-07:00"
+
+// meetingStartLine says when the meeting started, as honestly as the file
+// allows, picked by portable.MeetingStartOf. createdAtUtc is the build time,
+// so it is never presented as the start: with nothing better the line says
+// the start is unknown and names the build time as what it is.
+func meetingStartLine(meeting Meeting, loc *time.Location) string {
+	if loc == nil {
+		loc = time.Local
+	}
+	start := meeting.start("")
+	if start.Instant {
+		return "- Started: " + start.At.In(loc).Format(StartLayout)
+	}
+	if start.Known() {
+		return "- Started: " + start.Value + " (recording site's wall clock, time zone unknown)"
+	}
+	if meeting.CreatedAtUTC != "" {
+		return "- Started: unknown (the file was built " + meeting.CreatedAtUTC + ")"
+	}
+	return ""
 }

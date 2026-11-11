@@ -1,4 +1,9 @@
-import { formatMeetingDateWithDay, type MeetingCatalogEntry } from "./catalog";
+import { get } from "svelte/store";
+
+import { LL } from "../i18n";
+import { dateFormat } from "../i18n/format";
+import type { MeetingCatalogEntry } from "./catalog";
+import { formatMeetingStartForExport } from "./meetingTime";
 import {
   insightHeadline,
   insightTimestampMs,
@@ -50,24 +55,29 @@ export function renderInsightExport({
   // Template and model, and not the provider or the attempt: those say how the
   // run was carried out, not what produced the words, and mean nothing to
   // whoever this is passed to.
+  // The labels are for the person who reads the file, so they are in the
+  // reader's language; nothing parses them.
+  const t = get(LL).viewer.insights.export;
   const template = [record.workflowId, record.workflowVersion].filter(Boolean).join(" ");
-  const provenance = [`Template: ${template}`];
+  const provenance = [t.template({ template })];
   if (record.model) {
-    provenance.push(`Model: ${record.model}`);
+    provenance.push(t.model({ model: record.model }));
   }
-  blocks.push(`Written by Cassini on ${formatExportCreated(record)}  \n${provenance.join(" · ")}`);
+  blocks.push(`${t.written_by({ date: formatExportCreated(record) })}  \n${provenance.join(" · ")}`);
 
   if (sources.length > 0) {
     const items = sources.map((source) => {
       // A title is free text; a line break in a list item ends the item.
-      const label = `${oneLine(source.title)}, ${formatMeetingDateWithDay(source.dateLabel)}`;
+      // A start known as an instant carries its zone here, as createdAt does:
+      // the file is read on someone else's clock.
+      const label = `${oneLine(source.title)}, ${formatMeetingStartForExport(source)}`;
       const url = meetingUrl(source);
       return url ? `- [${escapeLinkText(label)}](${url})` : `- ${label}`;
     });
     // "these", not a count: the list is the meetings THIS reader can see, and
     // on screen that convention is understood, but the file leaves Cassini and
     // a number in it reads as the run's total.
-    blocks.push(`Drawn from these meetings:\n\n${items.join("\n")}`);
+    blocks.push(`${t.sources()}\n\n${items.join("\n")}`);
   }
 
   if (quoted) {
@@ -100,19 +110,18 @@ function oneLine(text: string): string {
 // The drawer shows createdAt in the reader's clock with no zone, which is right
 // on screen (formatInsightCreated). A copy is read somewhere else, by someone
 // whose clock this may not be, so here the zone goes with it.
-const EXPORT_DATE_FORMAT = new Intl.DateTimeFormat("en-GB", {
+const EXPORT_DATE_OPTIONS: Intl.DateTimeFormatOptions = {
   day: "numeric",
   month: "short",
   year: "numeric",
   hour: "2-digit",
   minute: "2-digit",
-  hour12: false,
   timeZoneName: "short",
-});
+};
 
 function formatExportCreated(record: InsightRecord): string {
   const ms = insightTimestampMs(record);
-  return ms === null ? (record.createdAt ?? "") : EXPORT_DATE_FORMAT.format(new Date(ms));
+  return ms === null ? (record.createdAt ?? "") : dateFormat(EXPORT_DATE_OPTIONS).format(new Date(ms));
 }
 
 const MAX_FILE_STEM = 100;

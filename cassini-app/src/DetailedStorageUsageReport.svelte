@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { dateFormat, LL } from "cassini-viewer/i18n";
   import { onDestroy, onMount } from "svelte";
   import { HardDrive, RefreshCw, TriangleAlert } from "@lucide/svelte";
   import { formatStorageBytes, storageUsageTotal } from "./operator/storageUsage";
@@ -39,7 +40,7 @@
   $: localTotal = usage ? usage.categories.reduce((sum, category) => sum + category.bytes, 0) : 0;
   $: partial = !!usage && (!!usage.category_error || usage.directories.some(directory => !!directory.error));
   $: largest = Math.max(0, ...rows.map(category => category.bytes));
-  function presentation(id: string) { return categoryPresentation[id] ?? { label: id, description: "Retained local files.", color: "#7d8490" }; }
+  function presentation(id: string) { return categoryPresentation[id] ?? { label: id, description: $LL.app.operator.storage.report.unknown_category_description(), color: "#7d8490" }; }
   function openCategory(id: string) {
     expanded = { ...expanded, [id]: true };
     requestAnimationFrame(() => document.getElementById(`category-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }));
@@ -66,7 +67,7 @@
   async function load(recalculate = false): Promise<void> {
     if (!operatorClient) {
       loading = false;
-      loadError = "Cassini’s operator connection is not available.";
+      loadError = $LL.app.operator.storage.report.no_operator();
       return;
     }
     loading = true;
@@ -87,55 +88,55 @@
 
   function measuredAt(value: string): string {
     const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? "just now" : date.toLocaleString();
+    return Number.isNaN(date.getTime()) ? "" : dateFormat({ dateStyle: "medium", timeStyle: "short" }).format(date);
   }
 </script>
 
 <section class="report" aria-labelledby="detailed-storage-title">
   <header class="report-head">
-    <div class="op-panel-title"><HardDrive size={18} aria-hidden="true" /><h1 id="detailed-storage-title">Storage</h1></div>
+    <div class="op-panel-title"><HardDrive size={18} aria-hidden="true" /><h1 id="detailed-storage-title">{$LL.app.operator.storage.report.title()}</h1></div>
     <div class="report-actions">
-      {#if usage?.measured_at}<span class="measured">Last calculated {measuredAt(usage.measured_at)}</span>{/if}
+      {#if usage?.measured_at && measuredAt(usage.measured_at)}<span class="measured">{$LL.app.operator.storage.report.last_calculated({ when: measuredAt(usage.measured_at) })}</span>{/if}
       <button class="op-btn recalculate" class:refreshing={recalculating} type="button" on:click={() => void load(true)} disabled={loading}>
         <RefreshCw size={15} aria-hidden="true" />
-        {recalculating ? "Calculating…" : usage?.measured_at ? "Recalculate" : "Calculate"}
+        {recalculating ? $LL.app.operator.storage.report.calculating() : usage?.measured_at ? $LL.app.operator.storage.report.recalculate() : $LL.app.operator.storage.report.calculate()}
       </button>
     </div>
   </header>
 
   {#if loadError && !usage}
-    <div class="alert alert-error text-sm"><TriangleAlert size={16} aria-hidden="true" />Couldn’t load storage details: {loadError}</div>
+    <div class="alert alert-error text-sm"><TriangleAlert size={16} aria-hidden="true" />{$LL.app.operator.storage.report.load_failed({ message: loadError })}</div>
   {:else if loading && !usage}
-    <div class="report-state">Loading this index…</div>
+    <div class="report-state">{$LL.app.operator.storage.report.loading()}</div>
   {:else if usage && usage.measured_at === ""}
-    <div class="report-state"><strong>Storage has not been calculated yet</strong><span>Last calculated: Never.</span></div>
+    <div class="report-state"><strong>{$LL.app.operator.storage.report.never_title()}</strong><span>{$LL.app.operator.storage.report.never_line()}</span></div>
   {:else if usage}
-    {#if loadError}<div class="alert alert-error text-sm"><TriangleAlert size={16} aria-hidden="true" />Couldn’t recalculate: {loadError}</div>{/if}
+    {#if loadError}<div class="alert alert-error text-sm"><TriangleAlert size={16} aria-hidden="true" />{$LL.app.operator.storage.report.recalculate_failed({ message: loadError })}</div>{/if}
     <div class="totals">
-      <section class="total-card op-tint"><span>On this server</span><strong>{partial ? "Partial result" : usage.categories.length === 0 ? "Not available" : formatStorageBytes(localTotal)}</strong><p>Recordings, published copies, attempts and logs.</p></section>
-      <section class="total-card op-tint"><span>In Nextcloud Files</span><strong>{publishedTotal === null ? "Couldn’t measure" : formatStorageBytes(publishedTotal)}</strong><p>Not touched by this server’s cleanup.</p></section>
+      <section class="total-card op-tint"><span>{$LL.app.operator.storage.report.local_heading()}</span><strong>{partial ? $LL.app.operator.storage.report.partial_result() : usage.categories.length === 0 ? $LL.app.operator.storage.report.not_available() : formatStorageBytes(localTotal)}</strong><p>{$LL.app.operator.storage.report.local_description()}</p></section>
+      <section class="total-card op-tint"><span>{$LL.app.operator.storage.report.published_heading()}</span><strong>{publishedTotal === null ? $LL.app.operator.storage.report.not_measured() : formatStorageBytes(publishedTotal)}</strong><p>{$LL.app.operator.storage.report.published_description()}</p></section>
     </div>
-    {#if partial}<p class="alert alert-warning" role="status">Some local data could not be measured or classified. Values below are partial; recalculate to retry.</p>{/if}
-    {#if publishedPartial}<p class="alert alert-warning" role="status">The Nextcloud breakdown is incomplete. Unmeasured roots are excluded; files whose dates could not be read are included as undated. Recalculate to retry.</p>{/if}
-    {#if !usage.published_category}<p class="report-state">Nextcloud date data is not available yet. Recalculate after updating the operator.</p>{/if}
+    {#if partial}<p class="alert alert-warning" role="status">{$LL.app.operator.storage.report.partial_local()}</p>{/if}
+    {#if publishedPartial}<p class="alert alert-warning" role="status">{$LL.app.operator.storage.report.partial_published()}</p>{/if}
+    {#if !usage.published_category}<p class="report-state">{$LL.app.operator.storage.report.published_dates_missing()}</p>{/if}
     {#if publishedPartial || partial}
-      <details class="measurement-errors"><summary>Measurement details</summary>
+      <details class="measurement-errors"><summary>{$LL.app.operator.storage.report.errors_summary()}</summary>
         {#if usage.category_error}<p>{usage.category_error}</p>{/if}
         {#if usage.published_category_error}<p>{usage.published_category_error}</p>{/if}
         {#each [...usage.published, ...usage.directories].filter(source => source.error) as source, index (index)}<p>{source.label}: {source.error}</p>{/each}
       </details>
     {/if}
     {#if usage.categories.length === 0}
-      <p class="report-state">Category data is not available yet. Recalculate after updating the operator.</p>
+      <p class="report-state">{$LL.app.operator.storage.report.categories_missing()}</p>
     {/if}
     {#if categories.length > 0}
-      <div class="dates-heading"><h2 id="category-comparison-title">By type</h2></div>
+      <div class="dates-heading"><h2 id="category-comparison-title">{$LL.app.operator.storage.report.by_type()}</h2></div>
       <section class="report-card op-tint" aria-labelledby="category-comparison-title">
         <div class="comparison">
           {#each rows as category (category.id)}
             {@const info = presentation(category.id)}
             {#if category.id === "history"}
-              <button type="button" class="comparison-row" aria-expanded={splitHistory} on:click={() => splitHistory = !splitHistory} aria-label={`${info.label}: ${formatStorageBytes(category.bytes)}`}>
+              <button type="button" class="comparison-row" aria-expanded={splitHistory} on:click={() => splitHistory = !splitHistory} aria-label={$LL.app.operator.storage.report.row_label({ category: info.label, size: formatStorageBytes(category.bytes) })}>
                 <span class="category-label">{info.label} <span class="expand-sign" aria-hidden="true">{splitHistory ? "−" : "+"}</span></span>
                 <span class="comparison-track" aria-hidden="true"><span style:width={`${largest > 0 ? category.bytes / largest * 100 : 0}%`} style:background={info.color}></span></span>
                 <strong>{formatStorageBytes(category.bytes)}</strong>
@@ -143,7 +144,7 @@
               {#if splitHistory}
                 {#each kinds as kind (kind.id)}
                   {@const kindInfo = presentation(kind.id)}
-                  <button type="button" class="comparison-row kind-row" on:click={() => openCategory(kind.id)} aria-label={`Explore ${kindInfo.label}: ${formatStorageBytes(kind.bytes)}`}>
+                  <button type="button" class="comparison-row kind-row" on:click={() => openCategory(kind.id)} aria-label={$LL.app.operator.storage.report.explore_label({ category: kindInfo.label, size: formatStorageBytes(kind.bytes) })}>
                     <span class="category-label">{kindInfo.label}</span>
                     <span class="comparison-track" aria-hidden="true"><span style:width={`${largest > 0 ? kind.bytes / largest * 100 : 0}%`} style:background={kindInfo.color}></span></span>
                     <strong>{formatStorageBytes(kind.bytes)}</strong>
@@ -151,24 +152,24 @@
                 {/each}
               {/if}
             {:else}
-              <button type="button" class="comparison-row" on:click={() => openCategory(category.id)} aria-label={`Explore ${info.label}: ${formatStorageBytes(category.bytes)}`}>
+              <button type="button" class="comparison-row" on:click={() => openCategory(category.id)} aria-label={$LL.app.operator.storage.report.explore_label({ category: info.label, size: formatStorageBytes(category.bytes) })}>
                 <span class="category-label">{info.label}</span>
                 <span class="comparison-track" aria-hidden="true"><span style:width={`${largest > 0 ? category.bytes / largest * 100 : 0}%`} style:background={info.color}></span></span>
-                <strong>{category.id === "published" && publishedPartial ? "Partial · " : ""}{formatStorageBytes(category.bytes)}</strong>
+                <strong>{category.id === "published" && publishedPartial ? `${$LL.app.operator.storage.report.partial_prefix()} · ` : ""}{formatStorageBytes(category.bytes)}</strong>
               </button>
             {/if}
           {/each}
         </div>
       </section>
-      <div class="dates-heading"><h2>By date</h2></div>
+      <div class="dates-heading"><h2>{$LL.app.operator.storage.report.by_date()}</h2></div>
       <div class="category-list">
         {#each categories as category (category.id)}
           {@const info = presentation(category.id)}
           <details class="category-card op-tint" id={`category-${category.id}`} bind:open={expanded[category.id]}>
-            <summary><span class="category-dot" style:background={info.color}></span><span class="category-name">{info.label}<small>{category.files.toLocaleString()} file{category.files === 1 ? "" : "s"}</small></span><strong>{formatStorageBytes(category.bytes)}</strong></summary>
+            <summary><span class="category-dot" style:background={info.color}></span><span class="category-name">{info.label}<small>{$LL.app.operator.storage.chart.files({ count: category.files })}</small></span><strong>{formatStorageBytes(category.bytes)}</strong></summary>
             <p class="category-description">{info.description}</p>
-            {#if category.id === "published" && publishedPartial}<p class="category-description" role="status">Partial result: some files could not be measured or dated.</p>{/if}
-            <StorageCategoryChart {category} measuredAt={usage.measured_at} label={info.label} color={info.color} dateLabel={category.id === "published" ? "publication or recording date" : "UTC lifecycle date"} policy={chartRetentionPolicy(category.id, retention)} />
+            {#if category.id === "published" && publishedPartial}<p class="category-description" role="status">{$LL.app.operator.storage.report.partial_category()}</p>{/if}
+            <StorageCategoryChart {category} measuredAt={usage.measured_at} label={info.label} color={info.color} dateKind={category.id === "published" ? "published" : "lifecycle"} policy={chartRetentionPolicy(category.id, retention)} />
           </details>
         {/each}
       </div>

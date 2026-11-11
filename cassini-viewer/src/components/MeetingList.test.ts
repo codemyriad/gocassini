@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { render } from "svelte/server";
+import { get } from "svelte/store";
+
+import { LL } from "../i18n";
 
 import { tagsByMeeting, type VocabularyTag } from "../viewer/annotations";
 import MeetingList from "./MeetingList.svelte";
@@ -25,7 +28,8 @@ describe("MeetingList rows", () => {
   it("gives the checkbox a name of its own", () => {
     // No visible text sits beside it — the row's title is in the button next to
     // it — so the accessible name has to be stated.
-    expect(meetingListSource).toContain("aria-label={`Select ${meeting.title}`}");
+    expect(meetingListSource).toContain("aria-label={text.select_meeting({ title: meeting.title })}");
+    expect(get(LL).viewer.browse.meeting_list.select_meeting({ title: "Standup" })).toBe("Select Standup");
   });
 
   it("keeps the open state on the element the row's styling is keyed to", () => {
@@ -112,7 +116,8 @@ describe("MeetingList insights", () => {
     // has come back, the failure when it did not, and nothing while the first
     // is still in flight.
     expect(meetingListSource).toContain("{#if insightsError}");
-    expect(meetingListSource).toContain("Insights could not be listed.");
+    expect(meetingListSource).toContain("{text.insights_failed()}");
+    expect(get(LL).viewer.browse.meeting_list.insights_failed()).toBe("Insights could not be listed.");
     expect(meetingListSource).toMatch(
       /\{#if insightsOffered && insightsLoaded\}[\s\S]{0,400}\{:else if insightsOffered && insightsError\}/,
     );
@@ -138,12 +143,11 @@ describe("MeetingList insights", () => {
     // reader never learns the capability exists. Without one (a standalone
     // export) it must NOT say so, because there is nothing to ask and the
     // promise would be empty.
-    expect(meetingListSource).toContain(
-      "`Search ${matchNounPlural} and what was said in them`",
-    );
-    expect(meetingListSource).toContain(
-      "`Search ${matchNounPlural} by name or date`",
-    );
+    expect(meetingListSource).toContain("$: searchLabels = text.search_label[kind];");
+    const labels = get(LL).viewer.browse.meeting_list.search_label;
+    expect(labels.both.said()).toBe("Search meetings or insights and what was said in them");
+    expect(labels.insights.name_date()).toBe("Search insights by name or date");
+    expect(labels.meetings.name_date()).toBe("Search meetings by name or date");
     expect(meetingListSource).toContain("searchOffered");
   });
 
@@ -182,7 +186,7 @@ describe("MeetingList insights", () => {
     // assert the branch rather than the markup: without an operator the box
     // must offer names and dates and claim nothing about transcripts.
     expect(meetingListSource).toMatch(
-      /searchBoxLabel = searchOffered[\s\S]{0,400}by name or date`;/,
+      /searchBoxLabel = searchOffered[\s\S]{0,400}: searchLabels\.name_date\(\);/,
     );
     expect(meetingListSource).toContain("placeholder={searchBoxLabel}");
     expect(meetingListSource).toContain("aria-label={searchBoxLabel}");
@@ -319,7 +323,33 @@ describe("MeetingList tag filter over insights", () => {
     // An install with no tags would otherwise promise something that cannot
     // match — the same empty promise searchOffered avoids.
     expect(meetingListSource).toContain("tagsSearchable = tags === null ? rememberedTagsSearchable : meetingTags.size > 0");
-    expect(meetingListSource).toContain("their tags and what was said in them");
-    expect(meetingListSource).toContain("by name, date or tag");
+    expect(meetingListSource).toContain("searchLabels.said_and_tags()");
+    expect(meetingListSource).toContain("searchLabels.name_date_tag()");
+    expect(get(LL).viewer.browse.meeting_list.search_label.meetings.said_and_tags()).toBe(
+      "Search meetings, their tags and what was said in them",
+    );
+  });
+});
+
+// D-885: the shell can put something in place of "No meetings yet", and above
+// a list that has meetings. A slot cannot be provided conditionally and one
+// that renders nothing still replaces the fallback, so the empty state is
+// gated on a bit the host sets, not on the slot's presence.
+describe("MeetingList's host slots", () => {
+  const empty = { meetings: [], totalCount: 0, insightsOffered: false, totalInsightCount: 0 };
+
+  it("keeps its own empty state unless the host says it fills the slot", () => {
+    expect(render(MeetingList, { props: { ...empty } } as never).body).toContain("No meetings yet");
+    expect(render(MeetingList, { props: { ...empty, listEmptyFilled: false } } as never).body).toContain("No meetings yet");
+    expect(render(MeetingList, { props: { ...empty, listEmptyFilled: true } } as never).body).not.toContain("No meetings yet");
+  });
+
+  it("puts the host's notice above the list only where there is a list", () => {
+    expect(meetingListSource).toMatch(
+      /\{#if totalCount > 0 \|\| totalInsightCount > 0\}[\s\S]{0,400}<slot name="list-notice" \/>[\s\S]{0,40}\{\/if\}/,
+    );
+    expect(meetingListSource).toMatch(
+      /\{#if totalCount === 0 && totalInsightCount === 0\}\s*\{#if listEmptyFilled\}\s*<slot name="list-empty" \/>\s*\{:else\}/,
+    );
   });
 });

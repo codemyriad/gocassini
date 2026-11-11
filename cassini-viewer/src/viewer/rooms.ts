@@ -1,4 +1,8 @@
-import { parseDateLabelMs, type MeetingCatalogEntry } from "./catalog";
+import { get } from "svelte/store";
+
+import { LL, locale } from "../i18n";
+import type { MeetingCatalogEntry } from "./catalog";
+import { meetingStartMonth } from "./meetingTime";
 
 // Room grouping for the browse surface (D-654). Pure, so the viewer's Vitest
 // suite — which runs in node with no DOM to render a component into — can cover
@@ -14,12 +18,13 @@ import { parseDateLabelMs, type MeetingCatalogEntry } from "./catalog";
 // It cannot collide with a real room's key: those are all prefixed `id:` or
 // `name:` by roomKeyOf below.
 export const NO_ROOM_KEY = "no-room";
-export const NO_ROOM_LABEL = "No room";
+// Read when it is shown, so it is in the reader's language.
+export const noRoomLabel = () => get(LL).viewer.browse.rooms.no_room();
 
-// Meetings whose dateLabel does not parse (a legacy catalog that shipped a raw
+// Meetings with no start (no recordedAtUtc, and a dateLabel that does not parse (a legacy catalog that shipped a raw
 // id as the label) still need a heading to sit under.
 export const UNDATED_MONTH_KEY = "";
-export const UNDATED_MONTH_LABEL = "Undated";
+export const undatedMonthLabel = () => get(LL).viewer.browse.rooms.undated();
 
 export interface RoomBucket {
   roomId?: string;
@@ -59,7 +64,7 @@ export function roomKeyOf(meeting: MeetingCatalogEntry): string {
 // honest — it says "this meeting has a room we have no name for", which is a
 // different fact from "this meeting has no room".
 export function roomLabelOf(meeting: MeetingCatalogEntry): string {
-  return meeting.roomDisplayName ?? meeting.roomName ?? meeting.roomId ?? NO_ROOM_LABEL;
+  return meeting.roomDisplayName ?? meeting.roomName ?? meeting.roomId ?? noRoomLabel();
 }
 
 // Whether this meeting says which room it was recorded in. The rail needs the
@@ -96,7 +101,7 @@ export function buildRoomBuckets(
       // newest-first list, so after a room is renamed the rail shows the new
       // name while the older meetings — which still carry the old one on their
       // own rows — stay grouped under it by id.
-      name: key === NO_ROOM_KEY ? NO_ROOM_LABEL : roomLabelOf(meeting),
+      name: key === NO_ROOM_KEY ? noRoomLabel() : roomLabelOf(meeting),
       count: 1,
       hasRoom: key !== NO_ROOM_KEY,
     });
@@ -105,7 +110,7 @@ export function buildRoomBuckets(
     if (left.hasRoom !== right.hasRoom) {
       return left.hasRoom ? -1 : 1;
     }
-    return left.name.localeCompare(right.name, undefined, {
+    return left.name.localeCompare(right.name, get(locale), {
       sensitivity: "base",
     });
   });
@@ -123,15 +128,6 @@ export function filterMeetingsByRoom(
   return meetings.filter((meeting) => roomKeyOf(meeting) === roomKey);
 }
 
-// Pinned to en-GB and UTC for the same reasons formatMeetingDateShort is:
-// consistent month names regardless of browser locale, and a label that agrees
-// with the key, which is derived from the same UTC instant.
-const MONTH_FORMAT = new Intl.DateTimeFormat("en-GB", {
-  month: "long",
-  year: "numeric",
-  timeZone: "UTC",
-});
-
 // groupMeetingsByMonth splits an already-ordered list into month headings
 // without reordering it: the caller's sort (newest first) is the one the list
 // renders in, and this only decides where the headings fall.
@@ -139,12 +135,17 @@ const MONTH_FORMAT = new Intl.DateTimeFormat("en-GB", {
 // Keyed by a Map rather than by comparing each entry to the previous one, so a
 // list that is not perfectly grouped still produces one heading per month
 // instead of the same month twice.
+//
+// The month is the one the row itself shows (meetingTime.meetingStartMonth):
+// the reader's local month for a meeting with recordedAtUtc, the label's digits
+// otherwise — the same wall clock the list is sorted by, so headings stay in
+// order.
 export function groupMeetingsByMonth(
   meetings: readonly MeetingCatalogEntry[],
 ): MeetingMonthGroup[] {
   const groups = new Map<string, MeetingMonthGroup>();
   for (const meeting of meetings) {
-    const { key, label } = monthOf(meeting.dateLabel);
+    const { key, label } = monthOf(meeting);
     const existing = groups.get(key);
     if (existing) {
       existing.meetings.push(meeting);
@@ -155,15 +156,6 @@ export function groupMeetingsByMonth(
   return [...groups.values()];
 }
 
-function monthOf(dateLabel: string): { key: string; label: string } {
-  const ms = parseDateLabelMs(dateLabel);
-  if (ms === null) {
-    return { key: UNDATED_MONTH_KEY, label: UNDATED_MONTH_LABEL };
-  }
-  const date = new Date(ms);
-  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
-  return {
-    key: `${date.getUTCFullYear()}-${month}`,
-    label: MONTH_FORMAT.format(date),
-  };
+function monthOf(meeting: MeetingCatalogEntry): { key: string; label: string } {
+  return meetingStartMonth(meeting) ?? { key: UNDATED_MONTH_KEY, label: undatedMonthLabel() };
 }

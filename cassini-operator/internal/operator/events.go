@@ -19,6 +19,9 @@ type StateChangeEvent struct {
 	At            string                `json:"at"`
 	Job           Job                   `json:"job"`
 	Attempt       *JobAttempt           `json:"attempt,omitempty"`
+	// Sharing travels with the event like Availability, so a run that just
+	// published shows who it could not be shared with without a reload.
+	Sharing *jobShareOutcome `json:"sharing,omitempty"`
 }
 
 type stateChangePublisher func(StateChangeEvent)
@@ -99,6 +102,15 @@ func (s *Store) emitStateChange(ctx context.Context, eventType, jobID string, at
 }
 
 func (rt *Runtime) publishStateChangeEvent(event StateChangeEvent) {
+	failure := ""
+	if event.Job.Error != nil {
+		failure = *event.Job.Error
+	}
+	// The bundle's jobs.json already exports each attempt's full error. Keep a
+	// short copy here so frequent state changes cannot rotate share evidence
+	// out of the shared events stream.
+	detail, truncated := supportTextPrefix(failure, supportJobStateDetailMax)
+	rt.supportJournal.record(supportEvent{Event: "job_state", Job: event.JobID, Attempt: event.AttemptNumber, Stage: supportStage(event.Job.Stage), State: supportState(event.Job.State), Reason: supportFailure(failure), Detail: detail, DetailTruncated: truncated})
 	if rt.events == nil {
 		return
 	}
@@ -106,6 +118,11 @@ func (rt *Runtime) publishStateChangeEvent(event StateChangeEvent) {
 		availability := rt.artifactAvailability(event.Job)
 		event.Availability = &availability
 		event.Job.MediaCleanup = availability.MediaCleanup
+	}
+	if rt.store != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		event.Sharing = rt.jobSharing(ctx, &event.Job)
+		cancel()
 	}
 	rt.events.Publish(event)
 }

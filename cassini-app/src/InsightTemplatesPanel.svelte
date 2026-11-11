@@ -1,4 +1,7 @@
 <script module lang="ts">
+  import { get } from "svelte/store";
+  import { LL as dictionary } from "cassini-viewer/i18n";
+
   // Enough hash to recognise a document by, with the whole of it a hover or a
   // copy away. A truncated hash is an identifier, not a checksum, which is why
   // the full value stays on the element it labels.
@@ -67,7 +70,7 @@
   // question, built in or custom.
   export function promptProblem(prompt: string): string {
     return prompt.includes(TEMPLATE_PLACEHOLDER)
-      ? `A custom template has no place for ${TEMPLATE_PLACEHOLDER}. Write the shape of the document into the prompt instead.`
+      ? get(dictionary).app.insights.templates_panel.template_placeholder_problem({ placeholder: TEMPLATE_PLACEHOLDER })
       : "";
   }
 </script>
@@ -92,6 +95,7 @@
   import { OperatorClient, OperatorHttpError } from "./operator/client";
   import { QUESTION_PLACEHOLDER, workflowTakesQuestion } from "./insights/client";
   import NeedsProviderCard from "./NeedsProviderCard.svelte";
+  import { LL } from "cassini-viewer/i18n";
   import type { InsightTemplateDraft, InsightWorkflow } from "./operator/types";
 
   // openPipeline: the step a refused delete names, opened where it is set.
@@ -155,13 +159,17 @@
   // The templates the summary and insight steps are set to run, as last read.
   let stepTemplates: Record<Step, string> = { summary: "", insight: "" };
 
-  const PROMPT_EXAMPLE = [
-    "You read meeting transcripts and list the risks people raised.",
-    "",
-    "Write a Markdown document with one heading, ## Risks, and under it one bullet per risk:",
-    "what the risk is, who raised it, and what was agreed about it.",
-    "If nobody raised a risk, say so in one line.",
-  ].join("\n");
+  // A sentence that puts a file name or a name in code or bold is translated
+  // whole, with a placeholder where that goes. It is cut at the placeholder,
+  // and the markup goes back between the two halves.
+  const MARK = "\uE000";
+  function around(text: string): [string, string] {
+    const at = text.indexOf(MARK);
+    return at < 0 ? [text, ""] : [text.slice(0, at), text.slice(at + MARK.length)];
+  }
+  $: [questionBefore, questionAfter] = around(
+    $LL.app.insights.templates_panel.prompt_question_hint({ placeholder: MARK }),
+  );
 
   onMount(() => {
     void load();
@@ -225,7 +233,7 @@
   }
 
   function duplicate(workflow: InsightWorkflow): Editor {
-    return { key: NEW_KEY, id: null, from: workflow.name, draft: draftOf(workflow, `${workflow.name} (copy)`) };
+    return { key: NEW_KEY, id: null, from: workflow.name, draft: draftOf(workflow, $LL.app.insights.templates_panel.copy_name({ name: workflow.name })) };
   }
 
   function shadowsBuiltIn(workflow: InsightWorkflow): boolean {
@@ -295,7 +303,7 @@
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           console.warn(`insight templates: ${current.replaces}.md was not removed after its repaired copy was saved`, error);
-          replaceError = `Saved as a new template, but ${current.replaces}.md could not be removed: ${message}`;
+          replaceError = $LL.app.insights.templates_panel.replace_remove_failed({ file: `${current.replaces}.md`, error: message });
         }
       }
       await load();
@@ -418,9 +426,9 @@
 <header class="op-panel-head">
   <div>
     <div class="op-panel-title">
-      <h1>Insight templates</h1>
+      <h1>{$LL.app.insights.templates_panel.title()}</h1>
     </div>
-    <p>Used for insights and meeting summaries. Write your own, or duplicate a built-in one and change it.</p>
+    <p>{$LL.app.insights.templates_panel.intro()}</p>
   </div>
   <div class="op-panel-actions">
     <button
@@ -428,7 +436,7 @@
       type="button"
       on:click={load}
       disabled={loading || !client}
-      aria-label="Reload insight templates"
+      aria-label={$LL.app.insights.templates_panel.reload_label()}
     >
       <RefreshCw size={15} aria-hidden="true" />
     </button>
@@ -442,24 +450,28 @@
       class:tpl-editor-new={editor.id === null}
       bind:this={editorEl}
       on:submit|preventDefault={save}
-      aria-label={editor.id === null ? "New insight template" : "Edit insight template"}
+      aria-label={editor.id === null
+        ? $LL.app.insights.templates_panel.editor_new_label()
+        : $LL.app.insights.templates_panel.editor_edit_label()}
       novalidate
     >
       {#if editor.id === null}
         <p class="tpl-editor-title">
-          New template{#if editor.from}<span class="tpl-hint"> · a copy of {editor.from}</span>{/if}
+          {editor.from
+            ? $LL.app.insights.templates_panel.editor_heading_copy({ name: editor.from })
+            : $LL.app.insights.templates_panel.new_template()}
         </p>
       {/if}
       <!-- Hints sit between a label and its field, read before typing, and
            describe the field rather than name it. One editor is open at a
            time, so the ids are fixed. -->
       <div class="op-field">
-        <label class="op-field-label" for="tpl-name">Name</label>
+        <label class="op-field-label" for="tpl-name">{$LL.app.insights.templates_panel.name_label()}</label>
         <input id="tpl-name" class="op-input" type="text" bind:value={editor.draft.name} maxlength="500" autocomplete="off" />
       </div>
       <div class="op-field">
-        <label class="op-field-label" for="tpl-description">Description</label>
-        <span id="tpl-description-hint" class="tpl-hint">Shown to the person choosing it, so they know what it does.</span>
+        <label class="op-field-label" for="tpl-description">{$LL.app.insights.templates_panel.description_label()}</label>
+        <span id="tpl-description-hint" class="tpl-hint">{$LL.app.insights.templates_panel.description_hint()}</span>
         <input
           id="tpl-description"
           class="op-input"
@@ -471,11 +483,10 @@
         />
       </div>
       <div class="op-field">
-        <label class="op-field-label" for="tpl-prompt">Prompt</label>
+        <label class="op-field-label" for="tpl-prompt">{$LL.app.insights.templates_panel.prompt_label()}</label>
         <span id="tpl-prompt-hint" class="tpl-hint">
-          The instruction the model receives, together with the transcripts.<br />
-          Put <code>{QUESTION_PLACEHOLDER}</code> where a question should go, and people will be asked for one when they
-          pick this template.
+          {$LL.app.insights.templates_panel.prompt_hint()}<br />
+          {questionBefore}<code>{QUESTION_PLACEHOLDER}</code>{questionAfter}
         </span>
         <textarea
           id="tpl-prompt"
@@ -483,7 +494,7 @@
           bind:value={editor.draft.prompt}
           rows="16"
           spellcheck="false"
-          placeholder={PROMPT_EXAMPLE}
+          placeholder={$LL.app.insights.templates_panel.prompt_example()}
           aria-describedby="tpl-prompt-hint"
         ></textarea>
         {#if editorProblem}
@@ -493,11 +504,11 @@
       {#if editor.id !== null}
         <!-- Not editable: the file name is what `cassini insight run
              --workflow` and every recorded insight name it by. -->
-        <p class="tpl-file">File: <code>{editor.id}.md</code></p>
+        <p class="tpl-file">{$LL.app.insights.templates_panel.file_label()} <code>{editor.id}.md</code></p>
       {:else if editor.replaces !== undefined}
+        {@const [replaceBefore, replaceAfter] = around($LL.app.insights.templates_panel.cannot_save_under_name({ file: MARK }))}
         <p class="tpl-file">
-          <code>{editor.replaces}.md</code> cannot be saved under its own name. Saving keeps this as a new template and
-          removes that file.
+          {replaceBefore}<code>{editor.replaces}.md</code>{replaceAfter}
         </p>
       {/if}
       {#if saveError}
@@ -505,10 +516,10 @@
       {/if}
       <div class="tpl-actions">
         <button class="op-btn" type="submit" disabled={!editorFilled || saving}>
-          {saving ? "Saving…" : "Save"}
+          {saving ? $LL.common.action.saving() : $LL.common.action.save()}
         </button>
         <button class="link-btn op-cancel" type="button" disabled={saving} on:click={() => (editor = null)}>
-          Cancel
+          {$LL.common.action.cancel()}
         </button>
         {#if editor.id !== null}
           {@const editing = customs.find((workflow) => workflow.id === editor?.id)}
@@ -520,7 +531,7 @@
               aria-haspopup="dialog"
               on:click={() => void askDelete(editing)}
             >
-              Delete
+              {$LL.common.action.delete()}
             </button>
           {/if}
         {/if}
@@ -544,13 +555,13 @@
       <div class="tpl-row-actions">
         {#if custom}
           <button class="link-btn" type="button" disabled={saving} on:click={() => void openEditor(editExisting(workflow))}>
-            Edit
+            {$LL.common.action.edit()}
           </button>
         {/if}
         {#if !workflow.error}
           {#if custom}<span class="tpl-sep" aria-hidden="true">·</span>{/if}
           <button class="link-btn" type="button" disabled={saving} on:click={() => void openEditor(duplicate(workflow))}>
-            Duplicate
+            {$LL.app.insights.templates_panel.duplicate()}
           </button>
         {/if}
         {#if custom}
@@ -562,7 +573,7 @@
             aria-haspopup="dialog"
             on:click={() => void askDelete(workflow)}
           >
-            Delete
+            {$LL.common.action.delete()}
           </button>
         {/if}
       </div>
@@ -572,8 +583,9 @@
       <!-- A custom file that will not run is shown with the reason, never
            dropped: the administrator who added it needs to know why it is
            not on offer. -->
+      {@const [errorBefore, errorAfter] = around($LL.app.insights.templates_panel.cannot_run({ file: MARK, error: workflow.error }))}
       <p class="tpl-error" role="note">
-        <code>{workflow.id}.md</code> cannot run: {workflow.error}
+        {errorBefore}<code>{workflow.id}.md</code>{errorAfter}
       </p>
     {:else}
       <!-- Name, description and prompt: the same three parts for a built-in
@@ -582,7 +594,9 @@
       <details class="tpl-prompt">
         <summary class="tpl-toggle">
           <span class="tpl-chev" aria-hidden="true"></span>
-          Prompt{#if workflowTakesQuestion(workflow)}<span class="tpl-hint"> · asks for a question</span>{/if}
+          {$LL.app.insights.templates_panel.prompt_toggle()}{#if workflowTakesQuestion(workflow)}<span class="tpl-hint">
+              · {$LL.app.insights.templates_panel.asks_for_question()}</span
+            >{/if}
         </summary>
         <div class="tpl-body">
           <pre class="tpl-instruction">{workflow.instruction}</pre>
@@ -603,7 +617,7 @@
 
 {#if hasProvider === false}
   <NeedsProviderCard
-    title="Add a provider to use these templates"
+    title={$LL.app.insights.templates_panel.needs_provider()}
     on:open={() => dispatch("openProviders")}
   />
 {/if}
@@ -611,20 +625,20 @@
   <div class="err-box" role="alert">{replaceError}</div>
 {/if}
 {#if loadError}
-  <div class="err-box" role="alert">Templates could not be listed.</div>
+  <div class="err-box" role="alert">{$LL.app.insights.templates_panel.load_failed()}</div>
 {:else if loading && workflows.length === 0}
-  <p class="op-state">Loading insight templates…</p>
+  <p class="op-state">{$LL.app.insights.templates_panel.loading()}</p>
 {:else if workflows.length === 0}
   <div class="op-empty">
     <FileText size={20} aria-hidden="true" />
-    <p class="t">This build ships no templates.</p>
+    <p class="t">{$LL.app.insights.templates_panel.none_shipped()}</p>
   </div>
 {:else}
   <!-- Dimmed rather than hidden while there is no endpoint: the templates
        are real and worth reading, they just have nowhere to be sent. -->
   <section class="tpl-section" aria-labelledby="tpl-custom-heading">
     <div class="tpl-section-head">
-      <h2 id="tpl-custom-heading" class="tpl-section-title">Your templates</h2>
+      <h2 id="tpl-custom-heading" class="tpl-section-title">{$LL.app.insights.templates_panel.custom_heading()}</h2>
       <button
         class="link-btn tpl-new"
         type="button"
@@ -632,7 +646,7 @@
         on:click={() => void openEditor(newTemplate())}
       >
         <Plus size={14} aria-hidden="true" />
-        New template
+        {$LL.app.insights.templates_panel.new_template()}
       </button>
     </div>
     {#if editor && editor.key === NEW_KEY}
@@ -641,7 +655,7 @@
       </div>
     {/if}
     {#if customs.length === 0 && editor?.key !== NEW_KEY}
-      <p class="tpl-none">None yet. Start a new one, or duplicate a built-in template below.</p>
+      <p class="tpl-none">{$LL.app.insights.templates_panel.custom_none()}</p>
     {/if}
     <!-- Keyed by origin as well as id: a custom file named after a built-in is
          listed, broken, and the two must not collide. -->
@@ -658,10 +672,10 @@
     <section class="tpl-section" aria-labelledby="tpl-builtin-heading">
       <div class="tpl-section-head">
         <h2 id="tpl-builtin-heading" class="tpl-section-title">
-          Built in <span class="tpl-count">{builtIns.length}</span>
+          {$LL.app.insights.templates_panel.built_in_heading()} <span class="tpl-count">{builtIns.length}</span>
         </h2>
       </div>
-      <p class="tpl-note">Shipped with Cassini. Duplicate one to change it.</p>
+      <p class="tpl-note">{$LL.app.insights.templates_panel.built_in_note()}</p>
       <div class="tpl-list">
         {#each builtIns as workflow (`${workflow.origin}:${workflow.id}`)}
           {@render templateRow(workflow, false)}
@@ -688,8 +702,9 @@
 >
   {#if deletion}
     {@const name = deletion.workflow.name || deletion.workflow.id}
+    {@const [deleteBefore, deleteAfter] = around($LL.app.insights.templates_panel.delete_title({ name: MARK }))}
     <div class="modal-box tpl-dialog">
-      <h2 id="tpl-delete-title" class="tpl-dialog-title">Delete <strong>{name}</strong>?</h2>
+      <h2 id="tpl-delete-title" class="tpl-dialog-title">{deleteBefore}<strong>{name}</strong>{deleteAfter}</h2>
       {#if deletion.inUse}
         <!-- A step runs this template, so the operator would refuse: no
              Delete to press, only the way to replace it. The insight
@@ -697,34 +712,32 @@
              place to send anyone and closes with OK. -->
         <p class="tpl-dialog-body">
           {#if deletion.inUse === "summary"}
-            This template is being used for generating summaries after calls are transcribed. Replace it with another
-            template before deleting it.
+            {$LL.app.insights.templates_panel.in_use_summary()}
           {:else}
-            This template is being used as the default for new insights. Replace it with another template before
-            deleting it.
+            {$LL.app.insights.templates_panel.in_use_insight()}
           {/if}
         </p>
         <div class="tpl-dialog-actions">
-          <button class="link-btn op-cancel" type="button" bind:this={deleteCancel} on:click={closeDelete}>Cancel</button>
+          <button class="link-btn op-cancel" type="button" bind:this={deleteCancel} on:click={closeDelete}>{$LL.common.action.cancel()}</button>
           {#if deletion.inUse === "summary"}
-            <button class="op-btn" type="button" on:click={openPipeline}>Open the Publish pipeline</button>
+            <button class="op-btn" type="button" on:click={openPipeline}>{$LL.app.insights.templates_panel.open_pipeline({ place: $LL.common.place.publish_pipeline() })}</button>
           {:else}
-            <button class="op-btn" type="button" on:click={closeDelete}>OK</button>
+            <button class="op-btn" type="button" on:click={closeDelete}>{$LL.app.insights.templates_panel.ok()}</button>
           {/if}
         </div>
       {:else}
         <p class="tpl-dialog-body">
-          Insights that have already been produced from it will keep a reference to its name, id, version and hash.
+          {$LL.app.insights.templates_panel.delete_note()}
         </p>
         {#if deletion.error}
           <div class="err-box" role="alert">{deletion.error}</div>
         {/if}
         <div class="tpl-dialog-actions">
           <button class="link-btn op-cancel" type="button" disabled={saving} bind:this={deleteCancel} on:click={closeDelete}>
-            Cancel
+            {$LL.common.action.cancel()}
           </button>
           <button class="btn btn-sm btn-error" type="button" disabled={saving} on:click={() => void remove()}>
-            {saving ? "Deleting…" : "Delete"}
+            {saving ? $LL.app.insights.templates_panel.deleting() : $LL.common.action.delete()}
           </button>
         </div>
       {/if}

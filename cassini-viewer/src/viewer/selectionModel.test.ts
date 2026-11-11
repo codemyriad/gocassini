@@ -325,10 +325,10 @@ describe("describeSelectionGaps", () => {
       }),
     ]);
     expect(describeSelectionGaps(totals)).toEqual([
-      "One of these predates the single-file format (marked in the list). Unpick it to prepare.",
+      "1 meeting predates the single-file format (marked in the list). Unpick it to prepare.",
     ]);
-    expect(describeSelectionGaps({ ...totals, withoutPortableAudio: 2 })[0]).toContain(
-      "Unpick them to prepare.",
+    expect(describeSelectionGaps({ ...totals, withoutPortableAudio: 2 })[0]).toBe(
+      "2 meetings predate the single-file format (marked in the list). Unpick them to prepare.",
     );
   });
 
@@ -365,7 +365,7 @@ describe("the meeting cap", () => {
     // The cap is the whole of the gap list here: a missing summary is a note
     // now, and the gaps are the sentences that stop Prepare.
     expect(describeSelectionGaps(over)).toEqual([
-      "You can work with up to 20 meetings at once. Unpick 2.",
+      "You can work with up to 20 meetings at once. Unpick 2 meetings.",
     ]);
   });
 });

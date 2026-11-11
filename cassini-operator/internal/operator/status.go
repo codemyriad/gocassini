@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"cassini-operator/internal/operator/appapi"
 )
 
 // GET /status is the admin doctor endpoint (D-363): it answers "is this
@@ -72,6 +74,11 @@ type statusResponse struct {
 	// recordings per-participant readable is actually there (D-554). It is the
 	// last recorded outcome of provisioning, not a live probe.
 	RecordingsAccess statusRecordingsAccess `json:"recordings_access"`
+	// RecordedAtMigration is whether past recordings' delivered files still
+	// need recordedAtUtc written into them, how far an administrator-started
+	// rewrite has got, and what a rewrite does in Nextcloud
+	// (recorded_at_migration.go). Informational: it never affects OK.
+	RecordedAtMigration recordedAtMigrationStatus `json:"recorded_at_migration"`
 }
 
 // statusRecordingsAccess answers "can this deployment actually restrict a
@@ -111,6 +118,20 @@ type statusRecordingsAccess struct {
 	Mode      string `json:"mode,omitempty"`
 	Root      string `json:"root,omitempty"`
 	CheckedAt string `json:"checked_at,omitempty"`
+	// SharingPolicy is whether Nextcloud's sharing settings let Cassini share
+	// recordings (D-885): the Recording sharing row, for a monitor. Absent
+	// until a preflight has evaluated it.
+	SharingPolicy *statusSharingPolicy `json:"sharing_policy,omitempty"`
+}
+
+type statusSharingPolicy struct {
+	State   string `json:"state"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	// ShareableGroups are the groups Cassini can share through while Nextcloud
+	// restricts sharing to group members.
+	ShareableGroups []string `json:"shareable_groups,omitempty"`
+	CheckedAt       string   `json:"checked_at,omitempty"`
 }
 
 type statusSTT struct {
@@ -328,6 +349,7 @@ func (rt *Runtime) statusHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	resp.RecordedAtMigration = rt.recordedAtMigrationStatus(r.Context())
 	resp.ImageTag = resp.Version
 	resp.DB = statusCheck{OK: true, Path: rt.cfg.DBPath}
 	if err := rt.store.Ping(r.Context()); err != nil {
@@ -395,6 +417,11 @@ type setupResponse struct {
 	// (docs/exapp-update-constraints.md §5a) — a field on an already-declared
 	// route costs nothing.
 	Features setupFeatures `json:"features"`
+	// Sharing is the caller's own view of recording shares (D-885): what is
+	// waiting for their acceptance and what could not be shared with them.
+	// Computed for the caller alone, by reads that run as them; see
+	// pending_shares.go. It rides here for the same reason Features does.
+	Sharing setupSharing `json:"sharing"`
 }
 
 // setupFeatures answers the two questions every unconfigured state reduces to:
@@ -467,6 +494,7 @@ func (rt *Runtime) setupHandler(w http.ResponseWriter, r *http.Request) {
 			Summaries: llm.Effective.Summary != nil,
 			Insights:  llm.Effective.Insight != nil,
 		},
+		Sharing: rt.sharingForCaller(r.Context(), appapi.UserID(r.Context())),
 	})
 }
 

@@ -6,6 +6,9 @@
 // that is missing is the entry — which is derived here, from the URL, because
 // the URL is the only thing the embedding page told us.
 
+import { get } from "svelte/store";
+
+import { LL } from "../i18n";
 import { describeMeeting } from "./portable";
 import type { MeetingCatalogEntry } from "./catalog";
 
@@ -40,11 +43,12 @@ export function meetingIdFromUrl(src: string): string {
 // whoever named the file.
 export function singleMeetingEntry(src: string, title = ""): MeetingCatalogEntry {
   const id = meetingIdFromUrl(src);
-  const described = describeMeeting(id);
+  const described = describeMeeting(id, get(LL).viewer.meeting.load.untitled());
   return {
     id,
     title: title.trim() || described.title,
     dateLabel: described.dateLabel,
+    ...(described.recordedAtUtc ? { recordedAtUtc: described.recordedAtUtc } : {}),
     ...(/\.json(?:[?#]|$)/i.test(src) ? { meetingPath: src } : { audioPath: src }),
   };
 }
