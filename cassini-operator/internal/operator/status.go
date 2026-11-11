@@ -398,6 +398,11 @@ type setupResponse struct {
 	State string `json:"state"`
 	// The public audience hint names the single direct-share model.
 	Mode string `json:"mode"`
+	// Audience is which share audience the operator is configured to use:
+	// "participants" (everyone in the Talk room, the default) or "attendees"
+	// (only the people Talk reports in the call). It is public because the
+	// viewer's audience chip must say the same thing to every reader.
+	Audience string `json:"audience"`
 	// Cause is why recordings cannot be served, in one plain sentence (D-759).
 	// Empty whenever they can, and empty whenever the honest cause cannot be
 	// told without naming an account, a path or an app — the same rule the rest
@@ -481,6 +486,10 @@ func (rt *Runtime) setupHandler(w http.ResponseWriter, r *http.Request) {
 	// viewer re-asks when the Prepare panel opens, and a cached "no AI
 	// endpoint" would defeat that (D-749).
 	w.Header().Set("Cache-Control", "no-store")
+	audience := "participants"
+	if rt.currentSettings().ShareWithAttendees {
+		audience = "attendees"
+	}
 	writeJSON(w, http.StatusOK, setupResponse{
 		// RecordingState is this branch's own addition and is orthogonal to the
 		// storage model: it says whether RECORDING is verified to work, which is
@@ -489,6 +498,7 @@ func (rt *Runtime) setupHandler(w http.ResponseWriter, r *http.Request) {
 		OK:             access.OK,
 		State:          access.State,
 		Mode:           "direct_shares",
+		Audience:       audience,
 		Cause:          storageUserCauseFor(access.Step),
 		Features: setupFeatures{
 			Summaries: llm.Effective.Summary != nil,

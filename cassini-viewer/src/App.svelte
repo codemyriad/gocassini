@@ -116,7 +116,7 @@
   // fact comes from the deployment's operator, which this layer cannot reach
   // and a standalone export does not have. "" is "nobody said", and the chip
   // renders nothing.
-  export let audience: "" | "participants" = "";
+  export let audience: "" | "participants" | "attendees" = "";
 
   // Whether the shell fills the list's `list-empty` slot (D-885): see the prop
   // of the same name on MeetingList. Forwarded, not decided, like the slot.

@@ -116,6 +116,8 @@
   let savedMeetingFormat: "opus" | "json" = "opus";
   let transcriptionEnabled = false;
   let retainVideo = false;
+  let shareWithAttendees = false;
+  let savedShareWithAttendees = false;
   let sourceRetention: "storage-policy" | "delete-after-processing" = "storage-policy";
   let savedSourceRetention = "storage-policy";
   let savedRetainVideo = false;
@@ -354,6 +356,8 @@
     savedMeetingFormat = meetingFormat;
     transcriptionEnabled = next.transcription_enabled === true;
     retainVideo = next.retain_video === true;
+    shareWithAttendees = next.share_with_attendees === true;
+    savedShareWithAttendees = shareWithAttendees;
     sourceRetention = next.source_retention ?? "storage-policy";
     savedSourceRetention = sourceRetention;
     savedRetainVideo = retainVideo;
@@ -419,6 +423,7 @@
             source_retention: sourceRetention,
             transcription_enabled: transcriptionEnabled,
             retain_video: retainVideo,
+            share_with_attendees: shareWithAttendees,
             active_model: activeModel,
             active_revision: activeRevision,
             ...(quality !== savedQuality ? { quality } : {}),
@@ -686,6 +691,7 @@
   $: sttDirty =
     settings !== null &&
     (sourceRetention !== savedSourceRetention || retainVideo !== savedRetainVideo || JSON.stringify([transcriptionEnabled,activeModel,activeRevision]) !== savedTranscription ||
+      shareWithAttendees !== savedShareWithAttendees ||
       meetingFormat !== savedMeetingFormat ||
       quality !== savedQuality ||
       deviceOverride !== savedDeviceOverride ||
@@ -767,7 +773,7 @@
      component untouched and keeps the cross-link a property of the layout that
      places the two sections, which is where it belongs. -->
 <div id="recording-storage">
-  <DirectShareAccessPanel {operatorClient} />
+  <DirectShareAccessPanel {operatorClient} {shareWithAttendees} onShareWithAttendeesChange={(value) => { shareWithAttendees = value; }} disabled={saving} />
 </div>
 
   {#if loadError}

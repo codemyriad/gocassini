@@ -9,6 +9,23 @@ when the instance permits it. A recipient may then create a public link if
 Nextcloud permits link sharing. Guests without an account receive no Files
 share. Cassini itself does not create public links.
 
+## Who the recording is shared with
+
+By default every recording is shared with everyone in the Talk room — a
+standing channel's whole membership, whether they were in the call or not. An
+administrator can change **Share recordings with** in Operator › Publish
+pipeline to **Only people who were in the call**. In that mode the roster is
+the local Nextcloud accounts Talk reports with its `inCall` flag when the
+recording starts and stops, plus the person who started it. Guests, email
+invitees and federated participants are skipped in either mode.
+
+The setting applies to recordings that start after it is saved. A recording's
+roster is frozen when captured, so changing the option does not re-share
+recordings already published. The attendee roster is the union of the two
+captures, so someone who joined after the start and left again before the stop
+is not in it; the recorder's own in-call list is the follow-up that can make
+that exact.
+
 ## Access checks
 
 The meeting list starts from the caller's current Nextcloud shares. Cassini's

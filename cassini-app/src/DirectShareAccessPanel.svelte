@@ -12,6 +12,16 @@
   let loading = true;
   export let busy = false;
   export let disabled = false;
+  // The parent owns the saved settings and Save button; this panel edits only
+  // its draft. settingsLoaded keeps the radios inert until the draft exists.
+  export let shareAudience: "room" | "attendees" = "room";
+  export let settingsLoaded = true;
+  export let onShareAudienceChange: (value: "room" | "attendees") => void = () => {};
+  // The operator's audience option. The parent (SettingsPanel) owns the saved
+  // settings and the Save button; this panel only edits the draft and says what
+  // the chosen mode means.
+  export let shareWithAttendees = false;
+  export let onShareWithAttendeesChange: (value: boolean) => void = () => {};
   let error = "";
   // Confirms a fix made from this panel; a healthy setup otherwise says nothing.
   let fixed = false;
@@ -51,11 +61,28 @@
 <section class="op-tint access">
   <h2 class="set-row-name op-card-title">{$LL.app.settings.direct_share.heading()}</h2>
   <div class="access-body grid gap-3 text-sm">
-    <!-- Same points as the rooms rail's "Shared with participants" note
+    <!-- Same points as the rooms rail's audience note
          (cassini-viewer RoomsRail.svelte); change both together. -->
     <p>{$LL.common.audience.intro()}</p>
+    <p>Choose who receives the recording — and with it the transcript and summary.</p>
+    <div class="audience-choice" role="group" aria-label="Share recordings with">
+      <label class="audience-option">
+        <input type="radio" name="recording-audience" checked={shareAudience === "room"} on:change={() => onShareAudienceChange("room")} disabled={disabled || !settingsLoaded} />
+        <span><strong>Everyone in the Talk room</strong> — the whole channel, including people who were not on the call.</span>
+      </label>
+      <label class="audience-option">
+        <input type="radio" name="recording-audience" checked={shareAudience === "attendees"} on:change={() => onShareAudienceChange("attendees")} disabled={disabled || !settingsLoaded} />
+        <span><strong>Only people who were in the call</strong> — attendees at the recording's start and stop; useful for a standing channel.</span>
+      </label>
+    </div>
+    <p class="audience-hint">Applies to recordings that start after you save. A recording's roster is fixed when it is captured; changing this later does not re-share recordings already published.</p>
+    <p class="audience-hint" role="note">In “Only people who were in the call” mode, the Talk room chat message is skipped: the whole room would see the recording's title and link.</p>
     <ul class="access-points">
-      <li>{$LL.common.audience.point_participants()}</li>
+      {#if shareAudience === "attendees"}
+        <li>Each recording is shared only with the people who were in the call while it was being recorded.</li>
+      {:else}
+        <li>{$LL.common.audience.point_participants()}</li>
+      {/if}
       <li>{$LL.common.audience.point_guests()}</li>
       <li>{$LL.common.audience.point_public_links()}</li>
     </ul>
@@ -101,5 +128,43 @@
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
+  }
+  .audience-choice {
+    display: grid;
+    gap: 8px;
+    margin: 2px 0;
+  }
+  .audience-option {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    cursor: pointer;
+  }
+  .audience-option input {
+    margin-top: 3px;
+    flex: none;
+  }
+  .audience-hint {
+    margin: 0;
+    opacity: 0.8;
+  }
+  .audience-choice {
+    display: grid;
+    gap: 8px;
+    margin: 2px 0;
+  }
+  .audience-option {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    cursor: pointer;
+  }
+  .audience-option input {
+    margin-top: 3px;
+    flex: none;
+  }
+  .audience-hint {
+    margin: 0;
+    opacity: 0.8;
   }
 </style>

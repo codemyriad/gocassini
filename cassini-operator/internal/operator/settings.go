@@ -26,6 +26,12 @@ type STTSettings struct {
 	// MeetingFormat controls publication, independently of transcription and local capture retention.
 	MeetingFormat        string   `json:"meeting_format"`
 	TranscriptionEnabled bool     `json:"transcription_enabled"`
+	// ShareWithAttendees selects the recording share audience: false (the
+	// default) shares with everyone in the Talk room, true shares only with the
+	// people Talk reports in the call while it is being recorded. The roster is
+	// captured at recording start and stop; the setting applies to recordings
+	// started after it is saved.
+	ShareWithAttendees bool `json:"share_with_attendees"`
 	ActiveModel          string   `json:"active_model,omitempty"`
 	ActiveRevision       string   `json:"active_revision,omitempty"`
 	Quality              string   `json:"quality"`
@@ -654,6 +660,10 @@ type settingsUpdate struct {
 	RetainVideo          *bool     `json:"retain_video"`
 	MeetingFormat        *string   `json:"meeting_format"`
 	TranscriptionEnabled *bool     `json:"transcription_enabled"`
+	// ShareWithAttendees is a pointer for the same reason as the fields above:
+	// nil means "leave the audience alone", so a client that does not know
+	// about the option cannot switch it off by omitting it.
+	ShareWithAttendees *bool `json:"share_with_attendees"`
 	ActiveModel          *string   `json:"active_model"`
 	ActiveRevision       *string   `json:"active_revision"`
 	Quality              *string   `json:"quality,omitempty"`
@@ -792,6 +802,9 @@ func (rt *Runtime) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.TranscriptionEnabled != nil {
 		updated.TranscriptionEnabled = *in.TranscriptionEnabled
+	}
+	if in.ShareWithAttendees != nil {
+		updated.ShareWithAttendees = *in.ShareWithAttendees
 	}
 	if in.ActiveModel != nil {
 		updated.ActiveModel = *in.ActiveModel

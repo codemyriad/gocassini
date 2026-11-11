@@ -211,10 +211,14 @@ func (s *directSharesPublishSink) audienceForJob(ctx context.Context, jobID stri
 		return nil, false, err
 	}
 	if !captured {
-		if s.rt.fetchTalkParticipants == nil {
+		fetch := s.rt.fetchTalkParticipants
+		if s.rt.currentSettings().ShareWithAttendees {
+			fetch = s.rt.fetchTalkAttendees
+		}
+		if fetch == nil {
 			return nil, false, fmt.Errorf("no captured Talk audience for %s and no participant lookup is available", jobID)
 		}
-		audience, _, err = s.rt.resolveRecordingAudience(ctx, jobID, binding.Owner, binding.RoomToken)
+		audience, _, err = s.rt.resolveRecordingAudienceWith(ctx, jobID, binding.Owner, binding.RoomToken, fetch)
 		if err != nil {
 			return nil, false, fmt.Errorf("resolve recording audience: %w", err)
 		}

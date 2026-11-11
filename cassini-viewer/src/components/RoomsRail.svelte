@@ -118,7 +118,7 @@
   $: if (!roomsLoading) remember(ROOMS_KEY, rooms.length);
   $: if (tagRows) remember(TAGS_KEY, tagRows.length);
 
-  export let audience: "" | "participants" = "";
+  export let audience: "" | "participants" | "attendees" = "";
   $: text = $LL.viewer.browse.rooms_rail;
   $: AUDIENCE = {
     participants: {
@@ -127,7 +127,15 @@
       // pipeline (cassini-app DirectShareAccessPanel.svelte): common.audience.
       points: [$LL.common.audience.point_participants(), $LL.common.audience.point_guests(), $LL.common.audience.point_public_links()],
     },
-  };
+    attendees: {
+      label: "Shared with call attendees",
+      points: [
+        "Each recording is shared only with the people who were in the call while it was being recorded.",
+        $LL.common.audience.point_guests(),
+        $LL.common.audience.point_public_links(),
+      ],
+    },
+  } as const;
   $: AUDIENCE_LEAD = $LL.common.audience.intro();
   let audienceEl: HTMLElement;
   let audienceOpen = false;

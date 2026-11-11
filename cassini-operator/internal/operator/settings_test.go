@@ -749,6 +749,55 @@ func TestPutSettingsAcceptsSearchAliases(t *testing.T) {
 	}
 }
 
+// TestPutSettingsAcceptsShareWithAttendees covers the audience option through
+// the same route the admin panel uses: it persists, reports back, and an
+// unrelated update does not silently reset it.
+func TestPutSettingsAcceptsShareWithAttendees(t *testing.T) {
+	rt := newSettingsTestRuntime(t)
+
+	rec := httptest.NewRecorder()
+	rt.handlePutSettings(rec, httptest.NewRequest(http.MethodPut, "/settings",
+		strings.NewReader(`{"quality":"balanced","share_with_attendees":true}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200 (body=%s)", rec.Code, rec.Body.String())
+	}
+
+	saved, err := LoadOrInitSettings(rt.settingsPath)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if !saved.ShareWithAttendees {
+		t.Fatal("share_with_attendees was not persisted")
+	}
+
+	// An omitted field preserves the choice, the same rule as the other
+	// options; a client too old to know the field must not switch it off.
+	rec = httptest.NewRecorder()
+	rt.handlePutSettings(rec, httptest.NewRequest(http.MethodPut, "/settings",
+		strings.NewReader(`{"quality":"fast"}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unrelated update code = %d, want 200", rec.Code)
+	}
+	saved, err = LoadOrInitSettings(rt.settingsPath)
+	if err != nil {
+		t.Fatalf("load after unrelated update: %v", err)
+	}
+	if !saved.ShareWithAttendees {
+		t.Fatal("an update that omitted share_with_attendees reset it")
+	}
+
+	// And it can be switched back to the default.
+	rec = httptest.NewRecorder()
+	rt.handlePutSettings(rec, httptest.NewRequest(http.MethodPut, "/settings",
+		strings.NewReader(`{"share_with_attendees":false}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("disable code = %d, want 200", rec.Code)
+	}
+	if rt.currentSettings().ShareWithAttendees {
+		t.Fatal("share_with_attendees = true after disabling it")
+	}
+}
+
 // A client that does not know about aliases must not erase them by omitting
 // the field.
 func TestPutSettingsWithoutAliasesKeepsThem(t *testing.T) {

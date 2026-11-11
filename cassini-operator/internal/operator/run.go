@@ -216,6 +216,9 @@ type Runtime struct {
 	talkAudienceRetryGap time.Duration
 	// fetchTalkParticipants resolves the room's local share recipients.
 	fetchTalkParticipants talkParticipantsFetcher
+	// fetchTalkAttendees resolves only the people Talk reports in the call.
+	// The operator's "Share recordings with" setting chooses between them.
+	fetchTalkAttendees talkParticipantsFetcher
 	// recordStopAckGrace and recordStopFinalizeGrace default to the package
 	// constants; tests shrink them to exercise stop enforcement quickly.
 	recordStopAckGrace      time.Duration
@@ -428,6 +431,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	defer runtime.Shutdown()
 	runtime.fetchTalkRoomName = exappCfg.talkRoomNameFetcher()
 	runtime.fetchTalkParticipants = exappCfg.talkParticipantsFetcher()
+	runtime.fetchTalkAttendees = exappCfg.talkAttendeesFetcher()
 	runtime.startRoomNamesWorker()
 
 	// Resolve the publish destination. An explicit name always wins; an unset

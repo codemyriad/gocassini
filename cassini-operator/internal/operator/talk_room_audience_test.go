@@ -222,6 +222,46 @@ func TestCaptureRoomAudienceStoresResolvedPrincipals(t *testing.T) {
 	}
 }
 
+// TestCaptureRoomAudienceUsesInCallAttendeesWhenConfigured is the option: with
+// "Share recordings with: only people in the call" on, the captured roster is
+// the attendee fetcher's answer, not the room's participant list.
+func TestCaptureRoomAudienceUsesInCallAttendeesWhenConfigured(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	seedTalkJob(t, rt, "job-attendees")
+	rt.settings = STTSettings{ShareWithAttendees: true}
+	rt.talkAudienceRetryGap = time.Millisecond
+
+	roomCalls, attendeeCalls := 0, 0
+	rt.fetchTalkParticipants = func(_ context.Context, _, _ string) ([]sharePrincipal, error) {
+		roomCalls++
+		return []sharePrincipal{{Type: "user", ID: "everyone-in-channel"}}, nil
+	}
+	rt.fetchTalkAttendees = func(_ context.Context, _, _ string) ([]sharePrincipal, error) {
+		attendeeCalls++
+		return []sharePrincipal{{Type: "user", ID: "alice"}, {Type: "user", ID: "bob"}}, nil
+	}
+
+	rt.captureRoomAudience("job-attendees", "alice", "tok123", roomAudiencePhaseStart)
+
+	mappings, captured, err := rt.store.JobRoomAudience(context.Background(), "job-attendees")
+	if err != nil {
+		t.Fatalf("JobRoomAudience() error = %v", err)
+	}
+	if !captured {
+		t.Fatal("captured = false after a successful attendee capture")
+	}
+	if len(mappings) != 2 || mappings[0].ID != "alice" || mappings[1].ID != "bob" {
+		t.Fatalf("mappings = %+v, want alice and bob only", mappings)
+	}
+	if roomCalls != 0 {
+		t.Errorf("room fetcher called %d times in attendee mode", roomCalls)
+	}
+	if attendeeCalls == 0 {
+		t.Error("attendee fetcher was not called")
+	}
+}
+
 // TestCaptureRoomAudienceLeavesNothingWhenEveryTierFails is the failure this
 // design accepts: the roster is lost and the recording becomes one the panel
 // can only explain, never narrow. It must fail that way quietly rather than

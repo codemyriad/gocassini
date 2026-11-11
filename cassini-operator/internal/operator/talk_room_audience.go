@@ -191,12 +191,21 @@ SELECT room_audience, room_audience_at FROM jobs WHERE id = ?`, id).Scan(&audien
 // nothing repairs it: that recording can never be narrowed from the panel, and
 // will sit there as a row explaining why.
 //
-// It reuses resolveRecordingAudience rather than calling the fetcher directly,
-// so a capture escalates through the same two tiers a publish does: the
-// recording's starter first, then the recordings owner. The tiers matter more
-// here than there, because at stop time the starter may already have left.
+// It reuses resolveRecordingAudienceWith rather than calling the fetcher
+// directly, so a capture escalates through the same two tiers a publish does:
+// the recording's starter first, then the recordings owner. The tiers matter
+// more here than there, because at stop time the starter may already have left.
+//
+// The roster is the room's participants (the default) or, when the operator's
+// "Share recordings with" setting is "only people in the call", just the
+// participants Talk reports with the in-call bit set. The second is what keeps
+// a standing channel's non-attendees out of a meeting's shares.
 func (rt *Runtime) captureRoomAudience(jobID, owner, roomToken, phase string) {
-	if rt.fetchTalkParticipants == nil {
+	fetch := rt.fetchTalkParticipants
+	if rt.currentSettings().ShareWithAttendees {
+		fetch = rt.fetchTalkAttendees
+	}
+	if fetch == nil {
 		return
 	}
 	owner = strings.TrimSpace(owner)
@@ -207,7 +216,7 @@ func (rt *Runtime) captureRoomAudience(jobID, owner, roomToken, phase string) {
 	ctx, cancel := context.WithTimeout(rt.ctx, roomAudienceTimeout)
 	defer cancel()
 
-	mappings, source, err := rt.resolveRecordingAudience(ctx, jobID, owner, roomToken)
+	mappings, source, err := rt.resolveRecordingAudienceWith(ctx, jobID, owner, roomToken, fetch)
 	if err != nil {
 		rt.logger.Printf("room audience capture failed id=%s phase=%s room=%s: %v (this recording cannot be narrowed later)", jobID, phase, roomToken, err)
 		return
@@ -216,5 +225,5 @@ func (rt *Runtime) captureRoomAudience(jobID, owner, roomToken, phase string) {
 		rt.logger.Printf("room audience persist failed id=%s phase=%s: %v", jobID, phase, err)
 		return
 	}
-	rt.logger.Printf("room audience captured id=%s phase=%s principals=%d source=%s", jobID, phase, len(mappings), source)
+	rt.logger.Printf("room audience captured id=%s phase=%s principals=%d source=%s attendees_only=%t", jobID, phase, len(mappings), source, rt.currentSettings().ShareWithAttendees)
 }

@@ -70,6 +70,42 @@ it("saves the publication format through settings and restores it on reload", as
   await expect.poll(() => saved.meeting_format).toBe("opus");
 });
 
+it("saves the recording audience option", async () => {
+  let saved = { quality: "balanced", meeting_format: "opus", transcription_enabled: false, share_with_attendees: false };
+  const writes: Record<string, unknown>[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = new URL(String(input), location.href).pathname;
+    if (path === "/operator/settings") {
+      if (init?.method === "PUT") {
+        const update = JSON.parse(init.body as string);
+        writes.push(update);
+        saved = { ...saved, ...update };
+      }
+      return Response.json(saved);
+    }
+    if (path === "/operator/storage") {
+      return Response.json({ ok: true, state: "provisioned", service_account: { exists: true } });
+    }
+    if (path === "/operator/settings/models") return Response.json({ models: [], jobs: [] });
+    if (path === "/operator/settings/llm") {
+      return Response.json({ providers: [], summary: { enabled: false }, insights: { enabled: false } });
+    }
+    return Response.json({});
+  }));
+  host = document.createElement("div");
+  document.body.append(host);
+  app = mount(SettingsPanel, { target: host, props: { operatorClient: new OperatorClient("/operator") } });
+
+  const room = page.getByRole("radio", { name: /^Everyone in the Talk room/ });
+  const attendees = page.getByRole("radio", { name: /^Only people who were in the call/ });
+  await expect.element(room).toBeChecked();
+  await attendees.click();
+  await expect.element(attendees).toBeChecked();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect.poll(() => saved.share_with_attendees).toBe(true);
+  expect(writes[0]).toMatchObject({ share_with_attendees: true });
+});
+
 it("keeps publication separate from source retention and explicitly opts into deletion", async () => {
   let saved = { quality: "balanced", meeting_format: "opus", source_retention: "storage-policy", retain_video: true, transcription_enabled: true, active_model: "prepared", active_revision: "r1" };
   const writes: Record<string, unknown>[] = [];
