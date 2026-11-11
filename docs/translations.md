@@ -214,7 +214,7 @@ Weblate cannot add a language by itself. Each one needs these TypeScript
 files, so its components are set to ask a maintainer (see below): a
 translator's **Start new translation** sends the project's administrators a
 "new language requested" notification in Weblate instead of creating files.
-Requests can also arrive as a GitHub issue titled "Translation: <language>".
+Requests can also arrive as a GitHub issue titled like "Translation: Swedish".
 
 ## Weblate
 

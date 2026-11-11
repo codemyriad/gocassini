@@ -105,9 +105,6 @@ If your language isn't on the list, you can ask for it from Weblate itself:
    **nextcloud-common**) and choose **Start new translation**.
 3. Pick your language and send the request. Weblate lets us know.
 
-If you'd rather, [open an issue](https://github.com/codemyriad/gocassini/issues/new)
-titled "Translation: <your language>" instead.
-
 Weblate can't start the language on its own: Cassini has to be told that a
 new language exists, which takes a small change to the app. We make that
 change, fill the language with a machine translation marked as needing
@@ -123,3 +120,6 @@ other language:
 
 The language goes into the next Cassini release. Any string not translated yet
 shows in English until it is.
+
+You can also ask on GitHub, in an [issue](https://github.com/codemyriad/gocassini/issues/new)
+named after your language, such as "Translation: Swedish".
