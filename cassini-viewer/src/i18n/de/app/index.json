@@ -64,10 +64,10 @@
       "step_set_admin_user": "Setze {variable} auf ein Nextcloud-Administrationskonto",
       "cause_unknown": "Cassini konnte die Einrichtung der Aufnahmen nicht bestätigen.",
       "cause": {
-        "nextcloud_probe": "",
-        "private_archive": "",
-        "sharing_api": "",
-        "owner_account": ""
+        "nextcloud_probe": "Nextcloud hat auf die Prüfung des Aufnahmekontos nicht geantwortet.",
+        "private_archive": "Cassini konnte nicht bestätigen, dass sein Aufnahmeordner privat und beschreibbar ist.",
+        "sharing_api": "Die Dateifreigabe von Nextcloud ist für das Cassini-Aufnahmekonto nicht verfügbar.",
+        "owner_account": "Das Cassini-Aufnahmekonto existiert nicht."
       },
       "detail_state": "Der Operator meldete {state}.",
       "detail_state_at_step": "Der Operator meldete {state} bei {step}.",
@@ -385,18 +385,18 @@
         "web_push_off": "Nicht erlaubt"
       },
       "notices": {
-        "saved_again": "",
-        "unreadable": "",
-        "unreadable_defaults": "",
-        "email_defaults": "",
-        "versioning_on": "",
-        "versioning_off": "",
-        "activity_on": "",
-        "activity_off": "",
-        "notifications_off": "",
-        "notifications_on": "",
-        "web_push_browsers": "",
-        "web_push_apps": ""
+        "saved_again": "Jede Aufnahme wird von Cassinis Konto {account} erneut gespeichert, und zwar über dieselbe Datei: Freigaben, Links und Datei-ID bleiben erhalten, und die Audiodaten bleiben unverändert.",
+        "unreadable": "Cassini konnte die Fähigkeiten von Nextcloud nicht lesen und kann daher nicht feststellen, ob die Aktivitäten-App, die Benachrichtigungen-App oder die Dateiversionierung aktiviert sind.",
+        "unreadable_defaults": "Wo die Dateiversionierung aktiviert ist (Standard in Nextcloud), wird die Datei im vorherigen Zustand als ältere Version aufbewahrt. Wo die Aktivitäten-App aktiviert ist (ebenfalls Standard), erhalten alle, mit denen die Aufnahme geteilt ist, für jede Aufnahme einen Eintrag „Datei geändert“ in ihrem Aktivitätenstream; Nextcloud fasst kurz nacheinander eintreffende Änderungen möglicherweise zusammen.",
+        "email_defaults": "Mit den Standardeinstellungen von Nextcloud wird die Änderung weder per E-Mail noch als Benachrichtigung gesendet: Beides ist für „Eine Datei oder ein Ordner wurde geändert“ ausgeschaltet. Die Administration kann diese Standards unter Administrationseinstellungen › Aktivität ändern, und jede Person kann sie in ihren eigenen Aktivitätseinstellungen einschalten. Cassini kann beides nicht lesen. Wer Benachrichtigungen eingeschaltet hat, erhält eine pro Aufnahme; wer E-Mail eingeschaltet hat, findet die Änderungen in der Aktivitäts-E-Mail, die Nextcloud sammelt und in der gewählten Häufigkeit sendet, statt einer E-Mail pro Änderung.",
+        "versioning_on": "Die Dateiversionierung ist aktiviert, daher wird die Datei im vorherigen Zustand als ältere Version im Konto {account} aufbewahrt. Sie belegt Speicherplatz, zählt aber nicht zum Kontingent dieses Kontos. Nextcloud lässt Versionen nach versions_retention_obligation in seiner config.php ablaufen, die Cassini nicht lesen kann, sowie nach der Grenze der App Versionen von der Hälfte des freien Speicherplatzes des Kontos; wird sie überschritten, werden die ältesten zuerst entfernt.",
+        "versioning_off": "Die Dateiversionierung ist nicht aktiviert, daher behält Nextcloud keine Kopie der Datei im vorherigen Zustand.",
+        "activity_on": "Die Aktivitäten-App ist aktiviert, daher erhalten alle, mit denen die Aufnahme geteilt ist, für jede Aufnahme einen Eintrag „Datei geändert“ in ihrem Aktivitätenstream; Nextcloud fasst kurz nacheinander eintreffende Änderungen möglicherweise zusammen.",
+        "activity_off": "Die Aktivitäten-App ist nicht aktiviert, daher erscheint die Änderung in niemandes Aktivitätenstream, und es wird keine Aktivitäts-E-Mail gesendet.",
+        "notifications_off": "Die Benachrichtigungen-App ist nicht aktiviert, daher kann für die Änderung keine Benachrichtigung gesendet werden.",
+        "notifications_on": "Die Benachrichtigungen-App ist aktiviert, daher erhält eine Person, die Benachrichtigungen für geänderte Dateien eingeschaltet hat, eine pro Aufnahme in Nextcloud und auf ihren Geräten, auf denen Push-Benachrichtigungen eingerichtet sind.",
+        "web_push_browsers": "Web-Push ist erlaubt, auch für Browser, daher kann die Benachrichtigung auch einen Browser erreichen, in dem diese Person Push-Benachrichtigungen zugelassen hat.",
+        "web_push_apps": "Web-Push ist erlaubt, aber nicht für Browser."
       },
       "panel": {
         "title": "Aufnahmezeiten in älteren Aufnahmen",
