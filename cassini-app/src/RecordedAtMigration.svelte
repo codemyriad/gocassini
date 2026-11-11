@@ -9,6 +9,7 @@
   import { LL } from "cassini-viewer/i18n";
   import type { OperatorClient } from "./operator/client";
   import { migrationActive, migrationButton, migrationCounting, migrationSummary, migrationVisible, notificationFacts, type RecordedAtMigration } from "./operator/recordedAtMigration";
+  import { recordedAtNoticeLines } from "./operator/recordedAtNotices";
   import { toneClasses } from "./operator/readiness";
 
   export let operatorClient: Pick<OperatorClient, "getRecordedAtMigration" | "startRecordedAtMigration" | "pauseRecordedAtMigration">;
@@ -76,7 +77,8 @@
   onDestroy(() => { destroyed = true; timers.clear(timer); });
 
   $: button = migration ? migrationButton(migration) : null;
-  $: facts = notificationFacts(migration?.notifications);
+  $: facts = $LL && notificationFacts(migration?.notifications);
+  $: noticeLines = $LL && migration?.notifications ? recordedAtNoticeLines(migration.notifications) : [];
   // Read before deciding, and out of the way once decided.
   $: noticesOpen = migration?.state === "needed";
 </script>
@@ -128,7 +130,7 @@
             {#each facts as fact}<dt class="text-base-content/60">{fact.label}</dt><dd class="text-base-content">{fact.value}</dd>{/each}
           </dl>
         {/if}
-        {#each migration.notifications.details as line}<p class="text-sm text-base-content/70">{line}</p>{/each}
+        {#each noticeLines as line}<p class="text-sm text-base-content/70">{line}</p>{/each}
         <p class="flex gap-1.5 text-xs text-base-content/60"><Info size={12} class="mt-0.5 shrink-0" aria-hidden="true" />{$LL.app.operator.recorded_at_migration.panel.pause_note()}</p>
       </div>
     </details>

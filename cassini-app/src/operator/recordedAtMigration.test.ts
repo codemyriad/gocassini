@@ -15,9 +15,8 @@ describe("normalizeRecordedAtMigration", () => {
     expect(migrationVisible(m)).toBe(false);
   });
 
-  it("keeps the operator's notification facts and sentences", () => {
-    const m = status({ state: "needed", needed: 3, notifications: { known: true, account: "cassini", activity_app: true, notifications_app: false, versioning: true, details: ["one", "", 4, "two"] } });
-    expect(m.notifications?.details).toEqual(["one", "two"]);
+  it("keeps the operator's notification facts", () => {
+    const m = status({ state: "needed", needed: 3, notifications: { known: true, account: "cassini", activity_app: true, notifications_app: false, versioning: true } });
     expect(notificationFacts(m.notifications)).toEqual([
       { label: "File versioning", value: "Enabled" },
       { label: "Activity app", value: "Enabled" },
@@ -26,7 +25,7 @@ describe("normalizeRecordedAtMigration", () => {
   });
 
   it("tells web push from browser push", () => {
-    const facts = (push: Record<string, boolean>) => notificationFacts(status({ state: "needed", needed: 1, notifications: { known: true, notifications_app: true, ...push, details: [] } }).notifications)
+    const facts = (push: Record<string, boolean>) => notificationFacts(status({ state: "needed", needed: 1, notifications: { known: true, notifications_app: true, ...push } }).notifications)
       .find(fact => fact.label === "Web push")?.value;
     expect(facts({ web_push: true, browser_push: false })).toBe("Allowed, not for browsers");
     expect(facts({ web_push: true, browser_push: true })).toBe("Allowed, browsers too");
@@ -35,7 +34,7 @@ describe("normalizeRecordedAtMigration", () => {
   });
 
   it("states no facts it could not read", () => {
-    const m = status({ state: "needed", needed: 3, notifications: { known: false, error: "could not read", details: ["defaults"] } });
+    const m = status({ state: "needed", needed: 3, notifications: { known: false, error: "could not read" } });
     expect(notificationFacts(m.notifications)).toEqual([]);
     expect(m.notifications?.activity_app).toBeUndefined();
   });

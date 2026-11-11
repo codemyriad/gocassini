@@ -378,6 +378,20 @@
         "web_push_apps": "Tilladt, ikke for browsere",
         "web_push_off": "Ikke tilladt"
       },
+      "notices": {
+        "saved_again": "",
+        "unreadable": "",
+        "unreadable_defaults": "",
+        "email_defaults": "",
+        "versioning_on": "",
+        "versioning_off": "",
+        "activity_on": "",
+        "activity_off": "",
+        "notifications_off": "",
+        "notifications_on": "",
+        "web_push_browsers": "",
+        "web_push_apps": ""
+      },
       "panel": {
         "title": "Optagelsestidspunkter i tidligere optagelser",
         "state_done": "Færdig",

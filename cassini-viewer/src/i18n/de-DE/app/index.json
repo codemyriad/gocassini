@@ -378,6 +378,20 @@
         "web_push_apps": "Erlaubt, nicht für Browser",
         "web_push_off": "Nicht erlaubt"
       },
+      "notices": {
+        "saved_again": "",
+        "unreadable": "",
+        "unreadable_defaults": "",
+        "email_defaults": "",
+        "versioning_on": "",
+        "versioning_off": "",
+        "activity_on": "",
+        "activity_off": "",
+        "notifications_off": "",
+        "notifications_on": "",
+        "web_push_browsers": "",
+        "web_push_apps": ""
+      },
       "panel": {
         "title": "Aufnahmezeiten in älteren Aufnahmen",
         "state_done": "Fertig",

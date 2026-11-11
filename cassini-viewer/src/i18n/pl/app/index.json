@@ -378,6 +378,20 @@
         "web_push_apps": "Dozwolone, ale nie w przeglądarkach",
         "web_push_off": "Niedozwolone"
       },
+      "notices": {
+        "saved_again": "",
+        "unreadable": "",
+        "unreadable_defaults": "",
+        "email_defaults": "",
+        "versioning_on": "",
+        "versioning_off": "",
+        "activity_on": "",
+        "activity_off": "",
+        "notifications_off": "",
+        "notifications_on": "",
+        "web_push_browsers": "",
+        "web_push_apps": ""
+      },
       "panel": {
         "title": "Czas nagrania w dawnych nagraniach",
         "state_done": "Gotowe",

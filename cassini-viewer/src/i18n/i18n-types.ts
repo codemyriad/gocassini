@@ -1501,6 +1501,58 @@ export type NamespaceAppTranslation = {
 				 */
 				web_push_off: string
 			}
+			notices: {
+				/**
+				 * E​a​c​h​ ​r​e​c​o​r​d​i​n​g​ ​i​s​ ​s​a​v​e​d​ ​a​g​a​i​n​ ​b​y​ ​C​a​s​s​i​n​i​'​s​ ​{​a​c​c​o​u​n​t​}​ ​a​c​c​o​u​n​t​,​ ​o​v​e​r​ ​t​h​e​ ​s​a​m​e​ ​f​i​l​e​:​ ​i​t​s​ ​s​h​a​r​e​s​,​ ​l​i​n​k​s​ ​a​n​d​ ​f​i​l​e​ ​i​d​ ​s​t​a​y​ ​a​s​ ​t​h​e​y​ ​a​r​e​,​ ​a​n​d​ ​t​h​e​ ​a​u​d​i​o​ ​i​s​ ​u​n​c​h​a​n​g​e​d​.
+				 * @param {unknown} account
+				 */
+				saved_again: RequiredParams<'account'>
+				/**
+				 * C​a​s​s​i​n​i​ ​c​o​u​l​d​ ​n​o​t​ ​r​e​a​d​ ​N​e​x​t​c​l​o​u​d​'​s​ ​c​a​p​a​b​i​l​i​t​i​e​s​,​ ​s​o​ ​i​t​ ​c​a​n​n​o​t​ ​t​e​l​l​ ​w​h​e​t​h​e​r​ ​t​h​e​ ​A​c​t​i​v​i​t​y​ ​a​n​d​ ​N​o​t​i​f​i​c​a​t​i​o​n​s​ ​a​p​p​s​ ​o​r​ ​f​i​l​e​ ​v​e​r​s​i​o​n​i​n​g​ ​a​r​e​ ​e​n​a​b​l​e​d​.
+				 */
+				unreadable: string
+				/**
+				 * W​h​e​r​e​ ​f​i​l​e​ ​v​e​r​s​i​o​n​i​n​g​ ​i​s​ ​e​n​a​b​l​e​d​ ​(​N​e​x​t​c​l​o​u​d​'​s​ ​d​e​f​a​u​l​t​)​,​ ​t​h​e​ ​f​i​l​e​ ​a​s​ ​i​t​ ​w​a​s​ ​b​e​f​o​r​e​ ​i​s​ ​k​e​p​t​ ​a​s​ ​a​n​ ​e​a​r​l​i​e​r​ ​v​e​r​s​i​o​n​.​ ​W​h​e​r​e​ ​t​h​e​ ​A​c​t​i​v​i​t​y​ ​a​p​p​ ​i​s​ ​e​n​a​b​l​e​d​ ​(​a​l​s​o​ ​t​h​e​ ​d​e​f​a​u​l​t​)​,​ ​e​v​e​r​y​o​n​e​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​ ​i​s​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​g​e​t​s​ ​a​ ​“​f​i​l​e​ ​c​h​a​n​g​e​d​”​ ​e​n​t​r​y​ ​f​o​r​ ​e​a​c​h​ ​r​e​c​o​r​d​i​n​g​ ​i​n​ ​t​h​e​i​r​ ​A​c​t​i​v​i​t​y​ ​s​t​r​e​a​m​;​ ​N​e​x​t​c​l​o​u​d​ ​m​a​y​ ​g​r​o​u​p​ ​c​h​a​n​g​e​s​ ​t​h​a​t​ ​a​r​r​i​v​e​ ​c​l​o​s​e​ ​t​o​g​e​t​h​e​r​.
+				 */
+				unreadable_defaults: string
+				/**
+				 * W​i​t​h​ ​N​e​x​t​c​l​o​u​d​'​s​ ​d​e​f​a​u​l​t​s​ ​t​h​e​ ​c​h​a​n​g​e​ ​i​s​ ​n​o​t​ ​e​m​a​i​l​e​d​ ​a​n​d​ ​n​o​t​ ​s​e​n​t​ ​a​s​ ​a​ ​n​o​t​i​f​i​c​a​t​i​o​n​:​ ​b​o​t​h​ ​a​r​e​ ​o​f​f​ ​f​o​r​ ​“​A​ ​f​i​l​e​ ​o​r​ ​f​o​l​d​e​r​ ​h​a​s​ ​b​e​e​n​ ​c​h​a​n​g​e​d​”​.​ ​A​n​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​ ​c​a​n​ ​c​h​a​n​g​e​ ​t​h​o​s​e​ ​d​e​f​a​u​l​t​s​ ​u​n​d​e​r​ ​A​d​m​i​n​i​s​t​r​a​t​i​o​n​ ​s​e​t​t​i​n​g​s​ ​›​ ​A​c​t​i​v​i​t​y​,​ ​a​n​d​ ​e​a​c​h​ ​p​e​r​s​o​n​ ​c​a​n​ ​t​u​r​n​ ​t​h​e​m​ ​o​n​ ​i​n​ ​t​h​e​i​r​ ​o​w​n​ ​A​c​t​i​v​i​t​y​ ​s​e​t​t​i​n​g​s​.​ ​C​a​s​s​i​n​i​ ​c​a​n​n​o​t​ ​r​e​a​d​ ​e​i​t​h​e​r​.​ ​A​n​y​o​n​e​ ​w​h​o​ ​t​u​r​n​e​d​ ​n​o​t​i​f​i​c​a​t​i​o​n​s​ ​o​n​ ​g​e​t​s​ ​o​n​e​ ​p​e​r​ ​r​e​c​o​r​d​i​n​g​;​ ​a​n​y​o​n​e​ ​w​h​o​ ​t​u​r​n​e​d​ ​e​m​a​i​l​ ​o​n​ ​f​i​n​d​s​ ​t​h​e​ ​c​h​a​n​g​e​s​ ​i​n​ ​t​h​e​i​r​ ​a​c​t​i​v​i​t​y​ ​e​m​a​i​l​,​ ​w​h​i​c​h​ ​N​e​x​t​c​l​o​u​d​ ​c​o​l​l​e​c​t​s​ ​a​n​d​ ​s​e​n​d​s​ ​a​t​ ​t​h​e​ ​f​r​e​q​u​e​n​c​y​ ​t​h​e​y​ ​c​h​o​s​e​ ​r​a​t​h​e​r​ ​t​h​a​n​ ​o​n​e​ ​p​e​r​ ​c​h​a​n​g​e​.
+				 */
+				email_defaults: string
+				/**
+				 * F​i​l​e​ ​v​e​r​s​i​o​n​i​n​g​ ​i​s​ ​e​n​a​b​l​e​d​,​ ​s​o​ ​t​h​e​ ​f​i​l​e​ ​a​s​ ​i​t​ ​w​a​s​ ​b​e​f​o​r​e​ ​i​s​ ​k​e​p​t​ ​a​s​ ​a​n​ ​e​a​r​l​i​e​r​ ​v​e​r​s​i​o​n​ ​i​n​ ​t​h​e​ ​{​a​c​c​o​u​n​t​}​ ​a​c​c​o​u​n​t​.​ ​I​t​ ​t​a​k​e​s​ ​d​i​s​k​ ​s​p​a​c​e​ ​b​u​t​ ​d​o​e​s​ ​n​o​t​ ​c​o​u​n​t​ ​a​g​a​i​n​s​t​ ​t​h​a​t​ ​a​c​c​o​u​n​t​'​s​ ​q​u​o​t​a​.​ ​N​e​x​t​c​l​o​u​d​ ​e​x​p​i​r​e​s​ ​v​e​r​s​i​o​n​s​ ​b​y​ ​v​e​r​s​i​o​n​s​_​r​e​t​e​n​t​i​o​n​_​o​b​l​i​g​a​t​i​o​n​ ​i​n​ ​i​t​s​ ​c​o​n​f​i​g​.​p​h​p​,​ ​w​h​i​c​h​ ​C​a​s​s​i​n​i​ ​c​a​n​n​o​t​ ​r​e​a​d​,​ ​a​n​d​ ​b​y​ ​t​h​e​ ​V​e​r​s​i​o​n​s​ ​a​p​p​'​s​ ​l​i​m​i​t​ ​o​f​ ​h​a​l​f​ ​t​h​e​ ​a​c​c​o​u​n​t​'​s​ ​f​r​e​e​ ​s​p​a​c​e​,​ ​p​a​s​t​ ​w​h​i​c​h​ ​t​h​e​ ​o​l​d​e​s​t​ ​g​o​ ​f​i​r​s​t​.
+				 * @param {unknown} account
+				 */
+				versioning_on: RequiredParams<'account'>
+				/**
+				 * F​i​l​e​ ​v​e​r​s​i​o​n​i​n​g​ ​i​s​ ​n​o​t​ ​e​n​a​b​l​e​d​,​ ​s​o​ ​N​e​x​t​c​l​o​u​d​ ​k​e​e​p​s​ ​n​o​ ​c​o​p​y​ ​o​f​ ​t​h​e​ ​f​i​l​e​ ​a​s​ ​i​t​ ​w​a​s​ ​b​e​f​o​r​e​.
+				 */
+				versioning_off: string
+				/**
+				 * T​h​e​ ​A​c​t​i​v​i​t​y​ ​a​p​p​ ​i​s​ ​e​n​a​b​l​e​d​,​ ​s​o​ ​e​v​e​r​y​o​n​e​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​ ​i​s​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​g​e​t​s​ ​a​ ​“​f​i​l​e​ ​c​h​a​n​g​e​d​”​ ​e​n​t​r​y​ ​f​o​r​ ​e​a​c​h​ ​r​e​c​o​r​d​i​n​g​ ​i​n​ ​t​h​e​i​r​ ​A​c​t​i​v​i​t​y​ ​s​t​r​e​a​m​;​ ​N​e​x​t​c​l​o​u​d​ ​m​a​y​ ​g​r​o​u​p​ ​c​h​a​n​g​e​s​ ​t​h​a​t​ ​a​r​r​i​v​e​ ​c​l​o​s​e​ ​t​o​g​e​t​h​e​r​.
+				 */
+				activity_on: string
+				/**
+				 * T​h​e​ ​A​c​t​i​v​i​t​y​ ​a​p​p​ ​i​s​ ​n​o​t​ ​e​n​a​b​l​e​d​,​ ​s​o​ ​t​h​e​ ​c​h​a​n​g​e​ ​a​p​p​e​a​r​s​ ​i​n​ ​n​o​b​o​d​y​'​s​ ​a​c​t​i​v​i​t​y​ ​s​t​r​e​a​m​ ​a​n​d​ ​n​o​ ​a​c​t​i​v​i​t​y​ ​e​m​a​i​l​ ​i​s​ ​s​e​n​t​.
+				 */
+				activity_off: string
+				/**
+				 * T​h​e​ ​N​o​t​i​f​i​c​a​t​i​o​n​s​ ​a​p​p​ ​i​s​ ​n​o​t​ ​e​n​a​b​l​e​d​,​ ​s​o​ ​n​o​ ​n​o​t​i​f​i​c​a​t​i​o​n​ ​c​a​n​ ​b​e​ ​s​e​n​t​ ​f​o​r​ ​t​h​e​ ​c​h​a​n​g​e​.
+				 */
+				notifications_off: string
+				/**
+				 * T​h​e​ ​N​o​t​i​f​i​c​a​t​i​o​n​s​ ​a​p​p​ ​i​s​ ​e​n​a​b​l​e​d​,​ ​s​o​ ​a​ ​p​e​r​s​o​n​ ​w​h​o​ ​t​u​r​n​e​d​ ​o​n​ ​n​o​t​i​f​i​c​a​t​i​o​n​s​ ​f​o​r​ ​c​h​a​n​g​e​d​ ​f​i​l​e​s​ ​g​e​t​s​ ​o​n​e​ ​p​e​r​ ​r​e​c​o​r​d​i​n​g​ ​i​n​ ​N​e​x​t​c​l​o​u​d​,​ ​a​n​d​ ​o​n​ ​t​h​e​i​r​ ​d​e​v​i​c​e​s​ ​w​h​e​r​e​ ​p​u​s​h​ ​n​o​t​i​f​i​c​a​t​i​o​n​s​ ​a​r​e​ ​s​e​t​ ​u​p​.
+				 */
+				notifications_on: string
+				/**
+				 * W​e​b​ ​p​u​s​h​ ​i​s​ ​a​l​l​o​w​e​d​,​ ​f​o​r​ ​b​r​o​w​s​e​r​s​ ​t​o​o​,​ ​s​o​ ​i​t​ ​c​a​n​ ​a​l​s​o​ ​r​e​a​c​h​ ​a​ ​b​r​o​w​s​e​r​ ​w​h​e​r​e​ ​t​h​a​t​ ​p​e​r​s​o​n​ ​a​c​c​e​p​t​e​d​ ​p​u​s​h​ ​n​o​t​i​f​i​c​a​t​i​o​n​s​.
+				 */
+				web_push_browsers: string
+				/**
+				 * W​e​b​ ​p​u​s​h​ ​i​s​ ​a​l​l​o​w​e​d​,​ ​b​u​t​ ​n​o​t​ ​f​o​r​ ​b​r​o​w​s​e​r​s​.
+				 */
+				web_push_apps: string
+			}
 			panel: {
 				/**
 				 * R​e​c​o​r​d​i​n​g​ ​t​i​m​e​s​ ​i​n​ ​p​a​s​t​ ​r​e​c​o​r​d​i​n​g​s
@@ -9127,6 +9179,56 @@ export type TranslationFunctions = {
 					 * Not allowed
 					 */
 					web_push_off: () => LocalizedString
+				}
+				notices: {
+					/**
+					 * Each recording is saved again by Cassini's {account} account, over the same file: its shares, links and file id stay as they are, and the audio is unchanged.
+					 */
+					saved_again: (arg: { account: unknown }) => LocalizedString
+					/**
+					 * Cassini could not read Nextcloud's capabilities, so it cannot tell whether the Activity and Notifications apps or file versioning are enabled.
+					 */
+					unreadable: () => LocalizedString
+					/**
+					 * Where file versioning is enabled (Nextcloud's default), the file as it was before is kept as an earlier version. Where the Activity app is enabled (also the default), everyone the recording is shared with gets a “file changed” entry for each recording in their Activity stream; Nextcloud may group changes that arrive close together.
+					 */
+					unreadable_defaults: () => LocalizedString
+					/**
+					 * With Nextcloud's defaults the change is not emailed and not sent as a notification: both are off for “A file or folder has been changed”. An administrator can change those defaults under Administration settings › Activity, and each person can turn them on in their own Activity settings. Cassini cannot read either. Anyone who turned notifications on gets one per recording; anyone who turned email on finds the changes in their activity email, which Nextcloud collects and sends at the frequency they chose rather than one per change.
+					 */
+					email_defaults: () => LocalizedString
+					/**
+					 * File versioning is enabled, so the file as it was before is kept as an earlier version in the {account} account. It takes disk space but does not count against that account's quota. Nextcloud expires versions by versions_retention_obligation in its config.php, which Cassini cannot read, and by the Versions app's limit of half the account's free space, past which the oldest go first.
+					 */
+					versioning_on: (arg: { account: unknown }) => LocalizedString
+					/**
+					 * File versioning is not enabled, so Nextcloud keeps no copy of the file as it was before.
+					 */
+					versioning_off: () => LocalizedString
+					/**
+					 * The Activity app is enabled, so everyone the recording is shared with gets a “file changed” entry for each recording in their Activity stream; Nextcloud may group changes that arrive close together.
+					 */
+					activity_on: () => LocalizedString
+					/**
+					 * The Activity app is not enabled, so the change appears in nobody's activity stream and no activity email is sent.
+					 */
+					activity_off: () => LocalizedString
+					/**
+					 * The Notifications app is not enabled, so no notification can be sent for the change.
+					 */
+					notifications_off: () => LocalizedString
+					/**
+					 * The Notifications app is enabled, so a person who turned on notifications for changed files gets one per recording in Nextcloud, and on their devices where push notifications are set up.
+					 */
+					notifications_on: () => LocalizedString
+					/**
+					 * Web push is allowed, for browsers too, so it can also reach a browser where that person accepted push notifications.
+					 */
+					web_push_browsers: () => LocalizedString
+					/**
+					 * Web push is allowed, but not for browsers.
+					 */
+					web_push_apps: () => LocalizedString
 				}
 				panel: {
 					/**

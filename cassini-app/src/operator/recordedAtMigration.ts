@@ -5,9 +5,8 @@ import { formatCount, LL } from "cassini-viewer/i18n";
 // recorded_at_migration (cassini-operator recorded_at_migration.go). The
 // operator enumerates the past recordings whose delivered file lacks the
 // recording time; nothing rewrites them until an administrator presses the
-// button, and the same panel pauses it. The notification sentences are the
-// operator's — it is the side that read Nextcloud's capabilities — so the panel
-// shows them verbatim rather than rewording what it cannot check.
+// button, and the same panel pauses it. The operator reads Nextcloud's
+// capabilities and sends what it found; recordedAtNotices.ts words it.
 
 export type RecordedAtMigrationState =
   | "not_applicable" | "checking" | "needed" | "running" | "pausing" | "paused" | "blocked" | "done" | "not_needed" | "unknown";
@@ -32,7 +31,6 @@ export interface RecordedAtNotifications {
   web_push?: boolean;
   browser_push?: boolean;
   versioning?: boolean;
-  details: string[];
 }
 
 export interface RecordedAtMigration {
@@ -91,7 +89,6 @@ export function normalizeRecordedAtMigration(raw: unknown): RecordedAtMigration 
       web_push: flag(notices.web_push),
       browser_push: flag(notices.browser_push),
       versioning: flag(notices.versioning),
-      details: Array.isArray(notices.details) ? notices.details.filter((line): line is string => typeof line === "string" && line.trim() !== "") : [],
     } : undefined,
     error: text(value.error) || undefined,
   };

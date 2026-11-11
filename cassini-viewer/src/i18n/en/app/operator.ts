@@ -383,6 +383,40 @@ const operator = {
       web_push_apps: "Allowed, not for browsers",
       web_push_off: "Not allowed",
     },
+    // The sentences under "What this does in Nextcloud", built from what
+    // Nextcloud's capabilities say (operator/recordedAtNotices.ts). Quoted
+    // Nextcloud wording (“A file or folder has been changed”, “file changed”,
+    // Administration settings › Activity) should match Nextcloud's own
+    // translation in your language. versions_retention_obligation and
+    // config.php are names; keep them as they are.
+    notices: {
+      // First sentence, always. {account}: the account name, "cassini".
+      saved_again:
+        "Each recording is saved again by Cassini's {account} account, over the same file: its shares, links and file id stay as they are, and the audio is unchanged.",
+      // When Nextcloud's capabilities could not be read.
+      unreadable:
+        "Cassini could not read Nextcloud's capabilities, so it cannot tell whether the Activity and Notifications apps or file versioning are enabled.",
+      // After `unreadable`: what happens with Nextcloud's defaults.
+      unreadable_defaults:
+        "Where file versioning is enabled (Nextcloud's default), the file as it was before is kept as an earlier version. Where the Activity app is enabled (also the default), everyone the recording is shared with gets a “file changed” entry for each recording in their Activity stream; Nextcloud may group changes that arrive close together.",
+      // Shown when the Activity app is enabled, or might be.
+      email_defaults:
+        "With Nextcloud's defaults the change is not emailed and not sent as a notification: both are off for “A file or folder has been changed”. An administrator can change those defaults under Administration settings › Activity, and each person can turn them on in their own Activity settings. Cassini cannot read either. Anyone who turned notifications on gets one per recording; anyone who turned email on finds the changes in their activity email, which Nextcloud collects and sends at the frequency they chose rather than one per change.",
+      // {account}: the account name, "cassini".
+      versioning_on:
+        "File versioning is enabled, so the file as it was before is kept as an earlier version in the {account} account. It takes disk space but does not count against that account's quota. Nextcloud expires versions by versions_retention_obligation in its config.php, which Cassini cannot read, and by the Versions app's limit of half the account's free space, past which the oldest go first.",
+      versioning_off: "File versioning is not enabled, so Nextcloud keeps no copy of the file as it was before.",
+      activity_on:
+        "The Activity app is enabled, so everyone the recording is shared with gets a “file changed” entry for each recording in their Activity stream; Nextcloud may group changes that arrive close together.",
+      activity_off: "The Activity app is not enabled, so the change appears in nobody's activity stream and no activity email is sent.",
+      notifications_off: "The Notifications app is not enabled, so no notification can be sent for the change.",
+      notifications_on:
+        "The Notifications app is enabled, so a person who turned on notifications for changed files gets one per recording in Nextcloud, and on their devices where push notifications are set up.",
+      // Added after notifications_on when Nextcloud allows web push for browsers.
+      web_push_browsers: "Web push is allowed, for browsers too, so it can also reach a browser where that person accepted push notifications.",
+      // Added after notifications_on when Nextcloud allows web push, but not for browsers.
+      web_push_apps: "Web push is allowed, but not for browsers.",
+    },
     panel: {
       title: "Recording times in past recordings",
       // State words beside the title; short.
