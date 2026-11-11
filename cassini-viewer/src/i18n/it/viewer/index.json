@@ -449,6 +449,7 @@
       "export_copied": "Trascrizione copiata.",
       "export_clipboard_blocked": "Appunti bloccati qui: usa Scarica la trascrizione.",
       "export_downloaded": "Trascrizione scaricata.",
+      "export_summary_downloaded": "",
       "export_preparing_file": "Preparazione del file della riunione…",
       "export_file_downloaded": "File della riunione scaricato.",
       "reload_failed": "Impossibile ricaricare la registrazione: {error}",
@@ -832,6 +833,7 @@
     "copy_transcripts": "Copia le trascrizioni",
     "download_transcript": "Scarica la trascrizione",
     "download_transcripts": "Scarica le trascrizioni",
+    "download_summary": "",
     "download_audio": "Scarica l’audio"
   }
 }

@@ -28,6 +28,11 @@ const defaultRecorderName = "CassiniRecorder"
 // as the operator distinguish doomed jobs from generic recorder failures.
 const exitUnjoinable = 3
 
+// exitNoAudioCaptured is returned by `cassini record` when the run failed
+// because it captured no audio (talk.ErrNoAudio). The operator reads it to
+// report stop reason no_audio_captured.
+const exitNoAudioCaptured = 4
+
 var runRecorderApp = app.RunContext
 
 // recordFailureExitCode maps recorder failures to the record exit code,
@@ -234,6 +239,16 @@ func runRecord(ctx context.Context, args []string, stdout, stderr io.Writer) int
 
 	fmt.Fprintln(stdout, "[2/3] Recording")
 	recordErr := runRecorderApp(ctx, cfg)
+	if recordErr != nil && errors.Is(recordErr, talk.ErrNoAudio) {
+		// Nothing was captured: the call was muted or silent for its whole
+		// length. This is still a failure — somebody pressed Record and got
+		// no recording — but it has a dedicated exit code so the operator
+		// can show the real reason instead of "Process exited with error".
+		_ = UpdateRunBundleStatus(bundle, bundleStateFailed, "record", recordErr.Error())
+		fmt.Fprintf(stderr, "record failed: %v\n", recordErr)
+		fmt.Fprintf(stderr, "partial_run -> %s\n", bundle.RootDir)
+		return exitNoAudioCaptured
+	}
 	if recordErr != nil && !salvageableRecording(recordErr, bundle) {
 		_ = UpdateRunBundleStatus(bundle, bundleStateFailed, "record", recordErr.Error())
 		fmt.Fprintf(stderr, "record failed: %v\n", recordErr)
@@ -308,6 +323,12 @@ func runRecordPortable(ctx context.Context, opts recordOptions, stdout, stderr i
 
 		fmt.Fprintln(stdout, "[3/5] Recording meeting")
 		recordErr := runRecorderApp(ctx, cfg)
+		if recordErr != nil && errors.Is(recordErr, talk.ErrNoAudio) {
+			_ = UpdateRunBundleStatus(bundle, bundleStateFailed, "record", recordErr.Error())
+			fmt.Fprintf(stderr, "record failed: %v\n", recordErr)
+			printPortableResumeHint(stderr, workspace.RootDir, outPath)
+			return exitNoAudioCaptured
+		}
 		if recordErr != nil && !salvageableRecording(recordErr, bundle) {
 			_ = UpdateRunBundleStatus(bundle, bundleStateFailed, "record", recordErr.Error())
 			fmt.Fprintf(stderr, "record failed: %v\n", recordErr)

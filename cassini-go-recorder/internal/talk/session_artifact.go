@@ -858,6 +858,21 @@ func (a *sessionCaptureArtifact) hasAudio() bool {
 	return false
 }
 
+// hasVideo reports whether any video packets were captured. An audio-video
+// run with video but no audio is not a no-audio run: the video is real media,
+// so callers must not report it as "no audio captured" (see ErrNoAudio in
+// recorder.go).
+func (a *sessionCaptureArtifact) hasVideo() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, stream := range a.streams {
+		if stream.kind == "video" && stream.rtpCount > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func captureMode(retainVideo bool) string {
 	if retainVideo {
 		return "audio-video"

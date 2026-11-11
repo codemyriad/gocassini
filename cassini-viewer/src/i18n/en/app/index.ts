@@ -1,4 +1,5 @@
 import type { BaseTranslation } from "../../i18n-types.js";
+import doctor_checks from "./doctor_checks.js";
 import insights from "./insights.js";
 import operator from "./operator.js";
 import settings from "./settings.js";
@@ -9,6 +10,7 @@ import shell from "./shell.js";
 const en_app = {
   shell,
   operator,
+  doctor_checks,
   settings,
   insights,
   // The kinds of file Cassini keeps, as Storage charts them and Retention sets

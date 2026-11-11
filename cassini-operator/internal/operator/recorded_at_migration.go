@@ -74,7 +74,12 @@ type recordedAtBlockedFile struct {
 	Meeting   string `json:"meeting"`
 	Title     string `json:"title,omitempty"`
 	DateLabel string `json:"date_label,omitempty"`
-	Reason    string `json:"reason"`
+	// Reason is English, as the operator wrote it. ReasonCode and ReasonParams
+	// word it in the app (D-921); empty for a file blocked by an operator
+	// that predates them, which the app shows in English.
+	Reason       string         `json:"reason"`
+	ReasonCode   string         `json:"reason_code,omitempty"`
+	ReasonParams map[string]any `json:"reason_params,omitempty"`
 }
 
 // recordedAtMigrationStateFor is the State rule, apart so it is testable.
@@ -208,7 +213,7 @@ func setRecordedAtFilesPausedTx(ctx context.Context, tx *sql.Tx, paused bool) er
 }
 
 func (s *meetingMetadataStore) recordedAtBlockedFiles(ctx context.Context, limit int) ([]recordedAtBlockedFile, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT b.opus_name, b.last_error,
+	rows, err := s.db.QueryContext(ctx, `SELECT b.opus_name, b.last_error, b.last_error_code, b.last_error_params,
  COALESCE((SELECT CASE WHEN json_valid(m.entry_json) THEN json_extract(m.entry_json, '$.title') END FROM meeting_metadata m WHERE m.opus_name=b.opus_name LIMIT 1), ''),
  COALESCE((SELECT m.date_label FROM meeting_metadata m WHERE m.opus_name=b.opus_name LIMIT 1), '')
  FROM recorded_at_file_backfill b WHERE b.state='blocked' ORDER BY b.opus_name LIMIT ?`, limit)
@@ -220,8 +225,14 @@ func (s *meetingMetadataStore) recordedAtBlockedFiles(ctx context.Context, limit
 	for rows.Next() {
 		var item recordedAtBlockedFile
 		var title any
-		if err := rows.Scan(&item.Meeting, &item.Reason, &title, &item.DateLabel); err != nil {
+		var params string
+		if err := rows.Scan(&item.Meeting, &item.Reason, &item.ReasonCode, &params, &title, &item.DateLabel); err != nil {
 			return nil, err
+		}
+		if params != "" {
+			// A row whose params do not parse keeps its code without them,
+			// and the app falls back to the English reason.
+			_ = json.Unmarshal([]byte(params), &item.ReasonParams)
 		}
 		if text, ok := title.(string); ok {
 			item.Title = text
@@ -240,7 +251,7 @@ func (w *recordedAtFileWorker) startMigration(ctx context.Context) (int64, error
 		return 0, err
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, `UPDATE recorded_at_file_backfill SET state='pending', attempts=0, retry_at=0, last_error='', updated_at=? WHERE state IN ('needed','blocked')`, nowUTCString())
+	result, err := tx.ExecContext(ctx, `UPDATE recorded_at_file_backfill SET state='pending', attempts=0, retry_at=0, last_error='', last_error_code='', last_error_params='', updated_at=? WHERE state IN ('needed','blocked')`, nowUTCString())
 	if err != nil {
 		return 0, err
 	}
@@ -303,7 +314,7 @@ func (rt *Runtime) recordedAtMigrationHandler(w http.ResponseWriter, r *http.Req
 	}
 	worker := rt.recordedAtFiles.Load()
 	if worker == nil {
-		writeJSONError(w, http.StatusConflict, "this deployment has no delivered files Cassini can rewrite")
+		writeCodedJSONError(w, http.StatusConflict, "migration_not_applicable", "this deployment has no delivered files Cassini can rewrite")
 		return
 	}
 	who := appapi.UserID(r.Context())
@@ -316,7 +327,7 @@ func (rt *Runtime) recordedAtMigrationHandler(w http.ResponseWriter, r *http.Req
 		// pass has finished that is part of the archive, and the rest would
 		// arrive as needed after the run, asking for a second press.
 		if !rt.recordedAtIndexChecked.Load() {
-			writeJSONError(w, http.StatusConflict, "Cassini is still counting the past recordings that need this; try again once it has finished")
+			writeCodedJSONError(w, http.StatusConflict, "migration_still_counting", "Cassini is still counting the past recordings that need this; try again once it has finished")
 			return
 		}
 		n, err := worker.startMigration(r.Context())

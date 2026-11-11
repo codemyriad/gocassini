@@ -28,8 +28,10 @@ func (rt *Runtime) testRecordingRow(test readinessTest) readinessCheck {
 		// No "open it to see where it stopped": a failed job has no published
 		// result to open, and the panel offers that link only once there is one.
 		row.Message = "The test recording did not finish."
+		row.Params = readinessParams{"variant": "stopped"}
 		if test.Stage != "" {
 			row.Message = "The test recording did not finish; it stopped at " + test.Stage + "."
+			row.Params = readinessParams{"variant": "stopped_at_stage", "stage": test.Stage}
 		}
 	case test.Published:
 		row.State, row.Code = "not_verified", "test_awaiting_playback"
@@ -37,10 +39,13 @@ func (rt *Runtime) testRecordingRow(test readinessTest) readinessCheck {
 	case test.StartedAt != "":
 		row.State, row.Code = "not_verified", "test_in_progress"
 		row.Message = "Cassini is waiting for a recording started in the test room."
+		row.Params = readinessParams{"variant": "waiting_for_talk"}
 		if test.JobID != "" {
 			row.Message = "A test recording is in progress."
+			row.Params = readinessParams{"variant": "in_progress"}
 			if test.Stage != "" {
 				row.Message = "A test recording is in progress: " + test.Stage + "."
+				row.Params = readinessParams{"variant": "in_progress_at_stage", "stage": test.Stage}
 			}
 		}
 	default:

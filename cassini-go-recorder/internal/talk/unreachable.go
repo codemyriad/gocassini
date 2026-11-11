@@ -18,9 +18,13 @@ type unreachableFinding struct {
 	steps   []ConnectionStep
 }
 
-const nextcloudAddressStep = "Cassini reaches Nextcloud at `NEXTCLOUD_URL`, or at `CASSINI_TALK_BACKEND_URL` when that is set. The address has to work from inside Cassini's container, not only from your browser"
+var nextcloudAddressStep = ConnectionStep{
+	ID:    "nextcloud_address",
+	Label: "Cassini reaches Nextcloud at `NEXTCLOUD_URL`, or at `CASSINI_TALK_BACKEND_URL` when that is set. The address has to work from inside Cassini's container, not only from your browser",
+}
 
 var nextcloudTestStep = ConnectionStep{
+	ID:       "test_nextcloud_address",
 	Label:    "To test the address, run this on the Nextcloud host. It should print an HTTP status such as 200, not an error:",
 	Commands: []string{`docker exec nc_app_gocassini sh -lc 'curl -k -s -o /dev/null -w "%{http_code}\n" "${CASSINI_TALK_BACKEND_URL:-$NEXTCLOUD_URL}/status.php"'`},
 }
@@ -35,8 +39,8 @@ func classifyUnreachable(err error) unreachableFinding {
 			code:    "nextcloud_tls_untrusted",
 			message: "Cassini reached Nextcloud but does not trust its certificate, so it did not read Talk's settings.",
 			steps: []ConnectionStep{
-				{Label: "A self-signed or private certificate is not trusted from inside Cassini's container. Use a publicly trusted certificate on Nextcloud, or point `CASSINI_TALK_BACKEND_URL` at an address whose certificate Cassini trusts"},
-				{Label: "The address Cassini uses must also match the name the certificate was issued for"},
+				{ID: "use_trusted_certificate", Label: "A self-signed or private certificate is not trusted from inside Cassini's container. Use a publicly trusted certificate on Nextcloud, or point `CASSINI_TALK_BACKEND_URL` at an address whose certificate Cassini trusts"},
+				{ID: "match_certificate_name", Label: "The address Cassini uses must also match the name the certificate was issued for"},
 			},
 		}
 	}
@@ -46,7 +50,7 @@ func classifyUnreachable(err error) unreachableFinding {
 		return unreachableFinding{
 			code:    "nextcloud_host_not_found",
 			message: "Cassini could not find Nextcloud at the address it was given: the name does not resolve from Cassini's container.",
-			steps:   []ConnectionStep{{Label: nextcloudAddressStep}, nextcloudTestStep},
+			steps:   []ConnectionStep{nextcloudAddressStep, nextcloudTestStep},
 		}
 	}
 
@@ -55,8 +59,8 @@ func classifyUnreachable(err error) unreachableFinding {
 			code:    "nextcloud_connection_refused",
 			message: "Nothing answered at the Nextcloud address Cassini was given: the connection was refused.",
 			steps: []ConnectionStep{
-				{Label: "Check that Nextcloud is running and listening on that address and port"},
-				{Label: nextcloudAddressStep},
+				{ID: "check_nextcloud_listening", Label: "Check that Nextcloud is running and listening on that address and port"},
+				nextcloudAddressStep,
 				nextcloudTestStep,
 			},
 		}
@@ -68,8 +72,8 @@ func classifyUnreachable(err error) unreachableFinding {
 			code:    "nextcloud_timeout",
 			message: "Nextcloud did not answer in time at the address Cassini was given.",
 			steps: []ConnectionStep{
-				{Label: "Check that Nextcloud is running, and is not overloaded or part-way through a restart"},
-				{Label: "Check that no firewall between Cassini's container and Nextcloud drops the connection"},
+				{ID: "check_nextcloud_running", Label: "Check that Nextcloud is running, and is not overloaded or part-way through a restart"},
+				{ID: "check_firewall", Label: "Check that no firewall between Cassini's container and Nextcloud drops the connection"},
 				nextcloudTestStep,
 			},
 		}
@@ -81,7 +85,7 @@ func classifyUnreachable(err error) unreachableFinding {
 			code:    "nextcloud_server_error",
 			message: "Nextcloud returned a server error while Cassini was reading Talk's settings.",
 			steps: []ConnectionStep{
-				{Label: "Nextcloud's log says what failed: Administration settings → Logging, or nextcloud.log on the server"},
+				{ID: "read_nextcloud_log", Label: "Nextcloud's log says what failed: Administration settings → Logging, or nextcloud.log on the server"},
 			},
 		}
 	}
@@ -93,8 +97,8 @@ func classifyUnreachable(err error) unreachableFinding {
 			code:    "nextcloud_unexpected_response",
 			message: "Something answered at the Nextcloud address, but not with Talk's settings.",
 			steps: []ConnectionStep{
-				{Label: "Nextcloud may be in maintenance mode or still starting. Wait for it, then check again"},
-				{Label: "A proxy may be answering in Nextcloud's place. Make sure `NEXTCLOUD_URL`, or `CASSINI_TALK_BACKEND_URL` when set, points at Nextcloud itself"},
+				{ID: "wait_for_nextcloud", Label: "Nextcloud may be in maintenance mode or still starting. Wait for it, then check again"},
+				{ID: "check_proxy", Label: "A proxy may be answering in Nextcloud's place. Make sure `NEXTCLOUD_URL`, or `CASSINI_TALK_BACKEND_URL` when set, points at Nextcloud itself"},
 			},
 		}
 	}
@@ -102,6 +106,6 @@ func classifyUnreachable(err error) unreachableFinding {
 	return unreachableFinding{
 		code:    "nextcloud_unreachable",
 		message: "Could not read Talk settings. Check Nextcloud connectivity and TLS, then try again.",
-		steps:   []ConnectionStep{{Label: nextcloudAddressStep}, nextcloudTestStep},
+		steps:   []ConnectionStep{nextcloudAddressStep, nextcloudTestStep},
 	}
 }

@@ -739,11 +739,18 @@ const operator = {
       signaling_connection_error: "Signaling connection error",
       join_failed: "Failed to join room",
       record_process_exit_nonzero: "Process exited with error",
+      no_audio_captured: "No audio captured",
+    },
+    // A failed run that captured no audio at all.
+    no_audio: {
+      headline: "No audio was captured. Were all participants muted?",
+      detail: "This recording has no audio to transcribe or publish.",
     },
     // A run's or an attempt's status. Each describes the run (one recording's
     // trip through the pipeline) or one attempt at it; agree with that noun if
     // your language needs to.
     status: {
+      no_audio_captured: "No audio captured",
       build_blocked: "Build blocked",
       waiting_for_resources: "Waiting for resources",
       failed: "Failed",

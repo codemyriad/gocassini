@@ -3,6 +3,7 @@ package cassini
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -181,5 +182,21 @@ func TestDoctorTextOutputIsUnchangedByTheJSONFlag(t *testing.T) {
 	}
 	if strings.HasPrefix(strings.TrimSpace(text), "[{") {
 		t.Error("text output became JSON")
+	}
+}
+
+// The rows the app shows carry the facts their summary is worded from, so the
+// app can word it in its reader's language (D-921). The summary itself, the
+// text a person reads in a terminal, is unchanged.
+func TestWritableDirCheckSendsWhatItFound(t *testing.T) {
+	dir := t.TempDir()
+	check := writableDirCheck("tmpdir.writable", dir, "temporary directory")
+	if check.Summary != "temporary directory writable: "+dir || check.Params["variant"] != "writable" || check.Params["path"] != dir {
+		t.Fatalf("check = %+v", check)
+	}
+	missing := filepath.Join(dir, "missing")
+	check = writableDirCheck("tmpdir.writable", missing, "temporary directory")
+	if check.Params["variant"] != "not_accessible" || check.Params["path"] != missing || check.Params["error"] == "" {
+		t.Fatalf("check = %+v", check)
 	}
 }

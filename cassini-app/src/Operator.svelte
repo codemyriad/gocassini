@@ -73,8 +73,8 @@
 
   // A job names its current attempt's kind, an attempt its own.
   type AttemptKindOf = { current_trigger_kind?: string; trigger_kind?: string };
-  type JobStatus = Pick<Job, "stage" | "state" | "build_retry_not_before"> & AttemptKindOf;
-  type RerunnableJob = Pick<Job, "stage" | "state" | "artifact_run_path">;
+  type JobStatus = Pick<Job, "stage" | "state" | "build_retry_not_before" | "stop_reason"> & AttemptKindOf;
+  type RerunnableJob = Pick<Job, "stage" | "state" | "artifact_run_path" | "stop_reason">;
 
   // The steps a run's status can name, as the stage bar names them.
   const STATUS_STAGES = ["record", "build", "seal", "publish"] as const;
@@ -86,6 +86,11 @@
     "signaling_connection_error",
     "record_process_exit_nonzero",
   ]);
+
+  // A call that captured no audio (everyone muted or silent) finished
+  // successfully but has nothing to publish or rerun. The operator marks it
+  // with this stop reason; the app says so instead of showing "Published".
+  const NO_AUDIO_STOP_REASON = "no_audio_captured";
 
   export interface RequestMetadata {
     url?: string;
@@ -183,6 +188,11 @@
       | Pick<Job, "error" | "state" | "record_exit_code" | "stop_reason">
       | Pick<JobAttempt, "error" | "state" | "record_exit_code" | "stop_reason">,
   ): boolean {
+    // A no-audio run is a failure in the operator, but it has its own warning
+    // treatment below: "Process exited with error" or a red error banner tells
+    // the muted-call owner nothing. The operator stores the real reason and
+    // the run detail names it explicitly.
+    if (item.stop_reason === NO_AUDIO_STOP_REASON) return false;
     if (item.error != null && item.error.trim() !== "") return true;
     if (item.state === "failed" || item.state === "interrupted") return true;
     if (item.record_exit_code != null && item.record_exit_code !== 0) return true;
@@ -207,6 +217,8 @@
         return t.join_failed();
       case "record_process_exit_nonzero":
         return t.record_process_exit_nonzero();
+      case NO_AUDIO_STOP_REASON:
+        return t.no_audio_captured();
       default:
         // An operator reason this app has no words for: its own name.
         return trimmed.replace(/_/g, " ");
@@ -270,6 +282,7 @@
 
   export function jobStatusLabel(job: JobStatus): string {
     const t = c().status;
+    if (job.stop_reason === NO_AUDIO_STOP_REASON) return t.no_audio_captured();
     if (isBuildBlocked(job)) return t.build_blocked();
     if (isBuildWaitingForResources(job)) return t.waiting_for_resources();
     if (job.state === "failed") return t.failed();
@@ -292,6 +305,7 @@
   }
 
   export function jobStatusToneClass(job: JobStatus): string {
+    if (job.stop_reason === NO_AUDIO_STOP_REASON) return "text-warning";
     if (hasResourceNotice(job) || job.state === "stopped") return "text-warning";
     if (job.state === "failed" || job.state === "interrupted") return "text-error";
     if (job.state === "succeeded") return "text-success";
@@ -299,6 +313,7 @@
   }
 
   export function isRerunnableJob(job: RerunnableJob): boolean {
+    if (job.stop_reason === NO_AUDIO_STOP_REASON) return false;
     const terminalState = job.stage === "done" || (job.stage === "build" && job.state === "blocked");
     return terminalState && !!job.artifact_run_path;
   }
@@ -1163,6 +1178,7 @@
     }
   }
   $: jobFinished = selectedJob?.job.stage === "done";
+  $: noAudioCaptured = selectedJob?.job.stop_reason === NO_AUDIO_STOP_REASON;
   $: rerunVisible = !!selectedJob?.job && (jobFinished || isBuildBlocked(selectedJob.job));
   $: rerunApplies = !!selectedJob?.job && isRerunnableJob(selectedJob.job);
   $: recordingDeleted = selectedJob?.availability?.source === "deleted" || selectedJob?.availability?.source === "expired" || selectedJob?.job.source_expired === true;
@@ -1753,6 +1769,23 @@
                         </div>
                       </dl>
                     </div>
+                  {:else if noAudioCaptured}
+                    <!-- A no-audio run is still a failure — somebody pressed
+                         Record and got no recording — but the useful message is
+                         "were all participants muted?", not a generic process
+                         exit. Yellow marks it as a warning, not a red error. -->
+                    <div class="grid gap-1 rounded-box border border-warning/50 bg-warning/10 p-3" role="status">
+                      <div class="flex items-center gap-2 text-warning">
+                        <TriangleAlert size={16} class="shrink-0" aria-hidden="true" />
+                        <p class="text-sm font-semibold">{$LL.app.operator.console.no_audio.headline()}</p>
+                      </div>
+                      <p class="text-xs break-words text-base-content/75">
+                        {$LL.app.operator.console.no_audio.detail()}
+                      </p>
+                      {#if cleanStopDetail(selectedJob.job.record_stop_detail, selectedJob.job.record_exit_code, false)}
+                        <p class="text-xs break-words text-base-content/60">{cleanStopDetail(selectedJob.job.record_stop_detail, selectedJob.job.record_exit_code, false)}</p>
+                      {/if}
+                    </div>
                   {:else if hasJobError(selectedJob.job)}
                     <div class="grid gap-1 rounded-box border border-error/40 bg-error/10 p-3">
                       {#if selectedJob.job.error}
@@ -1971,6 +2004,11 @@
                                   <dd>{attempt.build_deferral_count}</dd>
                                 </div>
                               </dl>
+                            </div>
+                          {:else if attempt.stop_reason === NO_AUDIO_STOP_REASON}
+                            <div class="grid gap-1 rounded-box border border-warning/50 bg-warning/10 p-3" role="status">
+                              <p class="text-sm font-semibold text-warning">{$LL.app.operator.console.no_audio.headline()}</p>
+                              <p class="text-xs break-words text-base-content/75">{$LL.app.operator.console.no_audio.detail()}</p>
                             </div>
                           {:else if hasJobError(attempt)}
                             <div class="grid gap-1 rounded-box border border-error/40 bg-error/10 p-3">

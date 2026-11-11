@@ -449,6 +449,7 @@
       "export_copied": "Transcriptie gekopieerd.",
       "export_clipboard_blocked": "Klembord hier geblokkeerd. Gebruik Transcriptie downloaden.",
       "export_downloaded": "Transcriptie gedownload.",
+      "export_summary_downloaded": "",
       "export_preparing_file": "Vergaderingsbestand voorbereiden…",
       "export_file_downloaded": "Vergaderingsbestand gedownload.",
       "reload_failed": "Kon de opname niet opnieuw laden: {error}",
@@ -832,6 +833,7 @@
     "copy_transcripts": "Transcripties kopiëren",
     "download_transcript": "Transcriptie downloaden",
     "download_transcripts": "Transcripties downloaden",
+    "download_summary": "",
     "download_audio": "Audio downloaden"
   }
 }
