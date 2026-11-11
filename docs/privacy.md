@@ -124,11 +124,14 @@ artifacts:
   (the default), or — when the administrator sets **Share recordings with: Only
   people who were in the call** — only the local accounts Talk reports in the
   call. Either roster is captured when the recording starts and again when it
-  stops. It is what lets Cassini later explicitly narrow an already-published
-  recording from Operator settings to its captured audience rather than whoever
-  is in the room today. This stored roster is frozen; when a recording has no
-  captured roster, publication resolves the audience at publish time in the
-  configured mode. Guests, email invitees and federated participants are not
+  stops; in attendee mode the recorder also writes every local account it saw in
+  the call into the run bundle, and the operator merges that list before
+  publishing. This is what lets Cassini later explicitly narrow an
+  already-published recording from Operator settings to its captured audience
+  rather than whoever is in the room today. The saved roster is frozen; if
+  attendee mode has no captured roster at all, publication shares only with the
+  person who started the recording and records a warning instead of looking the
+  room up again. Guests, email invitees and federated participants are not
   recorded: they have no local account to grant, so there is nothing to keep.
   It lives on the job row, which outlives the recording itself — job history is
   kept after artifacts are pruned.

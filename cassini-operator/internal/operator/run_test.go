@@ -2400,6 +2400,86 @@ func TestRecordWithoutAudioFailsWithDescriptiveReason(t *testing.T) {
 	}
 }
 
+func TestRecordSeenParticipantsMergeIntoAudience(t *testing.T) {
+	// #479: the recorder saw Carol join and leave before the stop capture, so
+	// Talk no longer lists her when the recorder has left. The sidecar account
+	// list must reach the saved roster before build/publish; guests are skipped.
+	rt, cleanup, _, _ := newCLITestRuntime(t)
+	defer cleanup()
+	t.Setenv("FAKE_RECORD_SEEN", "1")
+
+	req := httptest.NewRequest(http.MethodPost, "/jobs?provider=nextcloud-talk", strings.NewReader(`{"platform":"nextcloud-talk","url":"https://example.test/standing-channel"}`))
+	rec := httptest.NewRecorder()
+	rt.jobsHandler(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusAccepted, rec.Body.String())
+	}
+	var resp createJobResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	deadline := time.Now().Add(testWaitTimeout)
+	for time.Now().Before(deadline) {
+		audience, captured, err := rt.store.JobRoomAudience(context.Background(), resp.ID)
+		if err != nil {
+			t.Fatalf("JobRoomAudience() error = %v", err)
+		}
+		if captured {
+			ids := map[string]bool{}
+			for _, principal := range audience {
+				if principal.Type != "user" {
+					t.Fatalf("audience includes %+v, want local users only", principal)
+				}
+				ids[principal.ID] = true
+			}
+			if !ids["alice"] || !ids["carol"] {
+				t.Fatalf("audience = %v, want alice and carol (late joiner)", ids)
+			}
+			if ids["guest"] {
+				t.Fatalf("audience = %v, guest must be skipped", ids)
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("seen participants were not merged into the job's audience")
+}
+
+func TestRecordJobFreezesAudienceMode(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	rt.settings = STTSettings{MeetingFormat: "opus", Quality: "balanced", Source: "user", ShareAudience: shareAudienceAttendees}
+
+	req := httptest.NewRequest(http.MethodPost, "/jobs?provider=nextcloud-talk", strings.NewReader(`{"platform":"nextcloud-talk","url":"https://example.test/standing-channel"}`))
+	rec := httptest.NewRecorder()
+	rt.jobsHandler(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusAccepted, rec.Body.String())
+	}
+	var resp createJobResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	job, err := rt.store.GetJob(context.Background(), resp.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.AudienceMode != shareAudienceAttendees {
+		t.Fatalf("audience_mode = %q, want attendees saved at start", job.AudienceMode)
+	}
+
+	// A settings change while the recording is in progress must not alter it.
+	rt.settings.ShareAudience = shareAudienceRoom
+	jobAgain, err := rt.store.GetJob(context.Background(), resp.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if jobAgain.AudienceMode != shareAudienceAttendees {
+		t.Fatalf("audience_mode after setting change = %q, want attendees", jobAgain.AudienceMode)
+	}
+}
+
 func TestBuildFailurePersistsLightweightErrorDetail(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
@@ -2638,6 +2718,13 @@ cmd="${1:-}"
 if [ "$#" -gt 0 ]; then
   shift
 fi
+write_seen() {
+  out="$1"
+  mkdir -p "$out"
+  cat > "$out/seen-participants.json" <<'EOF'
+[{"actorType":"users","actorId":"alice","displayName":"Alice"},{"actorType":"users","actorId":"carol","displayName":"Carol"},{"actorType":"guests","actorId":"guest","displayName":"Guest"}]
+EOF
+}
 write_run() {
   out="$1"
   mkdir -p "$out"
@@ -2702,6 +2789,9 @@ case "$cmd" in
       write_failed_run "$out"
       echo "talk recorder stopping: no audio captured: every participant was muted or silent" >&2
       exit 4
+    fi
+    if [ "${FAKE_RECORD_SEEN:-0}" = "1" ]; then
+      write_seen "$out"
     fi
     write_run "$out"
     exit 0

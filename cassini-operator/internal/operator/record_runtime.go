@@ -118,6 +118,9 @@ type recordResult struct {
 	StopReason      string
 	StopDetail      string
 	ExitCode        *int
+	// SeenParticipants are the local accounts the recorder saw in the call,
+	// including people who joined and left before the stop capture (#479).
+	SeenParticipants []sharePrincipal
 }
 
 type recordLiveSignalWriter struct {
@@ -317,7 +320,42 @@ func (rt *Runtime) executeRecordCLI(_ context.Context, job Job, req TriggerReque
 	if _, err := os.Stat(filepath.Join(runPath, "cassini.json")); err != nil {
 		return result, fmt.Errorf("record output missing cassini.json: %w", err)
 	}
+	if seen, seenErr := readSeenParticipants(filepath.Join(runPath, "seen-participants.json")); seenErr != nil {
+		if !os.IsNotExist(seenErr) {
+			rt.logger.Printf("seen participants read failed id=%s: %v", job.ID, seenErr)
+		}
+	} else {
+		result.SeenParticipants = seen
+	}
 	return result, nil
+}
+
+// readSeenParticipants maps the recorder's monotonic local account list into
+// share principals. Guests and federated participants have no Nextcloud account
+// to grant, so they are skipped here as they are in the Talk captures.
+func readSeenParticipants(path string) ([]sharePrincipal, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var rows []struct {
+		ActorType string `json:"actorType"`
+		ActorID   string `json:"actorId"`
+	}
+	if err := json.Unmarshal(raw, &rows); err != nil {
+		return nil, fmt.Errorf("parse seen participants: %w", err)
+	}
+	seen := make([]sharePrincipal, 0, len(rows))
+	added := make(map[string]bool, len(rows))
+	for _, row := range rows {
+		id := strings.TrimSpace(row.ActorID)
+		if row.ActorType != "users" || id == "" || added[id] {
+			continue
+		}
+		added[id] = true
+		seen = append(seen, sharePrincipal{Type: "user", ID: id})
+	}
+	return seen, nil
 }
 
 func (rt *Runtime) runRecordDoctor() error {

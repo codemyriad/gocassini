@@ -7,6 +7,7 @@ import {
   NO_ROOM_KEY,
   noRoomLabel,
   undatedMonthLabel,
+  audienceForRooms,
   buildRoomBuckets,
   filterMeetingsByRoom,
   hasRoom,
@@ -74,8 +75,8 @@ describe("buildRoomBuckets", () => {
       meeting({ id: "c", roomId: "r-daily", roomName: "Daily" }),
     ]);
     expect(buckets).toEqual([
-      { key: "id:r-daily", roomId: "r-daily", name: "Daily", count: 2, hasRoom: true },
-      { key: "id:r-ops", roomId: "r-ops", name: "Ops & Infra", count: 1, hasRoom: true },
+      { key: "id:r-daily", roomId: "r-daily", name: "Daily", count: 2, audience: "", hasRoom: true },
+      { key: "id:r-ops", roomId: "r-ops", name: "Ops & Infra", count: 1, audience: "", hasRoom: true },
     ]);
   });
 
@@ -89,6 +90,7 @@ describe("buildRoomBuckets", () => {
       key: NO_ROOM_KEY,
       name: noRoomLabel(),
       count: 2,
+      audience: "",
       hasRoom: false,
     });
   });
@@ -100,8 +102,27 @@ describe("buildRoomBuckets", () => {
       meeting({ id: "a", roomId: "r1", roomName: "Design" }),
     ]);
     expect(buckets).toEqual([
-      { key: "id:r1", roomId: "r1", name: "Design review", count: 2, hasRoom: true },
+      { key: "id:r1", roomId: "r1", name: "Design review", count: 2, audience: "", hasRoom: true },
     ]);
+  });
+
+  it("carries the audience saved on each recording, not the current setting", () => {
+    const buckets = buildRoomBuckets([
+      meeting({ id: "a", roomId: "r1", roomName: "Design", audience: "attendees" }),
+      meeting({ id: "b", roomId: "r1", roomName: "Design", audience: "attendees" }),
+      meeting({ id: "c", roomId: "r2", roomName: "Daily", audience: "room" }),
+    ]);
+    expect(buckets.find((bucket) => bucket.key === "id:r1")?.audience).toBe("attendees");
+    expect(buckets.find((bucket) => bucket.key === "id:r2")?.audience).toBe("room");
+    expect(audienceForRooms(buckets)).toBe("mixed");
+  });
+
+  it("reports a uniform audience across the archive", () => {
+    const buckets = buildRoomBuckets([
+      meeting({ id: "a", roomId: "r1", roomName: "Design", audience: "attendees" }),
+      meeting({ id: "b", roomId: "r2", roomName: "Daily", audience: "attendees" }),
+    ]);
+    expect(audienceForRooms(buckets)).toBe("attendees");
   });
 
   it("returns nothing for an empty catalog", () => {

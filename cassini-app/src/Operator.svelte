@@ -1200,6 +1200,7 @@
       selectedJob?.sharing,
       rerunApplies && !rerunBlockedReason,
       !!selectedJob && (!isJobActive(selectedJob.job) || selectedJob.job.state === "interrupted"),
+      selectedJob?.job.audience_mode === "attendees" ? "attendees" : "room",
     ),
     ...(outcomeSource
       ? [transcriptionNotice(outcomeSource, rerunApplies && !rerunBlockedReason), summaryNotice(outcomeSource)]
@@ -1656,6 +1657,12 @@
                         <button class="btn btn-sm" type="button" disabled={submittingCleanup} on:click={handleRetryCleanup}>{$LL.app.operator.console.cleanup.retry()}</button>
                         {#if cleanupQueuedJob === selectedJob.job.id}<p class="text-sm">{$LL.app.operator.console.cleanup.retry_requested()}</p>{/if}
                       {/if}
+                    </div>
+                  {/if}
+                  {#if selectedJob.job.audience_notice}
+                    <div class="flex items-start gap-2 rounded-box border border-warning/50 bg-warning/10 p-3 text-sm" role="status">
+                      <TriangleAlert size={16} class="mt-0.5 shrink-0 text-warning" aria-hidden="true" />
+                      <p class="font-medium">{selectedJob.job.audience_notice}</p>
                     </div>
                   {/if}
                   {#each outcomeNotices as notice (notice.title)}

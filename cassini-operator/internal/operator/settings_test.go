@@ -749,15 +749,15 @@ func TestPutSettingsAcceptsSearchAliases(t *testing.T) {
 	}
 }
 
-// TestPutSettingsAcceptsShareWithAttendees covers the audience option through
+// TestPutSettingsAcceptsShareAudience covers the named audience choice through
 // the same route the admin panel uses: it persists, reports back, and an
 // unrelated update does not silently reset it.
-func TestPutSettingsAcceptsShareWithAttendees(t *testing.T) {
+func TestPutSettingsAcceptsShareAudience(t *testing.T) {
 	rt := newSettingsTestRuntime(t)
 
 	rec := httptest.NewRecorder()
 	rt.handlePutSettings(rec, httptest.NewRequest(http.MethodPut, "/settings",
-		strings.NewReader(`{"quality":"balanced","share_with_attendees":true}`)))
+		strings.NewReader(`{"quality":"balanced","share_audience":"attendees"}`)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code = %d, want 200 (body=%s)", rec.Code, rec.Body.String())
 	}
@@ -766,8 +766,8 @@ func TestPutSettingsAcceptsShareWithAttendees(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if !saved.ShareWithAttendees {
-		t.Fatal("share_with_attendees was not persisted")
+	if saved.ShareAudience != shareAudienceAttendees {
+		t.Fatalf("share_audience = %q, want attendees", saved.ShareAudience)
 	}
 
 	// An omitted field preserves the choice, the same rule as the other
@@ -782,19 +782,27 @@ func TestPutSettingsAcceptsShareWithAttendees(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load after unrelated update: %v", err)
 	}
-	if !saved.ShareWithAttendees {
-		t.Fatal("an update that omitted share_with_attendees reset it")
+	if saved.ShareAudience != shareAudienceAttendees {
+		t.Fatal("an update that omitted share_audience reset it")
 	}
 
 	// And it can be switched back to the default.
 	rec = httptest.NewRecorder()
 	rt.handlePutSettings(rec, httptest.NewRequest(http.MethodPut, "/settings",
-		strings.NewReader(`{"share_with_attendees":false}`)))
+		strings.NewReader(`{"share_audience":"room"}`)))
 	if rec.Code != http.StatusOK {
-		t.Fatalf("disable code = %d, want 200", rec.Code)
+		t.Fatalf("switch-room code = %d, want 200", rec.Code)
 	}
-	if rt.currentSettings().ShareWithAttendees {
-		t.Fatal("share_with_attendees = true after disabling it")
+	if rt.currentSettings().ShareAudience != shareAudienceRoom {
+		t.Fatalf("share_audience = %q, want room", rt.currentSettings().ShareAudience)
+	}
+
+	// An unknown named audience is refused, rather than silently coerced.
+	rec = httptest.NewRecorder()
+	rt.handlePutSettings(rec, httptest.NewRequest(http.MethodPut, "/settings",
+		strings.NewReader(`{"share_audience":"everyone"}`)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid audience code = %d, want 400", rec.Code)
 	}
 }
 
@@ -912,20 +920,44 @@ func TestMeetingFormatSettingsPersistAndValidate(t *testing.T) {
 	}
 }
 
-func TestMeetingFormatSurvivesHardwareRefresh(t *testing.T) {
+func TestLoadLegacyShareWithAttendeesBoolean(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
-	if err := Save(path, STTSettings{Source: "auto", Quality: "balanced", HardwareFingerprint: "old-host", MeetingFormat: "json"}); err != nil {
+	if err := os.WriteFile(path, []byte(`{"quality":"balanced","source":"user","share_with_attendees":true}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err := LoadOrInitSettings(path)
-	if err != nil || loaded.MeetingFormat != "json" {
-		t.Fatalf("hardware refresh changed publication: %+v %v", loaded, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.ShareAudience != shareAudienceAttendees {
+		t.Fatalf("legacy share_with_attendees = true loaded as %q, want attendees", loaded.ShareAudience)
+	}
+	if err := Save(path, loaded); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "share_with_attendees") {
+		t.Fatalf("saved settings still carry the legacy boolean: %s", raw)
+	}
+}
+
+func TestMeetingFormatSurvivesHardwareRefresh(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	if err := Save(path, STTSettings{Source: "auto", Quality: "balanced", HardwareFingerprint: "old-host", MeetingFormat: "json", ShareAudience: "attendees"}); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadOrInitSettings(path)
+	if err != nil || loaded.MeetingFormat != "json" || loaded.ShareAudience != shareAudienceAttendees {
+		t.Fatalf("hardware refresh changed publication or audience: %+v %v", loaded, err)
 	}
 	if err := os.WriteFile(path, []byte(`{"quality":"balanced","source":"user"}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err = LoadOrInitSettings(path)
-	if err != nil || loaded.MeetingFormat != "opus" {
+	if err != nil || loaded.MeetingFormat != "opus" || loaded.ShareAudience != shareAudienceRoom {
 		t.Fatalf("legacy settings: %+v %v", loaded, err)
 	}
 }

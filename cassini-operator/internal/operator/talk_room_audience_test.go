@@ -229,7 +229,9 @@ func TestCaptureRoomAudienceUsesInCallAttendeesWhenConfigured(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
 	seedTalkJob(t, rt, "job-attendees")
-	rt.settings = STTSettings{ShareWithAttendees: true}
+	if _, err := rt.store.db.Exec(`UPDATE jobs SET audience_mode = 'attendees' WHERE id = 'job-attendees'`); err != nil {
+		t.Fatalf("set job audience: %v", err)
+	}
 	rt.talkAudienceRetryGap = time.Millisecond
 
 	roomCalls, attendeeCalls := 0, 0

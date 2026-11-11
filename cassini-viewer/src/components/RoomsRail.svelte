@@ -118,7 +118,7 @@
   $: if (!roomsLoading) remember(ROOMS_KEY, rooms.length);
   $: if (tagRows) remember(TAGS_KEY, tagRows.length);
 
-  export let audience: "" | "participants" | "attendees" = "";
+  export let audience: "" | "participants" | "attendees" | "mixed" = "";
   $: text = $LL.viewer.browse.rooms_rail;
   $: AUDIENCE = {
     participants: {
@@ -131,6 +131,14 @@
       label: "Shared with call attendees",
       points: [
         "Each recording is shared only with the people who were in the call while it was being recorded.",
+        $LL.common.audience.point_guests(),
+        $LL.common.audience.point_public_links(),
+      ],
+    },
+    mixed: {
+      label: "Shared with each recording's audience",
+      points: [
+        "Recordings in this archive use different audiences; each kept the people captured when it was recorded.",
         $LL.common.audience.point_guests(),
         $LL.common.audience.point_public_links(),
       ],

@@ -210,3 +210,40 @@ func TestTalkNotificationMetadata(t *testing.T) {
 		t.Fatalf("bounded label: %q", got)
 	}
 }
+
+// #472 review: attendee mode leaves the room chat post out entirely. The
+// title and link would be visible to the whole room, which is precisely the
+// audience the recording excludes.
+func TestTalkNotificationSkippedInAttendeeMode(t *testing.T) {
+	var logs bytes.Buffer
+	rt, cleanup := newBarePublishRuntime(t, log.New(&logs, "", 0))
+	defer cleanup()
+	seedTalkNotificationJob(t, rt.store, "one")
+	if _, err := rt.store.db.Exec(`UPDATE jobs SET audience_mode = 'attendees' WHERE id = 'one'`); err != nil {
+		t.Fatal(err)
+	}
+	posts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		posts++
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+	client := newTalkNotificationClient(ExAppConfig{NextcloudURL: server.URL, AppID: "gocassini", AppSecret: "test-secret", AppVersion: "1"})
+	rt.publishSink = &notifyingTestSink{okPublishSink: okPublishSink{location: "remote"}, client: client}
+	rt.publishJobFn = func(context.Context, publishTask) (string, error) {
+		return filepath.Join(t.TempDir(), "attempt.site"), nil
+	}
+	if err := rt.store.MarkPublishQueued(rt.ctx, "one", "meeting", "meeting", nowUTCString()); err != nil {
+		t.Fatal(err)
+	}
+	rt.runPublishJob(publishTask{JobID: "one", AttemptNumber: 1})
+	if posts != 0 {
+		t.Fatalf("posts = %d, want no room chat in attendee mode", posts)
+	}
+	if job := mustGetJob(t, rt.store, "one"); job.State != "succeeded" {
+		t.Fatalf("state = %q, want succeeded", job.State)
+	}
+	if !strings.Contains(logs.String(), "skipped in attendee mode") {
+		t.Fatalf("log = %q, want the skip named", logs.String())
+	}
+}

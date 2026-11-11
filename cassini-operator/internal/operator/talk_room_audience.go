@@ -182,6 +182,18 @@ SELECT room_audience, room_audience_at FROM jobs WHERE id = ?`, id).Scan(&audien
 	return decoded, true, nil
 }
 
+// SetJobAudienceNotice records a run-level warning about the audience. An
+// empty notice clears it. Best-effort at the call sites: a warning is never
+// allowed to fail a successful publication or re-share.
+func (s *Store) SetJobAudienceNotice(ctx context.Context, id, notice string) error {
+	if _, err := s.db.ExecContext(ctx, `
+UPDATE jobs SET audience_notice = ?, updated_at = ? WHERE id = ?`,
+		nullableString(notice), nowUTCString(), id); err != nil {
+		return fmt.Errorf("set job audience notice: %w", err)
+	}
+	return nil
+}
+
 // captureRoomAudience resolves who had access to the room and records it.
 //
 // Best-effort and entirely off the critical path: it runs in its own goroutine
@@ -201,8 +213,17 @@ SELECT room_audience, room_audience_at FROM jobs WHERE id = ?`, id).Scan(&audien
 // participants Talk reports with the in-call bit set. The second is what keeps
 // a standing channel's non-attendees out of a meeting's shares.
 func (rt *Runtime) captureRoomAudience(jobID, owner, roomToken, phase string) {
+	// The mode is the one saved on the job at recording start, not the current
+	// setting: switching settings mid-recording must not add the whole room to
+	// this recording's roster (#472 review).
+	job, err := rt.store.GetJob(context.Background(), jobID)
+	if err != nil {
+		rt.logger.Printf("room audience capture skipped id=%s phase=%s: read job: %v", jobID, phase, err)
+		return
+	}
+	attendeesOnly := normalizeShareAudienceOrRoom(job.AudienceMode) == shareAudienceAttendees
 	fetch := rt.fetchTalkParticipants
-	if rt.currentSettings().ShareWithAttendees {
+	if attendeesOnly {
 		fetch = rt.fetchTalkAttendees
 	}
 	if fetch == nil {
@@ -225,5 +246,5 @@ func (rt *Runtime) captureRoomAudience(jobID, owner, roomToken, phase string) {
 		rt.logger.Printf("room audience persist failed id=%s phase=%s: %v", jobID, phase, err)
 		return
 	}
-	rt.logger.Printf("room audience captured id=%s phase=%s principals=%d source=%s attendees_only=%t", jobID, phase, len(mappings), source, rt.currentSettings().ShareWithAttendees)
+	rt.logger.Printf("room audience captured id=%s phase=%s principals=%d source=%s audience=%s", jobID, phase, len(mappings), source, normalizeShareAudienceOrRoom(job.AudienceMode))
 }

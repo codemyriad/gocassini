@@ -65,6 +65,10 @@ type publishDelivery struct {
 	// Empty is normal: a non-Talk job has no room, and a job whose room lookup
 	// failed has no name. It never erases a name an earlier publish resolved.
 	RoomName string
+	// Audience is the named share audience frozen on the job at recording start.
+	// The archive's catalog carries it so the viewer can label each room from
+	// what that recording actually used, not from today's setting.
+	Audience string
 }
 
 // publishSink delivers a published meeting to one destination.
@@ -169,7 +173,7 @@ func (s *localPublishSink) Deliver(_ context.Context, d publishDelivery) (string
 	if err != nil {
 		return "", err
 	}
-	merged, err := upsertSiteCatalog(existing, incoming, catalogEntryOverlay{RoomName: d.RoomName})
+	merged, err := upsertSiteCatalog(existing, incoming, catalogEntryOverlay{RoomName: d.RoomName, Audience: d.Audience})
 	if err != nil {
 		return "", err
 	}

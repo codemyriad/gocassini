@@ -59,6 +59,12 @@ export interface MeetingCatalogEntry {
   // recording is not — and is stamped by the operator on every publish.
   roomId?: string;
   roomName?: string;
+  // The audience captured for this recording ("room" or "attendees"). The
+  // operator stamps it from the job's frozen mode; older catalog entries have
+  // none and must not be labelled as if they did. The rooms rail aggregates
+  // these per bucket, so a room with mixed modes says so rather than taking
+  // today's setting.
+  audience?: "room" | "attendees";
   // Installation-local display projection; original roomName stays intact.
   roomDisplayName?: string;
   // Which operator job and attempt produced the artifact (D-640). Both
@@ -304,6 +310,7 @@ function validateMeetingCatalogEntry(
     // the whole meeting list.
     roomId: optionalRoomString(value.roomId),
     roomName: optionalRoomString(value.roomName),
+    audience: value.audience === "attendees" || value.audience === "room" ? value.audience : undefined,
     roomDisplayName: optionalRoomString(value.roomDisplayName),
     jobId: optionalRoomString(value.jobId),
     attemptNumber: optionalPositiveInteger(value.attemptNumber),

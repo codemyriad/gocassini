@@ -71,7 +71,7 @@ it("saves the publication format through settings and restores it on reload", as
 });
 
 it("saves the recording audience option", async () => {
-  let saved = { quality: "balanced", meeting_format: "opus", transcription_enabled: false, share_with_attendees: false };
+  let saved = { quality: "balanced", meeting_format: "opus", transcription_enabled: false, share_audience: "room" };
   const writes: Record<string, unknown>[] = [];
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(String(input), location.href).pathname;
@@ -102,8 +102,8 @@ it("saves the recording audience option", async () => {
   await attendees.click();
   await expect.element(attendees).toBeChecked();
   await page.getByRole("button", { name: "Save", exact: true }).click();
-  await expect.poll(() => saved.share_with_attendees).toBe(true);
-  expect(writes[0]).toMatchObject({ share_with_attendees: true });
+  await expect.poll(() => saved.share_audience).toBe("attendees");
+  expect(writes[0]).toMatchObject({ share_audience: "attendees" });
 });
 
 it("keeps publication separate from source retention and explicitly opts into deletion", async () => {

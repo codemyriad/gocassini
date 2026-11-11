@@ -388,6 +388,39 @@ func TestALaterReconciliationReplacesAStarterRefusal(t *testing.T) {
 	}
 }
 
+// #472 review: attendee mode must not look the room up again at publish time.
+// With no saved roster it shares the starter only and leaves a run warning.
+func TestAttendeeModeWithoutCapturedRosterSharesOnlyTheStarter(t *testing.T) {
+	f := newDirectPublishFixture(t, []sharePrincipal{{Type: "user", ID: "old-recipient"}})
+	if _, err := f.rt.store.db.Exec(`UPDATE jobs SET room_audience = NULL, room_audience_at = NULL, audience_mode = 'attendees' WHERE id = ?`, directPublishJob); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	f.rt.fetchTalkParticipants = func(context.Context, string, string) ([]sharePrincipal, error) {
+		called = true
+		return nil, nil
+	}
+	if err := f.deliver(); err != nil {
+		t.Fatalf("Deliver() error = %v", err)
+	}
+	if called {
+		t.Fatal("attendee mode looked up Today's room at publish time")
+	}
+	if len(f.posted) != 1 || !f.shared("0/alice") {
+		t.Fatalf("posted=%v shares=%v, want the starter only", f.posted, f.shares)
+	}
+	if f.shared("0/old-recipient") {
+		t.Fatal("a stale roster leaked into an attendee-mode publish with no capture")
+	}
+	job, err := f.rt.store.GetJob(context.Background(), directPublishJob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(job.AudienceNotice, "only the starter") {
+		t.Fatalf("audience notice = %q, want the starter-only warning", job.AudienceNotice)
+	}
+}
+
 // A file already in place from an earlier publish makes the next delivery a
 // republish, which does not re-share — except after a refused starter, which
 // stopped the last reconciliation before anyone was shared with.

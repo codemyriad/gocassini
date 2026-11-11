@@ -56,6 +56,10 @@ export interface Job {
    * for any job recorded before the operator promoted the room to a column. */
   room_name: string | null;
   room_display_name?: string;
+  /** The audience saved on the job when recording started; old jobs are room. */
+  audience_mode?: "room" | "attendees";
+  /** A run-level audience warning, e.g. no attendee list was captured. */
+  audience_notice?: string;
 }
 
 export interface JobAttempt {
@@ -204,11 +208,11 @@ export interface Settings {
   transcription_enabled?: boolean;
   /**
    * Share a recording's Files file (and so its summary) with all of the Talk
-   * room's participants (false, the default) or only the people Talk reports in
-   * the call while it is being recorded (true). The roster is captured at
-   * recording start and stop; the option applies to new recordings.
+   * room's participants ("room", the default) or only the people Talk reports
+   * in the call while it is being recorded ("attendees"). The chosen mode is
+   * frozen on the job at recording start.
    */
-  share_with_attendees?: boolean;
+  share_audience?: "room" | "attendees";
   active_model?: string;
   active_revision?: string;
   quality: SettingsQuality;
@@ -232,7 +236,7 @@ export interface SettingsUpdate {
   meeting_format?: "opus" | "json";
   source_retention?: "storage-policy" | "delete-after-processing";
   transcription_enabled?: boolean;
-  share_with_attendees?: boolean;
+  share_audience?: "room" | "attendees";
   active_model?: string;
   active_revision?: string;
   quality?: SettingsQuality;

@@ -487,7 +487,7 @@ func (rt *Runtime) setupHandler(w http.ResponseWriter, r *http.Request) {
 	// endpoint" would defeat that (D-749).
 	w.Header().Set("Cache-Control", "no-store")
 	audience := "participants"
-	if rt.currentSettings().ShareWithAttendees {
+	if rt.currentSettings().ShareAudience == shareAudienceAttendees {
 		audience = "attendees"
 	}
 	writeJSON(w, http.StatusOK, setupResponse{
