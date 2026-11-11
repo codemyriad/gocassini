@@ -29,11 +29,15 @@ func oneLineTitle(title string) string {
 
 // shareNote is the text on every recording share Cassini makes: what the
 // file is, so the person recognises it in Files and in Cassini's own list of
-// recordings waiting for them. No URL — the deep link into Cassini is not
-// stable across versions, and a stale link would be worse than none.
+// recordings waiting for them. Nextcloud also puts this text in the body of
+// the share email, under a heading that names only the file, so it opens by
+// saying the file is a Cassini recording. It promises no contents: a meeting
+// may have no transcript, summary or audio. No URL — the deep link into
+// Cassini is not stable across versions, and a stale link would be worse
+// than none.
 //
-//	Recording of Weekly sync, Friday 30 October 2026, 10:00 UTC (42 min). Open it in Cassini.
-//	Imported meeting Weekly sync, Friday 30 October 2026, 10:00 UTC (42 min). Open it in Cassini.
+//	Cassini meeting recording — Weekly sync, Friday 30 October 2026, 10:00 UTC (42 min). Open it in Cassini.
+//	Imported Cassini meeting — Weekly sync, Friday 30 October 2026, 10:00 UTC (42 min). Open it in Cassini.
 //
 // The clock time says it is UTC: Browse shows the same start in the reader's
 // own zone, and the two must not look like different meetings. A missing
@@ -42,23 +46,19 @@ func (f meetingFacts) shareNote(imported bool) string {
 	title := oneLineTitle(f.Title)
 	var b strings.Builder
 	if imported {
-		b.WriteString("Imported meeting")
+		b.WriteString("Imported Cassini meeting")
 	} else {
-		b.WriteString("Recording")
+		b.WriteString("Cassini meeting recording")
 	}
 	if title != "" {
-		if imported {
-			b.WriteString(" ")
-		} else {
-			b.WriteString(" of ")
-		}
+		b.WriteString(" — ")
 		b.WriteString(title)
 	}
 	if !f.StartedAt.IsZero() {
 		if title != "" {
 			b.WriteString(", ")
 		} else {
-			b.WriteString(" from ")
+			b.WriteString(" — ")
 		}
 		b.WriteString(f.StartedAt.UTC().Format("Monday 2 January 2006, 15:04") + " UTC")
 	}

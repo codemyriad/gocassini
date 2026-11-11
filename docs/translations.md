@@ -39,6 +39,10 @@ error, the operator's state and stage names) stay English, on purpose: they
 are what an administrator searches for and quotes in a bug report. Where one
 sits inside a translated sentence, it is a parameter and stays as it came.
 
+**The note on a recording share** (`share_note.go`), which Nextcloud also puts
+in its share email, is English for every recipient. Translating it is tracked
+in #476.
+
 ### Sentences the operator writes
 
 The operator (Go) writes some sentences the app shows, and keeps writing them
