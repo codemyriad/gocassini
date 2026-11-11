@@ -2,6 +2,7 @@
   import { createEventDispatcher } from "svelte";
   import { X } from "@lucide/svelte";
 
+  import { LL } from "../../i18n";
   import type { TagColorId, TagIconId } from "../../viewer/tagPalette";
   import TagIcon from "./TagIcon.svelte";
 
@@ -32,7 +33,7 @@
       type="button"
       class="tag-chip-remove"
       {disabled}
-      aria-label={`Remove ${label}`}
+      aria-label={$LL.viewer.browse.tags.remove_named({ name: label })}
       on:click|stopPropagation={() => dispatch("remove")}
     >
       <X size={12} aria-hidden="true" />

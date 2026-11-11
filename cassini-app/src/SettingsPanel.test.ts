@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
+import { get } from "svelte/store";
+import { LL } from "cassini-viewer/i18n";
 
 import settingsPanelSource from "./SettingsPanel.svelte?raw";
 
+const t = get(LL).app.settings.pipeline;
+
 describe("SettingsPanel device policy", () => {
   it("offers auto, CPU and CUDA as device overrides, and no model override", () => {
-    expect(settingsPanelSource).toContain('<option value="">Auto</option>');
+    expect(settingsPanelSource).toContain('<option value="">{t.hw_device_auto()}</option>');
+    expect(t.hw_device_auto()).toBe("Auto");
     expect(settingsPanelSource).toContain('<option value="cpu">CPU</option>');
     expect(settingsPanelSource).toContain('<option value="cuda">GPU (CUDA)</option>');
     // The model override accepted only the three models the quality tiers
@@ -22,8 +27,9 @@ describe("SettingsPanel device policy", () => {
     // and only reveals the CPU path once a build has run (D-702).
     // The "In use" line names the saved model and the effective device.
     expect(settingsPanelSource).toContain('savedDevice = settings?.effective?.device');
-    expect(settingsPanelSource).toContain("<strong>{inUseModel.name}</strong>");
-    expect(settingsPanelSource).toContain("on {runsOnLine}.");
+    expect(settingsPanelSource).toContain('<strong>{inUseModel?.name}</strong>');
+    expect(settingsPanelSource).toContain("t.in_use_transcribing({ model: slot(\"model\"), where: runsOnLine })");
+    expect(t.in_use_transcribing({ model: "M", where: t.runs_on_cpu() })).toBe("Transcribing with M on the CPU.");
     expect(settingsPanelSource).toContain("settings.effective.note");
   });
 
@@ -33,11 +39,14 @@ describe("SettingsPanel device policy", () => {
     expect(settingsPanelSource).toContain("inUseModelState(inUseModel, inUseDownload)");
     expect(settingsPanelSource).toContain('class:in-use-warn={inUseState === "missing"}');
     expect(settingsPanelSource).toContain('{#if inUseModel && inUseState === "missing"}');
-    expect(settingsPanelSource).toContain("the previous model transcribes recordings on {runsOnLine} meanwhile.");
+    expect(settingsPanelSource).toContain("t.in_use_stand_in_missing({ model: slot(\"model\"), where: runsOnLine })");
+    expect(t.in_use_stand_in_missing({ model: "M", where: "on D" })).toContain("the previous model transcribes recordings on D meanwhile.");
     // Installed files that failed their check: v3 transcribes, not because
     // Ultra is downloading or missing.
-    expect(settingsPanelSource).toContain("is installed but failed its runtime check; the previous model");
-    expect(settingsPanelSource).toContain("; recordings wait for it.");
+    expect(settingsPanelSource).toContain("t.in_use_stand_in_failed_check(");
+    expect(t.in_use_stand_in_failed_check({ model: "M", where: "on D" })).toContain("is installed but failed its runtime check; the previous model");
+    expect(settingsPanelSource).toContain("t.in_use_downloading({ model: slot(\"model\") })");
+    expect(t.in_use_downloading({ model: "M" })).toContain("; recordings wait for it.");
   });
 });
 
@@ -53,7 +62,8 @@ describe("SettingsPanel search spellings", () => {
   it("says what the setting does and does not do", () => {
     // It widens a search; it never rewrites a recording. An admin who thought
     // this fixed transcripts would use it for the wrong job.
-    expect(settingsPanelSource).toContain("Doesn't change any transcript, only what search finds.");
+    expect(settingsPanelSource).toContain("{t.search_note_transcripts()}");
+    expect(t.search_note_transcripts()).toBe("Doesn't change any transcript, only what search finds.");
   });
 });
 
@@ -72,7 +82,8 @@ describe("SettingsPanel summarisation step", () => {
     // an administrator, and a typo saved cleanly and failed much later, at the
     // run (D-718/D-719).
     expect(settingsPanelSource).toContain("listInsightWorkflows()");
-    expect(settingsPanelSource).toContain("Insight template");
+    expect(settingsPanelSource).toContain("{t.field_template()}");
+    expect(t.field_template()).toBe("Insight template");
     expect(settingsPanelSource).toContain("bind:value={summary.template}");
     expect(settingsPanelSource).not.toContain('placeholder="summarise (the one Cassini ships)"');
   });
@@ -81,7 +92,8 @@ describe("SettingsPanel summarisation step", () => {
     // Saved by an older or newer image, it is still what the step runs. A
     // picker that silently reset it to the default would change behaviour by
     // rendering.
-    expect(settingsPanelSource).toContain("not in this build");
+    expect(settingsPanelSource).toContain("t.template_not_in_build({ id })");
+    expect(t.template_not_in_build({ id: "x" })).toContain("not in this build");
   });
 
   it("chooses a provider when the step is switched on", () => {
@@ -113,8 +125,10 @@ describe("SettingsPanel summarisation step", () => {
   });
 
   it("offers the way out of the locked state", () => {
-    expect(settingsPanelSource).toContain("Needs a provider.");
-    expect(settingsPanelSource).toContain('on:click={() => dispatch("openProviders")}>Add one</button>');
+    expect(settingsPanelSource).toContain("{t.needs_provider()}");
+    expect(t.needs_provider()).toBe("Needs a provider.");
+    expect(settingsPanelSource).toContain('on:click={() => dispatch("openProviders")}>{t.add_provider()}</button>');
+    expect(t.add_provider()).toBe("Add one");
   });
 });
 
@@ -123,9 +137,9 @@ describe("SettingsPanel layout", () => {
     // It is the answer to "what the operator found is wrong", so it opens
     // under the finding rather than at the end of the page or in a card of its
     // own, which would read as a pipeline step.
-    const transcriptAt = settingsPanelSource.indexOf('aria-label="Transcription settings"');
+    const transcriptAt = settingsPanelSource.indexOf("aria-label={t.transcription_label()}");
     const hardwareAt = settingsPanelSource.indexOf('id="hardware-details"');
-    const deviceAt = settingsPanelSource.indexOf(">Device<");
+    const deviceAt = settingsPanelSource.indexOf(">{t.hw_device()}<");
     const summaryAt = settingsPanelSource.indexOf('aria-labelledby="summary-heading"');
     expect([transcriptAt, hardwareAt, deviceAt, summaryAt].every((at) => at > -1)).toBe(true);
     expect([transcriptAt, hardwareAt, deviceAt, summaryAt]).toEqual(
@@ -137,8 +151,8 @@ describe("SettingsPanel layout", () => {
     // Transcript, then the two steps that need one, then what is kept. The
     // chips above follow the same order, so chip N points at question N.
     const cardAt = settingsPanelSource.indexOf('aria-labelledby="recording-publication-heading"');
-    const headingAt = settingsPanelSource.indexOf(">After each meeting<");
-    const at = [">Transcript<", ">Summary<", ">What participants receive<", ">What media stays on the server<"]
+    const headingAt = settingsPanelSource.indexOf(">{t.after_meeting()}<");
+    const at = [">{t.transcript_heading()}<", ">{t.summary_heading()}<", ">{t.publication_heading()}<", ">{t.keep_heading()}<"]
       .map((title) => settingsPanelSource.indexOf(title));
     expect([cardAt, headingAt, ...at].every((index) => index > -1)).toBe(true);
     expect([cardAt, headingAt, ...at]).toEqual([...[cardAt, headingAt, ...at]].sort((a, b) => a - b));
@@ -147,18 +161,19 @@ describe("SettingsPanel layout", () => {
 
   it("asks the summary switch, provider and template inside question 2", () => {
     // One place for the whole step, under its switch; no separate card.
-    const switchAt = settingsPanelSource.indexOf('aria-label="Summarise every meeting"');
-    const providerAt = settingsPanelSource.indexOf('<span class="op-field-label">Provider</span>');
-    const templateAt = settingsPanelSource.indexOf("Insight template");
-    const publicationAt = settingsPanelSource.indexOf(">What participants receive<");
+    const switchAt = settingsPanelSource.indexOf("aria-label={t.summarise_switch()}");
+    const providerAt = settingsPanelSource.indexOf('<span class="op-field-label">{t.field_provider()}</span>');
+    const templateAt = settingsPanelSource.indexOf("{t.field_template()}");
+    const publicationAt = settingsPanelSource.indexOf(">{t.publication_heading()}<");
+    expect([switchAt, providerAt, templateAt, publicationAt].every((at) => at > -1)).toBe(true);
     expect([switchAt, providerAt, templateAt, publicationAt]).toEqual(
       [...[switchAt, providerAt, templateAt, publicationAt]].sort((a, b) => a - b));
     expect(settingsPanelSource).not.toContain(">Summary settings<");
   });
 
   it("asks the tiers, each with its model, inside the transcript question", () => {
-    const transcriptAt = settingsPanelSource.indexOf('aria-label="Transcription settings"');
-    const listAt = settingsPanelSource.indexOf('aria-label="What transcribes recordings"');
+    const transcriptAt = settingsPanelSource.indexOf("aria-label={t.transcription_label()}");
+    const listAt = settingsPanelSource.indexOf("aria-label={t.tiers_label()}");
     const modelsAt = settingsPanelSource.indexOf("<SpeechModelCell");
     const summaryAt = settingsPanelSource.indexOf('aria-labelledby="summary-heading"');
     expect([transcriptAt, listAt, modelsAt, summaryAt].every((at) => at > -1)).toBe(true);
@@ -168,7 +183,8 @@ describe("SettingsPanel layout", () => {
 
   it("keeps search spellings in their own card without transcription hints", () => {
     expect(settingsPanelSource).toContain('aria-labelledby="search-spellings-heading"');
-    expect(settingsPanelSource).toContain(">Search spellings<");
+    expect(settingsPanelSource).toContain(">{t.search_heading()}<");
+    expect(t.search_heading()).toBe("Search spellings");
     expect(settingsPanelSource).not.toContain(">Transcript hints<");
     expect(settingsPanelSource).not.toContain(">Vocabulary<");
     expect(settingsPanelSource).not.toContain("transcription_terms:");
@@ -209,16 +225,19 @@ describe("SettingsPanel template picker", () => {
     // D-819: the summary step runs the chosen template, so the choice is shown.
     expect(settingsPanelSource).not.toContain("SUMMARY_TEMPLATE_CHOICE");
     expect(settingsPanelSource).not.toContain("summaries still use the built-in template for now");
-    expect(settingsPanelSource).toContain("Meetings published from now on are summarised with this template.");
-    expect(settingsPanelSource).toContain("Edit templates");
+    expect(settingsPanelSource).toContain("{t.template_help()}");
+    expect(t.template_help()).toBe("Meetings published from now on are summarised with this template.");
+    expect(settingsPanelSource).toContain("{t.edit_templates()}");
   });
 
   it("names the provider's default model as what an empty summary model means", () => {
     // "endpoint default" named nothing; the provider's default model is what
     // actually runs when the step names none (D-749).
     expect(settingsPanelSource).toContain("placeholder={providerModelPlaceholder(summary.provider)}");
-    expect(settingsPanelSource).toContain("(the provider's default)");
-    expect(settingsPanelSource).toContain("no default model set on this provider");
+    expect(settingsPanelSource).toContain("t.provider_default_model({ model })");
+    expect(t.provider_default_model({ model: "m" })).toContain("(the provider's default)");
+    expect(settingsPanelSource).toContain("t.no_provider_default()");
+    expect(t.no_provider_default()).toBe("no default model set on this provider");
   });
 });
 
@@ -238,9 +257,11 @@ describe("SettingsPanel recording readiness", () => {
 // pointed five blocks down to the Download button; the tier is the model now.
 describe("SettingsPanel transcript step", () => {
   it("answers what transcribes recordings with one list: Off, or a tier", () => {
-    expect(settingsPanelSource).toContain('aria-label="What transcribes recordings"');
-    expect(settingsPanelSource).toContain('<span class="q-label">Off</span>');
-    expect(settingsPanelSource).toContain("Recordings are published without a transcript.");
+    expect(settingsPanelSource).toContain("aria-label={t.tiers_label()}");
+    expect(settingsPanelSource).toContain('<span class="q-label">{t.off()}</span>');
+    expect(t.off()).toBe("Off");
+    expect(settingsPanelSource).toContain("{t.off_description()}");
+    expect(t.off_description()).toBe("Recordings are published without a transcript.");
     expect(settingsPanelSource).not.toContain('aria-label="Transcribe every recording"');
     expect(settingsPanelSource).not.toContain("Download the model below to turn it on.");
     expect(settingsPanelSource).not.toContain("Transcription needs to be on to edit the settings below.");
@@ -262,8 +283,10 @@ describe("SettingsPanel transcript step", () => {
     // pick still has to be saved.
     expect(settingsPanelSource).toContain("on:queued={(event) => (pendingSelect = event.detail.id)}");
     expect(settingsPanelSource).toContain("function pickWhenReady(");
-    expect(settingsPanelSource).toContain("Transcription turns on when it finishes.");
-    expect(settingsPanelSource).toContain("Install and pick a model to turn transcription on.");
+    expect(settingsPanelSource).toContain("t.lead_downloading({ tier: pendingRow.option.label })");
+    expect(t.lead_downloading({ tier: "Fast" })).toContain("Transcription turns on when it finishes.");
+    expect(settingsPanelSource).toContain("t.lead_off()");
+    expect(t.lead_off()).toContain("Install and pick a model to turn transcription on.");
   });
 
   it("shows the GPU's one model once under the tiers", () => {
@@ -273,14 +296,16 @@ describe("SettingsPanel transcript step", () => {
 
   it("numbers the strip chips after the steps they jump to", () => {
     expect(settingsPanelSource).toContain('<span class="chip-num" aria-hidden="true">{index + 1}</span>');
-    expect(settingsPanelSource).toContain('{ name: "Media retention", step: status.keep');
+    expect(settingsPanelSource).toContain("{ name: t.chip_retention(), step: status.keep");
+    expect(t.chip_retention()).toBe("Media retention");
   });
 
   it("greys the summary step while there is no transcript and says why in a pill", () => {
-    expect(settingsPanelSource).toContain('<span class="q-pill q-pill-warn">needs a transcript</span>');
+    expect(settingsPanelSource).toContain('<span class="q-pill q-pill-warn">{t.needs_transcript()}</span>');
+    expect(t.needs_transcript()).toBe("needs a transcript");
     // The switch is out of the way rather than shown on inside a greyed step.
-    const pillAt = settingsPanelSource.indexOf('<span class="q-pill q-pill-warn">needs a transcript</span>');
-    const switchAt = settingsPanelSource.indexOf('aria-label="Summarise every meeting"');
+    const pillAt = settingsPanelSource.indexOf('<span class="q-pill q-pill-warn">{t.needs_transcript()}</span>');
+    const switchAt = settingsPanelSource.indexOf("aria-label={t.summarise_switch()}");
     expect(settingsPanelSource.slice(pillAt, switchAt)).toContain("{:else}");
     expect(settingsPanelSource).toContain("summaryStepLead(providerName(summaryProviderRow.id), summaryProviderRow.base_url)");
   });
@@ -291,7 +316,8 @@ describe("SettingsPanel transcript step", () => {
     // either way.
     expect(settingsPanelSource).toContain("<PublishedFormatSelect value={publishedFormat} transcript={transcriptionEnabled} disabled={saving}");
     expect(settingsPanelSource).toContain('disabled={saving} tabindex="-1" bind:this={keepSettings}');
-    expect(settingsPanelSource).toContain("Unavailable while audio is published (step 3).");
+    expect(settingsPanelSource).toContain("{t.keep_nothing_unavailable()}");
+    expect(t.keep_nothing_unavailable()).toBe("Unavailable while audio is published (step 3).");
     expect(settingsPanelSource).not.toContain("Transcription is off. Turn it on above to include a transcript.");
   });
 });

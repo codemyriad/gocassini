@@ -170,6 +170,14 @@ jobs:
         run: npm exec -w ${{ matrix.package }} -- playwright install --with-deps chromium
       - name: Run tests
         run: npm test -w ${{ matrix.package }}
+      # English is the source: the generated types and every language's JSON
+      # must match it (docs/translations.md).
+      - name: Check translation files
+        if: matrix.package == 'cassini-viewer'
+        run: |
+          npm run i18n:generate -w cassini-viewer
+          npm run i18n:sync -w cassini-viewer -- --check
+          git diff --exit-code -- cassini-viewer/src/i18n
 
   unit:
     name: Unit tests (${{ matrix.module }})

@@ -3,10 +3,14 @@
   // Deliberately minimal: type, pick, repeat — the chips beside it are the
   // state, so the picker itself holds nothing but the current query.
   import { createEventDispatcher, onDestroy } from "svelte";
+  import { LL } from "../../i18n";
   import type { ImportSharee } from "../../viewer/imports";
 
   export let search: (query: string) => Promise<ImportSharee[]>;
-  export let placeholder = "Add a person or group…";
+  // Empty means "Add a person or group…", in the reader's language.
+  export let placeholder = "";
+  $: text = $LL.viewer.browse.import;
+  $: label = placeholder || text.sharee_placeholder();
   // Fill the container's width instead of the fixed inline size.
   export let wide = false;
 
@@ -58,7 +62,7 @@
   }
 
   function kindLabel(sharee: ImportSharee): string {
-    return sharee.type === "user" ? "" : sharee.type === "group" ? "group" : "team";
+    return sharee.type === "user" ? "" : sharee.type === "group" ? text.kind_group() : text.kind_team();
   }
 
   onDestroy(() => {
@@ -70,7 +74,7 @@
   <input
     type="text"
     class="input input-sm input-bordered max-w-full {wide ? 'w-full' : 'w-52'}"
-    {placeholder}
+    placeholder={label}
     bind:value={query}
     on:input={handleInput}
     on:keydown={(event) => {
@@ -86,14 +90,14 @@
     on:blur={() => setTimeout(() => (open = false), 150)}
     role="combobox"
     aria-expanded={open}
-    aria-label={placeholder}
+    aria-label={label}
   />
   {#if open}
     <ul class="sharee-results menu menu-sm" role="listbox">
       {#if failed}
-        <li class="px-3 py-1.5 text-sm opacity-70">Could not search people right now.</li>
+        <li class="px-3 py-1.5 text-sm opacity-70">{text.sharee_search_failed()}</li>
       {:else if results.length === 0}
-        <li class="px-3 py-1.5 text-sm opacity-70">{searching ? "Searching…" : "Nobody matches that."}</li>
+        <li class="px-3 py-1.5 text-sm opacity-70">{searching ? text.sharee_searching() : text.sharee_none()}</li>
       {:else}
         {#each results as sharee (sharee.type + sharee.id)}
           <li>

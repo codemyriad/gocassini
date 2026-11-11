@@ -15,6 +15,7 @@
   import { createEventDispatcher, onDestroy } from "svelte";
   import { createCombobox } from "@melt-ui/svelte";
   import { ChevronDown, TriangleAlert } from "@lucide/svelte";
+  import { LL } from "cassini-viewer/i18n";
   import type { LLMModel } from "./operator/types";
 
   export let value = "";
@@ -26,9 +27,10 @@
   // workaround or a mistake.
   export let error = "";
   export let disabled = false;
-  export let placeholder = "endpoint default";
+  // Empty means the default wording, in the reader's language.
+  export let placeholder = "";
   export let id = "";
-  export let label = "Model";
+  export let label = "";
 
   const dispatch = createEventDispatcher<{ open: void }>();
 
@@ -107,12 +109,12 @@
      preprocessor emits, and it costs no build-time dependency shared with the
      viewing layer. -->
 <div class="model-field">
-  <span class="model-label" {...$labelEl} use:$labelEl.action>{label}</span>
+  <span class="model-label" {...$labelEl} use:$labelEl.action>{label || $LL.app.settings.model_combobox.label()}</span>
   <div class="model-input">
     <input
       {id}
       {disabled}
-      {placeholder}
+      placeholder={placeholder || $LL.app.settings.model_combobox.placeholder()}
       class="op-input input input-sm w-full border-base-300 pr-7 shadow-none"
       {...$input}
       use:$input.action
@@ -123,18 +125,18 @@
   {#if $open}
     <ul class="model-menu" {...$menu} use:$menu.action>
       {#if loading}
-        <li class="model-note">Loading models…</li>
+        <li class="model-note">{$LL.app.settings.model_combobox.loading()}</li>
       {:else if error}
         <!-- The list failed; the field has not. Saying which is what tells an
              administrator that typing the ID by hand is the way through. -->
         <li class="model-note model-note-warn">
           <TriangleAlert size={12} aria-hidden="true" />
-          <span>{error} You can still type a model ID.</span>
+          <span>{$LL.app.settings.model_combobox.list_failed({ error })}</span>
         </li>
       {:else if models.length === 0}
-        <li class="model-note">This endpoint listed no models. Type a model ID.</li>
+        <li class="model-note">{$LL.app.settings.model_combobox.no_models()}</li>
       {:else if visible.length === 0}
-        <li class="model-note">No match for “{$inputValue}”. It will be used as typed.</li>
+        <li class="model-note">{$LL.app.settings.model_combobox.no_match({ text: $inputValue })}</li>
       {:else}
         {#each visible as model (model.id)}
           {@const opt = $option({ value: model.id, label: model.id })}
@@ -149,7 +151,7 @@
           </li>
         {/each}
         {#if visible.length !== models.length}
-          <li class="model-note">{visible.length} of {models.length} models</li>
+          <li class="model-note">{$LL.app.settings.model_combobox.match_count({ shown: visible.length, count: models.length })}</li>
         {/if}
       {/if}
     </ul>

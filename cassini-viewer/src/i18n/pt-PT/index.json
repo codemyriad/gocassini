@@ -1,0 +1,46 @@
+{
+  "common": {
+    "action": {
+      "cancel": "Cancelar",
+      "save": "Guardar",
+      "saving": "A guardar…",
+      "retry": "Tentar novamente",
+      "retrying": "A tentar novamente…",
+      "dismiss": "Ignorar",
+      "delete": "Eliminar",
+      "remove": "Remover",
+      "edit": "Editar",
+      "close": "Fechar",
+      "try_again": "Tentar novamente"
+    },
+    "summary_request": {
+      "write": "Escrever resumo",
+      "regenerate": "Gerar resumo novamente",
+      "confirm_write_title": "Escrever um resumo desta reunião?",
+      "confirm_replace_title": "Substituir o resumo desta reunião?",
+      "cost": "{count:number|num} {{count:|chamada|||chamadas|chamadas}} a {target} · cerca de {tokens:number|compact} {{tokens:|token|||tokens|tokens}} de entrada, {words:number|num} {{words:|palavra|||palavras|palavras}}",
+      "cost_target_fallback": "o modelo de resumo",
+      "cost_target": "{model} ({provider})",
+      "endpoint_external": "A transcrição é enviada para um serviço externo, que pode cobrar por isso.",
+      "endpoint_local": "O modelo é executado na sua própria rede."
+    },
+    "audience": {
+      "intro": "Os Ficheiros do Nextcloud controlam quem pode ler cada gravação.",
+      "point_participants": "Cada gravação é partilhada com todos os participantes da sala do Talk, quer tenham estado presentes na chamada ou não.",
+      "point_guests": "Os convidados sem conta Nextcloud não a podem abrir.",
+      "point_public_links": "O Cassini nunca cria uma hiperligação pública. Em salas públicas, as pessoas podem voltar a partilhar o ficheiro se este Nextcloud o permitir."
+    },
+    "place": {
+      "operator": "Operador",
+      "publish_pipeline": "Fluxo de publicação",
+      "ai_providers": "Fornecedores de IA",
+      "insight_templates": "Modelos de análise",
+      "doctor": "Diagnóstico",
+      "storage": "Armazenamento",
+      "help": "Ajuda"
+    },
+    "status": {
+      "copied": "Copiado"
+    }
+  }
+}

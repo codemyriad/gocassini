@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { get } from "svelte/store";
+import { LL } from "cassini-viewer/i18n";
 
 import panelSource from "./RecordingSetup.svelte?raw";
 
@@ -71,7 +73,8 @@ describe("the test room is offered only to an administrator who can record in it
   it("builds the link in one place, so no branch can offer an unowned room", () => {
     // Both "Open test room" affordances hang off testRoomHref. An href built
     // straight from test_room_url anywhere would reintroduce the bug.
-    expect(panelSource).toContain("Open test room");
+    expect(panelSource).toContain("$LL.app.operator.doctor.open_test_room()");
+    expect(get(LL).app.operator.doctor.open_test_room()).toBe("Open test room");
     expect(panelSource).not.toMatch(/href=\{[^}]*test_room_url/);
   });
 });

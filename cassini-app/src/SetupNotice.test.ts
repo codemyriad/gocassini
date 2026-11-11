@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { get } from "svelte/store";
+import { LL, operatorPlace } from "cassini-viewer/i18n";
 
 import noticeSource from "./SetupNotice.svelte?raw";
 
@@ -22,7 +24,9 @@ describe("the setup notice", () => {
   });
 
   it("puts the technical account behind a collapsed disclosure", () => {
-    const disclosures = noticeSource.match(/<summary class="cursor-pointer font-medium">Details for administrators<\/summary>/g) ?? [];
+    const disclosures =
+      noticeSource.match(/<summary class="cursor-pointer font-medium">\{\$LL\.app\.shell\.setup_notice\.details_heading\(\)\}<\/summary>/g) ?? [];
+    expect(get(LL).app.shell.setup_notice.details_heading()).toBe("Details for administrators");
     expect(disclosures).toHaveLength(1);
     // Bound, not `open`: the disclosure starts closed, and "Show details" and
     // the triangle on the <details> itself cannot disagree about the state.
@@ -32,9 +36,10 @@ describe("the setup notice", () => {
   });
 
   it("offers the two actions from the mock, as buttons", () => {
-    const showDetails = noticeSource.match(/\n\s*Show details\n\s*<\/button>/g) ?? [];
+    const showDetails = noticeSource.match(/\n\s*\{\$LL\.app\.shell\.setup_notice\.show_details\(\)\}\n\s*<\/button>/g) ?? [];
     expect(showDetails).toHaveLength(1);
-    expect(noticeSource).toContain('{busy ? "Checking…" : "Try again"}');
+    expect(noticeSource).toContain("{busy ? $LL.app.shell.setup_notice.checking() : $LL.common.action.try_again()}");
+    expect(get(LL).common.action.try_again()).toBe("Try again");
     // Try again is a request to the operator, which the shell owns; the
     // component asks for it and does nothing itself.
     expect(noticeSource).toContain('dispatch("retry")');
@@ -44,7 +49,8 @@ describe("the setup notice", () => {
   it("sends the step that is a navigation to the settings section", () => {
     // The Setup tab is gone (D-756) and the storage controls are a section of
     // Operator › Publish pipeline (D-757).
-    expect(noticeSource).toContain("Open Operator › Publish pipeline");
+    expect(noticeSource).toContain("$LL.app.shell.setup_notice.open_publish_pipeline({ place: operatorPlace(\"publish_pipeline\") })");
+    expect(get(LL).app.shell.setup_notice.open_publish_pipeline({ place: operatorPlace("publish_pipeline") })).toBe("Open Operator › Publish pipeline");
     expect(noticeSource).not.toContain("Open the Setup tab");
     expect(noticeSource).toContain('dispatch("navigate", "settings")');
   });

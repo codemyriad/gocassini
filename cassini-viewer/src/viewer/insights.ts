@@ -1,3 +1,8 @@
+import { get } from "svelte/store";
+
+import { LL, operatorPlace } from "../i18n";
+import type { TranslationFunctions } from "../i18n/i18n-types";
+import { dateFormat } from "../i18n/format";
 import type { MeetingCatalogEntry } from "./catalog";
 import {
   compareStartOrder,
@@ -8,7 +13,7 @@ import {
   type StartOrder,
   wallClockMonth,
 } from "./meetingTime";
-import { NO_ROOM_KEY, UNDATED_MONTH_KEY, UNDATED_MONTH_LABEL } from "./rooms";
+import { NO_ROOM_KEY, UNDATED_MONTH_KEY, undatedMonthLabel } from "./rooms";
 
 // Insights in the browse catalogue (D-721). Pure, for the same reason rooms.ts
 // and selectionModel.ts are: the viewer's suite runs in node with no DOM, and
@@ -99,53 +104,40 @@ export type InsightReason =
   | "interrupted"
   | "unknown";
 
-// One entry per reason: the title says what happened, the line says what to
-// do, and neither repeats the other. Plain and short on purpose — these are
+// Every reason the operator can record. Each has an entry in the dictionary
+// (viewer.insights.failure): the title says what happened, the line says what
+// to do, and neither repeats the other. Plain and short on purpose — these are
 // the first words, not the last.
-export const INSIGHT_FAILURE_COPY: Record<InsightReason, { title: string; line: string }> = {
-  "bad-request": { title: "This request could not be run", line: "Check the app log." },
-  "no-provider": { title: "No AI endpoint", line: "Add one under Operator › AI providers." },
-  "provider-refused": {
-    title: "The endpoint refused the request",
-    line: "Check its key, quota or model name under Operator › AI providers.",
-  },
-  "model-failed": { title: "The model did not answer", line: "Retry, or pick fewer meetings." },
-  "template-changed": {
-    title: "The template changed before this insight ran",
-    line: "Generate it again to use the template as it is now.",
-  },
-  "write-failed": {
-    title: "The insight could not be written to disk",
-    line: "Check the app's storage.",
-  },
-  "deliver-failed": {
-    title: "The insight could not be saved to your Nextcloud files",
-    line: "Check your space, then retry.",
-  },
-  timeout: {
-    title: "Stopped after an hour",
-    line: "Retry with fewer meetings or a faster endpoint.",
-  },
-  "staging-failed": { title: "The meetings could not be staged", line: "Check the app's storage." },
-  "catalog-failed": { title: "Your meeting list could not be read", line: "Retry in a moment." },
-  "meeting-unavailable": {
-    title: "One of these meetings is no longer available to you",
-    line: "Unpick it and ask again.",
-  },
-  "download-failed": {
-    title: "A meeting could not be downloaded from Nextcloud",
-    line: "Retry in a moment.",
-  },
-  "assemble-failed": {
-    title: "The meetings could not be assembled into one document",
-    line: "Check the app log.",
-  },
-  interrupted: { title: "Cassini restarted before this insight finished", line: "Retry it." },
-  unknown: { title: "The insight failed", line: "Retry, or check the app log." },
-};
+export const INSIGHT_REASONS: readonly InsightReason[] = [
+  "bad-request",
+  "no-provider",
+  "provider-refused",
+  "model-failed",
+  "template-changed",
+  "write-failed",
+  "deliver-failed",
+  "timeout",
+  "staging-failed",
+  "catalog-failed",
+  "meeting-unavailable",
+  "download-failed",
+  "assemble-failed",
+  "interrupted",
+  "unknown",
+];
+
+// insightFailureCopy is one reason's title and line, in the reader's language.
+export function insightFailureCopy(reason: InsightReason): { title: string; line: string } {
+  const key = reason.replace(/-/g, "_") as keyof TranslationFunctions["viewer"]["insights"]["failure"];
+  const copy = get(LL).viewer.insights.failure[key];
+  // Two lines name a settings page as {place}; the rest take no arguments and
+  // ignore it.
+  const line = copy.line as (args: { place: string }) => string;
+  return { title: copy.title(), line: line({ place: operatorPlace("ai_providers") }) };
+}
 
 function isInsightReason(value: string): value is InsightReason {
-  return Object.prototype.hasOwnProperty.call(INSIGHT_FAILURE_COPY, value);
+  return (INSIGHT_REASONS as readonly string[]).includes(value);
 }
 
 // The four tokens the operator used to put on the front of a stored sentence.
@@ -177,11 +169,11 @@ export function insightRetryable(record: Pick<InsightRecord, "status" | "reason"
 }
 
 // describeInsightFailure is what a failed run's sheet renders: a title and one
-// line, from the table above and from nowhere else.
+// line, from the dictionary and from nowhere else.
 export function describeInsightFailure(
   record: Pick<InsightRecord, "reason" | "error">,
 ): { title: string; line: string } {
-  return INSIGHT_FAILURE_COPY[insightReasonOf(record)];
+  return insightFailureCopy(insightReasonOf(record));
 }
 
 // Which kinds of thing the browse list is showing. Both true is the default;
@@ -272,22 +264,22 @@ export function insightHeadline(record: InsightRecord): string {
     return name;
   }
   const question = record.question?.trim() ?? "";
-  return question !== "" ? question : record.workflowId || "Insight";
+  return question !== "" ? question : record.workflowId || get(LL).viewer.insights.headline_fallback();
 }
 
-// The four wire words, capitalised and otherwise untouched. An unrecognised
+// The four wire words, in the reader's language. An unrecognised
 // status is shown as it arrived rather than mapped to a guess: a status this
 // build does not know about is exactly the thing a reader needs to see.
 export function formatInsightStatus(status: string): string {
   switch (status) {
     case "queued":
-      return "Queued";
+      return get(LL).viewer.insights.status.queued();
     case "running":
-      return "Running";
+      return get(LL).viewer.insights.status.running();
     case "succeeded":
-      return "Succeeded";
+      return get(LL).viewer.insights.status.succeeded();
     case "failed":
-      return "Failed";
+      return get(LL).viewer.insights.status.failed();
     default:
       return status;
   }
@@ -301,14 +293,13 @@ export function insightTimestampMs(record: InsightRecord): number | null {
   return Number.isFinite(ms) ? ms : null;
 }
 
-const CREATED_DATE_FORMAT = new Intl.DateTimeFormat("en-GB", {
+const CREATED_DATE_OPTIONS: Intl.DateTimeFormatOptions = {
   day: "numeric",
   month: "short",
   year: "numeric",
   hour: "2-digit",
   minute: "2-digit",
-  hour12: false,
-});
+};
 
 // formatInsightCreated renders createdAt in the reader's own timezone.
 //
@@ -322,7 +313,7 @@ export function formatInsightCreated(record: InsightRecord): string {
   if (ms === null) {
     return record.createdAt ?? "";
   }
-  return CREATED_DATE_FORMAT.format(new Date(ms));
+  return dateFormat(CREATED_DATE_OPTIONS).format(new Date(ms));
 }
 
 // stripInsightFrontMatter removes the YAML provenance block the recorder writes
@@ -634,11 +625,11 @@ export function groupBrowseFeedByMonth(
 
 function monthOf(item: BrowseFeedItem): { key: string; label: string } {
   if (item.kind === "meeting") {
-    return meetingStartMonth(item.meeting) ?? { key: UNDATED_MONTH_KEY, label: UNDATED_MONTH_LABEL };
+    return meetingStartMonth(item.meeting) ?? { key: UNDATED_MONTH_KEY, label: undatedMonthLabel() };
   }
   const ms = insightTimestampMs(item.insight);
   if (ms === null) {
-    return { key: UNDATED_MONTH_KEY, label: UNDATED_MONTH_LABEL };
+    return { key: UNDATED_MONTH_KEY, label: undatedMonthLabel() };
   }
   return wallClockMonth(instantWallClock(ms));
 }

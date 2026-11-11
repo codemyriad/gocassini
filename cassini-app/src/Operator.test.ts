@@ -1,4 +1,6 @@
+import { get } from "svelte/store";
 import { describe, expect, it } from "vitest";
+import { LL } from "cassini-viewer/i18n";
 
 import operatorSource from "./Operator.svelte?raw";
 import settingsSource from "./Settings.svelte?raw";
@@ -337,7 +339,8 @@ describe("Operator left nav (D-723)", () => {
     // rail as a drawer, as the viewing layer's rooms rail does; a native select
     // restyled the group headings differently on every platform.
     expect(operatorSource).not.toContain("<select");
-    expect(operatorSource).toContain('aria-label="Choose an Operator section"');
+    expect(operatorSource).toContain("aria-label={$LL.app.operator.console.nav.open_label()}");
+    expect(get(LL).app.operator.console.nav.open_label()).toBe("Choose an Operator section");
     expect(operatorSource).toContain("data-open={navOpen}");
     expect(operatorSource).toMatch(/\.op-nav\[data-open="true"\] \{[^}]*transform: none;/);
     expect(operatorSource).toContain("min-[721px]:grid-cols-[268px_minmax(0,1fr)]");

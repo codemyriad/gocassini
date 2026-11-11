@@ -1,0 +1,46 @@
+{
+  "common": {
+    "action": {
+      "cancel": "Annulla",
+      "save": "Salva",
+      "saving": "Salvataggio…",
+      "retry": "Riprova",
+      "retrying": "Nuovo tentativo…",
+      "dismiss": "Ignora",
+      "delete": "Elimina",
+      "remove": "Rimuovi",
+      "edit": "Modifica",
+      "close": "Chiudi",
+      "try_again": "Riprova"
+    },
+    "summary_request": {
+      "write": "Scrivi il riassunto",
+      "regenerate": "Rigenera il riassunto",
+      "confirm_write_title": "Scrivere un riassunto per questa riunione?",
+      "confirm_replace_title": "Sostituire il riassunto di questa riunione?",
+      "cost": "{count:number|num} {{count:|chiamata|||chiamate|chiamate}} a {target} · circa {tokens:number|compact} {{tokens:|token|||token|token}} in ingresso, {words:number|num} {{words:|parola|||parole|parole}}",
+      "cost_target_fallback": "il modello del riassunto",
+      "cost_target": "{model} ({provider})",
+      "endpoint_external": "La trascrizione viene inviata a un servizio esterno, che potrebbe addebitarne il costo.",
+      "endpoint_local": "Il modello è in esecuzione sulla tua rete."
+    },
+    "audience": {
+      "intro": "File di Nextcloud stabilisce chi può leggere ogni registrazione.",
+      "point_participants": "Ogni registrazione è condivisa con tutti i partecipanti della conversazione di Talk, che fossero presenti alla chiamata o no.",
+      "point_guests": "Gli ospiti senza un account Nextcloud non possono aprirla.",
+      "point_public_links": "Cassini non crea mai un link pubblico. Nelle conversazioni pubbliche, le persone possono ricondividere il file se questo Nextcloud lo consente."
+    },
+    "place": {
+      "operator": "Operatore",
+      "publish_pipeline": "Flusso di pubblicazione",
+      "ai_providers": "Provider di IA",
+      "insight_templates": "Schemi di analisi",
+      "doctor": "Diagnostica",
+      "storage": "Archiviazione",
+      "help": "Aiuto"
+    },
+    "status": {
+      "copied": "Copiato"
+    }
+  }
+}

@@ -37,8 +37,8 @@ describe("storage usage presentation", () => {
   it("formats apparent bytes at readable unit boundaries", () => {
     expect(formatStorageBytes(0)).toBe("0 B");
     expect(formatStorageBytes(1023)).toBe("1023 B");
-    expect(formatStorageBytes(1024)).toBe("1.0 KB");
-    expect(formatStorageBytes(1536)).toBe("1.5 KB");
+    expect(formatStorageBytes(1024)).toBe("1.0 kB");
+    expect(formatStorageBytes(1536)).toBe("1.5 kB");
     expect(formatStorageBytes(12 * 1024 * 1024)).toBe("12 MB");
   });
 

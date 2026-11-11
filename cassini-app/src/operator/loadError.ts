@@ -1,3 +1,6 @@
+import { get } from "svelte/store";
+import { LL } from "cassini-viewer/i18n";
+
 import { OperatorHttpError } from "./client";
 
 // A failed operator call, as one plain sentence (D-756, lifted from #288).
@@ -25,15 +28,17 @@ export interface LoadError {
   detail: string;
 }
 
-export const LOAD_ERROR_TITLE = "Cassini couldn't read these settings";
+// Read at call time, so it follows the reader's language.
+export function loadErrorTitle(): string {
+  return get(LL).app.shell.load_error.title();
+}
 
 export function buildLoadError(error: unknown): LoadError {
   const detail = error instanceof Error ? error.message : String(error);
+  const t = get(LL).app.shell.load_error;
   const result: LoadError = {
-    title: LOAD_ERROR_TITLE,
-    summary:
-      "Try again in a moment. If it still won't load, share the technical details below with " +
-      "Cassini support.",
+    title: loadErrorTitle(),
+    summary: t.summary_default(),
     detail,
   };
 
@@ -41,25 +46,21 @@ export function buildLoadError(error: unknown): LoadError {
     result.detail = `HTTP ${error.status}: ${detail}`;
     switch (error.status) {
       case 401:
-        result.summary = "Sign in to Nextcloud again, then try again.";
+        result.summary = t.summary_unauthorized();
         break;
       case 403:
-        result.summary =
-          "Nextcloud denied access. Make sure you're signed in with an administrator account, " +
-          "then try again.";
+        result.summary = t.summary_forbidden();
         break;
       case 404:
         // A missing route can follow an update, but it can also be a proxy or a
         // server configuration. Do not claim an outdated manifest is proven, or
         // send anybody through removing and re-adding the app on the strength
         // of a 404.
-        result.summary =
-          "Cassini's storage settings couldn't be found. If you just updated Cassini, check that " +
-          "the update has finished, then try again.";
+        result.summary = t.summary_not_found();
         break;
       default:
         if (error.status >= 500) {
-          result.summary = "Cassini couldn't respond right now. Wait a moment and try again.";
+          result.summary = t.summary_server_error();
         }
     }
   } else if (
@@ -68,7 +69,7 @@ export function buildLoadError(error: unknown): LoadError {
   ) {
     // The browser's own words for "the request never arrived", which every
     // engine spells differently and none of them usefully.
-    result.summary = "Cassini couldn't be reached. Check your connection and try again.";
+    result.summary = t.summary_unreachable();
   }
 
   return result;

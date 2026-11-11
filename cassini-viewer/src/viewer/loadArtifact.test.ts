@@ -411,7 +411,7 @@ describe("loadArtifactFromDirectory", () => {
     expect(meetingSection?.rows).toEqual(
       expect.arrayContaining([
         // recordedAtLocal is a label: its own digits, no zone claimed.
-        expect.objectContaining({ label: "Recorded", value: "Tue 10 Mar 2026, 12:30" }),
+        expect.objectContaining({ label: "Recorded", value: "Tue, 10 Mar 2026, 12:30" }),
         expect.objectContaining({ label: "Duration", value: "17:26" }),
         expect.objectContaining({ label: "Speakers", values: ["Chris", "Alex"] }),
       ]),
@@ -419,7 +419,7 @@ describe("loadArtifactFromDirectory", () => {
     expect(processingSection?.rows).toEqual(
       expect.arrayContaining([
         // An instant, in the reader's clock (the suite runs in Europe/Rome).
-        expect.objectContaining({ label: "Processed", value: "Thu 19 Mar 2026, 10:43" }),
+        expect.objectContaining({ label: "Processed", value: "Thu, 19 Mar 2026, 10:43" }),
         expect.objectContaining({ label: "Speech to text", value: "sherpa-onnx · parakeet-tdt-0.6b-v2-int8" }),
       ]),
     );
@@ -499,7 +499,7 @@ describe("loadArtifactFromDirectory", () => {
     // It outranks recordedAtLocal, and renders in the reader's clock: Rome.
     expect(meetingSection?.rows).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ label: "Recorded", value: "Tue 10 Mar 2026, 12:30" }),
+        expect.objectContaining({ label: "Recorded", value: "Tue, 10 Mar 2026, 12:30" }),
       ]),
     );
     process.env.TZ = "America/New_York";
@@ -507,7 +507,7 @@ describe("loadArtifactFromDirectory", () => {
       const west = await loadPortableArtifactFromAudioPath("./weekly-sync-2026-03-10--12:30.opus");
       expect(west.metadata?.sections.find((section) => section.title === "Meeting")?.rows).toEqual(
         expect.arrayContaining([
-          expect.objectContaining({ label: "Recorded", value: "Tue 10 Mar 2026, 07:30" }),
+          expect.objectContaining({ label: "Recorded", value: "Tue, 10 Mar 2026, 07:30" }),
         ]),
       );
     } finally {
@@ -561,7 +561,7 @@ describe("loadArtifactFromDirectory", () => {
     expect(artifact.metadata?.recording.recordedAtUtc).toBe("2026-11-09T09:31:48.000Z");
     // 09:31:48Z in Rome, not the label's 09:31 and not the mirror's 05:00Z.
     expect(artifact.metadata?.sections.find((section) => section.title === "Meeting")?.rows).toEqual(
-      expect.arrayContaining([expect.objectContaining({ label: "Recorded", value: "Mon 9 Nov 2026, 10:31" })]),
+      expect.arrayContaining([expect.objectContaining({ label: "Recorded", value: "Mon, 9 Nov 2026, 10:31" })]),
     );
 
     // DATE equal to createdAtUtc says nothing about the recording; with only
@@ -576,7 +576,7 @@ describe("loadArtifactFromDirectory", () => {
     const stamped = await loadPortableArtifactFromAudioPath("./date-is-created-at.opus", new PortableMeetingStore());
     expect(stamped.metadata?.recording.recordedAtUtc).toBeNull();
     expect(stamped.metadata?.sections.find((section) => section.title === "Meeting")?.rows).toEqual(
-      expect.arrayContaining([expect.objectContaining({ label: "Recorded", value: "Mon 9 Nov 2026, 09:31" })]),
+      expect.arrayContaining([expect.objectContaining({ label: "Recorded", value: "Mon, 9 Nov 2026, 09:31" })]),
     );
   });
 

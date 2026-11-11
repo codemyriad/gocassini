@@ -1,0 +1,46 @@
+{
+  "common": {
+    "action": {
+      "cancel": "Annuller",
+      "save": "Gem",
+      "saving": "Gemmer…",
+      "retry": "Prøv igen",
+      "retrying": "Prøver igen…",
+      "dismiss": "Luk",
+      "delete": "Slet",
+      "remove": "Fjern",
+      "edit": "Rediger",
+      "close": "Luk",
+      "try_again": "Prøv igen"
+    },
+    "summary_request": {
+      "write": "Skriv opsummering",
+      "regenerate": "Skriv opsummeringen igen",
+      "confirm_write_title": "Skriv en opsummering af dette møde?",
+      "confirm_replace_title": "Erstat dette mødes opsummering?",
+      "cost": "{count:number|num} {{count:kald|kald}} til {target} · ca. {tokens:number|compact} input-{{tokens:token|tokens}}, {words:number|num} {{words:ord|ord}}",
+      "cost_target_fallback": "opsummeringsmodellen",
+      "cost_target": "{model} ({provider})",
+      "endpoint_external": "Transskriptionen sendes til en ekstern tjeneste, som kan tage betaling for det.",
+      "endpoint_local": "Modellen kører på dit eget netværk."
+    },
+    "audience": {
+      "intro": "Nextcloud Filer styrer, hvem der kan læse hver optagelse.",
+      "point_participants": "Hver optagelse deles med alle deltagere i Talk-samtalen, uanset om de var med i opkaldet eller ej.",
+      "point_guests": "Gæster uden en Nextcloud-konto kan ikke åbne den.",
+      "point_public_links": "Cassini opretter aldrig et offentligt link. I offentlige samtaler kan andre videredele filen, hvis denne Nextcloud tillader det."
+    },
+    "place": {
+      "operator": "Operatør",
+      "publish_pipeline": "Udgivelsespipeline",
+      "ai_providers": "AI-udbydere",
+      "insight_templates": "Indsigtsskabeloner",
+      "doctor": "Diagnose",
+      "storage": "Lager",
+      "help": "Hjælp"
+    },
+    "status": {
+      "copied": "Kopieret"
+    }
+  }
+}

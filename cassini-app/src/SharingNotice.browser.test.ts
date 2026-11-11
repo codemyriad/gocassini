@@ -1,6 +1,7 @@
 import { mount, unmount } from "svelte";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { page, userEvent } from "vitest/browser";
+import { durationFormat } from "cassini-viewer/i18n";
 import SharingNotice from "./SharingNotice.svelte";
 import { noticeRowLabel, refusedNoticeTitle, unpublishedTitle, type AcceptSharesResult, type ListedMeeting } from "./operator/sharingNotice";
 import type { PendingRecording, RecordingNotice, SharingStatus } from "./operator/setupHealth";
@@ -94,7 +95,7 @@ it("is one line with Accept all at its end, and the rows behind Show them", asyn
   await expect.element(page.getByRole("button", { name: "Accept Weekly sync" })).toBeVisible();
   expect(host.textContent).toContain("Weekly sync");
   expect(host.textContent).toContain("42 min");
-  expect(host.textContent).toContain("1 h 05");
+  expect(host.textContent).toContain(durationFormat({ hours: 1, minutes: 5 }));
   await expect.element(page.getByText(/^Why\? Your account accepts shared files by hand/)).toBeVisible();
   expect(host.textContent).toContain("Hide them");
   await page.screenshot({ element: host, path: `${SHOTS}/02-pending-open.png` });

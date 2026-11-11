@@ -28,7 +28,9 @@ describe("summary action", () => {
   });
 
   it("says the calls, the model and the size before anything is sent", () => {
-    expect(summaryCostText(plan)).toBe("1 call to deepseek/deepseek-v4.1-flash (Open Router) · about 7.5k input tokens, 5,213 words");
+    // Compact numbers differ between ICU versions ("7.5K" in older CLDR, "7.5k" in newer en-GB).
+    const tokens = new Intl.NumberFormat("en-GB", { notation: "compact", maximumFractionDigits: 1 }).format(7480);
+    expect(summaryCostText(plan)).toBe(`1 call to deepseek/deepseek-v4.1-flash (Open Router) · about ${tokens} input tokens, 5,213 words`);
     expect(summaryCostText({ ...plan, model: "", provider: "Local", estimated_input_tokens: 640, words: 300 })).toBe(
       "1 call to Local · about 640 input tokens, 300 words",
     );

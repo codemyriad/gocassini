@@ -1,0 +1,46 @@
+{
+  "common": {
+    "action": {
+      "cancel": "Cancelar",
+      "save": "Guardar",
+      "saving": "Guardando…",
+      "retry": "Reintentar",
+      "retrying": "Reintentando…",
+      "dismiss": "Descartar",
+      "delete": "Eliminar",
+      "remove": "Quitar",
+      "edit": "Editar",
+      "close": "Cerrar",
+      "try_again": "Reintentar"
+    },
+    "summary_request": {
+      "write": "Escribir resumen",
+      "regenerate": "Regenerar resumen",
+      "confirm_write_title": "¿Escribir un resumen de esta reunión?",
+      "confirm_replace_title": "¿Sustituir el resumen de esta reunión?",
+      "cost": "{count:number|num} {{count:llamada|llamadas}} a {target} · unos {tokens:number|compact} {{tokens:token|tokens}} de entrada, {words:number|num} {{words:palabra|palabras}}",
+      "cost_target_fallback": "el modelo de resumen",
+      "cost_target": "{model} ({provider})",
+      "endpoint_external": "La transcripción se envía a un servicio externo, que puede cobrar por ello.",
+      "endpoint_local": "El modelo se ejecuta en tu propia red."
+    },
+    "audience": {
+      "intro": "Archivos de Nextcloud controla quién puede leer cada grabación.",
+      "point_participants": "Cada grabación se comparte con todos los participantes de la sala de Talk, tanto si estuvieron en la llamada como si no.",
+      "point_guests": "Los invitados sin cuenta de Nextcloud no pueden abrirla.",
+      "point_public_links": "Cassini nunca crea un enlace público. En las salas públicas, los participantes pueden volver a compartir el archivo si este Nextcloud lo permite."
+    },
+    "place": {
+      "operator": "Operador",
+      "publish_pipeline": "Proceso de publicación",
+      "ai_providers": "Proveedores de IA",
+      "insight_templates": "Plantillas de análisis",
+      "doctor": "Diagnóstico",
+      "storage": "Almacenamiento",
+      "help": "Ayuda"
+    },
+    "status": {
+      "copied": "Copiado"
+    }
+  }
+}

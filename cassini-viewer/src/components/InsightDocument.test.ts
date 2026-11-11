@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { render } from "svelte/server";
+import { get } from "svelte/store";
+
+import { LL } from "../i18n";
 
 import InsightDocument from "./InsightDocument.svelte";
 import insightDocumentSource from "./InsightDocument.svelte?raw";
@@ -28,7 +31,11 @@ describe("InsightDocument", () => {
     // shell to what this caller may read, and passed in.
     expect(insightDocumentSource).toContain("export let sources: MeetingCatalogEntry[] = [];");
     expect(insightDocumentSource).toContain("{#each sources as source (source.id)}");
-    expect(insightDocumentSource).toContain("Context from {sources.length}");
+    expect(insightDocumentSource).toContain(
+      "$LL.viewer.insights.document.sources_heading({ count: sources.length })",
+    );
+    expect(get(LL).viewer.insights.document.sources_heading({ count: 1 })).toBe("Context from 1 meeting");
+    expect(get(LL).viewer.insights.document.sources_heading({ count: 3 })).toBe("Context from 3 meetings");
   });
 
   it("opens each source as itself, in the sheet", () => {
@@ -207,7 +214,10 @@ describe("InsightDocument", () => {
     });
 
     it("has Cancel and Save beside the name, as the tag editor does, and does not leave on blur", () => {
-      expect(insightDocumentSource).toContain("on:click={cancelRename}>Cancel</button>");
+      expect(insightDocumentSource).toContain(
+        "on:click={cancelRename}>{$LL.common.action.cancel()}</button>",
+      );
+      expect(get(LL).common.action.cancel()).toBe("Cancel");
       expect(insightDocumentSource).toContain("on:click={saveRename}");
       expect(insightDocumentSource).not.toContain("on:blur");
     });

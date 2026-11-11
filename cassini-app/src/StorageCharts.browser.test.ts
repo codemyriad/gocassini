@@ -256,7 +256,7 @@ describe("storage charts in the browser", () => {
       await expect.element(page.getByRole("button", { name: "Recalculate", exact: true })).toBeEnabled();
       await page.getByRole("button", { name: /Explore Recordings:/ }).click();
       await expect.poll(() => category("recordings").querySelector(".cutoff-note")?.textContent)
-        .toContain(`on or before ${chartDate("2026-09-12")} are removed at the next cleanup (${count}-day policy)`);
+        .toContain(`on or before ${chartDate("2026-09-12")} are removed at the next cleanup (kept for ${count} days)`);
       const marker = category("recordings").querySelector(".cutoff-marker")!;
       expect(marker.getAttribute("aria-hidden")).toBe("true");
       expect(marker.textContent).toContain("removed at next cleanup");

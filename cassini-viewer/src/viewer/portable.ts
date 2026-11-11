@@ -1453,7 +1453,13 @@ function tokenHasTiming(token: DisplayTranscriptV1["blocks"][number]["tokens"][n
 // digits and come back as a dateLabel only. A ULID job id encodes a real UTC
 // instant, so it also comes back as recordedAtUtc and renders in the reader's
 // clock; its dateLabel keeps the UTC digits for anything that reads only that.
-export function describeMeeting(meetingId: string): { title: string; dateLabel: string; recordedAtUtc?: string } {
+// A ULID carries no name, so it gets `untitled`: the caller passes the
+// translated word (this module stays free of the i18n store, for the node
+// scripts that import it).
+export function describeMeeting(
+  meetingId: string,
+  untitled = "Untitled meeting",
+): { title: string; dateLabel: string; recordedAtUtc?: string } {
   const normalizedMeetingId = stripVariantSuffix(meetingId);
   const colonTimeStamp = parseTimestampFromDoubledDashParts(normalizedMeetingId, "--");
   if (colonTimeStamp) {
@@ -1484,7 +1490,7 @@ export function describeMeeting(meetingId: string): { title: string; dateLabel: 
   const ulidMs = timestampMsFromUlid(normalizedMeetingId);
   if (ulidMs !== null) {
     return {
-      title: "Untitled meeting",
+      title: untitled,
       dateLabel: utcDateLabel(ulidMs),
       recordedAtUtc: new Date(ulidMs).toISOString(),
     };

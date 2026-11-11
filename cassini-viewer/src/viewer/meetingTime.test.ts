@@ -56,38 +56,38 @@ describe("meeting start rendering", () => {
 
   it("renders an instant in the reader's clock: Rome", () => {
     expect(formatMeetingStartShort(instant)).toBe("9 Nov 2026, 12:31");
-    expect(formatMeetingStartWithDay(instant)).toBe("Mon 9 Nov 2026, 12:31");
+    expect(formatMeetingStartWithDay(instant)).toBe("Mon, 9 Nov 2026, 12:31");
     expect(formatMeetingStartDay(instant)).toBe("9 Nov 2026");
   });
 
   it("renders an instant in the reader's clock: west of UTC", () => {
     process.env.TZ = "America/New_York";
-    expect(formatMeetingStartWithDay(instant)).toBe("Mon 9 Nov 2026, 06:31");
+    expect(formatMeetingStartWithDay(instant)).toBe("Mon, 9 Nov 2026, 06:31");
   });
 
   it("follows an injected zone over the runtime's", () => {
-    expect(formatMeetingStartWithDay(instant, "America/Los_Angeles")).toBe("Mon 9 Nov 2026, 03:31");
-    expect(formatMeetingStartWithDay(instant, "Asia/Tokyo")).toBe("Mon 9 Nov 2026, 20:31");
+    expect(formatMeetingStartWithDay(instant, "America/Los_Angeles")).toBe("Mon, 9 Nov 2026, 03:31");
+    expect(formatMeetingStartWithDay(instant, "Asia/Tokyo")).toBe("Mon, 9 Nov 2026, 20:31");
   });
 
   it("can move the day: late UTC evening is the next morning in Rome", () => {
     const late = { dateLabel: "2026-11-09 23:30", recordedAtUtc: "2026-11-09T23:30:00Z" };
-    expect(formatMeetingStartWithDay(late)).toBe("Tue 10 Nov 2026, 00:30");
+    expect(formatMeetingStartWithDay(late)).toBe("Tue, 10 Nov 2026, 00:30");
     expect(meetingStartDayKey(late)).toBe("2026-11-10");
   });
 
   // D-484, still: a label names no zone, so its digits are shown as they are,
   // whatever the reader's clock, and no zone is claimed.
   it("renders a label's own digits in every zone (D-484)", () => {
-    expect(formatMeetingStartWithDay(label)).toBe("Mon 9 Nov 2026, 11:31");
+    expect(formatMeetingStartWithDay(label)).toBe("Mon, 9 Nov 2026, 11:31");
     process.env.TZ = "America/New_York";
-    expect(formatMeetingStartWithDay(label)).toBe("Mon 9 Nov 2026, 11:31");
-    expect(formatMeetingStartWithDay(label, "Asia/Tokyo")).toBe("Mon 9 Nov 2026, 11:31");
+    expect(formatMeetingStartWithDay(label)).toBe("Mon, 9 Nov 2026, 11:31");
+    expect(formatMeetingStartWithDay(label, "Asia/Tokyo")).toBe("Mon, 9 Nov 2026, 11:31");
   });
 
   it("falls back to the label when the instant is malformed", () => {
     expect(formatMeetingStartWithDay({ dateLabel: "2026-11-09 11:31", recordedAtUtc: "yesterday" })).toBe(
-      "Mon 9 Nov 2026, 11:31",
+      "Mon, 9 Nov 2026, 11:31",
     );
   });
 
@@ -139,15 +139,15 @@ describe("meetingStartSortKey", () => {
 describe("formatMeetingStartForExport", () => {
   it("names the zone for an instant, since the copy is read elsewhere", () => {
     expect(formatMeetingStartForExport({ dateLabel: "", recordedAtUtc: "2026-11-09T11:31:00Z" })).toBe(
-      "Mon 9 Nov 2026, 12:31 CET",
+      "Mon, 9 Nov 2026, 12:31 CET",
     );
     expect(
       formatMeetingStartForExport({ dateLabel: "", recordedAtUtc: "2026-11-09T11:31:00Z" }, "America/New_York"),
-    ).toBe("Mon 9 Nov 2026, 06:31 GMT-5");
+    ).toBe("Mon, 9 Nov 2026, 06:31 GMT-5");
   });
 
   it("claims no zone for a label (D-484)", () => {
-    expect(formatMeetingStartForExport({ dateLabel: "2026-11-09 11:31" })).toBe("Mon 9 Nov 2026, 11:31");
+    expect(formatMeetingStartForExport({ dateLabel: "2026-11-09 11:31" })).toBe("Mon, 9 Nov 2026, 11:31");
   });
 });
 

@@ -15,70 +15,77 @@
   // credential.
   import { createEventDispatcher } from "svelte";
   import { ExternalLink } from "@lucide/svelte";
+  import { LL } from "../i18n";
   import type { AgentConnection } from "../viewer/dataProvider";
   import CloseButton from "./ui/CloseButton.svelte";
   import CommandBlock from "./ui/CommandBlock.svelte";
+  import { richText, slotArgs } from "./ui/richText";
 
   export let connection: AgentConnection;
 
   const dispatch = createEventDispatcher<{ close: void }>();
 
-  const PASSWORD_PLACEHOLDER = "<app password>";
+  $: text = $LL.viewer.browse.connect_agent;
+  // Part of the command the reader copies, and named in the step above it.
+  $: passwordPlaceholder = text.password_placeholder();
   // Other clients' configuration and the CLI live in the guide, so the panel
   // stays three steps long.
   const DOCS_URL =
     "https://github.com/codemyriad/gocassini/blob/main/docs/agent-meeting-access.md#7-connect-an-agent-over-mcp";
 
-  $: claudeCommand = `claude mcp add --transport http cassini ${connection.endpoint} --header "Authorization: Bearer ${PASSWORD_PLACEHOLDER}"`;
+  $: claudeCommand = `claude mcp add --transport http cassini ${connection.endpoint} --header "Authorization: Bearer ${passwordPlaceholder}"`;
 </script>
 
 <aside class="agent-panel" aria-labelledby="agent-panel-title">
   <header class="agent-head">
     <div class="min-w-0 flex-1">
-      <h2 id="agent-panel-title" class="text-[15px] font-semibold">Connect an agent</h2>
+      <h2 id="agent-panel-title" class="text-[15px] font-semibold">{text.title()}</h2>
       <p class="mt-0.5 text-[13px] leading-normal text-base-content/70">
-        Claude Code, Codex or any MCP client can read the meetings you see here. It reads as you, and it can only read:
-        it cannot mark, rename or delete anything.
+        {text.intro()}
       </p>
     </div>
-    <CloseButton label="Close Connect an agent" on:click={() => dispatch("close")} />
+    <CloseButton label={text.close()} on:click={() => dispatch("close")} />
   </header>
 
   <div class="agent-body">
     <section aria-labelledby="agent-address">
-      <h3 id="agent-address" class="text-xs font-semibold text-base-content/80">Server address</h3>
-      <CommandBlock command={connection.endpoint} copyLabel="Copy address" />
+      <h3 id="agent-address" class="text-xs font-semibold text-base-content/80">{text.address_heading()}</h3>
+      <CommandBlock command={connection.endpoint} copyLabel={text.copy_address()} />
     </section>
 
     <ol class="agent-steps">
       <li>
         <p class="text-[13px] leading-normal text-base-content/75">
-          <strong class="font-semibold text-base-content">Create an app password</strong> in
-          {#if connection.appPasswordsUrl}
-            <a class="link" href={connection.appPasswordsUrl} target="_blank" rel="noopener noreferrer">Personal settings › Security</a>.
-          {:else}
-            Personal settings › Security.
-          {/if}
-          Revoking it disconnects the agent.
+          {#each richText(text.step_password(slotArgs(["title", "link"]))) as part}{#if part.slot === "title"}<strong
+                class="font-semibold text-base-content">{text.step_password_title()}</strong
+              >{:else if part.slot === "link"}{#if connection.appPasswordsUrl}<a
+                  class="link"
+                  href={connection.appPasswordsUrl}
+                  target="_blank"
+                  rel="noopener noreferrer">{text.step_password_link()}</a
+                >{:else}{text.step_password_link()}{/if}{:else}{part.text}{/if}{/each}
         </p>
       </li>
       <li>
         <p class="text-[13px] leading-normal text-base-content/75">
-          <strong class="font-semibold text-base-content">Add Cassini to your agent.</strong> For Claude Code, with your
-          app password in place of <code class="agent-code">{PASSWORD_PLACEHOLDER}</code>:
+          {#each richText(text.step_add(slotArgs(["title", "placeholder"]))) as part}{#if part.slot === "title"}<strong
+                class="font-semibold text-base-content">{text.step_add_title()}</strong
+              >{:else if part.slot === "placeholder"}<code class="agent-code">{passwordPlaceholder}</code
+              >{:else}{part.text}{/if}{/each}
         </p>
         <CommandBlock command={claudeCommand} />
       </li>
       <li>
         <p class="text-[13px] leading-normal text-base-content/75">
-          <strong class="font-semibold text-base-content">Ask it something,</strong> like
-          <em>“What was decided in yesterday's standup?”</em>
+          {#each richText(text.step_ask(slotArgs(["title", "example"]))) as part}{#if part.slot === "title"}<strong
+                class="font-semibold text-base-content">{text.step_ask_title()}</strong
+              >{:else if part.slot === "example"}<em>{text.step_ask_example()}</em>{:else}{part.text}{/if}{/each}
         </p>
       </li>
     </ol>
 
     <a class="agent-more link" href={DOCS_URL} target="_blank" rel="noopener noreferrer">
-      Other agents and the command line
+      {text.more()}
       <ExternalLink size={12} aria-hidden="true" />
     </a>
   </div>

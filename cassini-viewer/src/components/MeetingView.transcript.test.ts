@@ -1,6 +1,9 @@
 import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
+import { get } from "svelte/store";
+
+import { LL } from "../i18n";
 
 import { buildTranscriptRows, type OverlapBlock, type TranscriptRow } from "../core/overlap";
 import { formatClockTime } from "../core/transcript";
@@ -215,10 +218,16 @@ describe("the transcript pane's markup", () => {
 
   it("gives every chip a screen-reader prefix that never reaches the clipboard", () => {
     // Read aloud as "Interjection by Ben Okafor: Right.", copied as
-    // "(Ben Okafor: Right.)" — the prefix is select-none, and the parens and
-    // colon are still real text for a copy, but no longer drawn: the name is a
-    // chip like the one a turn opens with.
-    expect(template).toContain('<span class="sr-only select-none">Interjection by </span>');
+    // "(Ben Okafor: Right.)" — the prefix is select-none and says the whole
+    // "Interjection by {name}:" (one sentence to translate), so the visible
+    // name and the colon are hidden from a screen reader; the parens and colon
+    // are still real text for a copy, but no longer drawn: the name is a chip
+    // like the one a turn opens with.
+    expect(template).toContain(
+      '<span class="sr-only select-none">{$LL.viewer.meeting.transcript.interjection_sr({ name: shownSpeakerLabel(member.speakerLabel) })}</span>',
+    );
+    expect(get(LL).viewer.meeting.transcript.interjection_sr({ name: "Ben Okafor" })).toBe("Interjection by Ben Okafor:");
+    expect(template).toContain('<span class="sr-only" aria-hidden="true">:</span>');
     expect(template).toContain('<span class="sr-only" aria-hidden="true">(</span>');
     expect(template).toContain('<span class="sr-only" aria-hidden="true">)</span>');
     expect(template).toContain('class="mv-speaker-name mv-speaker-inline"');
@@ -227,7 +236,10 @@ describe("the transcript pane's markup", () => {
   it("keeps the transcript pane a live region with static rows inside it", () => {
     expect(template).toContain('role="log"');
     // Bracketed as an aside to the header, the brackets kept from the reader.
-    expect(template).toContain('<span class="sr-only">Simultaneous speech: </span><span aria-hidden="true">(</span>over ');
+    expect(template).toContain(
+      '<span class="sr-only">{$LL.viewer.meeting.transcript.simultaneous_sr({ names: formatSpeakerList(row.over) })}</span><span aria-hidden="true">({$LL.viewer.meeting.transcript.over({ names: formatSpeakerList(row.over) })})</span>',
+    );
+    expect(get(LL).viewer.meeting.transcript.over({ names: "Ben Okafor" })).toBe("over Ben Okafor");
   });
 
   it("wires follow-scroll and nested crosstalk to the rendered turn", () => {
@@ -253,8 +265,10 @@ describe("finding words in the open meeting", () => {
   it("tells an empty search apart from an empty transcript", () => {
     // "No transcript loaded yet" as the answer to a search would say the
     // meeting has no words in it, which is a different and alarming claim.
-    expect(source).toContain("No transcript loaded yet.");
-    expect(source).toContain("Nothing in this transcript matches");
+    expect(source).toContain("$LL.viewer.meeting.transcript.not_loaded()");
+    expect(source).toContain("$LL.viewer.meeting.transcript.no_matches({ query: transcriptQuery.trim() })");
+    expect(get(LL).viewer.meeting.transcript.not_loaded()).toBe("No transcript loaded yet.");
+    expect(get(LL).viewer.meeting.transcript.no_matches({ query: "budget" })).toBe("Nothing in this transcript matches “budget”.");
   });
 
   it("hides turns only when asked, so find on its own never shortens the meeting", () => {

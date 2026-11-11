@@ -12,6 +12,12 @@ maintainer tasks handled at release time (see [Releases](#releases)).
 - Use `docs/exapp-install.md` for production ExApp behavior.
 - Use the harness under `harness/` and `sandbox/` only for local validation.
 
+## Translations
+
+The app's words are translated on [Weblate](https://weblate.codemyriad.io/projects/cassini/).
+To add or change a string in code, see [docs/translations.md](docs/translations.md).
+To help translate, see [Help translate Cassini](https://gocassini.com/docs/guides/translate).
+
 ## Secrets
 
 Do not commit private keys, certificates, CSRs, tokens, `.env` files, app-store

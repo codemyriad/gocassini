@@ -1,6 +1,7 @@
 import { defineConfig } from "vite";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import tailwindcss from "@tailwindcss/vite";
+import { i18nBundle } from "./scripts/i18n-bundle-plugin.mjs";
 
 // Public-embed build (D-775).
 //
@@ -17,7 +18,7 @@ import tailwindcss from "@tailwindcss/vite";
 // embed by allowing one URL. scripts/assert-single-bundle.mjs fails the build
 // if that ever stops being true.
 export default defineConfig({
-  plugins: [tailwindcss(), svelte()],
+  plugins: [i18nBundle({ withoutApp: true, languageFiles: true }), tailwindcss(), svelte()],
   base: "./",
   build: {
     // External maps keep production code minified and make installed builds debuggable.

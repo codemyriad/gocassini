@@ -27,6 +27,7 @@
 import { mount } from "svelte";
 import App from "./App.svelte";
 import { OperatorListProvider } from "./viewer/dataProvider";
+import { browserLanguages, nextcloudLanguage, nextcloudLocale, useFormatLocale, useLocale } from "./i18n";
 import "./app.css";
 
 // VIEWER_JS_SRC_PATTERN matches the registered ui/viewer.js src and captures
@@ -168,6 +169,8 @@ function mountEmbeddedViewer(): void {
   // falls back to catalog.json when that route is not served. main.ts keeps
   // StaticCatalogProvider: a standalone export and the nginx viewer mode have
   // no backend in the request path at all.
+  appRoot.lang = useLocale([nextcloudLanguage(window), ...browserLanguages()]);
+  useFormatLocale([nextcloudLocale(window), nextcloudLanguage(window), ...browserLanguages()]);
   mount(App, { target: appRoot, props: { ncMode, dataProvider: new OperatorListProvider() } });
 }
 
