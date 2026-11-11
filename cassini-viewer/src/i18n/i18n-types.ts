@@ -2497,8 +2497,26 @@ export type NamespaceAppTranslation = {
 				 * P​r​o​c​e​s​s​ ​e​x​i​t​e​d​ ​w​i​t​h​ ​e​r​r​o​r
 				 */
 				record_process_exit_nonzero: string
+				/**
+				 * N​o​ ​a​u​d​i​o​ ​c​a​p​t​u​r​e​d
+				 */
+				no_audio_captured: string
+			}
+			no_audio: {
+				/**
+				 * N​o​ ​a​u​d​i​o​ ​w​a​s​ ​c​a​p​t​u​r​e​d​.​ ​W​e​r​e​ ​a​l​l​ ​p​a​r​t​i​c​i​p​a​n​t​s​ ​m​u​t​e​d​?
+				 */
+				headline: string
+				/**
+				 * T​h​i​s​ ​r​e​c​o​r​d​i​n​g​ ​h​a​s​ ​n​o​ ​a​u​d​i​o​ ​t​o​ ​t​r​a​n​s​c​r​i​b​e​ ​o​r​ ​p​u​b​l​i​s​h​.
+				 */
+				detail: string
 			}
 			status: {
+				/**
+				 * N​o​ ​a​u​d​i​o​ ​c​a​p​t​u​r​e​d
+				 */
+				no_audio_captured: string
 				/**
 				 * B​u​i​l​d​ ​b​l​o​c​k​e​d
 				 */
@@ -10139,8 +10157,26 @@ export type TranslationFunctions = {
 					 * Process exited with error
 					 */
 					record_process_exit_nonzero: () => LocalizedString
+					/**
+					 * No audio captured
+					 */
+					no_audio_captured: () => LocalizedString
+				}
+				no_audio: {
+					/**
+					 * No audio was captured. Were all participants muted?
+					 */
+					headline: () => LocalizedString
+					/**
+					 * This recording has no audio to transcribe or publish.
+					 */
+					detail: () => LocalizedString
 				}
 				status: {
+					/**
+					 * No audio captured
+					 */
+					no_audio_captured: () => LocalizedString
 					/**
 					 * Build blocked
 					 */

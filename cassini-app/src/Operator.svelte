@@ -218,7 +218,7 @@
       case "record_process_exit_nonzero":
         return t.record_process_exit_nonzero();
       case NO_AUDIO_STOP_REASON:
-        return "No audio captured";
+        return t.no_audio_captured();
       default:
         // An operator reason this app has no words for: its own name.
         return trimmed.replace(/_/g, " ");
@@ -282,7 +282,7 @@
 
   export function jobStatusLabel(job: JobStatus): string {
     const t = c().status;
-    if (job.stop_reason === NO_AUDIO_STOP_REASON) return "No audio captured";
+    if (job.stop_reason === NO_AUDIO_STOP_REASON) return t.no_audio_captured();
     if (isBuildBlocked(job)) return t.build_blocked();
     if (isBuildWaitingForResources(job)) return t.waiting_for_resources();
     if (job.state === "failed") return t.failed();
@@ -1777,10 +1777,10 @@
                     <div class="grid gap-1 rounded-box border border-warning/50 bg-warning/10 p-3" role="status">
                       <div class="flex items-center gap-2 text-warning">
                         <TriangleAlert size={16} class="shrink-0" aria-hidden="true" />
-                        <p class="text-sm font-semibold">No audio was captured. Were all participants muted?</p>
+                        <p class="text-sm font-semibold">{$LL.app.operator.console.no_audio.headline()}</p>
                       </div>
                       <p class="text-xs break-words text-base-content/75">
-                        This recording has no audio to transcribe or publish.
+                        {$LL.app.operator.console.no_audio.detail()}
                       </p>
                       {#if cleanStopDetail(selectedJob.job.record_stop_detail, selectedJob.job.record_exit_code, false)}
                         <p class="text-xs break-words text-base-content/60">{cleanStopDetail(selectedJob.job.record_stop_detail, selectedJob.job.record_exit_code, false)}</p>
@@ -2007,8 +2007,8 @@
                             </div>
                           {:else if attempt.stop_reason === NO_AUDIO_STOP_REASON}
                             <div class="grid gap-1 rounded-box border border-warning/50 bg-warning/10 p-3" role="status">
-                              <p class="text-sm font-semibold text-warning">No audio was captured. Were all participants muted?</p>
-                              <p class="text-xs break-words text-base-content/75">This recording has no audio to transcribe or publish.</p>
+                              <p class="text-sm font-semibold text-warning">{$LL.app.operator.console.no_audio.headline()}</p>
+                              <p class="text-xs break-words text-base-content/75">{$LL.app.operator.console.no_audio.detail()}</p>
                             </div>
                           {:else if hasJobError(attempt)}
                             <div class="grid gap-1 rounded-box border border-error/40 bg-error/10 p-3">

@@ -309,7 +309,7 @@ func TestRecordAbnormalStopWithoutRecordingStaysFailed(t *testing.T) {
 func TestRecordNoAudioFailsWithDescriptiveReason(t *testing.T) {
 	// A call where everyone was muted captures no audio. Its recorder run
 	// returns ErrNoAudio after finalizing nothing; `cassini record` must keep
-	// the run failed, write a descriptive reason into the bundle, and exit 3
+	// the run failed, write a descriptive reason into the bundle, and exit 4
 	// so the operator can say "No audio was captured" instead of the generic
 	// "Process exited with error".
 	prevRecorder := runRecorderApp
@@ -324,8 +324,8 @@ func TestRecordNoAudioFailsWithDescriptiveReason(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	code := Run(context.Background(), []string{"record", "--call", "https://example.test/call/muted", "--out", outDir}, &stdout, &stderr)
-	if code != 3 {
-		t.Fatalf("expected exit code 3 for a no-audio failure, got %d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	if code != exitNoAudioCaptured {
+		t.Fatalf("expected exit code 4 for a no-audio failure, got %d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
 	if !strings.Contains(stderr.String(), "record failed: no audio captured") {
 		t.Fatalf("expected the descriptive no-audio failure on stderr, got %q", stderr.String())

@@ -28,6 +28,11 @@ const defaultRecorderName = "CassiniRecorder"
 // as the operator distinguish doomed jobs from generic recorder failures.
 const exitUnjoinable = 3
 
+// exitNoAudioCaptured is returned by `cassini record` when the run failed
+// because it captured no audio (talk.ErrNoAudio). The operator reads it to
+// report stop reason no_audio_captured.
+const exitNoAudioCaptured = 4
+
 var runRecorderApp = app.RunContext
 
 // recordFailureExitCode maps recorder failures to the record exit code,
@@ -242,7 +247,7 @@ func runRecord(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		_ = UpdateRunBundleStatus(bundle, bundleStateFailed, "record", recordErr.Error())
 		fmt.Fprintf(stderr, "record failed: %v\n", recordErr)
 		fmt.Fprintf(stderr, "partial_run -> %s\n", bundle.RootDir)
-		return 3
+		return exitNoAudioCaptured
 	}
 	if recordErr != nil && !salvageableRecording(recordErr, bundle) {
 		_ = UpdateRunBundleStatus(bundle, bundleStateFailed, "record", recordErr.Error())
@@ -322,7 +327,7 @@ func runRecordPortable(ctx context.Context, opts recordOptions, stdout, stderr i
 			_ = UpdateRunBundleStatus(bundle, bundleStateFailed, "record", recordErr.Error())
 			fmt.Fprintf(stderr, "record failed: %v\n", recordErr)
 			printPortableResumeHint(stderr, workspace.RootDir, outPath)
-			return 3
+			return exitNoAudioCaptured
 		}
 		if recordErr != nil && !salvageableRecording(recordErr, bundle) {
 			_ = UpdateRunBundleStatus(bundle, bundleStateFailed, "record", recordErr.Error())

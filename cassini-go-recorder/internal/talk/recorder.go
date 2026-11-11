@@ -109,7 +109,7 @@ var ErrAbnormalStop = errors.New("talk recorder stopped abnormally")
 // they were muted, or silent for the whole call. There is nothing to compose,
 // transcribe or publish. The run is still a failure — somebody pressed Record
 // and got no recording — but it has its own reason so the operator can show
-// the real cause instead of a generic process exit. `cassini record` exits 3
+// the real cause instead of a generic process exit. `cassini record` exits 4
 // for it and keeps the session artifacts and logs for diagnosis.
 var ErrNoAudio = errors.New("no audio captured: every participant was muted or silent")
 
@@ -714,7 +714,7 @@ func (r *Recorder) cleanup(ctx context.Context) error {
 		}
 		if errors.Is(err, ErrNoAudio) {
 			// The call was silent. The CLI turns this into a failed run with
-			// exit code 3 so the operator can name the real reason instead
+			// exit code 4 so the operator can name the real reason instead
 			// of reporting a generic process exit.
 			log.Printf("no audio captured: %v (recording failed)", err)
 		} else {
@@ -2301,7 +2301,7 @@ func (r *Recorder) composeFinalOutputFromSessionArtifact() error {
 		// listening: at least one subscription was answered with sendable
 		// audio and the capture itself did not lose media. Then nobody sent
 		// audio — every participant was muted or silent — and the run fails
-		// with the no-audio reason (exit code 3), not a generic capture
+		// with the no-audio reason (exit code 4), not a generic capture
 		// error. A run with no audio-bearing subscription, with capture
 		// damage, or with captured video stays a generic hard error so a
 		// genuinely broken capture — or real media — is not passed off as a

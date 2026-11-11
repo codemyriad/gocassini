@@ -640,9 +640,15 @@
         "duration_limit": "Limite de duração atingido",
         "signaling_connection_error": "Erro de ligação de sinalização",
         "join_failed": "Não foi possível entrar na sala",
-        "record_process_exit_nonzero": "O processo terminou com erro"
+        "record_process_exit_nonzero": "O processo terminou com erro",
+        "no_audio_captured": ""
+      },
+      "no_audio": {
+        "headline": "",
+        "detail": ""
       },
       "status": {
+        "no_audio_captured": "",
         "build_blocked": "Compilação bloqueada",
         "waiting_for_resources": "À espera de recursos",
         "failed": "Falhada",

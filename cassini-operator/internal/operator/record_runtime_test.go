@@ -18,8 +18,8 @@ func TestClassifyRecordStopReasonUnjoinableRoom(t *testing.T) {
 		t.Fatalf("recordStopDetail() = %q", detail)
 	}
 
-	exitCode := 1
-	got := classifyRecordStopReason(false, &exitCode, detail, errors.New("cassini record: exit status 1"))
+	exitCode := 3
+	got := classifyRecordStopReason(false, &exitCode, detail, errors.New("cassini record: exit status 3"))
 	if got != "join_failed" {
 		t.Fatalf("classifyRecordStopReason() = %q, want %q", got, "join_failed")
 	}

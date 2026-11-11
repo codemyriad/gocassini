@@ -1422,7 +1422,7 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 	finishedAt := nowUTCString()
 	if err != nil {
 		rt.logger.Printf("record failed id=%s: %v", job.ID, err)
-		// A no-audio run is a failure, but "cassini record: exit status 3"
+		// A no-audio run is a failure, but "cassini record: exit status 4"
 		// says nothing to the person who pressed Record. Store the real
 		// reason; the app turns it into "No audio was captured. Were all
 		// participants muted?".

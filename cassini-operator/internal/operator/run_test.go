@@ -2343,9 +2343,9 @@ func TestRecordFailureRetainsAttemptRunWithoutCanonicalRun(t *testing.T) {
 
 func TestRecordWithoutAudioFailsWithDescriptiveReason(t *testing.T) {
 	// A call whose participants were all muted captures zero audio. The
-	// recorder exits 3 for it; the operator must keep the run failed, map the
+	// recorder exits 4 for it; the operator must keep the run failed, map the
 	// exit code to no_audio_captured, and store a reason a person can read —
-	// not "cassini record: exit status 3" and not a false success with no
+	// not "cassini record: exit status 4" and not a false success with no
 	// build or publish.
 	rt, cleanup, _, _ := newCLITestRuntime(t)
 	defer cleanup()
@@ -2372,8 +2372,8 @@ func TestRecordWithoutAudioFailsWithDescriptiveReason(t *testing.T) {
 	if job.Error == nil || !strings.Contains(*job.Error, "no audio captured") {
 		t.Fatalf("error = %#v, want the descriptive no-audio reason", job.Error)
 	}
-	if job.RecordExitCode == nil || *job.RecordExitCode != 3 {
-		t.Fatalf("record_exit_code = %#v, want 3", job.RecordExitCode)
+	if job.RecordExitCode == nil || *job.RecordExitCode != recordExitNoAudioCaptured {
+		t.Fatalf("record_exit_code = %#v, want 4", job.RecordExitCode)
 	}
 	if job.BuildQueuedAt != nil || job.BuildStartedAt != nil || job.BuildFinishedAt != nil {
 		t.Fatalf("no-audio run must not queue a build, got build stamps %#v", job)
@@ -2701,7 +2701,7 @@ case "$cmd" in
     if [ "${FAKE_RECORD_NO_AUDIO:-0}" = "1" ]; then
       write_failed_run "$out"
       echo "talk recorder stopping: no audio captured: every participant was muted or silent" >&2
-      exit 3
+      exit 4
     fi
     write_run "$out"
     exit 0

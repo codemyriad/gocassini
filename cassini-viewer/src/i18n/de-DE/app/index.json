@@ -640,9 +640,15 @@
         "duration_limit": "Zeitlimit erreicht",
         "signaling_connection_error": "Fehler bei der Signaling-Verbindung",
         "join_failed": "Beitritt zur Unterhaltung fehlgeschlagen",
-        "record_process_exit_nonzero": "Prozess mit Fehler beendet"
+        "record_process_exit_nonzero": "Prozess mit Fehler beendet",
+        "no_audio_captured": ""
+      },
+      "no_audio": {
+        "headline": "",
+        "detail": ""
       },
       "status": {
+        "no_audio_captured": "",
         "build_blocked": "Build blockiert",
         "waiting_for_resources": "Wartet auf Ressourcen",
         "failed": "Fehlgeschlagen",

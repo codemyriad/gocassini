@@ -640,9 +640,15 @@
         "duration_limit": "Se alcanzó el límite de duración",
         "signaling_connection_error": "Error de conexión de señalización",
         "join_failed": "No se pudo unir a la sala",
-        "record_process_exit_nonzero": "El proceso terminó con un error"
+        "record_process_exit_nonzero": "El proceso terminó con un error",
+        "no_audio_captured": ""
+      },
+      "no_audio": {
+        "headline": "",
+        "detail": ""
       },
       "status": {
+        "no_audio_captured": "",
         "build_blocked": "Montaje bloqueado",
         "waiting_for_resources": "Esperando recursos",
         "failed": "Fallida",
