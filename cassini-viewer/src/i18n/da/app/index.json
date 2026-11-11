@@ -64,10 +64,10 @@
       "step_set_admin_user": "Sæt {variable} til en Nextcloud-administrator",
       "cause_unknown": "Cassini kunne ikke bekræfte sin opsætning af optagelser.",
       "cause": {
-        "nextcloud_probe": "",
-        "private_archive": "",
-        "sharing_api": "",
-        "owner_account": ""
+        "nextcloud_probe": "Nextcloud svarede ikke på kontrollen af optagelseskontoen.",
+        "private_archive": "Cassini kunne ikke bekræfte, at dens mappe til optagelser er privat og skrivbar.",
+        "sharing_api": "Nextclouds fildeling er ikke tilgængelig for Cassinis optagelseskonto.",
+        "owner_account": "Cassinis optagelseskonto findes ikke."
       },
       "detail_state": "Operatøren rapporterede {state}.",
       "detail_state_at_step": "Operatøren rapporterede {state} ved {step}.",
@@ -385,18 +385,18 @@
         "web_push_off": "Ikke tilladt"
       },
       "notices": {
-        "saved_again": "",
-        "unreadable": "",
-        "unreadable_defaults": "",
-        "email_defaults": "",
-        "versioning_on": "",
-        "versioning_off": "",
-        "activity_on": "",
-        "activity_off": "",
-        "notifications_off": "",
-        "notifications_on": "",
-        "web_push_browsers": "",
-        "web_push_apps": ""
+        "saved_again": "Hver optagelse gemmes igen af Cassinis konto {account} oven i den samme fil: dens delinger, links og fil-id forbliver, som de er, og lyden er uændret.",
+        "unreadable": "Cassini kunne ikke læse Nextclouds oplysninger om funktioner, så den kan ikke afgøre, om Aktivitets-appen og Notifikations-appen eller filversionering er aktiveret.",
+        "unreadable_defaults": "Hvor filversionering er aktiveret (Nextclouds standard), gemmes filen, som den var før, som en tidligere version. Hvor Aktivitets-appen er aktiveret (også standard), får alle, optagelsen er delt med, en »fil ændret«-post for hver optagelse i deres aktivitetsstrøm; Nextcloud kan samle ændringer, der kommer tæt efter hinanden.",
+        "email_defaults": "Med Nextclouds standardindstillinger sendes ændringen hverken som e-mail eller som notifikation: begge er slået fra for »En fil eller mappe er blevet ændret«. En administrator kan ændre disse standarder under Systemindstillinger › Aktivitet, og hver person kan slå dem til i sine egne aktivitetsindstillinger. Cassini kan ikke læse nogen af dem. Alle, der har slået notifikationer til, får én pr. optagelse; alle, der har slået e-mail til, finder ændringerne i deres aktivitets-e-mail, som Nextcloud samler og sender med den hyppighed, de har valgt, i stedet for én pr. ændring.",
+        "versioning_on": "Filversionering er aktiveret, så filen, som den var før, gemmes som en tidligere version på kontoen {account}. Den optager diskplads, men tæller ikke med i kontoens kvote. Nextcloud lader versioner udløbe efter versions_retention_obligation i sin config.php, som Cassini ikke kan læse, og efter Versioner-appens grænse på halvdelen af kontoens ledige plads; ud over den slettes de ældste først.",
+        "versioning_off": "Filversionering er ikke aktiveret, så Nextcloud gemmer ingen kopi af filen, som den var før.",
+        "activity_on": "Aktivitets-appen er aktiveret, så alle, optagelsen er delt med, får en »fil ændret«-post for hver optagelse i deres aktivitetsstrøm; Nextcloud kan samle ændringer, der kommer tæt efter hinanden.",
+        "activity_off": "Aktivitets-appen er ikke aktiveret, så ændringen vises ikke i nogens aktivitetsstrøm, og der sendes ingen aktivitets-e-mail.",
+        "notifications_off": "Notifikations-appen er ikke aktiveret, så der kan ikke sendes nogen notifikation om ændringen.",
+        "notifications_on": "Notifikations-appen er aktiveret, så en person, der har slået notifikationer for ændrede filer til, får én pr. optagelse i Nextcloud og på sine enheder, hvor push-notifikationer er sat op.",
+        "web_push_browsers": "Web push er tilladt, også for browsere, så notifikationen kan også nå en browser, hvor personen har accepteret push-notifikationer.",
+        "web_push_apps": "Web push er tilladt, men ikke for browsere."
       },
       "panel": {
         "title": "Optagelsestidspunkter i tidligere optagelser",
