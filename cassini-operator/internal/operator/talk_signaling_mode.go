@@ -97,6 +97,7 @@ func hpbCheckForMode(mode string) *readinessCheck {
 		return &readinessCheck{
 			ID: "talk.hpb", State: "not_verified", Code: "hpb_declared_unverified",
 			Message: "Talk names a High Performance Backend. Whether Cassini can authenticate to it is what the Talk connection check below establishes.",
+			Params:  readinessParams{"variant": "unverified"},
 			Action:  "recheck",
 		}
 	default:
@@ -167,12 +168,13 @@ func mergeCredentialIntoBackend(row *readinessCheck, secret, source string) {
 		// always given; a row that asks for a secret without saying where it
 		// lives sends an administrator hunting, which is what happened.
 		row.State, row.Code = "needs_action", "internal_secret_missing"
+		row.Params = nil
 		row.Message = "Talk has a High Performance Backend, and Cassini needs that server's internal secret to join calls invisibly. This is not a Nextcloud setting: it belongs to the signaling server, which is why Cassini cannot read it for you."
 		row.Action = "configure_talk"
 		row.Steps = []readinessStep{
-			{Label: "On Nextcloud All-in-One, print it with:", Commands: []string{"docker exec nextcloud-aio-talk printenv INTERNAL_SECRET"}},
-			{Label: "On a standalone signaling server, it is `internalsecret` under `[clients]` in its configuration file"},
-			{Label: "Paste it unchanged — one differing character fails exactly as a wrong credential would, and nothing can tell the difference until this check runs"},
+			{ID: "print_aio_internal_secret", Label: "On Nextcloud All-in-One, print it with:", Commands: []string{"docker exec nextcloud-aio-talk printenv INTERNAL_SECRET"}},
+			{ID: "find_standalone_internal_secret", Label: "On a standalone signaling server, it is `internalsecret` under `[clients]` in its configuration file"},
+			{ID: "paste_secret_unchanged", Label: "Paste it unchanged — one differing character fails exactly as a wrong credential would, and nothing can tell the difference until this check runs"},
 		}
 		return
 	}
@@ -184,7 +186,9 @@ func mergeCredentialIntoBackend(row *readinessCheck, secret, source string) {
 	}
 	if row.Code == "hpb_declared_unverified" && source == "env" {
 		row.Message = "Talk names a High Performance Backend, and the internal secret comes from Cassini's deployment configuration. Whether that secret is the right one is what this check establishes."
+		row.Params = readinessParams{"variant": "secret_from_env"}
 	} else if row.Code == "hpb_declared_unverified" {
 		row.Message = "Talk names a High Performance Backend and an internal secret is saved. Whether Cassini can authenticate with it is what this check establishes."
+		row.Params = readinessParams{"variant": "secret_saved"}
 	}
 }
