@@ -4,6 +4,7 @@
 
 import { get } from "svelte/store";
 import { dateFormat, LL, relativeNow, relativeTimeFormat } from "cassini-viewer/i18n";
+import type { ReadinessParams } from "./doctorText";
 
 // The copy, read when it is needed so it follows the reader's language.
 const copy = () => get(LL).app.operator.readiness;
@@ -15,9 +16,14 @@ export type CheckState = "passed" | "warn" | "needs_action" | "not_verified";
 // Where the operator can do the work, the row carries `repair` and the panel
 // renders a button instead (review 2026-09-25). `commands` is only for what
 // Cassini cannot read or run for itself, each labelled with where it applies.
+//
+// `label` is the operator's English; `id` and `params` word it in the reader's
+// language (doctorText.ts stepLabel). Render through that, not `label`.
 export interface ReadinessStep {
+  id?: string;
   label: string;
   commands?: string[];
+  params?: ReadinessParams;
 }
 
 export function labelParts(label: string): { text: string; code: boolean }[] {
@@ -28,7 +34,10 @@ export interface ReadinessCheck {
   id: string;
   state: CheckState;
   code: string;
+  // The operator's English. `code` and `params` word it in the reader's
+  // language (doctorText.ts checkMessage); render through that.
   message: string;
+  params?: ReadinessParams;
   action?: string;
   // The remedy, for a check that is not ok (D-798 R0.1). Distinct from
   // `action`: plenty of remedies are not a place to navigate to, but a command
