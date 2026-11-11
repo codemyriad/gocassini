@@ -169,6 +169,7 @@ type Runtime struct {
 	sealQueue     chan sealTask
 	publishQueue  chan publishTask
 	events        *eventHub
+	eventWebhook  *eventWebhook
 	recordMu      sync.Mutex
 	recordJobs    map[string]*recordProcessState
 	recordWG      sync.WaitGroup
@@ -941,6 +942,7 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 		rt.llm = llm
 	}
 	store.SetStateChangePublisher(rt.publishStateChangeEvent)
+	rt.eventWebhook = newEventWebhook(store, logger, os.Getenv)
 	rt.recordJobFn = rt.executeRecordCLI
 	rt.buildJobFn = rt.withSpeakerEdits(rt.executeBuildCLI)
 	rt.sealJobFn = rt.executeSealCLIWithTimeout
@@ -983,6 +985,7 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 	rt.startBuildWorkers()
 	rt.startSealWorker()
 	rt.startPublishWorker()
+	rt.startEventWebhook()
 	rt.workerWG.Add(1)
 	go rt.requeueDispatcher()
 	rt.startRetentionWorker()
@@ -1416,6 +1419,7 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 		return
 	}
 	rt.logger.Printf("record started id=%s", job.ID)
+	rt.emitEvent(rt.ctx, eventRecordingStarted, job.ID, job.CurrentAttemptNumber, map[string]any{"started_at": startedAt})
 
 	result, err := rt.recordJobFn(rt.ctx, job, req)
 	releaseSlot()
@@ -1430,6 +1434,7 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 		if result.StopReason == stopReasonNoAudio {
 			failureText = "no audio captured: every participant was muted or silent"
 		}
+		rt.emitEvent(rt.ctx, eventRecordingFailed, job.ID, job.CurrentAttemptNumber, map[string]any{"phase": "record", "error": failureText})
 		if talkState, ok := rt.lookupTalkJobState(job.ID); ok {
 			if notifyErr := rt.notifyTalkFailed(talkState); notifyErr != nil {
 				rt.logger.Printf("talk failed callback failed id=%s: %v", job.ID, notifyErr)
@@ -1443,6 +1448,7 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 	canonicalRunPath, promoteErr := promoteRunBundle(rt.cfg.WorkRoot, result.ArtifactRunPath, job.ID)
 	if promoteErr != nil {
 		rt.logger.Printf("record promote failed id=%s run=%s: %v", job.ID, result.ArtifactRunPath, promoteErr)
+		rt.emitEvent(rt.ctx, eventRecordingFailed, job.ID, job.CurrentAttemptNumber, map[string]any{"phase": "record", "error": promoteErr.Error()})
 		if failErr := rt.store.MarkRecordFailed(context.Background(), job.ID, promoteErr.Error(), result, finishedAt); failErr != nil {
 			rt.logger.Printf("record promote failure update failed id=%s: %v", job.ID, failErr)
 		}
@@ -1450,11 +1456,13 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 	}
 	if updateErr := rt.store.UpdateRecordOutcome(context.Background(), job.ID, result, canonicalRunPath, finishedAt); updateErr != nil {
 		rt.logger.Printf("record outcome update failed id=%s: %v", job.ID, updateErr)
+		rt.emitEvent(rt.ctx, eventRecordingFailed, job.ID, job.CurrentAttemptNumber, map[string]any{"phase": "record", "error": updateErr.Error()})
 		if failErr := rt.store.MarkRecordFailed(context.Background(), job.ID, updateErr.Error(), result, finishedAt); failErr != nil {
 			rt.logger.Printf("record outcome failure update failed id=%s: %v", job.ID, failErr)
 		}
 		return
 	}
+	rt.emitEvent(rt.ctx, eventRecordingStopped, job.ID, job.CurrentAttemptNumber, map[string]any{"stopped_at": finishedAt, "stop_reason": strings.TrimSpace(result.StopReason)})
 	rt.removeSuccessfulCaptureDuplicate(job.ID, job.CurrentAttemptNumber)
 	// Tell spreed the recording stopped. Status only — the meeting itself
 	// goes to Nextcloud as the published .opus, never through Talk's

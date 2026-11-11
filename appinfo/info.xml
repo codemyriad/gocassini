@@ -211,6 +211,26 @@ Summaries and questions use whichever language model you connect, so their ratin
         <display-name>Drop crosstalk words (optional)</display-name>
         <description>Set to 1 to delete words the acoustic evidence contradicts instead of annotating them. Intended for room systems where one microphone audibly picks up every participant. The manifest records how many words were removed.</description>
       </variable>
+      <variable>
+        <name>CASSINI_EVENT_WEBHOOK_URL</name>
+        <display-name>Lifecycle event webhook URL (optional)</display-name>
+        <description>Receive signed JSON events when recordings start, stop, build, summarise, publish, share or fail. Leave empty to disable. See docs/events.md for the event catalog and payloads.</description>
+      </variable>
+      <variable>
+        <name>CASSINI_EVENT_WEBHOOK_SECRET</name>
+        <display-name>Lifecycle event webhook secret (optional)</display-name>
+        <description>HMAC-SHA256 secret used to sign each event. Required when CASSINI_EVENT_WEBHOOK_URL is set. Receivers verify X-Cassini-Signature over the timestamp and body.</description>
+      </variable>
+      <variable>
+        <name>CASSINI_EVENT_WEBHOOK_EVENTS</name>
+        <display-name>Lifecycle event allow-list (optional)</display-name>
+        <description>Comma-separated event names to deliver, for example "summary.completed,recording.failed". Empty delivers every event in the catalog.</description>
+      </variable>
+      <variable>
+        <name>CASSINI_EVENT_WEBHOOK_TIMEOUT</name>
+        <display-name>Lifecycle event webhook timeout (optional)</display-name>
+        <description>Per-request timeout for event delivery, for example "10s". Defaults to 10s; values above one minute are rejected.</description>
+      </variable>
     </environment-variables>
 
     <routes>

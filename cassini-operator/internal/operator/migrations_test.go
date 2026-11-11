@@ -507,6 +507,7 @@ func TestNewestMigrationHasARollbackTest(t *testing.T) {
 		"attempt_summary_times":    true,
 		"job_share_outcomes":       true,
 		"share_notice_dismissals":  true,
+		"event_outbox":             true,
 	}
 	newest := migrations[len(migrations)-1].Name
 	if !covered[newest] {
@@ -688,5 +689,48 @@ func TestMigrateDownDropsShareNoticeDismissalsAndKeepsTheJob(t *testing.T) {
 	}
 	if dismissed, err := store.dismissedShareNotices(ctx, "alice"); err != nil || len(dismissed) != 0 {
 		t.Fatalf("dismissedShareNotices() after re-upgrade = %v, %v; want an empty, working table", dismissed, err)
+	}
+}
+
+// A rollback past 0027 drops queued and delivered webhook events: they are
+// delivery history, not recording state, and the recording pipeline does not
+// depend on them. The re-upgrade brings an empty, working outbox back, so a
+// fresh event can still be queued and delivered after a downgrade/upgrade.
+func TestMigrateDownDropsEventOutbox(t *testing.T) {
+	migrations, err := loadMigrations()
+	if err != nil {
+		t.Fatalf("loadMigrations() error = %v", err)
+	}
+	at := migrationIndex(migrations, "event_outbox")
+	if at < 0 {
+		t.Fatal("no event_outbox migration")
+	}
+	store, err := OpenStore(filepath.Join(t.TempDir(), "jobs.sqlite3"))
+	if err != nil {
+		t.Fatalf("OpenStore() error = %v", err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	if err := store.insertEvent(ctx, "evt_before_rollback", eventSummaryCompleted, `{"type":"summary.completed"}`, nowUTCString()); err != nil {
+		t.Fatalf("insertEvent() error = %v", err)
+	}
+
+	if err := store.migrateDownTo(migrations[at].Version - 1); err != nil {
+		t.Fatalf("migrateDownTo(%d) error = %v", migrations[at].Version-1, err)
+	}
+	if _, err := store.db.Exec(`SELECT id FROM event_outbox`); err == nil {
+		t.Fatal("event_outbox survived the down migration")
+	}
+	if err := store.ensureSchema(); err != nil {
+		t.Fatalf("ensureSchema() error = %v", err)
+	}
+	if _, ok, err := store.nextDueEvent(ctx, nowUTCString()); err != nil || ok {
+		t.Fatalf("nextDueEvent() after re-upgrade ok=%v, err=%v; want an empty, working outbox", ok, err)
+	}
+	if err := store.insertEvent(ctx, "evt_after_upgrade", eventRecordingStarted, `{"type":"recording.started"}`, nowUTCString()); err != nil {
+		t.Fatalf("insertEvent() after re-upgrade error = %v", err)
+	}
+	if event, ok, err := store.nextDueEvent(ctx, nowUTCString()); err != nil || !ok || event.ID != "evt_after_upgrade" {
+		t.Fatalf("nextDueEvent() after re-upgrade = %+v, %v, %v", event, ok, err)
 	}
 }

@@ -80,6 +80,7 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 	if err != nil {
 		detail := rt.extractSiteFailureDetail(attemptArtifactSitePath, err)
 		rt.logger.Printf("publish failed id=%s attempt=%d: %s", task.JobID, task.AttemptNumber, detail)
+		rt.emitEvent(rt.ctx, eventRecordingFailed, task.JobID, task.AttemptNumber, map[string]any{"phase": "publish", "error": detail})
 		if updateErr := rt.store.MarkPublishFailed(context.Background(), task.JobID, "", attemptArtifactSitePath, detail, finishedAt); updateErr != nil {
 			rt.logger.Printf("publish fail update failed id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, updateErr)
 		}
@@ -114,6 +115,7 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 		rt.logger.Printf("publish deliver failed id=%s attempt=%d sink=%s attempt_site=%s: %v", task.JobID, task.AttemptNumber, rt.sink().Name(), attemptArtifactSitePath, err)
 		reason, httpStatus, ocsStatus := supportError(err)
 		rt.supportJournal.record(supportEvent{Event: "delivery_failed", Job: task.JobID, Attempt: task.AttemptNumber, Reason: reason, HTTP: httpStatus, OCS: ocsStatus, Detail: supportOriginalError(err)})
+		rt.emitEvent(rt.ctx, eventRecordingFailed, task.JobID, task.AttemptNumber, map[string]any{"phase": "publish", "error": err.Error()})
 		if updateErr := rt.store.MarkPublishFailed(context.Background(), task.JobID, "", attemptArtifactSitePath, err.Error(), finishedAt); updateErr != nil {
 			rt.logger.Printf("publish deliver failure update failed id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, updateErr)
 		}
@@ -137,6 +139,15 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 	if err := rt.store.MarkPublishSucceeded(context.Background(), task.JobID, location, attemptArtifactSitePath, finishedAt); err != nil {
 		rt.logger.Printf("publish success update failed id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, err)
 		return
+	}
+	rt.emitEvent(rt.ctx, eventRecordingPublished, task.JobID, task.AttemptNumber, map[string]any{"published_location": location})
+	if job, err := rt.store.GetJob(context.Background(), task.JobID); err == nil {
+		sharing := rt.jobSharing(context.Background(), &job)
+		if sharing != nil {
+			rt.emitEvent(rt.ctx, eventSharesCompleted, task.JobID, task.AttemptNumber, map[string]any{
+				"sharing": sharing,
+			})
+		}
 	}
 	// Best effort: one bounded request, with no retry or restart recovery.
 	// Failure never changes the publication result or stops its cleanup.

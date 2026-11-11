@@ -332,6 +332,10 @@ Options).
 | `LLM_BASE_URL` | No | Initial OpenAI-compatible API base URL for meeting summaries — a hosted provider or your own model server. Pre-fills the app's LLM settings on first start; afterwards endpoints are changed in the app (`PUT /settings/llm`), never by redeploying. **The full local transcript is sent to whatever endpoint is configured** (transcription itself is always local). Unset, the app starts with no LLM endpoint and publishes raw transcripts without summaries. Defaults to `https://openrouter.ai/api/v1` when `OPENROUTER_API_KEY` is set |
 | `LLM_MODEL` | No | Initial model for summaries (default `openai/gpt-4o-mini`) |
 | `CASSINI_OPERATOR_API_TOKEN` | No | Bearer token for direct non-AppAPI operator API calls. AppAPI-proxied requests are authenticated by Nextcloud/AppAPI |
+| `CASSINI_EVENT_WEBHOOK_URL` | No | Receiver for signed lifecycle events. Empty disables the feature. See [Lifecycle events](./events.md) |
+| `CASSINI_EVENT_WEBHOOK_SECRET` | With the URL | HMAC-SHA256 secret used to sign lifecycle events |
+| `CASSINI_EVENT_WEBHOOK_EVENTS` | No | Comma-separated allow-list of event names; empty delivers the whole catalog |
+| `CASSINI_EVENT_WEBHOOK_TIMEOUT` | No | Per-request timeout for event delivery; default `10s` |
 
 ### Updating deploy options after install
 

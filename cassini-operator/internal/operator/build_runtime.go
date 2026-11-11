@@ -174,6 +174,7 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 		}
 		detail := rt.extractBuildFailureDetail(builtMeetingPath, err)
 		rt.logger.Printf("build failed id=%s attempt=%d worker=%d: %s", task.JobID, task.AttemptNumber, workerIndex, detail)
+		rt.emitEvent(rt.ctx, eventRecordingFailed, task.JobID, task.AttemptNumber, map[string]any{"phase": "build", "error": detail})
 		if updateErr := rt.store.MarkBuildFailed(context.Background(), task.JobID, builtMeetingPath, detail, finishedAt); updateErr != nil {
 			rt.logger.Printf("build fail update failed id=%s attempt=%d worker=%d: %v", task.JobID, task.AttemptNumber, workerIndex, updateErr)
 		}
@@ -223,6 +224,7 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 		}
 		return
 	}
+	rt.emitEvent(rt.ctx, eventBuildCompleted, task.JobID, task.AttemptNumber, map[string]any{"meeting_title": meetingTitle})
 	rt.logger.Printf("build succeeded id=%s attempt=%d worker=%d attempt_meeting=%s canonical_meeting=%s seal_queued_at=%s", task.JobID, task.AttemptNumber, workerIndex, builtMeetingPath, canonicalMeetingPath, finishedAt)
 }
 
