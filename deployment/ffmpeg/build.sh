@@ -9,6 +9,14 @@ releases_url=${releases_url%/}
 signing_key_url=${FFMPEG_SIGNING_KEY_URL:-https://ffmpeg.org/ffmpeg-devel.asc}
 signing_fingerprint=${FFMPEG_SIGNING_KEY_FINGERPRINT:-FCF986EA15E6E293A5644F10B4322F04D67658D8}
 
+# ffmpeg.org drops connections from CI runners now and then: fail a dead
+# connection in 20s and retry, instead of waiting out curl's ~2-minute connect
+# timeout once and failing the build.
+fetch() {
+  curl --fail --silent --show-error --location \
+    --connect-timeout 20 --retry 5 --retry-delay 5 --retry-all-errors "$@"
+}
+
 script_dir=$(unset CDPATH; cd -- "$(dirname -- "$0")" && pwd)
 if [ "$requested_version" = latest ]; then
   version=$("$script_dir/resolve-latest.sh")
@@ -38,9 +46,9 @@ trap 'rm -rf "$work"' EXIT HUP INT TERM
 archive="ffmpeg-$version.tar.xz"
 source_url="$releases_url/$archive"
 
-curl --fail --silent --show-error --location "$source_url" --output "$work/$archive"
-curl --fail --silent --show-error --location "$source_url.asc" --output "$work/$archive.asc"
-curl --fail --silent --show-error --location "$signing_key_url" --output "$work/ffmpeg-devel.asc"
+fetch "$source_url" --output "$work/$archive"
+fetch "$source_url.asc" --output "$work/$archive.asc"
+fetch "$signing_key_url" --output "$work/ffmpeg-devel.asc"
 
 actual_fingerprint=$(gpg --batch --show-keys --with-colons "$work/ffmpeg-devel.asc" \
   | awk -F: '$1 == "fpr" { print $10; exit }')

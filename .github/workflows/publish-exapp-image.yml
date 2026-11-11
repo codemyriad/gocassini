@@ -181,8 +181,10 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: ./scripts/check-tag-branch.sh "$VERSION" "$GITHUB_SHA"
       # Only needed to read the FFmpeg label off an earlier image on tag builds.
+      # Reads earlier images' FFmpeg labels below. The images are public, but
+      # anonymous reads are rate-limited.
       - name: Log in to the container registry
-        if: steps.changes.outputs.relevant == 'true' && github.ref_type == 'tag'
+        if: steps.changes.outputs.relevant == 'true'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -210,46 +212,71 @@ jobs:
           # previous release (:X.Y.Z is kept forever, unlike branch images,
           # which are pruned, and the branch's own image doesn't exist yet when
           # it is pushed with its first beta); then main's current image.
-          if [ "${{ github.ref_type }}" = "tag" ]; then
+          #
+          # PRs inherit main's FFmpeg too (D-906). They test the FFmpeg main
+          # ships, the build cache already holds that FFmpeg compiled, and a PR
+          # no longer fails when ffmpeg.org is unreachable from the runner,
+          # which broke 9 image runs in the week before this change.
+
+          # validated_version IMAGE: the FFmpeg version IMAGE was built and
+          # gated with, or a non-zero exit when it carries none.
+          validated_version() {
+            local found
+            found="$(docker buildx imagetools inspect "$1" \
+              --format '{{ json .Image }}' 2>/dev/null \
+              | jq -r '
+                  if .config? then
+                    .config.Labels?["io.gocassini.ffmpeg.requested-version"] // empty
+                  else
+                    [ .[] | .config.Labels?["io.gocassini.ffmpeg.requested-version"] ]
+                    | if length > 0 and all(. != null and . != "") and (unique | length == 1) then
+                        .[0]
+                      else
+                        empty
+                      end
+                  end
+                ' || true)"
+            case "${found}" in
+              "" | latest | *[!0-9.]* | .* | *..* | *.) return 1 ;;
+            esac
+            printf '%s\n' "${found}"
+          }
+
+          sources=()
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
             version="${GITHUB_REF_NAME#v}"
-            sources=()
             if [[ "$(./scripts/release-version.sh branch "$version")" != main ]]; then
               previous="$(git ls-remote --tags --refs origin 'v*' | sed 's|.*refs/tags/v||' \
                 | ./scripts/release-version.sh previous "$version")"
               if [[ -n "$previous" ]]; then sources+=("${REGISTRY}/${IMAGE}:${previous}"); fi
             fi
             sources+=("${REGISTRY}/${IMAGE}:branch-main")
-            for source_image in "${sources[@]}"; do
-              validated="$(docker buildx imagetools inspect "$source_image" \
-                --format '{{ json .Image }}' 2>/dev/null \
-                | jq -r '
-                    if .config? then
-                      .config.Labels?["io.gocassini.ffmpeg.requested-version"] // empty
-                    else
-                      [ .[] | .config.Labels?["io.gocassini.ffmpeg.requested-version"] ]
-                      | if length > 0 and all(. != null and . != "") and (unique | length == 1) then
-                          .[0]
-                        else
-                          empty
-                        end
-                    end
-                  ' || true)"
-              case "${validated}" in
-                "" | latest | *[!0-9.]* | .* | *..* | *.)
-                  echo "::warning::${source_image} carries no validated FFmpeg version" \
-                    "(got '${validated:-none}'); trying the next source"
-                  ;;
-                *)
-                  echo "Pinning FFmpeg ${validated}, as already gated by ${source_image}"
-                  echo "version=${validated}" >> "$GITHUB_OUTPUT"
-                  exit 0
-                  ;;
-              esac
-            done
+          elif [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            sources+=("${REGISTRY}/${IMAGE}:branch-main")
+          fi
+          for source_image in "${sources[@]}"; do
+            if version="$(validated_version "$source_image")"; then
+              echo "Pinning FFmpeg ${version}, as already gated by ${source_image}"
+              echo "version=${version}" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "::warning::${source_image} carries no validated FFmpeg version; trying the next source"
+          done
+          if [ "${#sources[@]}" -gt 0 ]; then
             echo "::warning::no earlier image carries a validated FFmpeg version; falling back to resolving upstream"
           fi
-          version=$(deployment/ffmpeg/resolve-latest.sh)
-          echo "Resolved FFmpeg ${version} from ffmpeg.org"
+
+          if version="$(deployment/ffmpeg/resolve-latest.sh)"; then
+            echo "Resolved FFmpeg ${version} from ffmpeg.org"
+          elif [ "$GITHUB_REF_TYPE" != tag ] \
+            && version="$(validated_version "${REGISTRY}/${IMAGE}:branch-main")"; then
+            # ffmpeg.org stayed unreachable through every retry. Keep main's
+            # FFmpeg rather than fail the build; the next run looks again.
+            echo "::warning::ffmpeg.org is unreachable; keeping FFmpeg ${version} from main's current image"
+          else
+            echo "::error::could not resolve an FFmpeg version from ffmpeg.org or main's current image"
+            exit 1
+          fi
           echo "version=${version}" >> "$GITHUB_OUTPUT"
 
   # Each platform builds on a native runner. Building arm64 under QEMU on an

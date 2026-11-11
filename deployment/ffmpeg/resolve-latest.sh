@@ -3,6 +3,14 @@ set -eu
 
 releases_url="${FFMPEG_RELEASES_URL:-https://ffmpeg.org/releases/}"
 
+# ffmpeg.org drops connections from CI runners now and then: fail a dead
+# connection in 20s and retry, instead of waiting out curl's ~2-minute connect
+# timeout once and failing the build.
+fetch() {
+  curl --fail --silent --show-error --location \
+    --connect-timeout 20 --retry 5 --retry-delay 5 --retry-all-errors "$@"
+}
+
 if [ -n "${FFMPEG_RELEASES_INDEX_FILE:-}" ]; then
   index_file=$FFMPEG_RELEASES_INDEX_FILE
   test -r "$index_file" || {
@@ -11,7 +19,7 @@ if [ -n "${FFMPEG_RELEASES_INDEX_FILE:-}" ]; then
   }
   index=$(sed -n '1,20000p' "$index_file")
 else
-  index=$(curl --fail --silent --show-error --location "$releases_url")
+  index=$(fetch "$releases_url")
 fi
 
 version=$(printf '%s\n' "$index" \
