@@ -34,7 +34,12 @@ import { get } from "svelte/store";
 import MeetingView from "./components/MeetingView.svelte";
 import { StaticCatalogProvider } from "./viewer/dataProvider";
 import { resolveEmbedTheme, singleMeetingEntry } from "./viewer/singleMeeting";
-import { LL, browserLanguages, useFormatLocale, useLocale } from "./i18n";
+import { LL, baseLocale, browserLanguages, matchLocale, useFormatLocale, useLocale } from "./i18n";
+import type { Locales } from "./i18n";
+import type { Translations } from "./i18n/i18n-types";
+import { loadedLocales } from "./i18n/i18n-util";
+import { loadFormatters } from "./i18n/i18n-util.sync";
+import { mergeTranslations } from "./i18n/translations";
 import "./app.css";
 
 export const ELEMENT_NAME = "cassini-meeting";
@@ -184,14 +189,59 @@ export function findEmbedScriptSrc(doc: Document): string {
 // build's CSS. An empty src means we could not find ourselves; a relative href
 // is the best remaining guess and only styling degrades.
 export function embedStylesheetHref(scriptSrc: string): string {
+  return siblingHref(scriptSrc, "viewer.css");
+}
+
+// The build bundles English only and publishes every other language beside
+// the script as i18n/<lang>.json (scripts/i18n-bundle-plugin.mjs), so a reader
+// downloads the one language the page asks for. Same directory as the script
+// for the same reason as the stylesheet.
+export function embedLanguageHref(scriptSrc: string, locale: Locales): string {
+  return siblingHref(scriptSrc, `i18n/${locale}.json`);
+}
+
+function siblingHref(scriptSrc: string, name: string): string {
   if (!scriptSrc) {
-    return "viewer.css";
+    return name;
   }
   try {
-    return new URL("viewer.css" + queryOf(scriptSrc), scriptSrc).toString();
+    return new URL(name + queryOf(scriptSrc), scriptSrc).toString();
   } catch {
-    return "viewer.css";
+    return name;
   }
+}
+
+// Fetch a language file and make it the locale's dictionary, laid over English
+// so a string it lacks reads in English. False when it could not be had: a CSP
+// without gocassini.com in connect-src, a 404, offline. The caller then stays
+// in English rather than showing nothing.
+export async function loadEmbedLanguage(
+  locale: Locales,
+  href: string,
+  fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<boolean> {
+  try {
+    const response = await fetchImpl(href);
+    if (!response.ok) return false;
+    const json: unknown = await response.json();
+    if (!json || typeof json !== "object") return false;
+    loadedLocales[locale] = mergeTranslations<Translations>(loadedLocales[baseLocale], json);
+    loadFormatters(locale);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// One fetch per language per page, however many embeds ask for it.
+const languageLoads = new Map<Locales, Promise<boolean>>();
+function embedLanguage(locale: Locales): Promise<boolean> {
+  let load = languageLoads.get(locale);
+  if (!load) {
+    load = loadEmbedLanguage(locale, embedLanguageHref(scriptSrc, locale));
+    languageLoads.set(locale, load);
+  }
+  return load;
 }
 
 // Carried over so the CSS expires from the browser cache with the JS.
@@ -215,6 +265,9 @@ export function defineCassiniMeeting(): void {
     static observedAttributes = [...LIVE_ATTRIBUTES];
 
     private app: Record<string, unknown> | null = null;
+    // Set while the language file is on its way, so a quick disconnect and
+    // reconnect neither mounts twice nor mounts into a detached element.
+    private pending: object | null = null;
     private wrapper: HTMLElement | null = null;
 
     // A page with its own light/dark switch sets theme again when the reader
@@ -226,7 +279,7 @@ export function defineCassiniMeeting(): void {
     }
 
     connectedCallback(): void {
-      if (this.app) {
+      if (this.app || this.pending) {
         return;
       }
       const src = (this.getAttribute("src") ?? "").trim();
@@ -253,13 +306,33 @@ export function defineCassiniMeeting(): void {
         shadow.appendChild(style);
       }
 
+      const provider = new StaticCatalogProvider();
+      const wanted = matchLocale(embedLanguages(this));
+      if (wanted === baseLocale) {
+        this.render(shadow, src, provider, wanted);
+        return;
+      }
+      // Wait for the language before mounting, so the reader never sees the
+      // viewer in English first. The recording starts loading meanwhile: the
+      // provider caches it, and MeetingView's own load picks it up.
+      void provider.loadMeetingForEntry(singleMeetingEntry(src)).catch(() => {});
+      const token = {};
+      this.pending = token;
+      void embedLanguage(wanted).then((loaded) => {
+        if (this.pending !== token) return;
+        this.pending = null;
+        this.render(shadow, src, provider, loaded ? wanted : baseLocale);
+      });
+    }
+
+    private render(shadow: ShadowRoot, src: string, provider: StaticCatalogProvider, language: Locales): void {
       // data-theme sits on the wrapper rather than the mount, so the badge under
       // the viewer is themed with it rather than falling back to the default.
       const wrapper = document.createElement("div");
       wrapper.className = "cassini-embed";
       // One language per page: the dictionaries are shared, so two embeds
       // asking for different languages end up in the last one's (ATTRIBUTES.md).
-      wrapper.lang = useLocale(embedLanguages(this));
+      wrapper.lang = useLocale([language]);
       useFormatLocale(embedLanguages(this));
       wrapper.dataset.theme = resolveEmbedTheme(this.getAttribute("theme"), prefersDarkScheme());
       const layout = (this.getAttribute("layout") ?? "").trim().toLowerCase();
@@ -286,7 +359,6 @@ export function defineCassiniMeeting(): void {
 
       shadow.appendChild(wrapper);
 
-      const provider = new StaticCatalogProvider();
       const entry = singleMeetingEntry(src, this.getAttribute("title") ?? "");
       this.app = mount(MeetingView, {
         target: root,
@@ -317,6 +389,7 @@ export function defineCassiniMeeting(): void {
     }
 
     disconnectedCallback(): void {
+      this.pending = null;
       if (!this.app) {
         return;
       }
