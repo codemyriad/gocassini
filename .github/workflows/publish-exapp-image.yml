@@ -37,12 +37,19 @@ env:
   EXTRA_ALIAS_SUFFIXES: '-rocm'
 
 jobs:
-  classify-changes:
-    name: Classify image and harness relevance
+  # One job, not three (D-906): classifying, validating the manifest and
+  # resolving FFmpeg take seconds each, but as separate jobs every one of
+  # them waited for a runner before the build could start.
+  prepare:
+    name: Classify changes, validate manifest, resolve FFmpeg
     runs-on: ubuntu-latest
     outputs:
       relevant: ${{ steps.changes.outputs.relevant }}
       compatibility-matrix: ${{ steps.compatibility.outputs.matrix }}
+      # <version> from appinfo/info.xml — the single source of truth for
+      # release image tags (:X.Y.Z, :X.Y.Z-cuda).
+      app_version: ${{ steps.version.outputs.version }}
+      ffmpeg_version: ${{ steps.ffmpeg.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -94,22 +101,14 @@ jobs:
           matrix="$(python3 scripts/nextcloud_compatibility.py matrix --tier "$tier" --paths-file "$paths")"
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
-  validate-manifest:
-    name: Validate appinfo/info.xml
-    runs-on: ubuntu-latest
-    needs: classify-changes
-    if: needs.classify-changes.outputs.relevant == 'true'
-    outputs:
-      # <version> from appinfo/info.xml — the single source of truth for
-      # release image tags (:X.Y.Z, :X.Y.Z-cuda).
-      app_version: ${{ steps.version.outputs.version }}
-    steps:
-      - uses: actions/checkout@v4
       - name: Install xmllint
+        if: steps.changes.outputs.relevant == 'true'
         run: sudo ./scripts/ci-apt-update.sh && sudo apt-get install -y --no-install-recommends libxml2-utils
       - name: Wellformed XML check
+        if: steps.changes.outputs.relevant == 'true'
         run: xmllint --noout appinfo/info.xml
       - name: Required-fields sanity check
+        if: steps.changes.outputs.relevant == 'true'
         run: |
           set -euo pipefail
           # The two Talk secret declarations are markers, not decoration: AppAPI
@@ -136,8 +135,10 @@ jobs:
             exit 1
           fi
       - name: Validate compatibility policy and documentation
+        if: steps.changes.outputs.relevant == 'true'
         run: python3 scripts/nextcloud_compatibility.py validate
       - name: Version pin consistency check
+        if: steps.changes.outputs.relevant == 'true'
         id: version
         run: |
           set -euo pipefail
@@ -174,30 +175,23 @@ jobs:
       - name: A release tag is on the branch its version is cut on
         # Before any immutable :X.Y.Z image exists. A new tag only: a dispatch
         # rebuilds an existing one, which may predate release branches.
-        if: github.event_name == 'push' && github.ref_type == 'tag'
+        if: steps.changes.outputs.relevant == 'true' && github.event_name == 'push' && github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
         run: ./scripts/check-tag-branch.sh "$VERSION" "$GITHUB_SHA"
-
-  resolve-ffmpeg:
-    name: Resolve FFmpeg version
-    runs-on: ubuntu-latest
-    needs: classify-changes
-    if: needs.classify-changes.outputs.relevant == 'true'
-    outputs:
-      version: ${{ steps.ffmpeg.outputs.version }}
-    steps:
-      - uses: actions/checkout@v4
       # Only needed to read the FFmpeg label off an earlier image on tag builds.
+      # Reads earlier images' FFmpeg labels below. The images are public, but
+      # anonymous reads are rate-limited.
       - name: Log in to the container registry
-        if: github.ref_type == 'tag'
+        if: steps.changes.outputs.relevant == 'true'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Resolve FFmpeg version
+        if: steps.changes.outputs.relevant == 'true'
         id: ffmpeg
         run: |
           set -euo pipefail
@@ -218,46 +212,71 @@ jobs:
           # previous release (:X.Y.Z is kept forever, unlike branch images,
           # which are pruned, and the branch's own image doesn't exist yet when
           # it is pushed with its first beta); then main's current image.
-          if [ "${{ github.ref_type }}" = "tag" ]; then
+          #
+          # PRs inherit main's FFmpeg too (D-906). They test the FFmpeg main
+          # ships, the build cache already holds that FFmpeg compiled, and a PR
+          # no longer fails when ffmpeg.org is unreachable from the runner,
+          # which broke 9 image runs in the week before this change.
+
+          # validated_version IMAGE: the FFmpeg version IMAGE was built and
+          # gated with, or a non-zero exit when it carries none.
+          validated_version() {
+            local found
+            found="$(docker buildx imagetools inspect "$1" \
+              --format '{{ json .Image }}' 2>/dev/null \
+              | jq -r '
+                  if .config? then
+                    .config.Labels?["io.gocassini.ffmpeg.requested-version"] // empty
+                  else
+                    [ .[] | .config.Labels?["io.gocassini.ffmpeg.requested-version"] ]
+                    | if length > 0 and all(. != null and . != "") and (unique | length == 1) then
+                        .[0]
+                      else
+                        empty
+                      end
+                  end
+                ' || true)"
+            case "${found}" in
+              "" | latest | *[!0-9.]* | .* | *..* | *.) return 1 ;;
+            esac
+            printf '%s\n' "${found}"
+          }
+
+          sources=()
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
             version="${GITHUB_REF_NAME#v}"
-            sources=()
             if [[ "$(./scripts/release-version.sh branch "$version")" != main ]]; then
               previous="$(git ls-remote --tags --refs origin 'v*' | sed 's|.*refs/tags/v||' \
                 | ./scripts/release-version.sh previous "$version")"
               if [[ -n "$previous" ]]; then sources+=("${REGISTRY}/${IMAGE}:${previous}"); fi
             fi
             sources+=("${REGISTRY}/${IMAGE}:branch-main")
-            for source_image in "${sources[@]}"; do
-              validated="$(docker buildx imagetools inspect "$source_image" \
-                --format '{{ json .Image }}' 2>/dev/null \
-                | jq -r '
-                    if .config? then
-                      .config.Labels?["io.gocassini.ffmpeg.requested-version"] // empty
-                    else
-                      [ .[] | .config.Labels?["io.gocassini.ffmpeg.requested-version"] ]
-                      | if length > 0 and all(. != null and . != "") and (unique | length == 1) then
-                          .[0]
-                        else
-                          empty
-                        end
-                    end
-                  ' || true)"
-              case "${validated}" in
-                "" | latest | *[!0-9.]* | .* | *..* | *.)
-                  echo "::warning::${source_image} carries no validated FFmpeg version" \
-                    "(got '${validated:-none}'); trying the next source"
-                  ;;
-                *)
-                  echo "Pinning FFmpeg ${validated}, as already gated by ${source_image}"
-                  echo "version=${validated}" >> "$GITHUB_OUTPUT"
-                  exit 0
-                  ;;
-              esac
-            done
+          elif [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            sources+=("${REGISTRY}/${IMAGE}:branch-main")
+          fi
+          for source_image in "${sources[@]}"; do
+            if version="$(validated_version "$source_image")"; then
+              echo "Pinning FFmpeg ${version}, as already gated by ${source_image}"
+              echo "version=${version}" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "::warning::${source_image} carries no validated FFmpeg version; trying the next source"
+          done
+          if [ "${#sources[@]}" -gt 0 ]; then
             echo "::warning::no earlier image carries a validated FFmpeg version; falling back to resolving upstream"
           fi
-          version=$(deployment/ffmpeg/resolve-latest.sh)
-          echo "Resolved FFmpeg ${version} from ffmpeg.org"
+
+          if version="$(deployment/ffmpeg/resolve-latest.sh)"; then
+            echo "Resolved FFmpeg ${version} from ffmpeg.org"
+          elif [ "$GITHUB_REF_TYPE" != tag ] \
+            && version="$(validated_version "${REGISTRY}/${IMAGE}:branch-main")"; then
+            # ffmpeg.org stayed unreachable through every retry. Keep main's
+            # FFmpeg rather than fail the build; the next run looks again.
+            echo "::warning::ffmpeg.org is unreachable; keeping FFmpeg ${version} from main's current image"
+          else
+            echo "::error::could not resolve an FFmpeg version from ffmpeg.org or main's current image"
+            exit 1
+          fi
           echo "version=${version}" >> "$GITHUB_OUTPUT"
 
   # Each platform builds on a native runner. Building arm64 under QEMU on an
@@ -268,7 +287,8 @@ jobs:
   build-image-amd64:
     name: Build ExApp image (amd64)
     runs-on: ubuntu-latest
-    needs: [classify-changes, validate-manifest, resolve-ffmpeg]
+    needs: prepare
+    if: needs.prepare.outputs.relevant == 'true'
     outputs:
       tags: ${{ steps.meta.outputs.tags }}
       digest: ${{ steps.build-push.outputs.digest || steps.build-pr.outputs.digest }}
@@ -298,13 +318,13 @@ jobs:
             push)
               if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
                 # Release tags come from appinfo/info.xml <version>, not the
-                # git ref: validate-manifest guarantees the git tag is
+                # git ref: prepare guarantees the git tag is
                 # v<version> and that <image-tag> matches, so the published
                 # :X.Y.Z tag is exactly what a pinned AppAPI install pulls.
                 # A release never moves :latest: it tracks main (below), which
                 # staging and the canary pull, and a patch on an older line
                 # would otherwise point it back at that line.
-                VERSION="${{ needs.validate-manifest.outputs.app_version }}"
+                VERSION="${{ needs.prepare.outputs.app_version }}"
                 TAGS+=("${REF}:${VERSION}")
                 for suffix in ${EXTRA_ALIAS_SUFFIXES}; do
                   TAGS+=("${REF}:${VERSION}${suffix}")
@@ -324,7 +344,7 @@ jobs:
               fi
               ;;
             pull_request)
-              # PR builds: load locally for the smoke job, do not push.
+              # PR builds: load locally for the container checks, do not push.
               ;;
             workflow_dispatch)
               TAGS+=("${REF}:dispatch-$(date -u +%Y%m%d%H%M%S)")
@@ -335,7 +355,7 @@ jobs:
             for t in "${TAGS[@]}"; do echo "$t"; done
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
-          # Primary tag used by the smoke job (PR builds use the sha tag too).
+          # Primary tag used by the container checks (PR builds use the sha tag too).
           echo "primary=${TAGS[0]}" >> "$GITHUB_OUTPUT"
 
       # PR builds build linux/amd64 and load it locally so downstream smoke/e2e
@@ -352,7 +372,7 @@ jobs:
           load: true
           tags: ${{ steps.meta.outputs.tags }}
           build-args: |
-            FFMPEG_VERSION=${{ needs.resolve-ffmpeg.outputs.version }}
+            FFMPEG_VERSION=${{ needs.prepare.outputs.ffmpeg_version }}
             FFMPEG_BUILD_JOBS=4
           cache-from: type=gha,scope=build-image-amd64
           cache-to: type=gha,mode=max,scope=build-image-amd64
@@ -369,7 +389,7 @@ jobs:
           platforms: linux/amd64
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
           build-args: |
-            FFMPEG_VERSION=${{ needs.resolve-ffmpeg.outputs.version }}
+            FFMPEG_VERSION=${{ needs.prepare.outputs.ffmpeg_version }}
             FFMPEG_BUILD_JOBS=4
           cache-from: type=gha,scope=build-image-amd64
           cache-to: type=gha,mode=max,scope=build-image-amd64
@@ -396,25 +416,24 @@ jobs:
 
   # Joins the per-platform digests into the tagged multi-arch manifest list.
   # Downstream jobs depend on this job, so on push they only start once every
-  # tag points at the multi-arch image. PRs push nothing: this job only
-  # forwards the amd64 tags. It still requires the arm64 job on PRs, so a
-  # broken arm64 build fails the required faithful gate instead of merging.
+  # tag points at the multi-arch image. PRs push nothing, so it is skipped on
+  # them (D-906: it used to run only to forward the amd64 tags, which cost a
+  # wait for a runner) and downstream jobs load the amd64 image instead. A
+  # broken arm64 build still fails the required faithful gate, which needs it.
   # No always(): the default success() condition also skips this job when a
   # newer push cancels the run, so a stale run never retags the registry.
   build-image:
     name: Build ExApp image
     runs-on: ubuntu-latest
     needs: [build-image-amd64, build-image-arm64]
+    if: github.event_name != 'pull_request'
     outputs:
-      image_ref: ${{ needs.build-image-amd64.outputs.tags }}
-      digest: ${{ steps.merge.outputs.digest || needs.build-image-amd64.outputs.digest }}
+      digest: ${{ steps.merge.outputs.digest }}
     steps:
       - name: Set up Docker Buildx
-        if: github.event_name != 'pull_request'
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to ghcr.io
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -422,7 +441,6 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Push multi-arch manifest list
-        if: github.event_name != 'pull_request'
         id: merge
         env:
           TAGS: ${{ needs.build-image-amd64.outputs.tags }}
@@ -442,20 +460,16 @@ jobs:
           digest="$(docker buildx imagetools inspect "$primary" --format '{{json .Manifest}}' | jq -r .digest)"
           echo "digest=${digest}" >> "$GITHUB_OUTPUT"
 
-      - name: Forward amd64 tags (PR)
-        if: github.event_name == 'pull_request'
-        run: echo "PR build; downstream jobs load the amd64 image from the exapp-image artifact."
-
   compatibility:
     name: Installed compatibility (${{ matrix.baseline }})
     runs-on: ubuntu-latest
-    needs: [classify-changes, build-image]
-    if: needs.classify-changes.outputs.relevant == 'true'
+    needs: [prepare, build-image-amd64, build-image]
+    if: ${{ needs.prepare.outputs.relevant == 'true' && !cancelled() && needs.build-image-amd64.result == 'success' && (needs.build-image.result == 'success' || github.event_name == 'pull_request') }}
     timeout-minutes: 40
     strategy:
       fail-fast: false
       max-parallel: 3
-      matrix: ${{ fromJSON(needs.classify-changes.outputs.compatibility-matrix) }}
+      matrix: ${{ fromJSON(needs.prepare.outputs.compatibility-matrix) }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/compatibility-tools
@@ -463,7 +477,7 @@ jobs:
         id: load
         uses: ./.github/actions/load-exapp-image
         with:
-          image-ref-list: ${{ github.event_name == 'pull_request' && needs.build-image.outputs.image_ref || format('ghcr.io/{0}@{1}', github.repository, needs.build-image.outputs.digest) }}
+          image-ref-list: ${{ github.event_name == 'pull_request' && needs.build-image-amd64.outputs.tags || format('ghcr.io/{0}@{1}', github.repository, needs.build-image.outputs.digest) }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Run locked installed compatibility scenario
         env:
@@ -496,17 +510,44 @@ jobs:
           retention-days: 14
 
   # Preserve the branch-protection context while requiring every selected row.
+  # It is also this workflow's gate (D-906): branch protection requires only
+  # this check from it, so it fails unless every other job in the workflow
+  # passed or was not needed, and the jobs behind it can change freely. The
+  # GPU jobs run only on push and on `full-ci` PRs; elsewhere they are skipped.
+  # The D-403 control (dispatch only) and release-evidence (which needs this
+  # job) stay out.
   faithful-installed-exapp-talk-cpu:
     name: Faithful installed ExApp Talk artifact (CPU)
     runs-on: ubuntu-latest
-    needs: [classify-changes, build-image, compatibility]
+    needs:
+      - prepare
+      - build-image-amd64
+      - build-image-arm64
+      - build-image
+      - compatibility
+      - container-checks
+      - build-cuda-base
+      - build-image-cuda
+      - transcribe-smoke-cuda
+      - e2e-talk-record-cuda
+    # Not e2e-summary-template-cuda: it was never required, and requiring it
+    # would hold every release on that GPU scenario (release-evidence needs
+    # this gate). Nor the D-403 control, which runs only on dispatch, or
+    # release-evidence, which needs this gate. test-ci-require-jobs.sh checks
+    # that every other job is listed.
     if: always()
     steps:
+      - uses: actions/checkout@v4
+      - name: Every job in the workflow passed or was not needed
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: ./scripts/ci-require-jobs.sh <<<"$NEEDS"
       - name: Require classified, built and executed product coverage
         env:
-          CLASSIFIED: ${{ needs.classify-changes.result }}
-          RELEVANT: ${{ needs.classify-changes.outputs.relevant }}
-          BUILT: ${{ needs.build-image.result }}
+          CLASSIFIED: ${{ needs.prepare.result }}
+          RELEVANT: ${{ needs.prepare.outputs.relevant }}
+          # build-image only joins the platforms on push; a PR's image is amd64's.
+          BUILT: ${{ github.event_name == 'pull_request' && needs.build-image-amd64.result || needs.build-image.result }}
           COMPATIBILITY: ${{ needs.compatibility.result }}
         run: |
           set -euo pipefail
@@ -519,24 +560,22 @@ jobs:
             echo 'Invalid applicability result' >&2
             exit 1
           fi
-      - uses: actions/checkout@v4
-        if: needs.classify-changes.outputs.relevant == 'true'
       - uses: actions/download-artifact@v4
-        if: needs.classify-changes.outputs.relevant == 'true'
+        if: needs.prepare.outputs.relevant == 'true'
         with:
           pattern: compatibility-*-${{ github.run_attempt }}
           path: evidence
       - name: Verify complete matching evidence
-        if: needs.classify-changes.outputs.relevant == 'true'
+        if: needs.prepare.outputs.relevant == 'true'
         env:
-          MATRIX: ${{ needs.classify-changes.outputs.compatibility-matrix }}
+          MATRIX: ${{ needs.prepare.outputs.compatibility-matrix }}
         run: python3 scripts/compatibility_evidence.py aggregate --records evidence --matrix "$MATRIX"
 
   release-evidence:
     name: Qualify release artifacts
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: [validate-manifest, build-image, build-image-arm64, build-image-cuda, faithful-installed-exapp-talk-cpu, smoke, e2e-container, e2e-entrypoint, e2e-talk-record-cuda, transcribe-smoke-cuda]
+    needs: [prepare, build-image, build-image-arm64, build-image-cuda, faithful-installed-exapp-talk-cpu, container-checks, e2e-talk-record-cuda, transcribe-smoke-cuda]
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -571,12 +610,12 @@ jobs:
     # DISTINCT job id and check name from "Faithful installed ExApp Talk artifact
     # (CPU)" so it can never be mistaken for that required context. Trigger it by
     # hand from the Actions tab ("Run workflow"). The cheap, always-on tiers that
-    # ride under it are the required-fields marker lint in validate-manifest above
+    # ride under it are the required-fields marker lint in prepare above
     # and harness/bin/test-negative-manifest.sh in ci.yml's contracts job.
     name: D-403 manifest allow-list sensitivity control (CPU)
     runs-on: ubuntu-latest
-    needs: [classify-changes, build-image]
-    if: github.event_name == 'workflow_dispatch'
+    needs: [prepare, build-image-amd64, build-image]
+    if: ${{ github.event_name == 'workflow_dispatch' && !cancelled() && needs.build-image-amd64.result == 'success' && needs.build-image.result == 'success' }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -616,7 +655,7 @@ jobs:
         id: load
         uses: ./.github/actions/load-exapp-image
         with:
-          image-ref-list: ${{ github.event_name == 'pull_request' && needs.build-image.outputs.image_ref || format('ghcr.io/{0}@{1}', github.repository, needs.build-image.outputs.digest) }}
+          image-ref-list: ${{ github.event_name == 'pull_request' && needs.build-image-amd64.outputs.tags || format('ghcr.io/{0}@{1}', github.repository, needs.build-image.outputs.digest) }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Pre-pull stack images
@@ -665,10 +704,18 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-  smoke:
-    name: Smoke test image (HTTP plane, dev-mode)
+  # The image's container-level checks in one job (D-906): each took under a
+  # minute, so as three jobs they mostly waited for runners, and each loaded
+  # the image tarball again. Every check runs even if an earlier one fails,
+  # and each has its own timeout, so a hang in one can't use up the job's
+  # time; the scripts name their containers per process and remove them on
+  # exit.
+  container-checks:
+    name: Container checks (smoke, HTTP plane, real entrypoint)
     runs-on: ubuntu-latest
-    needs: build-image
+    needs: [build-image-amd64, build-image]
+    if: ${{ !cancelled() && needs.build-image-amd64.result == 'success' && (needs.build-image.result == 'success' || github.event_name == 'pull_request') }}
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
 
@@ -676,28 +723,50 @@ jobs:
         id: load
         uses: ./.github/actions/load-exapp-image
         with:
-          image-ref-list: ${{ github.event_name == 'pull_request' && needs.build-image.outputs.image_ref || format('ghcr.io/{0}@{1}', github.repository, needs.build-image.outputs.digest) }}
+          image-ref-list: ${{ github.event_name == 'pull_request' && needs.build-image-amd64.outputs.tags || format('ghcr.io/{0}@{1}', github.repository, needs.build-image.outputs.digest) }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run smoke test
+        if: ${{ !cancelled() && steps.load.outcome == 'success' }}
+        timeout-minutes: 10
         env:
           IMAGE_REF: ${{ steps.load.outputs.ref }}
         run: ./harness/bin/ci-smoke-exapp.sh
 
       # Every image starts with an empty model store and an offline catalogue.
       - name: Assert model-free image and optional transcription
+        if: ${{ !cancelled() && steps.load.outcome == 'success' }}
+        timeout-minutes: 10
         env:
           IMAGE_REF: ${{ steps.load.outputs.ref }}
           CASSINI_SMOKE_MODELS_ONLY: '1'
         run: ./harness/bin/ci-transcribe-smoke-exapp.sh
+
+      - name: Run container-level e2e
+        if: ${{ !cancelled() && steps.load.outcome == 'success' }}
+        timeout-minutes: 15
+        env:
+          IMAGE_REF: ${{ steps.load.outputs.ref }}
+        run: ./harness/bin/ci-e2e-exapp.sh
+
+      # Unlike the checks above, this boots the image via its real ENTRYPOINT
+      # with only AppAPI-shaped env (no --entrypoint override, no CASSINI_*
+      # injection, no HP_*) and waits for the image HEALTHCHECK to report
+      # healthy — the production boot contract a real install hits.
+      - name: Run real-entrypoint e2e
+        if: ${{ !cancelled() && steps.load.outcome == 'success' }}
+        timeout-minutes: 10
+        env:
+          IMAGE_REF: ${{ steps.load.outputs.ref }}
+        run: ./harness/bin/ci-e2e-entrypoint-exapp.sh
 
   # Native arm64 runner (free for public repos). Builds and smoke-tests the
   # arm64 image, then on non-PR events pushes it by digest for build-image.
   build-image-arm64:
     name: Build + smoke test ARM64 image (runtime + transcription)
     runs-on: ubuntu-24.04-arm
-    needs: [classify-changes, validate-manifest, resolve-ffmpeg]
-    if: needs.classify-changes.outputs.relevant == 'true'
+    needs: prepare
+    if: needs.prepare.outputs.relevant == 'true'
     timeout-minutes: 45
     outputs:
       digest: ${{ steps.push.outputs.digest }}
@@ -726,7 +795,7 @@ jobs:
           load: true
           tags: gocassini:arm64-smoke
           build-args: |
-            FFMPEG_VERSION=${{ needs.resolve-ffmpeg.outputs.version }}
+            FFMPEG_VERSION=${{ needs.prepare.outputs.ffmpeg_version }}
             FFMPEG_BUILD_JOBS=4
           cache-from: type=gha,scope=build-image-arm64
           cache-to: type=gha,mode=max,scope=build-image-arm64
@@ -761,7 +830,7 @@ jobs:
           platforms: linux/arm64
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
           build-args: |
-            FFMPEG_VERSION=${{ needs.resolve-ffmpeg.outputs.version }}
+            FFMPEG_VERSION=${{ needs.prepare.outputs.ffmpeg_version }}
             FFMPEG_BUILD_JOBS=4
           cache-from: type=gha,scope=build-image-arm64
 
@@ -774,14 +843,15 @@ jobs:
     # per-commit CUDA app build reuses it via FROM (D-375). Stays on
     # ubuntu-latest — no GPU needed, keeps george free.
     runs-on: ubuntu-latest
-    needs: validate-manifest
+    needs: prepare
     # Heavy tier: builds on push/dispatch, or on a PR explicitly labeled
     # `full-ci`. The same-repo clause keeps the CUDA chain (which feeds the
     # self-hosted GPU jobs) off fork PRs; pushing the base also needs ghcr creds.
     if: >-
-      github.event_name != 'pull_request' ||
-      (github.event.pull_request.head.repo.full_name == github.repository &&
-       contains(github.event.pull_request.labels.*.name, 'full-ci'))
+      needs.prepare.outputs.relevant == 'true' &&
+      (github.event_name != 'pull_request' ||
+       (github.event.pull_request.head.repo.full_name == github.repository &&
+        contains(github.event.pull_request.labels.*.name, 'full-ci')))
     outputs:
       base_ref: ${{ steps.base.outputs.base_ref }}
     steps:
@@ -858,14 +928,15 @@ jobs:
     # deploy-preview's deploy-gpu). Only the thin per-commit layers build here;
     # the fat base comes prebuilt from build-cuda-base via FROM (D-375).
     runs-on: ubuntu-latest
-    needs: [validate-manifest, build-cuda-base, resolve-ffmpeg]
+    needs: [prepare, build-cuda-base]
     # Heavy tier: builds on push/dispatch, or on a PR explicitly labeled
     # `full-ci`. Fork PRs cannot push to ghcr and must never run downstream CUDA
     # jobs on the self-hosted GPU runner, so the same-repo clause stays.
     if: >-
-      github.event_name != 'pull_request' ||
-      (github.event.pull_request.head.repo.full_name == github.repository &&
-       contains(github.event.pull_request.labels.*.name, 'full-ci'))
+      needs.prepare.outputs.relevant == 'true' &&
+      (github.event_name != 'pull_request' ||
+       (github.event.pull_request.head.repo.full_name == github.repository &&
+        contains(github.event.pull_request.labels.*.name, 'full-ci')))
     outputs:
       image_ref: ${{ steps.meta.outputs.tags }}
       primary:   ${{ steps.meta.outputs.primary }}
@@ -902,7 +973,7 @@ jobs:
                 # Same source of truth as the CPU build: appinfo/info.xml
                 # <version>, validated against the git tag upstream. Like
                 # :latest, :latest-cuda and :cuda track main only.
-                VERSION="${{ needs.validate-manifest.outputs.app_version }}"
+                VERSION="${{ needs.prepare.outputs.app_version }}"
                 TAGS+=("${REF}:${VERSION}-cuda")
               else
                 BRANCH="${GITHUB_REF##refs/heads/}"
@@ -953,7 +1024,7 @@ jobs:
           sbom: false
           build-args: |
             BASE_IMAGE=${{ needs.build-cuda-base.outputs.base_ref }}
-            FFMPEG_VERSION=${{ needs.resolve-ffmpeg.outputs.version }}
+            FFMPEG_VERSION=${{ needs.prepare.outputs.ffmpeg_version }}
           tags: ${{ steps.meta.outputs.tags }}
           cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE }}-buildcache:cuda
           cache-to: ${{ github.event_name != 'pull_request' && format('type=registry,ref={0}/{1}-buildcache:cuda,mode=max', env.REGISTRY, env.IMAGE) || '' }}
@@ -1045,50 +1116,6 @@ jobs:
             docker builder prune -af || true
           fi
           df -h / | tail -1
-
-  e2e-container:
-    name: E2E container HTTP plane + middleware + lifecycle (no Nextcloud)
-    runs-on: ubuntu-latest
-    needs: build-image
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Load ExApp image
-        id: load
-        uses: ./.github/actions/load-exapp-image
-        with:
-          image-ref-list: ${{ github.event_name == 'pull_request' && needs.build-image.outputs.image_ref || format('ghcr.io/{0}@{1}', github.repository, needs.build-image.outputs.digest) }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Run container-level e2e
-        env:
-          IMAGE_REF: ${{ steps.load.outputs.ref }}
-        run: ./harness/bin/ci-e2e-exapp.sh
-
-  e2e-entrypoint:
-    name: E2E container real entrypoint + HEALTHCHECK (AppAPI env, no overrides)
-    runs-on: ubuntu-latest
-    needs: build-image
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Load ExApp image
-        id: load
-        uses: ./.github/actions/load-exapp-image
-        with:
-          image-ref-list: ${{ github.event_name == 'pull_request' && needs.build-image.outputs.image_ref || format('ghcr.io/{0}@{1}', github.repository, needs.build-image.outputs.digest) }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-
-      # Unlike the smoke/e2e jobs above, this boots the image via its real
-      # ENTRYPOINT with only AppAPI-shaped env (no --entrypoint override, no
-      # CASSINI_* injection, no HP_*) and waits for the image HEALTHCHECK to
-      # report healthy — the production boot contract a real install hits.
-      - name: Run real-entrypoint e2e
-        env:
-          IMAGE_REF: ${{ steps.load.outputs.ref }}
-        run: ./harness/bin/ci-e2e-entrypoint-exapp.sh
 
   # D-684 removed the hosted-CPU Talk/ASR roundtrip. This CUDA job owns the
   # positive transcript assertion; the faithful CPU-host gate above owns Talk

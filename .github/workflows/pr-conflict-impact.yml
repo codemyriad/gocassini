@@ -3,8 +3,12 @@ name: PR conflict impact
 on:
   pull_request_target:
     types: [opened, synchronize, reopened, edited, closed]
+  # Base branches only (D-906): a push to a PR's branch already arrives as
+  # that PR's `synchronize` event, so `'**'` ran this twice per push. A push
+  # to main or a release branch can change every PR that targets it. Merges
+  # arrive as `closed`; the hourly run covers anything else.
   push:
-    branches: ['**']
+    branches: [main, 'release/**']
   workflow_dispatch:
   schedule:
     - cron: '23 * * * *'

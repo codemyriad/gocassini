@@ -13,12 +13,11 @@ seen=false
 while IFS= read -r path || [[ -n "$path" ]]; do
   [[ -n "$path" ]] || continue
   seen=true
-  if classify_path_is_docs "$path"; then
+  if classify_path_is_docs "$path" || classify_path_matches "$path" "${OTHER_WORKFLOWS[@]}"; then
     continue
   fi
   case "$path" in
     cassini-app/*|cassini-viewer/*|cassini-operator/*|cassini-microsite/*) ;;
-    .github/workflows/pr-conflict-impact.yml|.github/workflows/microsite.yml) ;;
     *) relevant=true ;;
   esac
 done

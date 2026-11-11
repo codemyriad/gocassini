@@ -110,9 +110,12 @@ jobs:
       - name: shellcheck (every tracked shell script)
         run: |
           set -euo pipefail
-          mapfile -t scripts < <(git ls-files '*.sh' | sort)
-          printf 'checking %d shell scripts\n' "${#scripts[@]}"
-          shellcheck -x --source-path=SCRIPTDIR --severity=style "${scripts[@]}"
+          printf 'checking %d shell scripts\n' "$(git ls-files '*.sh' | wc -l)"
+          # Batches across every CPU (D-906): one call checked the scripts one
+          # after another, about half of this job's time. xargs exits 123 when
+          # any batch has a finding, which fails the step.
+          git ls-files -z '*.sh' | sort -z \
+            | xargs -0 -n 4 -P "$(nproc)" shellcheck -x --source-path=SCRIPTDIR --severity=style
 
       # Formatting, alongside the other lint gates rather than bolted onto the
       # unit-test job. It sat in ci.yml while this workflow was advisory: a

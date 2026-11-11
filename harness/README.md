@@ -920,7 +920,7 @@ In CI this control is a `workflow_dispatch`-only job in
 (CPU)"** — distinct from the required per-PR "Faithful installed ExApp Talk
 artifact (CPU)" gate. Trigger it from the Actions tab ("Run workflow"). The
 cheap always-on tiers are `test-negative-manifest.sh` (ci.yml contracts) and the
-required-fields marker lint in `validate-manifest` that fails per-PR if either
+required-fields marker lint in the image workflow's `prepare` job that fails per-PR if either
 Talk secret `<variable>` disappears from `appinfo/info.xml`.
 
 ---

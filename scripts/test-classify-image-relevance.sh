@@ -61,6 +61,20 @@ expect true  $'spec/x.schema.json\nREADME.md'
 expect true  "spec/cassini-portable-meeting-manifest-v1.schema.json"
 expect true  "scripts/process-recordings.sh"
 
+# Not docs, but never in the image or its tests (D-906): #457 changed only
+# lint.yml and pr-conflict-impact.yml and still built and tested the image.
+expect false $'.github/workflows/lint.yml\n.github/workflows/pr-conflict-impact.yml'
+expect false $'.github/workflows/ci.yml\nREADME.md'
+expect false $'cassini-microsite/src/pages/index.astro\n.github/workflows/microsite.yml'
+expect false $'.claude/skills/x/SKILL.md\n.claude/settings.json'
+expect false $'.github/workflows/release.yml\nchangelog.d/x.md'
+# ...but the image's own workflow, its actions and new workflows still build it.
+expect true  ".github/workflows/publish-exapp-image.yml"
+expect true  ".github/actions/load-exapp-image/action.yml"
+expect true  ".github/workflows/new-workflow.yml"
+expect true  $'.github/workflows/lint.yml\ncassini-operator/main.go'
+expect true  $'cassini-microsite/x.astro\nscripts/lib-release-version.sh'
+
 echo "PASS: classifier behavioral fixtures"
 
 # ---- (2) drift assertion vs ci.yml paths-ignore ------------------------------
@@ -68,6 +82,11 @@ echo "PASS: classifier behavioral fixtures"
 # shellcheck source=scripts/classify-image-relevance.sh
 source "$CLASSIFIER"
 (( ${#DENY_GLOBS[@]} > 0 )) || fail "classifier exposes no DENY_GLOBS array"
+
+# Every listed workflow exists, so a rename can't leave a stale entry behind.
+for wf in "${OTHER_WORKFLOWS[@]}"; do
+  [[ -f "$ROOT/$wf" ]] || fail "OTHER_WORKFLOWS lists a missing file: $wf"
+done
 
 # Translate one GitHub filter glob to its bash-glob equivalent -- the same rule
 # ci.yml's own comment documents (`*` spans `/` in bash, so `**/` and `/**`
