@@ -23,8 +23,13 @@ const (
 	// every CUDA tier and the CPU "best" tier. fp32 is the only precision the
 	// onnxruntime CUDA EP runs without fragmenting back to CPU.
 	modelParakeetUltraFp32 = "parakeet-ultra-0.6b"
-	// modelParakeetUltraInt8 is its int8 quantization, the balanced CPU tier.
-	modelParakeetUltraInt8 = "parakeet-ultra-0.6b-int8"
+	// modelParakeetUltraInt8 is its conv-fp32 int8 quantization (v2, D-924;
+	// codemyriad/systems cassini-dist D86), the balanced CPU tier.
+	modelParakeetUltraInt8 = "parakeet-ultra-0.6b-int8-v2"
+	// modelParakeetUltraInt8V1 is the initial int8 quantization of Parakeet
+	// Ultra, which v2 replaced (D-924). Retired: an install that still has its
+	// files transcribes with it while v2 is not ready.
+	modelParakeetUltraInt8V1 = "parakeet-ultra-0.6b-int8"
 	// modelParakeet110M is the small CTC model: fastest on CPU, least accurate.
 	modelParakeet110M = "parakeet-tdt-ctc-110m-en-int8"
 	// modelParakeetV3Int8 and modelParakeetV3Fp32 are NVIDIA's Parakeet v3,
@@ -83,11 +88,13 @@ var speechModelSpecs = map[string]speechModelSpec{
 	// Both Ultra precisions load only where the joiner-size TDT detection is.
 	modelParakeetUltraInt8: {runtimeMarkers: []string{parakeetTDTJoinerMarker}, buildPeakMB: 2048, downloadMB: 465},
 	modelParakeetUltraFp32: {cuda: true, runtimeMarkers: []string{parakeetTDTJoinerMarker}, buildPeakMB: 3584, downloadMB: 1485},
-	// The retired v3 models are never selected or downloaded; a build runs one
-	// only as a stand-in for the Ultra model replacing it (admitStandIn). Their
-	// tdt url loads on any 2.0.1 runtime, so they need no marker.
-	modelParakeetV3Int8: {buildPeakMB: 2048},
-	modelParakeetV3Fp32: {cuda: true, buildPeakMB: 3584},
+	// Retired Ultra int8 v1 and v3 models are never selected or downloaded; a
+	// build runs one only as a stand-in for the Ultra model replacing it
+	// (admitStandIn). Ultra int8 v1 keeps the plain Moondream url so it still
+	// needs the joiner marker; v3's tdt url loads on any 2.0.1 runtime.
+	modelParakeetUltraInt8V1: {runtimeMarkers: []string{parakeetTDTJoinerMarker}, buildPeakMB: 2048},
+	modelParakeetV3Int8:      {buildPeakMB: 2048},
+	modelParakeetV3Fp32:      {cuda: true, buildPeakMB: 3584},
 }
 
 // modelSupportsCUDA reports whether the CUDA path installs and runs a model.
@@ -200,15 +207,20 @@ func modelForQuality(quality, device string) string {
 //	parakeet-tdt-0.6b-v3 (fp32)    3446 MiB   1.41x realtime
 //
 // Parakeet Ultra replaced v3 in 2026-10. Over 19 real `cassini build` runs
-// (6 threads) Ultra int8 peaked at 1,893 MiB decoding greedily (1,933 in an
-// earlier batch), against v3 int8's 1,807; it is charged 2048. Ultra fp32's
-// host RSS in CUDA builds was within 2% of v3 fp32's (2,105 vs 2,146 MiB); its
-// CPU build was not measured, so it is charged v3 fp32's CPU figure above,
-// rounded up to 3584. v3 is still charged for the builds it stands in for
-// while Ultra is not ready: int8 2048 (its 1,807 rounded up like the rest;
-// before Ultra it was charged 1792 from the D-702 figure), fp32 3584. A
-// stand-in thus never needs less than the model it stands in for, which
-// admission relies on when that model's check waits for memory.
+// (6 threads) `parakeet-ultra-0.6b-int8` (v1) peaked at 1,893 MiB decoding
+// greedily (1,933 in an earlier batch), against v3 int8's 1,807; it was
+// charged 2048. `parakeet-ultra-0.6b-int8-v2` (2026-11-10, D-924) keeps its 24
+// depthwise and 5 `/pre_encode/` subsampling convolutions in fp32 (+1.0 MiB
+// unpacked, 640.5 vs 639.5 MiB, with unchanged RAM and ~10% faster CPU time on
+// the 28-minute FLEURS `en_us` check under Cassini GNOME's runtime) and keeps
+// the same 2048 charge. Ultra fp32's host RSS in CUDA builds was within 2% of
+// v3 fp32's (2,105 vs 2,146 MiB); its CPU build was not measured, so it is
+// charged v3 fp32's CPU figure above, rounded up to 3584. Retired v1 and v3
+// are still charged for the builds they stand in for while their replacement
+// is not ready: int8 2048 (v1's 1,893 and v3's 1,807 rounded up; before Ultra,
+// v3 int8 was charged 1792 from the D-702 figure), fp32 3584. A stand-in thus
+// never needs less than the model it stands in for, which admission relies on
+// when that model's check waits for memory.
 //
 // The fp32 figure is why "best" is not the CPU default: it is the only tier
 // that transcribes slower than the meeting it is transcribing.

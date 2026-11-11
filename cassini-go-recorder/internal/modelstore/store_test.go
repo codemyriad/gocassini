@@ -81,7 +81,7 @@ func TestShippedCatalogue(t *testing.T) {
 	}
 	want := map[string]string{
 		"parakeet-tdt-ctc-110m-en-int8": KindSpeech,
-		"parakeet-ultra-0.6b-int8":      KindSpeech,
+		"parakeet-ultra-0.6b-int8-v2":   KindSpeech,
 		"parakeet-ultra-0.6b":           KindSpeech,
 		"silero-vad":                    KindVAD,
 		"nemotron-3-diarization-int8":   KindDiarization,
@@ -697,13 +697,15 @@ func TestPinnedDependencySurvivesNewCatalogueDefault(t *testing.T) {
 	}
 }
 
-// Parakeet Ultra replaces v3 at the same precision, and the int8 build ships
-// without bpe.vocab so it decodes greedily, as v3 int8 did.
-func TestShippedUltraReplacesV3(t *testing.T) {
+// Parakeet Ultra replaces v3 at the same precision (and Ultra int8 v2 replaces
+// both Ultra int8 v1 and v3 int8), and the int8 build ships without bpe.vocab
+// so it decodes greedily, as v3 int8 did.
+func TestShippedUltraReplacements(t *testing.T) {
 	c := Shipped()
 	for retired, want := range map[string]string{
 		"parakeet-tdt-0.6b-v3":      "parakeet-ultra-0.6b",
-		"parakeet-tdt-0.6b-v3-int8": "parakeet-ultra-0.6b-int8",
+		"parakeet-tdt-0.6b-v3-int8": "parakeet-ultra-0.6b-int8-v2",
+		"parakeet-ultra-0.6b-int8":  "parakeet-ultra-0.6b-int8-v2",
 	} {
 		if _, err := c.Model(retired, ""); err == nil {
 			t.Errorf("catalogue still ships %s", retired)
@@ -715,7 +717,7 @@ func TestShippedUltraReplacesV3(t *testing.T) {
 	if _, ok := c.Replacement("parakeet-tdt-ctc-110m-en-int8"); ok {
 		t.Error("a shipped model is reported as replaced")
 	}
-	m, err := c.Model("parakeet-ultra-0.6b-int8", "")
+	m, err := c.Model("parakeet-ultra-0.6b-int8-v2", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -739,7 +741,7 @@ func TestShippedUltraReplacesV3(t *testing.T) {
 	for _, p := range paths {
 		fmt.Fprintf(&listing, "%s  %s\n", byPath[p], p)
 	}
-	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(listing.String()))); got != m.Revision || m.Revision != "18cb623004dd6c15999b93cb70b14d8a1f6e8f3a2a97ff733f104bfc3494f6a9" {
+	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(listing.String()))); got != m.Revision || m.Revision != "50c15b94ea9cb1c2f8dbcdcbc0f15b450169154deeb206923cb5388f60892366" {
 		t.Fatalf("revision %s, listing hash %s", m.Revision, got)
 	}
 }
@@ -769,11 +771,12 @@ func TestValidateRejectsAmbiguousReplacement(t *testing.T) {
 	}
 }
 
-// Parakeet v3 is gone from what can be installed or selected, but the
-// catalogue still describes the files an upgraded install has, exactly as the
-// last catalogue that shipped them did, so a build can stand in with them
-// until Ultra is ready. Their bytes are checked against these artifacts.
-func TestShippedCatalogueRetiresV3(t *testing.T) {
+// Parakeet Ultra int8 v1 and Parakeet v3 are gone from what can be installed
+// or selected, but the catalogue still describes the files an upgraded install
+// has, exactly as the last catalogue that shipped them did, so a build can
+// stand in with them until the replacement Ultra model is ready. Their bytes
+// are checked against these artifacts.
+func TestShippedCatalogueRetiredModels(t *testing.T) {
 	c := Shipped()
 	const tokens = "models/files/5b3811f0c23fefc86835981f0a23ecfb817999df272ad744c597e5b669ea1b4a/tokens.txt.zst"
 	want := map[string]struct {
@@ -781,7 +784,13 @@ func TestShippedCatalogueRetiresV3(t *testing.T) {
 		files                 map[string]string
 		optional              string
 	}{
-		"parakeet-tdt-0.6b-v3-int8": {"5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf", "parakeet-ultra-0.6b-int8", map[string]string{
+		"parakeet-ultra-0.6b-int8": {"18cb623004dd6c15999b93cb70b14d8a1f6e8f3a2a97ff733f104bfc3494f6a9", "parakeet-ultra-0.6b-int8-v2", map[string]string{
+			"encoder.int8.onnx": "models/files/caf7a38f2ad3224c1863564fb6e975a11aa3ae6ad1e7ad0bee5c4f5e018babb4/encoder.int8.onnx.zst",
+			"decoder.int8.onnx": "models/files/69e2e91d01225bc552f8b0113630562fc52622cb2a3c61ef4445ee779f06b295/decoder.int8.onnx.zst",
+			"joiner.int8.onnx":  "models/files/639fda62a71242a8d7cefb6647f2094eb8ac783925ce91cbd047a0de6988f396/joiner.int8.onnx.zst",
+			"tokens.txt":        tokens,
+		}, ""},
+		"parakeet-tdt-0.6b-v3-int8": {"5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf", "parakeet-ultra-0.6b-int8-v2", map[string]string{
 			"encoder.int8.onnx": "models/files/cb9e98257d3bc2611b43d9897e67454e5893aff1ffc90229ca3fa7f9ed5bb22e/encoder.int8.onnx.zst",
 			"decoder.int8.onnx": "models/files/b14c3967107f0a5e4e9c0bde770c204202bde8d1a6255c27a863930e8c887c3d/decoder.int8.onnx.zst",
 			"joiner.int8.onnx":  "models/files/1ef3c78137d39d45cfad961be5a45bf7abd3c13fa721c7da2327b0eb3d0e8ce6/joiner.int8.onnx.zst",
@@ -825,11 +834,12 @@ func TestShippedCatalogueRetiresV3(t *testing.T) {
 			t.Fatalf("Lookup(%s) = %s %v %v", id, got.Revision, retired, err)
 		}
 	}
-	if _, retired, err := c.Lookup("parakeet-ultra-0.6b-int8", ""); err != nil || retired {
+	if _, retired, err := c.Lookup("parakeet-ultra-0.6b-int8-v2", ""); err != nil || retired {
 		t.Fatalf("Lookup of a shipped model: retired=%v %v", retired, err)
 	}
 	// The weights are main's, byte for byte.
 	for key, digest := range map[string]string{
+		"models/files/caf7a38f2ad3224c1863564fb6e975a11aa3ae6ad1e7ad0bee5c4f5e018babb4/encoder.int8.onnx.zst": "299617fefd4664d1c115b691dcb6413cabcdbcc694cdf3cb4464b72c5fc3ae69",
 		"models/files/cb9e98257d3bc2611b43d9897e67454e5893aff1ffc90229ca3fa7f9ed5bb22e/encoder.int8.onnx.zst": "acfc2b4456377e15d04f0243af540b7fe7c992f8d898d751cf134c3a55fd2247",
 		"models/files/23a61cdbca1f606128fa9c2c05aa81457d3d0cce1aa7414a29f53ed5c626244d/encoder.weights.zst":   "3af3f51af5f2d01dbbf5af47d42c7962a2c205f11004254bb4f2b979862f39a8",
 	} {

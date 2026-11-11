@@ -1,6 +1,7 @@
 package operator
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -369,7 +370,7 @@ func (rt *Runtime) admitTranscription(ctx context.Context, settings STTSettings,
 	// detail are what the transcript records; detail is a fixed sentence,
 	// never cause's text, which can carry a command's output.
 	standIn := func(cause error, reason, detail string) (string, STTSettings, error) {
-		retired, ok, waitErr := rt.admitStandIn(ctx, inventory, selected, device, limits, retiredPin)
+		retired, ok, waitErr := rt.admitStandIn(ctx, inventory, selected, device, limits)
 		if !ok {
 			// The selected model may have become ready since the inventory was
 			// read: a `cassini models import` or `install` run outside the
@@ -479,15 +480,15 @@ func (rt *Runtime) notInstalledReason(ctx context.Context, m modelInfo, device s
 
 // admitStandIn returns the retired model that stands in for selected on
 // device while selected is not ready: one selected Replaces whose files are
-// still installed (`models list` marks it replaced_by selected), preferring
-// the job's own retired pin. The CUDA path runs only an fp32 one. A stand-in
+// still installed (`models list` marks it replaced_by selected), in
+// selected.Replaces order. The CUDA path runs only an fp32 one. A stand-in
 // that has not passed its runtime check on this runtime is checked here,
 // first, as the selected model would be; one that fails is not tried again
 // until a restart. A check that has to wait for memory returns that error, so
 // the build can wait for it too. Nothing here ever downloads a retired model:
 // there is only what an upgraded install still has.
-func (rt *Runtime) admitStandIn(ctx context.Context, inventory []modelInfo, selected modelInfo, device string, limits resourceLimits, retiredPin string) (standIn modelInfo, ok bool, waitErr error) {
-	for _, m := range rt.standInCandidates(inventory, selected, device, retiredPin) {
+func (rt *Runtime) admitStandIn(ctx context.Context, inventory []modelInfo, selected modelInfo, device string, limits resourceLimits) (standIn modelInfo, ok bool, waitErr error) {
+	for _, m := range rt.standInCandidates(inventory, selected, device) {
 		if m.Ready {
 			return m, true, nil
 		}
@@ -517,9 +518,9 @@ func (rt *Runtime) admitStandIn(ctx context.Context, inventory []modelInfo, sele
 }
 
 // standInCandidates lists the installed retired models that may stand in for
-// selected on device, retiredPin first, leaving out any whose runtime check
-// failed since the start.
-func (rt *Runtime) standInCandidates(inventory []modelInfo, selected modelInfo, device, retiredPin string) []modelInfo {
+// selected on device, in selected.Replaces order, leaving out any whose
+// runtime check failed since the start.
+func (rt *Runtime) standInCandidates(inventory []modelInfo, selected modelInfo, device string) []modelInfo {
 	rt.standInMu.Lock()
 	defer rt.standInMu.Unlock()
 	var candidates []modelInfo
@@ -528,12 +529,11 @@ func (rt *Runtime) standInCandidates(inventory []modelInfo, selected modelInfo, 
 			(isCUDA(device) && !modelSupportsCUDA(m.ID)) || rt.standInCheckFailed[standInKey(m, device)] {
 			continue
 		}
-		if m.ID == retiredPin {
-			candidates = append([]modelInfo{m}, candidates...)
-		} else {
-			candidates = append(candidates, m)
-		}
+		candidates = append(candidates, m)
 	}
+	slices.SortFunc(candidates, func(a, b modelInfo) int {
+		return cmp.Compare(slices.Index(selected.Replaces, a.ID), slices.Index(selected.Replaces, b.ID))
+	})
 	return candidates
 }
 
