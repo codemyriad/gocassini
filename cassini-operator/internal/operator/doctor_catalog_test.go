@@ -36,9 +36,10 @@ var doctorCatalogSources = map[string][]string{
 	".": {
 		"recording_readiness.go", "search_readiness.go", "nc_sharing_policy.go",
 		"talk_signaling_mode.go", "readiness_prerequisites.go", "recording_test_tool.go",
-		"recorded_at_files.go",
+		"recorded_at_files.go", "recorded_at_migration.go",
 	},
-	"../../../cassini-go-recorder/internal/talk": {"readiness.go", "unreachable.go"},
+	"../../../cassini-go-recorder/internal/talk":    {"readiness.go", "unreachable.go"},
+	"../../../cassini-go-recorder/internal/cassini": {"doctor.go"},
 }
 
 // Composite types whose Code (or code) is a check's message code.
@@ -50,14 +51,26 @@ var doctorCheckTypes = map[string]bool{
 // Composite types whose ID is a remedy step's id.
 var doctorStepTypes = map[string]bool{"readinessStep": true, "ConnectionStep": true}
 
+// Variants, sharing issues and re-index outcomes pick a sentence within a
+// code, so a new one is as much a new sentence as a new code is. Errors are
+// the codes of refusals the operator's routes word for a reader.
 type doctorCatalog struct {
 	Messages       []string `json:"messages"`
+	Variants       []string `json:"variants"`
+	SharingIssues  []string `json:"sharing_issues"`
+	Reindex        []string `json:"reindex"`
 	Steps          []string `json:"steps"`
 	BlockedReasons []string `json:"blocked_reasons"`
+	Errors         []string `json:"errors"`
+}
+
+// doctorSets is what the scan collects, one set per catalog list.
+type doctorSets struct {
+	messages, variants, issues, reindex, steps, reasons, errors map[string]bool
 }
 
 func TestDoctorCatalog(t *testing.T) {
-	messages, steps, reasons := map[string]bool{}, map[string]bool{}, map[string]bool{}
+	sets := doctorSets{map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}}
 	for dir, listed := range doctorCatalogSources {
 		files, err := filepath.Glob(filepath.Join(dir, "*.go"))
 		if err != nil {
@@ -77,10 +90,14 @@ func TestDoctorCatalog(t *testing.T) {
 				}
 				continue
 			}
-			scanDoctorSource(t, path, file, messages, steps, reasons)
+			scanDoctorSource(t, path, file, sets)
 		}
 	}
-	got := doctorCatalog{Messages: sortedKeys(messages), Steps: sortedKeys(steps), BlockedReasons: sortedKeys(reasons)}
+	got := doctorCatalog{
+		Messages: sortedKeys(sets.messages), Variants: sortedKeys(sets.variants), SharingIssues: sortedKeys(sets.issues),
+		Reindex: sortedKeys(sets.reindex), Steps: sortedKeys(sets.steps), BlockedReasons: sortedKeys(sets.reasons),
+		Errors: sortedKeys(sets.errors),
+	}
 
 	if os.Getenv("CASSINI_UPDATE_DOCTOR_CATALOG") != "" {
 		raw, err := json.MarshalIndent(got, "", "  ")
@@ -107,8 +124,11 @@ func TestDoctorCatalog(t *testing.T) {
 
 // scanDoctorSource collects every literal in a code position: a Code field of
 // a row type, an assignment to .Code or code, the code argument of the
-// readiness report's add helpers, a step's ID, and a blocked file's code.
-func scanDoctorSource(t *testing.T, path string, file *ast.File, messages, steps, reasons map[string]bool) {
+// readiness report's add helpers, a step's ID, a blocked file's code, a
+// sharing issue's id, the code of a coded error response, and the values of
+// "variant" and "reindex" in a params map.
+func scanDoctorSource(t *testing.T, path string, file *ast.File, sets doctorSets) {
+	messages, steps, reasons := sets.messages, sets.steps, sets.reasons
 	walkTypedLiterals(file, func(typ string, lit *ast.CompositeLit) {
 		fields := keyedFields(lit)
 		switch {
@@ -117,6 +137,9 @@ func scanDoctorSource(t *testing.T, path string, file *ast.File, messages, steps
 				if value, ok := stringLiteral(fields[key]); ok {
 					messages[value] = true
 				}
+			}
+			if value, ok := stringLiteral(fields["id"]); ok && typ == "sharingPolicyIssue" {
+				sets.issues[value] = true
 			}
 		case doctorStepTypes[typ]:
 			label, hasLabel := fields["Label"]
@@ -142,6 +165,18 @@ func scanDoctorSource(t *testing.T, path string, file *ast.File, messages, steps
 	})
 	ast.Inspect(file, func(n ast.Node) bool {
 		switch node := n.(type) {
+		case *ast.KeyValueExpr:
+			// A params map: {"variant": "…"}, {"reindex": "…"}.
+			if key, ok := stringLiteral(node.Key); ok {
+				if value, ok := stringLiteral(node.Value); ok {
+					switch key {
+					case "variant":
+						sets.variants[value] = true
+					case "reindex":
+						sets.reindex[value] = true
+					}
+				}
+			}
 		case *ast.AssignStmt:
 			if len(node.Lhs) != len(node.Rhs) {
 				return true
@@ -151,6 +186,9 @@ func scanDoctorSource(t *testing.T, path string, file *ast.File, messages, steps
 				switch target := lhs.(type) {
 				case *ast.SelectorExpr:
 					isCode = target.Sel.Name == "Code"
+					if value, ok := stringLiteral(node.Rhs[i]); ok && target.Sel.Name == "id" {
+						sets.issues[value] = true
+					}
 				case *ast.Ident:
 					isCode = target.Name == "code"
 				}
@@ -162,6 +200,13 @@ func scanDoctorSource(t *testing.T, path string, file *ast.File, messages, steps
 			if fn, ok := node.Fun.(*ast.Ident); ok && (fn.Name == "add" || fn.Name == "addWithSteps") && len(node.Args) >= 3 {
 				if value, ok := stringLiteral(node.Args[2]); ok {
 					messages[value] = true
+				}
+			}
+			if fn, ok := node.Fun.(*ast.Ident); ok && fn.Name == "writeCodedJSONError" && len(node.Args) >= 3 {
+				if value, ok := stringLiteral(node.Args[2]); ok {
+					sets.errors[value] = true
+				} else {
+					t.Errorf("%s: writeCodedJSONError with no literal code", path)
 				}
 			}
 		}

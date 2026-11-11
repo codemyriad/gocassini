@@ -11,7 +11,7 @@
   import { migrationActive, migrationButton, migrationCounting, migrationSummary, migrationVisible, notificationFacts, type RecordedAtMigration } from "./operator/recordedAtMigration";
   import { recordedAtNoticeLines } from "./operator/recordedAtNotices";
   import { toneClasses } from "./operator/readiness";
-  import { blockedReason } from "./operator/doctorText";
+  import { blockedReason, operatorErrorText } from "./operator/doctorText";
 
   export let operatorClient: Pick<OperatorClient, "getRecordedAtMigration" | "startRecordedAtMigration" | "pauseRecordedAtMigration">;
   // How often the section re-reads while files are being written, and while
@@ -47,7 +47,7 @@
       // Said only once something was shown: a section that never loaded has
       // nothing to correct, and the checks above already report an operator
       // that does not answer.
-      if (migration) error = $LL.app.operator.recorded_at_migration.refresh_failed({ message: cause instanceof Error ? cause.message : String(cause) });
+      if (migration) error = $LL.app.operator.recorded_at_migration.refresh_failed({ message: operatorErrorText(cause) });
     }
     schedule();
   }
@@ -67,7 +67,7 @@
     try {
       migration = action === "start" ? await operatorClient.startRecordedAtMigration() : await operatorClient.pauseRecordedAtMigration();
     } catch (cause) {
-      error = cause instanceof Error ? cause.message : String(cause);
+      error = operatorErrorText(cause);
     } finally {
       busy = false;
     }

@@ -5,7 +5,7 @@
   import type { OperatorClient } from "./operator/client";
   import CommandBlock from "cassini-viewer/ui/CommandBlock.svelte";
   import { checkLabels, checkStateLabel, checkTone, describeRefreshFailure, formatAge, labelParts, readinessTitle, testFollowUp, readinessHealthKey, readinessRows, repairLabels, repairLabel, reportTone, rowActions, rowGuide, sharedCheckTime, talkRoomURL, talkSettingsURL as buildTalkSettingsURL, testInFlight, toneClasses, unsharedSummary, shareLimitedSummary, shareLimitCommands, type CheckTone, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
-  import { checkMessage, stepLabel } from "./operator/doctorText";
+  import { checkMessage, operatorErrorText, stepLabel } from "./operator/doctorText";
   import { onSetupChanged, notifySetupChanged } from "./operator/setupSignal";
   export let operatorClient: Pick<OperatorClient, "getReadiness" | "checkReadiness" | "repairReadiness" | "updateRecordingSetup">;
   // Review fixtures use an inert origin for generated host instructions.
@@ -163,7 +163,7 @@
     try {
       const next = await operatorClient.updateRecordingSetup(payload);
       if (alive) { report = next; stale = false; error = ""; secret = ""; notifySetupChanged(); }
-    } catch (e) { if (alive) error = e instanceof Error ? e.message : String(e); }
+    } catch (e) { if (alive) error = operatorErrorText(e); }
     finally { busy = false; }
   }
   // The operator performs the repair; this asks it to start and takes the
@@ -174,7 +174,7 @@
     try {
       const next = await operatorClient.repairReadiness(action);
       if (alive) { report = next; stale = false; error = ""; }
-    } catch (e) { if (alive) error = e instanceof Error ? e.message : String(e); }
+    } catch (e) { if (alive) error = operatorErrorText(e); }
     finally { busy = false; }
   }
   async function action(name: string, owner: string, checkable = false) {

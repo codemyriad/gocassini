@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import catalog from "./doctorCatalog.json";
-import { blockedReason, blockedReasonWordings, checkMessage, messageWordings, readParams, stepLabel, stepWordings } from "./doctorText";
+import { blockedReason, blockedReasonWordings, checkMessage, errorWordings, messageWordings, operatorErrorText, readParams, reindexWordings, sharingIssueWordings, stepLabel, stepWordings, wordedVariants } from "./doctorText";
+import { OperatorHttpError } from "./client";
 import type { ReadinessCheck } from "./readiness";
 
 // doctorCatalog.json is generated from the operator's and the recorder's
@@ -15,6 +16,27 @@ describe("the catalog", () => {
   });
   it("words every reason a recording can be blocked", () => {
     expect(Object.keys(blockedReasonWordings).sort()).toEqual([...catalog.blocked_reasons].sort());
+  });
+  // A variant, a sharing issue or a re-index outcome is a sentence of its own.
+  it("words every variant, sharing issue and re-index outcome", () => {
+    expect(wordedVariants().sort()).toEqual([...catalog.variants].sort());
+    expect(Object.keys(sharingIssueWordings).sort()).toEqual([...catalog.sharing_issues].sort());
+    expect(Object.keys(reindexWordings).sort()).toEqual([...catalog.reindex].sort());
+  });
+  it("words every refusal the operator's routes send a code for", () => {
+    expect(Object.keys(errorWordings).sort()).toEqual([...catalog.errors].sort());
+  });
+});
+
+describe("operatorErrorText", () => {
+  it("words a coded refusal and keeps any other error's text", () => {
+    expect(operatorErrorText(new OperatorHttpError(409, "x", { error: "x", error_code: "secret_managed_by_deployment" })))
+      .toBe("The internal secret is managed by deployment configuration.");
+    expect(operatorErrorText(new OperatorHttpError(400, "Use a Talk room URL…", { error_code: "test_room_url_invalid" })))
+      .toBe("Use a Talk room URL without query parameters. Configure NEXTCLOUD_URL or the Talk backend URL on the server first.");
+    expect(operatorErrorText(new OperatorHttpError(409, "from a newer operator", { error_code: "brand_new" }))).toBe("from a newer operator");
+    expect(operatorErrorText(new OperatorHttpError(500, "could not start the migration: disk full"))).toBe("could not start the migration: disk full");
+    expect(operatorErrorText(new TypeError("Failed to fetch"))).toBe("Failed to fetch");
   });
 });
 

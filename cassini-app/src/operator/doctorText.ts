@@ -91,41 +91,47 @@ type Wording = (p: Params, check: ReadinessCheck) => string | undefined;
 const fixed = (key: keyof ReturnType<typeof copy>["message"]): Wording =>
   () => (copy().message[key] as () => string)();
 
-const searchMessage: Wording = (p) => {
-  const t = copy().search;
-  const first = searchSummary(p);
+// Every variant a wording below picks by, so doctorText.test.ts can hold them
+// to doctorCatalog.json `variants`.
+const variantKeys = new Set<string>();
+const variants = (byVariant: Record<string, Wording>): Wording => {
+  Object.keys(byVariant).forEach(key => variantKeys.add(key));
+  return (p, check) => (Object.hasOwn(byVariant, p.variant()) ? byVariant[p.variant()](p, check) : undefined);
+};
+
+// The sentence after the archive search summary, by `reindex`; every value in
+// doctorCatalog.json `reindex`.
+export const reindexWordings: Record<string, (p: Params) => string> = {
+  running: () => copy().search.reindex.running(),
+  finished: (p) => copy().search.reindex.finished({
+    added: p.num("reindex_added"), unchanged: p.num("reindex_unchanged"),
+    unsearchable: p.num("reindex_unsearchable"), failed: p.num("reindex_failed"),
+  }),
+  archive_unreadable: () => copy().search.reindex.archive_unreadable(),
+  index_unavailable: () => copy().search.reindex.index_unavailable(),
+  environment: () => copy().search.reindex.environment(),
+  failed: (p) => copy().search.reindex.failed({ error: p.str("error") }),
+};
+
+const searchSummary = variants({
+  index_unavailable: () => copy().search.index_unavailable(),
+  inventory_unreadable: () => copy().search.inventory_unreadable(),
+  index_unreadable: () => copy().search.index_unreadable(),
+  nothing_recorded: () => copy().search.nothing_recorded(),
+  archive_empty: () => copy().search.archive_empty(),
+  not_checked: () => copy().search.not_checked(),
+  coverage: (p) => searchCoverage(p),
+  coverage_unlisted: (p) => `${searchCoverage(p)} ${copy().search.not_listed()}`,
+  coverage_complete: (p) => `${searchCoverage(p)} ${copy().search.all_accounted()}`,
+});
+
+const searchMessage: Wording = (p, check) => {
+  const first = searchSummary(p, check);
   if (first === undefined) return undefined;
   if (!p.has("reindex")) return first;
   const reindex = p.str("reindex");
-  const r = t.reindex;
-  const second = reindex === "running" ? r.running()
-    : reindex === "finished" ? r.finished({
-      added: p.num("reindex_added"), unchanged: p.num("reindex_unchanged"),
-      unsearchable: p.num("reindex_unsearchable"), failed: p.num("reindex_failed"),
-    })
-      : reindex === "archive_unreadable" ? r.archive_unreadable()
-        : reindex === "index_unavailable" ? r.index_unavailable()
-          : reindex === "environment" ? r.environment()
-            : reindex === "failed" ? r.failed({ error: p.str("error") })
-              : undefined;
-  return second === undefined ? undefined : `${first} ${second}`;
+  return Object.hasOwn(reindexWordings, reindex) ? `${first} ${reindexWordings[reindex](p)}` : undefined;
 };
-
-function searchSummary(p: Params): string | undefined {
-  const t = copy().search;
-  switch (p.variant()) {
-    case "index_unavailable": return t.index_unavailable();
-    case "inventory_unreadable": return t.inventory_unreadable();
-    case "index_unreadable": return t.index_unreadable();
-    case "nothing_recorded": return t.nothing_recorded();
-    case "archive_empty": return t.archive_empty();
-    case "not_checked": return t.not_checked();
-    case "coverage": return searchCoverage(p);
-    case "coverage_unlisted": return `${searchCoverage(p)} ${t.not_listed()}`;
-    case "coverage_complete": return `${searchCoverage(p)} ${t.all_accounted()}`;
-    default: return undefined;
-  }
-}
 
 // describeSearchCoverage in the operator's search_readiness.go, in the same
 // order.
@@ -146,49 +152,44 @@ function searchCoverage(p: Params): string {
   return reasons.length === 0 ? searchable : `${searchable} ${t.others({ reasons: conjunction(reasons) })}`;
 }
 
+// One sharing sentence by issue; every id in doctorCatalog.json `sharing_issues`.
+export const sharingIssueWordings: Record<string, (p: Params) => string> = {
+  share_api_off: () => copy().sharing.share_api_off(),
+  excluded_groups: (p) => {
+    const groups = p.list("excluded_groups");
+    return copy().sharing.excluded_groups({ groups: namedGroups(groups), account: p.str("account"), count: groups.length });
+  },
+  no_allowed_group: () => copy().sharing.no_allowed_group(),
+  not_in_allowed_groups: (p) => copy().sharing.not_in_allowed_groups({ groups: namedGroups(p.list("allowed_groups")), account: p.str("account") }),
+  in_no_group: (p) => copy().sharing.in_no_group({ account: p.str("account") }),
+  groups_ignored: (p) => copy().sharing.groups_ignored({ groups: namedGroups(p.list("groups")), account: p.str("account") }),
+  only_groups: (p) => copy().sharing.only_groups({ groups: namedGroups(p.list("shareable_groups")), account: p.str("account") }),
+  only_admins: (p) => copy().sharing.only_admins({ groups: namedGroups(p.list("shareable_groups")), account: p.str("account") }),
+  group_sharing_off: () => copy().sharing.group_sharing_off(),
+};
+
 // The Recording sharing row (and the storage row when the Share API is off):
 // one sentence per issue, in the operator's order.
 const sharingMessage: Wording = (p) => {
-  const t = copy().sharing;
-  const sentences = p.list("issues").map(issue => {
-    switch (issue) {
-      case "share_api_off": return t.share_api_off();
-      case "excluded_groups": {
-        const groups = p.list("excluded_groups");
-        return t.excluded_groups({ groups: namedGroups(groups), account: p.str("account"), count: groups.length });
-      }
-      case "no_allowed_group": return t.no_allowed_group();
-      case "not_in_allowed_groups":
-        return t.not_in_allowed_groups({ groups: namedGroups(p.list("allowed_groups")), account: p.str("account") });
-      case "in_no_group": return t.in_no_group({ account: p.str("account") });
-      case "groups_ignored": return t.groups_ignored({ groups: namedGroups(p.list("groups")), account: p.str("account") });
-      case "only_groups": return t.only_groups({ groups: namedGroups(p.list("shareable_groups")), account: p.str("account") });
-      case "only_admins": return t.only_admins({ groups: namedGroups(p.list("shareable_groups")), account: p.str("account") });
-      case "group_sharing_off": return t.group_sharing_off();
-      default: return undefined;
-    }
-  });
-  return sentences.every(sentence => sentence !== undefined) ? sentences.join(" ") : undefined;
+  const issues = p.list("issues");
+  if (!issues.every(issue => Object.hasOwn(sharingIssueWordings, issue))) return undefined;
+  return issues.map(issue => sharingIssueWordings[issue](p)).join(" ");
 };
 
 // The host rows: what doctor found, by its variant.
-const hostMessage = (row: "workdir" | "tmpdir"): Wording => (p) => {
-  const t = copy().host;
-  const variant = p.variant();
-  if (row === "workdir") {
-    if (variant === "found") return t.workdir_found({ path: p.str("path") });
-    if (variant === "unavailable") return t.workdir_unavailable({ error: p.str("error") });
-  }
-  switch (variant) {
-    case "writable": return t[`${row}_writable`]({ path: p.str("path") });
-    case "not_accessible": return t[`${row}_not_accessible`]({ error: p.str("error") });
-    case "not_a_directory": return t[`${row}_not_a_directory`]({ path: p.str("path") });
-    case "not_writable": return t[`${row}_not_writable`]({ path: p.str("path"), error: p.str("error") });
-    default: return undefined;
-  }
+const hostMessage = (row: "workdir" | "tmpdir"): Wording => {
+  const t = () => copy().host;
+  return variants({
+    ...(row === "workdir" ? {
+      found: (p: Params) => t().workdir_found({ path: p.str("path") }),
+      unavailable: (p: Params) => t().workdir_unavailable({ error: p.str("error") }),
+    } : {}),
+    writable: (p) => t()[`${row}_writable`]({ path: p.str("path") }),
+    not_accessible: (p) => t()[`${row}_not_accessible`]({ error: p.str("error") }),
+    not_a_directory: (p) => t()[`${row}_not_a_directory`]({ path: p.str("path") }),
+    not_writable: (p) => t()[`${row}_not_writable`]({ path: p.str("path"), error: p.str("error") }),
+  });
 };
-
-const variants = (byVariant: Record<string, Wording>): Wording => (p, check) => byVariant[p.variant()]?.(p, check);
 
 // Every code in doctorCatalog.json `messages`, and nothing else.
 export const messageWordings: Record<string, Wording> = {
@@ -391,4 +392,31 @@ export function blockedReason(item: RecordedAtBlockedFile): string {
   const code = item.reason_code;
   const wording = code && Object.hasOwn(blockedReasonWordings, code) ? blockedReasonWordings[code] : undefined;
   return wording ? worded(() => wording(new Params(item.reason_params)), item.reason) : item.reason;
+}
+
+// Every variant some wording above picks by, for doctorText.test.ts.
+export const wordedVariants = (): string[] => [...variantKeys];
+
+// A refusal from the operator's routes, by its error_code; every code in
+// doctorCatalog.json `errors`.
+export const errorWordings: Record<string, () => string> = {
+  migration_not_applicable: () => copy().error.migration_not_applicable(),
+  migration_still_counting: () => copy().error.migration_still_counting(),
+  reindex_unavailable: () => copy().error.reindex_unavailable(),
+  secret_managed_by_deployment: () => copy().error.secret_managed_by_deployment(),
+  setup_save_failed: () => copy().error.setup_save_failed(),
+  setup_store_needs_restore: () => copy().error.setup_store_needs_restore(),
+  test_not_published: () => copy().error.test_not_published(),
+  test_room_create_failed: () => copy().error.test_room_create_failed(),
+  test_room_url_invalid: () => copy().error.test_room_url_invalid({ variable: "NEXTCLOUD_URL" }),
+};
+
+// operatorErrorText is what to show for a failed operator call: the refusal
+// worded in the reader's language when the operator sent an error_code this
+// build knows, otherwise the error's own text (raw errors stay English).
+export function operatorErrorText(error: unknown): string {
+  const details = (error as { details?: unknown } | null)?.details;
+  const code = details && typeof details === "object" ? (details as Record<string, unknown>).error_code : undefined;
+  if (typeof code === "string" && Object.hasOwn(errorWordings, code)) return errorWordings[code]();
+  return error instanceof Error ? error.message : String(error);
 }

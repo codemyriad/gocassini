@@ -973,6 +973,17 @@
       "file_instant_invalid": "the delivered file states an invalid {field}; repair it and retry",
       "recording_too_large": "recording exceeds the staging limit",
       "file_id_changed": "Nextcloud changed the file id from {from} to {to}; existing shares must be repaired"
+    },
+    "error": {
+      "migration_not_applicable": "this deployment has no delivered files Cassini can rewrite",
+      "migration_still_counting": "Cassini is still counting the past recordings that need this; try again once it has finished",
+      "reindex_unavailable": "Search re-indexing is available only for Nextcloud recording archives.",
+      "secret_managed_by_deployment": "The internal secret is managed by deployment configuration.",
+      "setup_save_failed": "Could not save recording setup on the persistent volume.",
+      "setup_store_needs_restore": "Restore the saved recording setup before making changes.",
+      "test_not_published": "The selected Talk test recording has not finished publishing.",
+      "test_room_create_failed": "Cassini could not create a test room in Talk. Check that Talk is installed and reachable, then try again.",
+      "test_room_url_invalid": "Use a Talk room URL without query parameters. Configure {variable} or the Talk backend URL on the server first."
     }
   },
   "settings": {

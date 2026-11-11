@@ -51,7 +51,7 @@ func (rt *Runtime) searchReadinessCheck(ctx context.Context) readinessCheck {
 	if !known {
 		check.State, check.Code = "not_verified", "search_coverage_scope_unknown"
 		check.Message = describeSearchCoverage(coverage) + " Cassini has not listed the archive yet, so older recordings may not be counted."
-		check.Params = searchCoverageParams("coverage_unlisted", coverage)
+		check.Params = withParams(readinessParams{"variant": "coverage_unlisted"}, searchCoverageParams(coverage))
 		if coverage.TotalKnown() == 0 {
 			check.Code = "search_coverage_empty"
 			check.Message = "No meetings have been recorded yet, so search has nothing to index."
@@ -67,7 +67,7 @@ func (rt *Runtime) searchReadinessCheck(ctx context.Context) readinessCheck {
 	}
 
 	check.Message = describeSearchCoverage(coverage)
-	check.Params = searchCoverageParams("coverage", coverage)
+	check.Params = withParams(readinessParams{"variant": "coverage"}, searchCoverageParams(coverage))
 	if len(inventory.OpusNames) == 0 && coverage.TotalKnown() == 0 && coverage.NeedsAttention() == 0 {
 		// An archive nobody has recorded into yet is healthy, not unresolved.
 		// The listing succeeded and found nothing, which is a finding.
@@ -85,7 +85,7 @@ func (rt *Runtime) searchReadinessCheck(ctx context.Context) readinessCheck {
 	} else {
 		check.State, check.Code = "passed", "search_archive_files_accounted_for"
 		check.Message += " Every meeting file in the archive is accounted for."
-		check.Params = searchCoverageParams("coverage_complete", coverage)
+		check.Params = withParams(readinessParams{"variant": "coverage_complete"}, searchCoverageParams(coverage))
 	}
 	if coverage.NeedsAttention() > 0 && check.State == "not_verified" {
 		check.State, check.Code = "warn", "search_coverage_partial"
@@ -150,10 +150,10 @@ func withParams(base, extra readinessParams) readinessParams {
 }
 
 // searchCoverageParams are describeSearchCoverage's numbers, for the app to
-// word the same sentence (D-921), under the variant naming what follows it.
-func searchCoverageParams(variant string, c searchCoverage) readinessParams {
+// word the same sentence (D-921). The caller adds the variant naming what
+// follows it.
+func searchCoverageParams(c searchCoverage) readinessParams {
 	return readinessParams{
-		"variant":               variant,
 		"indexed":               c.Indexed,
 		"silent":                c.Silent,
 		"disabled":              c.Disabled,

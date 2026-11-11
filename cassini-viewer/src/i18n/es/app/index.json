@@ -973,6 +973,17 @@
       "file_instant_invalid": "",
       "recording_too_large": "",
       "file_id_changed": ""
+    },
+    "error": {
+      "migration_not_applicable": "",
+      "migration_still_counting": "",
+      "reindex_unavailable": "",
+      "secret_managed_by_deployment": "",
+      "setup_save_failed": "",
+      "setup_store_needs_restore": "",
+      "test_not_published": "",
+      "test_room_create_failed": "",
+      "test_room_url_invalid": ""
     }
   },
   "settings": {

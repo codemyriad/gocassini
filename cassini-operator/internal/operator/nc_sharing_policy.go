@@ -433,17 +433,18 @@ func evaluateSharingPolicy(s sharingPolicySettings, groups []string) sharingPoli
 			verdict := fmt.Sprintf("Only members of %s can receive recordings.", namedGroups(shareable))
 			membership := fmt.Sprintf("which is only in %s", namedGroups(shareable))
 			consequence := "Anyone outside these groups cannot open the recordings of their meetings, and a recording they start is not published at all."
-			id := "only_groups"
+			issue := sharingPolicyIssue{state: "warn", code: "sharing_limited_to_groups", id: "only_groups",
+				params: readinessParams{"shareable_groups": shareable}}
 			if len(shareable) == 1 && shareable[0] == "admin" {
-				id = "only_admins"
+				issue.id = "only_admins"
 				verdict = "Only administrators can receive recordings."
 				membership += ", the administrators' group"
 				consequence = "Anyone who is not an administrator cannot open the recordings of their meetings, and a recording they start is not published at all."
 			}
 			sentence := fmt.Sprintf("%s Nextcloud's %s is on, and Cassini shares from its %s account, %s. %s", verdict, restrictSetting, ncRecordingsOwner, membership, consequence)
 			joinAll := readinessStep{ID: "join_every_group", Params: account, Label: fmt.Sprintf("Or add `%s` to every group whose members should receive recordings. A group everyone is in covers everybody; `%s` does not need to be an administrator. Keep it there: removing it later makes Nextcloud remove people's access to recordings already shared through that group.", ncRecordingsOwner, ncRecordingsOwner)}
-			issues = append(issues, sharingPolicyIssue{state: "warn", code: "sharing_limited_to_groups", id: id, sentence: sentence,
-				params: readinessParams{"shareable_groups": shareable}, steps: []readinessStep{lift, joinAll}})
+			issue.sentence, issue.steps = sentence, []readinessStep{lift, joinAll}
+			issues = append(issues, issue)
 		}
 	}
 

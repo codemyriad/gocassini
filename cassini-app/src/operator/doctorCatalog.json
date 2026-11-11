@@ -66,6 +66,54 @@
     "tmpdir.writable",
     "workdir"
   ],
+  "variants": [
+    "app_api_proxy",
+    "archive_empty",
+    "coverage",
+    "coverage_complete",
+    "coverage_unlisted",
+    "found",
+    "in_progress",
+    "in_progress_at_stage",
+    "index_unavailable",
+    "index_unreadable",
+    "inventory_unreadable",
+    "needs_attention",
+    "not_a_base_url",
+    "not_a_directory",
+    "not_accessible",
+    "not_checked",
+    "not_writable",
+    "nothing_recorded",
+    "secret_from_env",
+    "secret_saved",
+    "stopped",
+    "stopped_at_stage",
+    "unavailable",
+    "unchecked",
+    "unverified",
+    "waiting_for_talk",
+    "writable"
+  ],
+  "sharing_issues": [
+    "excluded_groups",
+    "group_sharing_off",
+    "groups_ignored",
+    "in_no_group",
+    "no_allowed_group",
+    "not_in_allowed_groups",
+    "only_admins",
+    "only_groups",
+    "share_api_off"
+  ],
+  "reindex": [
+    "archive_unreadable",
+    "environment",
+    "failed",
+    "finished",
+    "index_unavailable",
+    "running"
+  ],
   "steps": [
     "allow_sharing_for_everyone",
     "check_admin_account",
@@ -126,5 +174,16 @@
     "queued_instant_invalid",
     "recording_missing",
     "recording_too_large"
+  ],
+  "errors": [
+    "migration_not_applicable",
+    "migration_still_counting",
+    "reindex_unavailable",
+    "secret_managed_by_deployment",
+    "setup_save_failed",
+    "setup_store_needs_restore",
+    "test_not_published",
+    "test_room_create_failed",
+    "test_room_url_invalid"
   ]
 }

@@ -3791,6 +3791,45 @@ export type NamespaceAppTranslation = {
 			 */
 			file_id_changed: RequiredParams<'from' | 'to'>
 		}
+		error: {
+			/**
+			 * t​h​i​s​ ​d​e​p​l​o​y​m​e​n​t​ ​h​a​s​ ​n​o​ ​d​e​l​i​v​e​r​e​d​ ​f​i​l​e​s​ ​C​a​s​s​i​n​i​ ​c​a​n​ ​r​e​w​r​i​t​e
+			 */
+			migration_not_applicable: string
+			/**
+			 * C​a​s​s​i​n​i​ ​i​s​ ​s​t​i​l​l​ ​c​o​u​n​t​i​n​g​ ​t​h​e​ ​p​a​s​t​ ​r​e​c​o​r​d​i​n​g​s​ ​t​h​a​t​ ​n​e​e​d​ ​t​h​i​s​;​ ​t​r​y​ ​a​g​a​i​n​ ​o​n​c​e​ ​i​t​ ​h​a​s​ ​f​i​n​i​s​h​e​d
+			 */
+			migration_still_counting: string
+			/**
+			 * S​e​a​r​c​h​ ​r​e​-​i​n​d​e​x​i​n​g​ ​i​s​ ​a​v​a​i​l​a​b​l​e​ ​o​n​l​y​ ​f​o​r​ ​N​e​x​t​c​l​o​u​d​ ​r​e​c​o​r​d​i​n​g​ ​a​r​c​h​i​v​e​s​.
+			 */
+			reindex_unavailable: string
+			/**
+			 * T​h​e​ ​i​n​t​e​r​n​a​l​ ​s​e​c​r​e​t​ ​i​s​ ​m​a​n​a​g​e​d​ ​b​y​ ​d​e​p​l​o​y​m​e​n​t​ ​c​o​n​f​i​g​u​r​a​t​i​o​n​.
+			 */
+			secret_managed_by_deployment: string
+			/**
+			 * C​o​u​l​d​ ​n​o​t​ ​s​a​v​e​ ​r​e​c​o​r​d​i​n​g​ ​s​e​t​u​p​ ​o​n​ ​t​h​e​ ​p​e​r​s​i​s​t​e​n​t​ ​v​o​l​u​m​e​.
+			 */
+			setup_save_failed: string
+			/**
+			 * R​e​s​t​o​r​e​ ​t​h​e​ ​s​a​v​e​d​ ​r​e​c​o​r​d​i​n​g​ ​s​e​t​u​p​ ​b​e​f​o​r​e​ ​m​a​k​i​n​g​ ​c​h​a​n​g​e​s​.
+			 */
+			setup_store_needs_restore: string
+			/**
+			 * T​h​e​ ​s​e​l​e​c​t​e​d​ ​T​a​l​k​ ​t​e​s​t​ ​r​e​c​o​r​d​i​n​g​ ​h​a​s​ ​n​o​t​ ​f​i​n​i​s​h​e​d​ ​p​u​b​l​i​s​h​i​n​g​.
+			 */
+			test_not_published: string
+			/**
+			 * C​a​s​s​i​n​i​ ​c​o​u​l​d​ ​n​o​t​ ​c​r​e​a​t​e​ ​a​ ​t​e​s​t​ ​r​o​o​m​ ​i​n​ ​T​a​l​k​.​ ​C​h​e​c​k​ ​t​h​a​t​ ​T​a​l​k​ ​i​s​ ​i​n​s​t​a​l​l​e​d​ ​a​n​d​ ​r​e​a​c​h​a​b​l​e​,​ ​t​h​e​n​ ​t​r​y​ ​a​g​a​i​n​.
+			 */
+			test_room_create_failed: string
+			/**
+			 * U​s​e​ ​a​ ​T​a​l​k​ ​r​o​o​m​ ​U​R​L​ ​w​i​t​h​o​u​t​ ​q​u​e​r​y​ ​p​a​r​a​m​e​t​e​r​s​.​ ​C​o​n​f​i​g​u​r​e​ ​{​v​a​r​i​a​b​l​e​}​ ​o​r​ ​t​h​e​ ​T​a​l​k​ ​b​a​c​k​e​n​d​ ​U​R​L​ ​o​n​ ​t​h​e​ ​s​e​r​v​e​r​ ​f​i​r​s​t​.
+			 * @param {unknown} variable
+			 */
+			test_room_url_invalid: RequiredParams<'variable'>
+		}
 	}
 	settings: {
 		pipeline: {
@@ -12085,6 +12124,44 @@ export type TranslationFunctions = {
 				 * Nextcloud changed the file id from {from} to {to}; existing shares must be repaired
 				 */
 				file_id_changed: (arg: { from: unknown, to: unknown }) => LocalizedString
+			}
+			error: {
+				/**
+				 * this deployment has no delivered files Cassini can rewrite
+				 */
+				migration_not_applicable: () => LocalizedString
+				/**
+				 * Cassini is still counting the past recordings that need this; try again once it has finished
+				 */
+				migration_still_counting: () => LocalizedString
+				/**
+				 * Search re-indexing is available only for Nextcloud recording archives.
+				 */
+				reindex_unavailable: () => LocalizedString
+				/**
+				 * The internal secret is managed by deployment configuration.
+				 */
+				secret_managed_by_deployment: () => LocalizedString
+				/**
+				 * Could not save recording setup on the persistent volume.
+				 */
+				setup_save_failed: () => LocalizedString
+				/**
+				 * Restore the saved recording setup before making changes.
+				 */
+				setup_store_needs_restore: () => LocalizedString
+				/**
+				 * The selected Talk test recording has not finished publishing.
+				 */
+				test_not_published: () => LocalizedString
+				/**
+				 * Cassini could not create a test room in Talk. Check that Talk is installed and reachable, then try again.
+				 */
+				test_room_create_failed: () => LocalizedString
+				/**
+				 * Use a Talk room URL without query parameters. Configure {variable} or the Talk backend URL on the server first.
+				 */
+				test_room_url_invalid: (arg: { variable: unknown }) => LocalizedString
 			}
 		}
 		settings: {
