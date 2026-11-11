@@ -132,21 +132,20 @@ func suppressBlockedRows(checks []readinessCheck) {
 			root = "talk.discovery"
 		}
 		if root != "" {
-			name := readinessRowNames[root]
-			blockRow(hpb, name, false)
+			blockRow(hpb, root, false)
 			if root == "talk.discovery" {
 				rootCauses[root] = true
 			} else {
-				blockRow(discovery, name, false)
+				blockRow(discovery, root, false)
 			}
 			if test := byID["test"]; test != nil && !blockedReadinessCodes[test.Code] && provenReadinessRow(byID["storage"]) {
-				blockRow(test, name, false)
+				blockRow(test, root, false)
 			}
 		}
 	}
 	if archive, storage := byID["archive.search"], byID["storage"]; archive != nil && storage != nil &&
 		archive.Code == "search_reindex_archive_unreadable" && storage.State == "needs_action" {
-		blockRow(archive, readinessRowNames["storage"], false)
+		blockRow(archive, "storage", false)
 	}
 	// In declared order, so a blocked prerequisite propagates down the chain in
 	// one pass: no backend blocks the credential, which blocks the connection.
@@ -172,11 +171,7 @@ func suppressBlockedRows(checks []readinessCheck) {
 			if blocker == "" {
 				blocker = unprovenID
 			}
-			name := readinessRowNames[blocker]
-			if name == "" {
-				name = blocker
-			}
-			blockRow(row, name, failedID == "")
+			blockRow(row, blocker, failedID == "")
 			blocked = true
 		}
 		if blocked {
@@ -190,11 +185,7 @@ func suppressBlockedRows(checks []readinessCheck) {
 			if prereq.State != "needs_action" && !blockedReadinessCodes[prereq.Code] {
 				continue
 			}
-			name := readinessRowNames[prereqID]
-			if name == "" {
-				name = prereqID
-			}
-			blockRow(row, name, false)
+			blockRow(row, prereqID, false)
 			break
 		}
 	}
@@ -203,13 +194,22 @@ func suppressBlockedRows(checks []readinessCheck) {
 // blockRow rewrites a row to say what it is waiting for and stop asking to be
 // looked at. No action and no remedy of its own: both belong to the
 // prerequisite, and offering them here splits one fix across rows.
-func blockRow(row *readinessCheck, blocker string, unchecked bool) {
+//
+// The message names the blocking row in English; params carry its id, so the
+// app names it the way its own row is labelled, in the reader's language.
+func blockRow(row *readinessCheck, blockerID string, unchecked bool) {
+	blocker := readinessRowNames[blockerID]
+	if blocker == "" {
+		blocker = blockerID
+	}
 	row.State = "not_verified"
 	row.Code = "check_blocked"
 	if unchecked {
 		row.Message = fmt.Sprintf("Not checked: this depends on %s, which has not been checked yet. Run all checks first.", blocker)
+		row.Params = readinessParams{"variant": "unchecked", "blocker": blockerID}
 	} else {
 		row.Message = fmt.Sprintf("Not checked: this depends on %s, which needs attention first.", blocker)
+		row.Params = readinessParams{"variant": "needs_attention", "blocker": blockerID}
 	}
 	row.Action = ""
 	row.Steps = nil

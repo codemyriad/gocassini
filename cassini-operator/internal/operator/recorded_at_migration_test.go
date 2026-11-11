@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -67,6 +68,9 @@ func TestRecordedAtMigrationStartRetriesBlockedAndWakes(t *testing.T) {
 	f := newFileWorkerFixture(t, 0)
 	ctx := context.Background()
 	f.setState(t, recordedAtStateBlocked)
+	if _, err := f.w.rt.meetingMetadata.db.Exec(`UPDATE recorded_at_file_backfill SET last_error='x', last_error_code='recording_missing', last_error_params='{"a":1}' WHERE opus_name='MEETING1.opus'`); err != nil {
+		t.Fatal(err)
+	}
 	f.addRow(t, "DONE.opus", recordedAtStateDone)
 	f.addRow(t, "NEEDED.opus", recordedAtStateNeeded)
 	n, err := f.w.startMigration(ctx)
@@ -75,6 +79,12 @@ func TestRecordedAtMigrationStartRetriesBlockedAndWakes(t *testing.T) {
 	}
 	if r := f.row(t); r.state != recordedAtStatePending || r.attempts != 0 || r.lastError != "" {
 		t.Fatalf("blocked row = %+v", r)
+	}
+	// The reason's code goes with its English, so a later block is not
+	// worded by a stale one.
+	var code, params string
+	if err := f.w.rt.meetingMetadata.db.QueryRow(`SELECT last_error_code, last_error_params FROM recorded_at_file_backfill WHERE opus_name='MEETING1.opus'`).Scan(&code, &params); err != nil || code != "" || params != "" {
+		t.Fatalf("code = %q, params = %q, %v", code, params, err)
 	}
 	if len(f.w.wake) != recordedAtFileWorkers {
 		t.Fatalf("woke %d workers, want %d", len(f.w.wake), recordedAtFileWorkers)
@@ -333,7 +343,7 @@ func TestRecordedAtMigrationStatusCountsAndNotices(t *testing.T) {
 	f.addRow(t, "NEEDED2.opus", recordedAtStateNeeded)
 	f.addRow(t, "DONE.opus", recordedAtStateDone)
 	f.addRow(t, "BLOCKED.opus", recordedAtStateBlocked)
-	if _, err := f.w.rt.meetingMetadata.db.Exec(`UPDATE recorded_at_file_backfill SET last_error='recording is missing; restore it and retry' WHERE opus_name='BLOCKED.opus'`); err != nil {
+	if _, err := f.w.rt.meetingMetadata.db.Exec(`UPDATE recorded_at_file_backfill SET last_error='Nextcloud changed the file id from 41 to 42; existing shares must be repaired', last_error_code='file_id_changed', last_error_params='{"from":41,"to":42}' WHERE opus_name='BLOCKED.opus'`); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.w.rt.meetingMetadata.Put(ctx, 43, "BLOCKED.opus", json.RawMessage(`{"id":"BLOCKED","title":"Weekly sync","dateLabel":"2026-07-01 09:00","audioPath":"./meetings/BLOCKED.opus"}`)); err != nil {
@@ -343,7 +353,11 @@ func TestRecordedAtMigrationStatusCountsAndNotices(t *testing.T) {
 	if s.State != "needed" || s.Needed != 2 || s.Done != 1 || s.Blocked != 1 || s.Queued != 0 || !s.Checked || s.Workers != 2 || s.PaceSeconds != 30 {
 		t.Fatalf("status = %+v", s)
 	}
-	if len(s.BlockedItems) != 1 || s.BlockedItems[0] != (recordedAtBlockedFile{Meeting: "BLOCKED.opus", Title: "Weekly sync", DateLabel: "2026-07-01 09:00", Reason: "recording is missing; restore it and retry"}) {
+	// The English reason for the log and older apps, and its code and params
+	// for the app to word (D-921).
+	if want := (recordedAtBlockedFile{Meeting: "BLOCKED.opus", Title: "Weekly sync", DateLabel: "2026-07-01 09:00",
+		Reason:     "Nextcloud changed the file id from 41 to 42; existing shares must be repaired",
+		ReasonCode: "file_id_changed", ReasonParams: map[string]any{"from": float64(41), "to": float64(42)}}); len(s.BlockedItems) != 1 || !reflect.DeepEqual(s.BlockedItems[0], want) {
 		t.Fatalf("blocked = %+v", s.BlockedItems)
 	}
 	if s.Notices == nil || !s.Notices.Known || *s.Notices.ActivityApp != true || s.Notices.NextcloudVersion != "33.0.9" {

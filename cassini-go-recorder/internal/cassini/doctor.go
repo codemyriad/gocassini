@@ -48,6 +48,11 @@ type DoctorCheck struct {
 	Summary string `json:"summary"`
 	// Advice is what to do about it, empty when there is nothing to do.
 	Advice string `json:"advice,omitempty"`
+	// Params are the facts Summary and Advice are worded from, so the app can
+	// word them in its reader's language (D-921): `variant` says which of a
+	// check's sentences this is, `path` the directory, `error` the system's own
+	// error (English on purpose). Set only on the checks the app shows.
+	Params map[string]any `json:"params,omitempty"`
 }
 
 // doctorCheck is the internal alias the collectors build. Kept short because it
@@ -142,12 +147,14 @@ func collectDoctorChecks(target string) []doctorCheck {
 
 	checks := []doctorCheck{}
 	if wd, err := os.Getwd(); err != nil {
-		checks = append(checks, doctorCheck{ID: "workdir", Status: doctorFail, Summary: fmt.Sprintf("working directory unavailable: %v", err)})
+		checks = append(checks, doctorCheck{ID: "workdir", Status: doctorFail, Summary: fmt.Sprintf("working directory unavailable: %v", err),
+			Params: map[string]any{"variant": "unavailable", "error": err.Error()}})
 	} else {
 		checks = append(checks, doctorCheck{
 			ID:      "workdir",
 			Status:  doctorOK,
 			Summary: fmt.Sprintf("working directory %s", wd),
+			Params:  map[string]any{"variant": "found", "path": wd},
 		})
 		checks = append(checks, writableDirCheck("workdir.writable", wd, "working directory"))
 		checks = append(checks, freeSpaceCheck("workdir.space", wd, "working directory", minWorkFreeWarn, minWorkFreeFail))
@@ -222,6 +229,7 @@ func writableDirCheck(id string, path string, label string) doctorCheck {
 			Status:  doctorFail,
 			Summary: fmt.Sprintf("%s not accessible: %v", label, err),
 			Advice:  fmt.Sprintf("create %s or choose a path you can write to", path),
+			Params:  map[string]any{"variant": "not_accessible", "path": path, "error": err.Error()},
 		}
 	}
 	if !info.IsDir() {
@@ -230,6 +238,7 @@ func writableDirCheck(id string, path string, label string) doctorCheck {
 			Status:  doctorFail,
 			Summary: fmt.Sprintf("%s is not a directory: %s", label, path),
 			Advice:  fmt.Sprintf("replace %s with a writable directory", path),
+			Params:  map[string]any{"variant": "not_a_directory", "path": path},
 		}
 	}
 	probePath := filepath.Join(path, ".cassini-doctor-write-test")
@@ -239,10 +248,12 @@ func writableDirCheck(id string, path string, label string) doctorCheck {
 			Status:  doctorFail,
 			Summary: fmt.Sprintf("%s is not writable: %s (%v)", label, path, err),
 			Advice:  writableDirAdvice(label, path),
+			Params:  map[string]any{"variant": "not_writable", "path": path, "error": err.Error()},
 		}
 	}
 	_ = os.Remove(probePath)
-	return doctorCheck{ID: id, Status: doctorOK, Summary: fmt.Sprintf("%s writable: %s", label, path)}
+	return doctorCheck{ID: id, Status: doctorOK, Summary: fmt.Sprintf("%s writable: %s", label, path),
+		Params: map[string]any{"variant": "writable", "path": path}}
 }
 
 func freeSpaceCheck(id string, path string, label string, warnBytes int64, failBytes int64) doctorCheck {

@@ -27,6 +27,14 @@ type readinessCheck struct {
 	State   string `json:"state"`
 	Code    string `json:"code"`
 	Message string `json:"message"`
+	// Params are the values Message embeds, so the app can word the message in
+	// its reader's language from Code and these (D-921), falling back to
+	// Message, which stays English for logs, the support bundle and older apps.
+	// Where one code has several sentences, `variant` says which; a code that
+	// has one sentence and embeds nothing sends none. Values are strings,
+	// numbers or lists of strings. Never mutated in place: rows are copied by
+	// value and would share the map, so a change assigns a new one.
+	Params readinessParams `json:"params,omitempty"`
 	// Action is a verb the panel renders as a button. It answers "where do I go
 	// to fix this", and only inside the app.
 	Action string `json:"action,omitempty"`
@@ -74,10 +82,20 @@ type readinessCheck struct {
 // readinessStep mirrors SetupNoticeStep, deliberately: the app already renders
 // that shape for storage faults, with the commands behind a disclosure so an
 // administrator who just wants the button never reads a command line.
+//
+// ID is stable, so the app can word the step in its reader's language (D-921),
+// with Params for the values Label embeds; Label stays the English. Every ID
+// the operator and the recorder can send is listed in
+// cassini-app/src/operator/doctorCatalog.json (doctor_catalog_test.go).
 type readinessStep struct {
-	Label    string   `json:"label"`
-	Commands []string `json:"commands,omitempty"`
+	ID       string          `json:"id,omitempty"`
+	Label    string          `json:"label"`
+	Commands []string        `json:"commands,omitempty"`
+	Params   readinessParams `json:"params,omitempty"`
 }
+
+// readinessParams are the values a check's message or a step's label embeds.
+type readinessParams map[string]any
 
 type recordingSetupState struct {
 	InternalSecret string `json:"internal_secret,omitempty"`
@@ -262,17 +280,24 @@ const appAPIProxyPath = "/apps/app_api/proxy/"
 // A path alone is not the tell: Nextcloud legitimately lives under a
 // subdirectory. Addressing an ExApp through AppAPI is.
 func (rt *Runtime) talkBackendMisconfigured() string {
+	_, message := rt.talkBackendURLProblem()
+	return message
+}
+
+// talkBackendURLProblem is talkBackendMisconfigured with params naming which
+// of its two sentences it is, for the app to word (D-921).
+func (rt *Runtime) talkBackendURLProblem() (params readinessParams, message string) {
 	raw := strings.TrimSpace(rt.cfg.TalkBackendURL)
 	if raw == "" {
-		return ""
+		return nil, ""
 	}
 	if u, err := url.Parse(raw); err == nil && strings.Contains(u.Path, appAPIProxyPath) {
-		return "Cassini's configured Talk backend URL addresses Cassini's own AppAPI proxy, so requests for Talk's settings never reach Talk. Clear CASSINI_TALK_BACKEND_URL unless a deployment genuinely needs an override; Talk sends the correct backend URL with each recording request."
+		return readinessParams{"variant": "app_api_proxy"}, "Cassini's configured Talk backend URL addresses Cassini's own AppAPI proxy, so requests for Talk's settings never reach Talk. Clear CASSINI_TALK_BACKEND_URL unless a deployment genuinely needs an override; Talk sends the correct backend URL with each recording request."
 	}
 	if rt.readinessBackendURL() == "" {
-		return "Cassini's configured Talk backend URL is not a usable base URL. It must be a plain http(s) URL with no query or fragment. Clear CASSINI_TALK_BACKEND_URL unless a deployment genuinely needs an override."
+		return readinessParams{"variant": "not_a_base_url"}, "Cassini's configured Talk backend URL is not a usable base URL. It must be a plain http(s) URL with no query or fragment. Clear CASSINI_TALK_BACKEND_URL unless a deployment genuinely needs an override."
 	}
-	return ""
+	return nil, ""
 }
 
 func (rt *Runtime) validTestRoom(raw string) bool {
@@ -362,10 +387,11 @@ func (rt *Runtime) runDoctorProbe(ctx context.Context) ([]readinessCheck, error)
 		return nil, errors.New("empty doctor output")
 	}
 	var reported []struct {
-		ID      string `json:"id"`
-		Status  string `json:"status"`
-		Summary string `json:"summary"`
-		Advice  string `json:"advice"`
+		ID      string          `json:"id"`
+		Status  string          `json:"status"`
+		Summary string          `json:"summary"`
+		Advice  string          `json:"advice"`
+		Params  readinessParams `json:"params"`
 	}
 	if err := json.Unmarshal(out, &reported); err != nil {
 		return nil, err
@@ -396,12 +422,13 @@ func (rt *Runtime) runDoctorProbe(ctx context.Context) ([]readinessCheck, error)
 			State:   state,
 			Code:    r.ID,
 			Message: r.Summary,
+			Params:  r.Params,
 		}
 		// doctor's advice is already the remedy in prose. It becomes a step
 		// rather than being appended to the summary, so the message stays the
 		// finding and the step stays the fix.
 		if state != "passed" && strings.TrimSpace(r.Advice) != "" {
-			check.Steps = []readinessStep{{Label: r.Advice}}
+			check.Steps = []readinessStep{hostAdviceStep(r.ID, r.Params, r.Advice)}
 		}
 		byID[r.ID] = check
 	}
@@ -439,9 +466,30 @@ func hostChecklistRows(byID map[string]readinessCheck) []readinessCheck {
 		rows = append(rows, row)
 	}
 	if row, ok := byID["tmpdir.writable"]; ok {
+		row.Code = "tmpdir.writable"
 		rows = append(rows, row)
 	}
 	return rows
+}
+
+// hostAdviceStep is doctor's advice as a step, with an id for the app to word
+// it by (D-921). The id follows from which finding doctor made; advice for a
+// finding the panel does not show, or from a doctor that sent no variant,
+// keeps no id and stays English.
+func hostAdviceStep(doctorID string, params readinessParams, advice string) readinessStep {
+	variant, _ := params["variant"].(string)
+	path := readinessParams{"path": params["path"]}
+	switch {
+	case variant == "not_accessible":
+		return readinessStep{ID: "create_directory", Label: advice, Params: path}
+	case variant == "not_a_directory":
+		return readinessStep{ID: "replace_with_directory", Label: advice, Params: path}
+	case variant == "not_writable" && doctorID == "workdir.writable":
+		return readinessStep{ID: "fix_workdir_permissions", Label: advice}
+	case variant == "not_writable" && doctorID == "tmpdir.writable":
+		return readinessStep{ID: "fix_tmpdir", Label: advice}
+	}
+	return readinessStep{Label: advice}
 }
 
 // worseOf returns whichever check reports the worse news, so a collapsed row
@@ -514,7 +562,7 @@ func (rt *Runtime) checkRecordingReadinessScoped(ctx context.Context, scope read
 				ID: "host", State: "warn", Code: "host_checks_unavailable",
 				Message: "Cassini could not check disk space and ffmpeg on the recording volume.",
 				Action:  "recheck",
-				Steps:   []readinessStep{{Label: "Check the recorder's media tools and its recording volume, then run the checks again"}},
+				Steps:   []readinessStep{{ID: "check_media_host", Label: "Check the recorder's media tools and its recording volume, then run the checks again"}},
 			}}
 		}
 		for i := range host {
@@ -557,7 +605,7 @@ func (rt *Runtime) checkRecordingReadinessScoped(ctx context.Context, scope read
 			checks = append(checks, readinessCheck{
 				ID: "talk.discovery", State: "needs_action", Code: "test_room_unavailable",
 				Message: "Cassini could not create the conversation it checks the connection with. Check that Talk is installed and that Cassini's account may create conversations.",
-				Steps:   []readinessStep{{Label: "Confirm the Talk app is enabled, then run this check again"}},
+				Steps:   []readinessStep{{ID: "enable_talk", Label: "Confirm the Talk app is enabled, then run this check again"}},
 			})
 		} else if strings.TrimSpace(rt.cfg.TalkSharedSecret) != "" && rt.validTestRoom(room) && rt.talkBackendMisconfigured() == "" {
 			var err error
@@ -671,8 +719,8 @@ func (rt *Runtime) readinessWithOptional(ctx context.Context, includeOptional bo
 		addWithSteps("configuration", "needs_action", "setup_store_unreadable",
 			"Cassini could not read its saved recording setup, so its Talk credentials cannot be confirmed.",
 			"repair_configuration",
-			readinessStep{Label: "Check that Cassini's persistent volume is mounted and writable, then restore recording-setup.json from a backup if it is missing"},
-			readinessStep{Label: "Disable and re-enable Cassini in Nextcloud, which re-runs its setup"})
+			readinessStep{ID: "restore_setup_store", Label: "Check that Cassini's persistent volume is mounted and writable, then restore recording-setup.json from a backup if it is missing"},
+			readinessStep{ID: "reenable_app", Label: "Disable and re-enable Cassini in Nextcloud, which re-runs its setup"})
 	}
 	access := ncAccessSubstrate.snapshot(rt.resolvedPublishSinkName())
 	// Parsed only to tell "a check has run" from "none has". How OLD it is rides
@@ -683,6 +731,7 @@ func (rt *Runtime) readinessWithOptional(ctx context.Context, includeOptional bo
 		// The Recording sharing row waits on this one, so this row carries
 		// the setting's name and the way out.
 		addWithSteps("storage", "needs_action", apiOff.Code, apiOff.Message, "recheck", apiOff.Steps...)
+		resp.Checks[len(resp.Checks)-1].Params = apiOff.Params
 		resp.Checks[len(resp.Checks)-1].CheckedAt = access.CheckedAt
 	} else if !access.Applicable {
 		add("storage", "not_verified", "storage_not_probed", "The Nextcloud storage check does not apply to this publish destination. Verify storage with a test recording.", "test_recording")
@@ -730,14 +779,15 @@ func (rt *Runtime) readinessWithOptional(ctx context.Context, includeOptional bo
 	if strings.TrimSpace(rt.cfg.TalkSharedSecret) == "" {
 		addWithSteps("talk.handoff", "needs_action", "recording_secret_missing",
 			"Cassini has no recording secret. It creates one when it starts and keeps it on its data volume, and that did not succeed.", "",
-			readinessStep{Label: "Check that Cassini's data volume is mounted and writable: the secret is saved next to its database"},
-			readinessStep{Label: "Then restart Cassini by disabling and re-enabling it in Nextcloud's apps, which creates the secret again"},
-			readinessStep{Label: "Or set one yourself in `CASSINI_TALK_RECORDING_SECRET`, in Cassini's deploy options. A secret set there always wins"})
+			readinessStep{ID: "check_data_volume_secret", Label: "Check that Cassini's data volume is mounted and writable: the secret is saved next to its database"},
+			readinessStep{ID: "restart_app_new_secret", Label: "Then restart Cassini by disabling and re-enabling it in Nextcloud's apps, which creates the secret again"},
+			readinessStep{ID: "set_recording_secret", Label: "Or set one yourself in `CASSINI_TALK_RECORDING_SECRET`, in Cassini's deploy options. A secret set there always wins"})
 	}
-	if refusal := rt.talkBackendMisconfigured(); refusal != "" {
+	if params, refusal := rt.talkBackendURLProblem(); refusal != "" {
 		// Ahead of the room check: no room can make this work, and "choose a
 		// test room" would send a reader to fix the one thing that is fine.
 		add("talk.discovery", "needs_action", "talk_backend_url_invalid", refusal, "")
+		resp.Checks[len(resp.Checks)-1].Params = params
 	} else if len(probes) == 0 {
 		// The message this replaces named both cases — "Previous results have
 		// expired OR this process restarted" — while treating them as one. They
@@ -1024,7 +1074,7 @@ func (rt *Runtime) readinessHandler(w http.ResponseWriter, r *http.Request) {
 		switch body.Action {
 		case repairBackfillSearch:
 			if !rt.canBackfillSearch() {
-				writeJSONError(w, http.StatusBadRequest, "Search re-indexing is available only for Nextcloud recording archives.")
+				writeCodedJSONError(w, http.StatusBadRequest, "reindex_unavailable", "Search re-indexing is available only for Nextcloud recording archives.")
 				return
 			}
 			rt.startSearchBackfill()
@@ -1058,11 +1108,11 @@ func (rt *Runtime) recordingSetupHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if body.InternalSecret != nil && strings.TrimSpace(os.Getenv(envTalkSignalingInternalSecret)) != "" {
-		writeJSONError(w, 409, "The internal secret is managed by deployment configuration.")
+		writeCodedJSONError(w, 409, "secret_managed_by_deployment", "The internal secret is managed by deployment configuration.")
 		return
 	}
 	if body.TestRoomURL != nil && !rt.validTestRoom(strings.TrimSpace(*body.TestRoomURL)) {
-		writeJSONError(w, 400, "Use a Talk room URL without query parameters. Configure NEXTCLOUD_URL or the Talk backend URL on the server first.")
+		writeCodedJSONError(w, 400, "test_room_url_invalid", "Use a Talk room URL without query parameters. Configure NEXTCLOUD_URL or the Talk backend URL on the server first.")
 		return
 	}
 	if body.Action != "" && body.Action != "arm_test" && body.Action != "confirm_playback" {
@@ -1077,7 +1127,7 @@ func (rt *Runtime) recordingSetupHandler(w http.ResponseWriter, r *http.Request)
 	rt.loadRecordingSetupLocked()
 	if s.loadFailed {
 		s.mu.Unlock()
-		writeJSONError(w, 409, "Restore the saved recording setup before making changes.")
+		writeCodedJSONError(w, 409, "setup_store_needs_restore", "Restore the saved recording setup before making changes.")
 		return
 	}
 	next := s.state
@@ -1109,7 +1159,7 @@ func (rt *Runtime) recordingSetupHandler(w http.ResponseWriter, r *http.Request)
 			if err != nil {
 				s.mu.Unlock()
 				rt.logger.Printf("ERROR: could not prepare a test room: %v", err)
-				writeJSONError(w, 502, "Cassini could not create a test room in Talk. Check that Talk is installed and reachable, then try again.")
+				writeCodedJSONError(w, 502, "test_room_create_failed", "Cassini could not create a test room in Talk. Check that Talk is installed and reachable, then try again.")
 				return
 			}
 			next.TestRoomURL = created
@@ -1132,7 +1182,7 @@ func (rt *Runtime) recordingSetupHandler(w http.ResponseWriter, r *http.Request)
 		s.mu.Lock()
 		if !test.Published || body.JobID == "" || test.JobID != body.JobID {
 			s.mu.Unlock()
-			writeJSONError(w, 409, "The selected Talk test recording has not finished publishing.")
+			writeCodedJSONError(w, 409, "test_not_published", "The selected Talk test recording has not finished publishing.")
 			return
 		}
 		next.PlaybackJobID = body.JobID
@@ -1140,7 +1190,7 @@ func (rt *Runtime) recordingSetupHandler(w http.ResponseWriter, r *http.Request)
 	}
 	if err := rt.saveRecordingSetupLocked(next); err != nil {
 		s.mu.Unlock()
-		writeJSONError(w, 500, "Could not save recording setup on the persistent volume.")
+		writeCodedJSONError(w, 500, "setup_save_failed", "Could not save recording setup on the persistent volume.")
 		return
 	}
 	if body.InternalSecret != nil || body.TestRoomURL != nil {

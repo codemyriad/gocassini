@@ -11,6 +11,7 @@
   import { migrationActive, migrationButton, migrationCounting, migrationSummary, migrationVisible, notificationFacts, type RecordedAtMigration } from "./operator/recordedAtMigration";
   import { recordedAtNoticeLines } from "./operator/recordedAtNotices";
   import { toneClasses } from "./operator/readiness";
+  import { blockedReason, operatorErrorText } from "./operator/doctorText";
 
   export let operatorClient: Pick<OperatorClient, "getRecordedAtMigration" | "startRecordedAtMigration" | "pauseRecordedAtMigration">;
   // How often the section re-reads while files are being written, and while
@@ -46,7 +47,7 @@
       // Said only once something was shown: a section that never loaded has
       // nothing to correct, and the checks above already report an operator
       // that does not answer.
-      if (migration) error = $LL.app.operator.recorded_at_migration.refresh_failed({ message: cause instanceof Error ? cause.message : String(cause) });
+      if (migration) error = $LL.app.operator.recorded_at_migration.refresh_failed({ message: operatorErrorText(cause) });
     }
     schedule();
   }
@@ -66,7 +67,7 @@
     try {
       migration = action === "start" ? await operatorClient.startRecordedAtMigration() : await operatorClient.pauseRecordedAtMigration();
     } catch (cause) {
-      error = cause instanceof Error ? cause.message : String(cause);
+      error = operatorErrorText(cause);
     } finally {
       busy = false;
     }
@@ -115,7 +116,7 @@
   {#if migration.blocked_items.length > 0}
     <ul class="mt-2 space-y-1 text-sm" aria-label={$LL.app.operator.recorded_at_migration.panel.blocked_list_label()}>
       {#each migration.blocked_items as item}
-        <li class="flex gap-1.5 text-base-content/70"><CircleAlert size={14} class="mt-0.5 shrink-0 {toneClasses.warning}" aria-hidden="true" /><span><span class="font-medium text-base-content">{item.title || item.meeting}</span>{#if item.date_label}<span class="text-base-content/60">{` · ${item.date_label}`}</span>{/if}: {item.reason}</span></li>
+        <li class="flex gap-1.5 text-base-content/70"><CircleAlert size={14} class="mt-0.5 shrink-0 {toneClasses.warning}" aria-hidden="true" /><span><span class="font-medium text-base-content">{item.title || item.meeting}</span>{#if item.date_label}<span class="text-base-content/60">{` · ${item.date_label}`}</span>{/if}: {blockedReason(item)}</span></li>
       {/each}
       {#if migration.blocked > migration.blocked_items.length}<li class="text-xs text-base-content/60">{$LL.app.operator.recorded_at_migration.panel.blocked_more({ count: migration.blocked - migration.blocked_items.length })}</li>{/if}
     </ul>

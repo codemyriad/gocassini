@@ -5,6 +5,7 @@
   import type { OperatorClient } from "./operator/client";
   import CommandBlock from "cassini-viewer/ui/CommandBlock.svelte";
   import { checkLabels, checkStateLabel, checkTone, describeRefreshFailure, formatAge, labelParts, readinessTitle, testFollowUp, readinessHealthKey, readinessRows, repairLabels, repairLabel, reportTone, rowActions, rowGuide, sharedCheckTime, talkRoomURL, talkSettingsURL as buildTalkSettingsURL, testInFlight, toneClasses, unsharedSummary, shareLimitedSummary, shareLimitCommands, type CheckTone, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
+  import { checkMessage, operatorErrorText, stepLabel } from "./operator/doctorText";
   import { onSetupChanged, notifySetupChanged } from "./operator/setupSignal";
   export let operatorClient: Pick<OperatorClient, "getReadiness" | "checkReadiness" | "repairReadiness" | "updateRecordingSetup">;
   // Review fixtures use an inert origin for generated host instructions.
@@ -162,7 +163,7 @@
     try {
       const next = await operatorClient.updateRecordingSetup(payload);
       if (alive) { report = next; stale = false; error = ""; secret = ""; notifySetupChanged(); }
-    } catch (e) { if (alive) error = e instanceof Error ? e.message : String(e); }
+    } catch (e) { if (alive) error = operatorErrorText(e); }
     finally { busy = false; }
   }
   // The operator performs the repair; this asks it to start and takes the
@@ -173,7 +174,7 @@
     try {
       const next = await operatorClient.repairReadiness(action);
       if (alive) { report = next; stale = false; error = ""; }
-    } catch (e) { if (alive) error = e instanceof Error ? e.message : String(e); }
+    } catch (e) { if (alive) error = operatorErrorText(e); }
     finally { busy = false; }
   }
   async function action(name: string, owner: string, checkable = false) {
@@ -287,7 +288,7 @@
               {/each}
             </div>
           </div>
-          <p class="mt-1 text-sm text-base-content/70">{check.message}</p>
+          <p class="mt-1 text-sm text-base-content/70">{checkMessage(check)}</p>
           {#if check.unshared}
             <!-- In any state: the setting may be fixed and the meetings it
                  refused still unshared. Each is re-shared from its run, which
@@ -325,7 +326,7 @@
               <summary class="tpl-toggle text-sm! group-open:text-base-content!"><span class="tpl-chev" aria-hidden="true"></span>{$LL.app.operator.doctor.what_to_do()}</summary>
               <ul class="mt-2 ml-px space-y-2 border-l-2 border-base-300 pl-3">
                 {#each check.steps ?? [] as step}
-                  <li class="text-sm text-base-content/70">{#each labelParts(step.label) as part}{#if part.code}<code class="rounded bg-base-200 px-1 py-0.5 font-mono text-[0.85em] text-base-content">{part.text}</code>{:else}{part.text}{/if}{/each}{#each step.commands ?? [] as command}<CommandBlock {command} />{/each}</li>
+                  <li class="text-sm text-base-content/70">{#each labelParts(stepLabel(step)) as part}{#if part.code}<code class="rounded bg-base-200 px-1 py-0.5 font-mono text-[0.85em] text-base-content">{part.text}</code>{:else}{part.text}{/if}{/each}{#each step.commands ?? [] as command}<CommandBlock {command} />{/each}</li>
                 {/each}
               </ul>
             </details>

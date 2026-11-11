@@ -2351,6 +2351,14 @@ func writeJSONError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]string{"error": message})
 }
 
+// writeCodedJSONError is writeJSONError for a refusal a reader sees as a
+// sentence: error stays the English, and error_code lets the app word it in
+// the reader's language (D-921). Every code is in
+// cassini-app/src/operator/doctorCatalog.json (doctor_catalog_test.go).
+func writeCodedJSONError(w http.ResponseWriter, status int, code, message string) {
+	writeJSON(w, status, map[string]string{"error": message, "error_code": code})
+}
+
 func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

@@ -355,6 +355,11 @@ func TestRecordedAtFileWorkerBlocksOnUnsupportedCLI(t *testing.T) {
 	if r.state != "blocked" || !strings.Contains(r.lastError, "upgrade") {
 		t.Fatalf("row = %+v", r)
 	}
+	// Beside the English, the code the app words it by (D-921).
+	var code string
+	if err := f.w.rt.meetingMetadata.db.QueryRow(`SELECT last_error_code FROM recorded_at_file_backfill WHERE opus_name='MEETING1.opus'`).Scan(&code); err != nil || code != "cli_too_old" {
+		t.Fatalf("last_error_code = %q, %v", code, err)
+	}
 	if n := f.w.drain(context.Background()); n != 0 {
 		t.Fatal("blocked rows are not retried")
 	}

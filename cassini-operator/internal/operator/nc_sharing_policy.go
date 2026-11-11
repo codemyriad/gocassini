@@ -74,7 +74,11 @@ type sharingPolicyFinding struct {
 	State   string
 	Code    string
 	Message string
-	Steps   []readinessStep
+	// Params word Message in the app (D-921): `issues` lists, in order, which
+	// sentence each of Message's sentences is, and the rest are the groups
+	// and the account they name.
+	Params readinessParams
+	Steps  []readinessStep
 	// ShareableGroups are the groups Cassini can share through while
 	// Nextcloud restricts sharing to group members; empty when unrestricted.
 	ShareableGroups []string
@@ -322,8 +326,11 @@ func namedGroups(groups []string) string {
 }
 
 type sharingPolicyIssue struct {
-	state, code, sentence string
-	steps                 []readinessStep
+	// id names the sentence, for the app to word (D-921); params are what it
+	// embeds. Several issues share a code, and one finding reports them all.
+	state, code, id, sentence string
+	params                    readinessParams
+	steps                     []readinessStep
 }
 
 // evaluateSharingPolicy judges the settings against `cassini`'s groups. It
@@ -355,11 +362,13 @@ func evaluateSharingPolicy(s sharingPolicySettings, groups []string) sharingPoli
 		return step + " It does not need to be an administrator. Keep it there: removing it later makes Nextcloud remove people's access to recordings already shared through that group."
 	}
 
+	account := readinessParams{"account": ncRecordingsOwner}
+
 	if !s.APIEnabled {
 		issues = append(issues, sharingPolicyIssue{
-			state: "needs_action", code: "sharing_api_disabled",
+			state: "needs_action", code: "sharing_api_disabled", id: "share_api_off",
 			sentence: nobody + "Nextcloud's “Allow apps to use the Share API” is off, so every share Cassini makes is refused and no new meetings can be published.",
-			steps:    []readinessStep{{Label: "Turn on “Allow apps to use the Share API” under " + sharingSettings + "."}},
+			steps:    []readinessStep{{ID: "enable_share_api", Label: "Turn on “Allow apps to use the Share API” under " + sharingSettings + "."}},
 		})
 	}
 
@@ -371,68 +380,79 @@ func evaluateSharingPolicy(s sharingPolicySettings, groups []string) sharingPoli
 				membership = "those groups"
 			}
 			issues = append(issues, sharingPolicyIssue{
-				state: "needs_action", code: "sharing_disabled_for_account",
+				state: "needs_action", code: "sharing_disabled_for_account", id: "excluded_groups",
 				sentence: fmt.Sprintf("%sNextcloud's “Exclude some groups from sharing” lists %s, and Cassini shares from its %s account, which is in %s.%s", nobody, namedGroups(hit), ncRecordingsOwner, membership, refusedAll),
+				params:   readinessParams{"excluded_groups": hit},
 				steps: []readinessStep{
-					{Label: fmt.Sprintf("Remove %s from the excluded groups under %s.", quotedGroups(hit), sharingSettings)},
-					{Label: fmt.Sprintf("Or take `%s` out of %s on Nextcloud's Users page.", ncRecordingsOwner, quotedGroups(hit))},
+					{ID: "unexclude_groups", Label: fmt.Sprintf("Remove %s from the excluded groups under %s.", quotedGroups(hit), sharingSettings), Params: readinessParams{"groups": hit}},
+					{ID: "leave_excluded_groups", Label: fmt.Sprintf("Or take `%s` out of %s on Nextcloud's Users page.", ncRecordingsOwner, quotedGroups(hit)), Params: readinessParams{"account": ncRecordingsOwner, "groups": hit}},
 				},
 			})
 		}
 	case excludeGroupsAllowlist:
 		if len(intersectGroups(groups, s.ExcludeGroupsList)) == 0 {
-			sentence := nobody + "Nextcloud's “Limit sharing to some groups” allows no group at all, so no account may share." + refusedAll
-			steps := []readinessStep{{Label: fmt.Sprintf("Choose the groups allowed to share under %s, including one `%s` is in.", sharingSettings, ncRecordingsOwner)}}
+			issue := sharingPolicyIssue{
+				state: "needs_action", code: "sharing_disabled_for_account", id: "no_allowed_group",
+				sentence: nobody + "Nextcloud's “Limit sharing to some groups” allows no group at all, so no account may share." + refusedAll,
+				steps:    []readinessStep{{ID: "choose_allowed_groups", Label: fmt.Sprintf("Choose the groups allowed to share under %s, including one `%s` is in.", sharingSettings, ncRecordingsOwner), Params: account}},
+			}
 			if len(s.ExcludeGroupsList) > 0 {
-				sentence = fmt.Sprintf("%sNextcloud's “Limit sharing to some groups” allows only %s, and Cassini shares from its %s account, which is in none of them.%s", nobody, namedGroups(s.ExcludeGroupsList), ncRecordingsOwner, refusedAll)
-				steps = []readinessStep{
-					{Label: fmt.Sprintf("Add `%s` to one of %s on Nextcloud's Users page.", ncRecordingsOwner, quotedGroups(s.ExcludeGroupsList))},
-					{Label: "Or allow sharing for everyone under " + sharingSettings + "."},
+				issue.id = "not_in_allowed_groups"
+				issue.sentence = fmt.Sprintf("%sNextcloud's “Limit sharing to some groups” allows only %s, and Cassini shares from its %s account, which is in none of them.%s", nobody, namedGroups(s.ExcludeGroupsList), ncRecordingsOwner, refusedAll)
+				issue.params = readinessParams{"allowed_groups": s.ExcludeGroupsList}
+				issue.steps = []readinessStep{
+					{ID: "join_allowed_group", Label: fmt.Sprintf("Add `%s` to one of %s on Nextcloud's Users page.", ncRecordingsOwner, quotedGroups(s.ExcludeGroupsList)), Params: readinessParams{"account": ncRecordingsOwner, "groups": s.ExcludeGroupsList}},
+					{ID: "allow_sharing_for_everyone", Label: "Or allow sharing for everyone under " + sharingSettings + "."},
 				}
 			}
-			issues = append(issues, sharingPolicyIssue{state: "needs_action", code: "sharing_disabled_for_account", sentence: sentence, steps: steps})
+			issues = append(issues, issue)
 		}
 	}
 
 	if s.OnlyGroupMembers {
 		shareable = subtractGroups(groups, s.IgnoredGroups)
-		lift := readinessStep{Label: "Turn off " + restrictSetting + " under " + sharingSettings + "."}
-		joinOne := readinessStep{Label: notAdmin(fmt.Sprintf("Or add `%s` to a group everyone who records is in.", ncRecordingsOwner))}
+		lift := readinessStep{ID: "lift_group_restriction", Label: "Turn off " + restrictSetting + " under " + sharingSettings + "."}
+		joinOne := readinessStep{ID: "join_common_group", Label: notAdmin(fmt.Sprintf("Or add `%s` to a group everyone who records is in.", ncRecordingsOwner)), Params: account}
 		switch {
 		case len(shareable) == 0 && len(groups) == 0:
 			issues = append(issues, sharingPolicyIssue{
-				state: "needs_action", code: "sharing_no_common_group",
+				state: "needs_action", code: "sharing_no_common_group", id: "in_no_group",
 				sentence: fmt.Sprintf("%sNextcloud's %s is on, and Cassini shares from its %s account, which is in no group.%s", nobody, restrictSetting, ncRecordingsOwner, refusedAll),
 				steps:    []readinessStep{lift, joinOne},
 			})
 		case len(shareable) == 0:
 			issues = append(issues, sharingPolicyIssue{
-				state: "needs_action", code: "sharing_no_common_group",
+				state: "needs_action", code: "sharing_no_common_group", id: "groups_ignored",
 				sentence: fmt.Sprintf("%sNextcloud's %s is on, and every group the %s account is in (%s) is ignored when Nextcloud checks membership.%s", nobody, restrictSetting, ncRecordingsOwner, namedGroups(groups), refusedAll),
+				params:   readinessParams{"groups": groups},
 				steps: []readinessStep{lift, joinOne,
-					{Label: fmt.Sprintf("Or stop ignoring %s under “Ignore the following groups when checking group membership”.", quotedGroups(groups))},
+					{ID: "stop_ignoring_groups", Label: fmt.Sprintf("Or stop ignoring %s under “Ignore the following groups when checking group membership”.", quotedGroups(groups)), Params: readinessParams{"groups": groups}},
 				},
 			})
 		default:
 			verdict := fmt.Sprintf("Only members of %s can receive recordings.", namedGroups(shareable))
 			membership := fmt.Sprintf("which is only in %s", namedGroups(shareable))
 			consequence := "Anyone outside these groups cannot open the recordings of their meetings, and a recording they start is not published at all."
+			issue := sharingPolicyIssue{state: "warn", code: "sharing_limited_to_groups", id: "only_groups",
+				params: readinessParams{"shareable_groups": shareable}}
 			if len(shareable) == 1 && shareable[0] == "admin" {
+				issue.id = "only_admins"
 				verdict = "Only administrators can receive recordings."
 				membership += ", the administrators' group"
 				consequence = "Anyone who is not an administrator cannot open the recordings of their meetings, and a recording they start is not published at all."
 			}
 			sentence := fmt.Sprintf("%s Nextcloud's %s is on, and Cassini shares from its %s account, %s. %s", verdict, restrictSetting, ncRecordingsOwner, membership, consequence)
-			joinAll := readinessStep{Label: fmt.Sprintf("Or add `%s` to every group whose members should receive recordings. A group everyone is in covers everybody; `%s` does not need to be an administrator. Keep it there: removing it later makes Nextcloud remove people's access to recordings already shared through that group.", ncRecordingsOwner, ncRecordingsOwner)}
-			issues = append(issues, sharingPolicyIssue{state: "warn", code: "sharing_limited_to_groups", sentence: sentence, steps: []readinessStep{lift, joinAll}})
+			joinAll := readinessStep{ID: "join_every_group", Params: account, Label: fmt.Sprintf("Or add `%s` to every group whose members should receive recordings. A group everyone is in covers everybody; `%s` does not need to be an administrator. Keep it there: removing it later makes Nextcloud remove people's access to recordings already shared through that group.", ncRecordingsOwner, ncRecordingsOwner)}
+			issue.sentence, issue.steps = sentence, []readinessStep{lift, joinAll}
+			issues = append(issues, issue)
 		}
 	}
 
 	if !s.AllowGroupSharing {
 		issues = append(issues, sharingPolicyIssue{
-			state: "warn", code: "group_sharing_disabled",
+			state: "warn", code: "group_sharing_disabled", id: "group_sharing_off",
 			sentence: "Groups in a room do not receive recordings. Nextcloud's “Allow sharing with groups” is off, so a meeting whose room includes a group is published without access for that group's members, unless they are in the room themselves.",
-			steps:    []readinessStep{{Label: "Turn on “Allow sharing with groups” under " + sharingSettings + "."}},
+			steps:    []readinessStep{{ID: "enable_group_sharing", Label: "Turn on “Allow sharing with groups” under " + sharingSettings + "."}},
 		})
 	}
 
@@ -445,14 +465,21 @@ func evaluateSharingPolicy(s sharingPolicySettings, groups []string) sharingPoli
 		return finding
 	}
 	worst := issues[0]
-	var sentences []string
+	var sentences, ids []string
 	var steps []readinessStep
 	seen := map[string]bool{}
+	// Each issue names its own params, and no two issues name the same one
+	// with different values, so they merge into the row's.
+	params := readinessParams{"account": ncRecordingsOwner}
 	for _, issue := range issues {
 		if readinessStateRank[issue.state] > readinessStateRank[worst.state] {
 			worst = issue
 		}
 		sentences = append(sentences, issue.sentence)
+		ids = append(ids, issue.id)
+		for key, value := range issue.params {
+			params[key] = value
+		}
 		for _, step := range issue.steps {
 			if !seen[step.Label] {
 				seen[step.Label] = true
@@ -460,9 +487,10 @@ func evaluateSharingPolicy(s sharingPolicySettings, groups []string) sharingPoli
 			}
 		}
 	}
+	params["issues"] = ids
 	return sharingPolicyFinding{
 		State: worst.state, Code: worst.code,
-		Message: strings.Join(sentences, " "), Steps: steps,
+		Message: strings.Join(sentences, " "), Params: params, Steps: steps,
 		ShareableGroups: shareable,
 	}
 }
@@ -477,14 +505,14 @@ func unreadableSharingPolicy(err error) sharingPolicyFinding {
 		return sharingPolicyFinding{
 			State: "not_verified", Code: "sharing_policy_check_timed_out",
 			Message: "Nextcloud did not answer in time when Cassini read its sharing settings, so whether they let it share recordings is not known.",
-			Steps:   []readinessStep{{Label: "Check again. If it keeps running out of time, Nextcloud is answering slowly: the Recording storage check above uses the same connection"}},
+			Steps:   []readinessStep{{ID: "recheck_slow_nextcloud", Label: "Check again. If it keeps running out of time, Nextcloud is answering slowly: the Recording storage check above uses the same connection"}},
 		}
 	}
 	return sharingPolicyFinding{
 		State: "not_verified", Code: "sharing_policy_unreadable",
 		Message: "Cassini could not read Nextcloud's sharing settings, so whether they let it share recordings is not known.",
 		Steps: []readinessStep{
-			{Label: "Cassini reads them as the Nextcloud administrator it acts as. Check that Nextcloud is reachable and that account is still an administrator, then check again"},
+			{ID: "check_admin_account", Label: "Cassini reads them as the Nextcloud administrator it acts as. Check that Nextcloud is reachable and that account is still an administrator, then check again"},
 		},
 	}
 }
@@ -534,7 +562,7 @@ func sharingPolicyRow(finding sharingPolicyFinding, checked bool) readinessCheck
 			Message: "Nextcloud's sharing settings have not been checked yet.", Action: "recheck"}
 	}
 	row := readinessCheck{ID: sharingRowID, State: finding.State, Code: finding.Code,
-		Message: finding.Message, Steps: finding.Steps, CheckedAt: finding.CheckedAt}
+		Message: finding.Message, Params: finding.Params, Steps: finding.Steps, CheckedAt: finding.CheckedAt}
 	if finding.State == "not_verified" {
 		row.Action = "recheck"
 	}
