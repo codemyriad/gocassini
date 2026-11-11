@@ -220,6 +220,7 @@ The persisted stop model currently distinguishes:
 - `operator_requested`
 - `signaling_connection_error`
 - `join_failed`
+- `no_audio_captured`
 - `record_process_exit_nonzero`
 
 `operator_requested` is intentionally operator-owned classification:

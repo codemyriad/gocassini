@@ -640,9 +640,15 @@
         "duration_limit": "Duration limit reached",
         "signaling_connection_error": "Signaling connection error",
         "join_failed": "Failed to join room",
-        "record_process_exit_nonzero": "Process exited with error"
+        "record_process_exit_nonzero": "Process exited with error",
+        "no_audio_captured": "No audio captured"
+      },
+      "no_audio": {
+        "headline": "No audio was captured. Were all participants muted?",
+        "detail": "This recording has no audio to transcribe or publish."
       },
       "status": {
+        "no_audio_captured": "No audio captured",
         "build_blocked": "Build blocked",
         "waiting_for_resources": "Waiting for resources",
         "failed": "Failed",

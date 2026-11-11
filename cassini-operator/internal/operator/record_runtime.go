@@ -740,6 +740,17 @@ func reverseLogLines(logs string) []string {
 	return lines
 }
 
+// stopReasonNoAudio is the stop reason of a failed run that captured no audio
+// at all: every participant was muted or silent. The recorder exits 4 for it
+// and the app shows the real cause instead of a generic process exit; the run
+// remains failed because somebody pressed Record and got no recording.
+const stopReasonNoAudio = "no_audio_captured"
+
+// recordExitNoAudioCaptured is the exit code `cassini record` reserves for
+// that run (exitNoAudioCaptured in the recorder's cli.go). 3 is taken: it
+// marks a room the recorder could not join.
+const recordExitNoAudioCaptured = 4
+
 func classifyRecordStopReason(stopAccepted bool, exitCode *int, stopDetail string, runErr error) string {
 	if stopAccepted && runErr == nil {
 		return "operator_requested"
@@ -751,6 +762,10 @@ func classifyRecordStopReason(stopAccepted bool, exitCode *int, stopDetail strin
 		combined = combined + " " + strings.ToLower(strings.TrimSpace(runErr.Error()))
 	}
 	switch {
+	case exitCode != nil && *exitCode == recordExitNoAudioCaptured:
+		return stopReasonNoAudio
+	case strings.Contains(combined, "no audio captured"):
+		return stopReasonNoAudio
 	case strings.Contains(combined, "room empty"):
 		return "room_empty"
 	case strings.Contains(combined, "duration limit reached"):

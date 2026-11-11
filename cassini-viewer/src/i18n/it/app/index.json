@@ -640,9 +640,15 @@
         "duration_limit": "Limite di durata raggiunto",
         "signaling_connection_error": "Errore di connessione alla segnalazione",
         "join_failed": "Impossibile entrare nella conversazione",
-        "record_process_exit_nonzero": "Processo terminato con un errore"
+        "record_process_exit_nonzero": "Processo terminato con un errore",
+        "no_audio_captured": ""
+      },
+      "no_audio": {
+        "headline": "",
+        "detail": ""
       },
       "status": {
+        "no_audio_captured": "",
         "build_blocked": "Elaborazione bloccata",
         "waiting_for_resources": "In attesa di risorse",
         "failed": "Non riuscita",

@@ -306,6 +306,52 @@ func TestRecordAbnormalStopWithoutRecordingStaysFailed(t *testing.T) {
 	}
 }
 
+func TestRecordNoAudioFailsWithDescriptiveReason(t *testing.T) {
+	// A call where everyone was muted captures no audio. Its recorder run
+	// returns ErrNoAudio after finalizing nothing; `cassini record` must keep
+	// the run failed, write a descriptive reason into the bundle, and exit 4
+	// so the operator can say "No audio was captured" instead of the generic
+	// "Process exited with error".
+	prevRecorder := runRecorderApp
+	runRecorderApp = func(_ context.Context, _ config.Config) error {
+		return talk.ErrNoAudio
+	}
+	defer func() {
+		runRecorderApp = prevRecorder
+	}()
+
+	outDir := filepath.Join(t.TempDir(), "muted.run")
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run(context.Background(), []string{"record", "--call", "https://example.test/call/muted", "--out", outDir}, &stdout, &stderr)
+	if code != exitNoAudioCaptured {
+		t.Fatalf("expected exit code 4 for a no-audio failure, got %d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "record failed: no audio captured") {
+		t.Fatalf("expected the descriptive no-audio failure on stderr, got %q", stderr.String())
+	}
+	if strings.Contains(stdout.String(), "(empty)") || strings.Contains(stdout.String(), "run ->") {
+		t.Fatalf("no-audio run reported as a success: %q", stdout.String())
+	}
+
+	loaded, ok, err := LoadRunBundle(outDir)
+	if err != nil || !ok {
+		t.Fatalf("load run bundle: ok=%t err=%v", ok, err)
+	}
+	if loaded.Manifest.State != bundleStateFailed {
+		t.Fatalf("expected bundle state %q, got %q", bundleStateFailed, loaded.Manifest.State)
+	}
+	if !strings.Contains(loaded.Manifest.Error, "no audio captured") {
+		t.Fatalf("expected the bundle to carry the no-audio reason, got %q", loaded.Manifest.Error)
+	}
+	if loaded.Manifest.Recording.Path != "" {
+		t.Fatalf("no-audio run claims a recording: %#v", loaded.Manifest.Recording)
+	}
+	if _, err := os.Stat(filepath.Join(outDir, "recording.mkv")); !os.IsNotExist(err) {
+		t.Fatalf("no-audio run wrote a recording: %v", err)
+	}
+}
+
 func TestDoctorHelpExitsZero(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer

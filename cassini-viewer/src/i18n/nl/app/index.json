@@ -640,9 +640,15 @@
         "duration_limit": "Maximale duur bereikt",
         "signaling_connection_error": "Fout in de signaleringsverbinding",
         "join_failed": "Kon niet deelnemen aan de ruimte",
-        "record_process_exit_nonzero": "Proces gestopt met een fout"
+        "record_process_exit_nonzero": "Proces gestopt met een fout",
+        "no_audio_captured": ""
+      },
+      "no_audio": {
+        "headline": "",
+        "detail": ""
       },
       "status": {
+        "no_audio_captured": "",
         "build_blocked": "Bouwen geblokkeerd",
         "waiting_for_resources": "Wacht op middelen",
         "failed": "Mislukt",

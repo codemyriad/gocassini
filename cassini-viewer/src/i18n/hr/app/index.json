@@ -640,9 +640,15 @@
         "duration_limit": "Dosegnuto ograničenje trajanja",
         "signaling_connection_error": "Pogreška signalizacijske veze",
         "join_failed": "Pridruživanje sobi nije uspjelo",
-        "record_process_exit_nonzero": "Proces je završio s pogreškom"
+        "record_process_exit_nonzero": "Proces je završio s pogreškom",
+        "no_audio_captured": ""
+      },
+      "no_audio": {
+        "headline": "",
+        "detail": ""
       },
       "status": {
+        "no_audio_captured": "",
         "build_blocked": "Izrada blokirana",
         "waiting_for_resources": "Čeka resurse",
         "failed": "Neuspjelo",
