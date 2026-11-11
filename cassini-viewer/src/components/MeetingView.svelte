@@ -684,7 +684,7 @@
   }
 
   function downloadSummary() {
-    if (!summaryMarkdown) return;
+    if (!summaryMarkdown?.trim()) return;
     exportRequestId += 1;
     saveTranscript(summaryMarkdown, `${exportStem()}-summary.md`);
     exportStatus = get(LL).viewer.meeting.view.export_summary_downloaded();
@@ -1690,12 +1690,12 @@
           {/each}
         </div>
       {/if}
-      {#if transcriptIndex || summaryMarkdown}
+      {#if transcriptIndex}
         <ExportMenu
           includeSummary
           canCopy={!copyExportBusy && displaySegments.length > 0}
           canDownloadTranscript={displaySegments.length > 0}
-          canDownloadSummary={Boolean(summaryMarkdown)}
+          canDownloadSummary={Boolean(summaryMarkdown?.trim())}
           canDownloadAudio={Boolean(meeting?.meetingPath ?? audioSrc) && !audioExportBusy}
           audioLabel={meeting?.meetingPath ? $LL.viewer.meeting.view.download_meeting_file() : $LL.viewer.meeting.view.download_audio()}
           status={exportStatus}
