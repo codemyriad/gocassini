@@ -74,7 +74,7 @@ describe("retention settings in the browser", () => {
       expect(button.element().getAttribute("aria-pressed")).toBe("true");
     }
     await page.getByRole("button", { name: "Custom", exact: true }).first().click();
-    await page.getByLabelText("Recordings days", { exact: true }).fill("45");
+    await page.getByLabelText("Days to keep: Recordings", { exact: true }).fill("45");
     expect(page.getByText("Captured audio", { exact: true }).all()).toHaveLength(0);
     expect(page.getByText("Captured video", { exact: true }).all()).toHaveLength(0);
 
@@ -97,7 +97,7 @@ describe("retention settings in the browser", () => {
     await unmount(app!);
     app = undefined;
     mountPanel();
-    await expect.element(page.getByLabelText("Recordings days")).toHaveValue(45);
+    await expect.element(page.getByLabelText("Days to keep: Recordings")).toHaveValue(45);
 
     saved.revision += 1; // Another administrator saves first.
     await page.getByRole("button", { name: "90 days", exact: true }).first().click();
@@ -108,11 +108,11 @@ describe("retention settings in the browser", () => {
     await page.getByRole("button", { name: "Leave", exact: true }).click();
     await expect.element(page.getByRole("button", { name: "Save" })).toBeDisabled();
     await page.getByRole("button", { name: "Custom", exact: true }).first().click();
-    await page.getByLabelText("Recordings days").fill("0");
+    await page.getByLabelText("Days to keep: Recordings").fill("0");
     const previousPuts = puts;
     await page.getByRole("button", { name: "Save" }).click();
     expect(puts).toBe(previousPuts);
-    await page.getByLabelText("Recordings days").fill("1");
+    await page.getByLabelText("Days to keep: Recordings").fill("1");
     await page.getByRole("button", { name: "Save" }).click();
     await expect.element(page.getByRole("status")).toBeVisible();
   });

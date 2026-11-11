@@ -1,4 +1,5 @@
 import { get, writable } from "svelte/store";
+import { LL } from "cassini-viewer/i18n";
 import { OperatorHttpError, type OperatorClient } from "./client";
 import type { RetentionSettings } from "./retention";
 
@@ -7,7 +8,7 @@ import type { RetentionSettings } from "./retention";
 export const retentionMutationBusy = writable(false);
 
 export async function withRetentionMutation<T>(write: () => Promise<T>): Promise<T> {
-  if (get(retentionMutationBusy)) throw new Error("Retention settings are being saved. Try again.");
+  if (get(retentionMutationBusy)) throw new Error(get(LL).app.settings.retention.save_in_progress());
   retentionMutationBusy.set(true);
   try { return await write(); }
   finally { retentionMutationBusy.set(false); }

@@ -631,7 +631,7 @@ describe("filterMeetingCatalogEntries", () => {
     ];
     expect(filterMeetingCatalogEntries(withInstant, "22:11").map((m) => m.id)).toEqual(["m4"]);
     expect(filterMeetingCatalogEntries(withInstant, "21:11").map((m) => m.id)).toEqual([]);
-    expect(filterMeetingCatalogEntries(withInstant, "mon 9 mar").map((m) => m.id)).toEqual(["m4"]);
+    expect(filterMeetingCatalogEntries(withInstant, "mon, 9 mar").map((m) => m.id)).toEqual(["m4"]);
   });
 
   it("matches the local day an instant moved to", () => {

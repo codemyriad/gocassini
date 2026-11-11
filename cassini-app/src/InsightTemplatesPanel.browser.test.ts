@@ -351,9 +351,9 @@ describe("insight templates panel in the browser", () => {
     expect(dialog.getByRole("button", { name: "Delete" }).all()).toHaveLength(0);
     expect(dialog.getByRole("button", { name: "Close" }).all()).toHaveLength(0);
     const actions = [...dialog.element().querySelectorAll(".tpl-dialog-actions button")].map((b) => b.textContent?.trim());
-    expect(actions).toEqual(["Cancel", "Open the Publish pipeline"]);
+    expect(actions).toEqual(["Cancel", "Open Publish pipeline"]);
 
-    await dialog.getByRole("button", { name: "Open the Publish pipeline" }).click();
+    await dialog.getByRole("button", { name: "Open Publish pipeline" }).click();
     expect(panelsAsked).toEqual(["pipeline"]);
     await expect.poll(() => (document.querySelector("dialog") as HTMLDialogElement).open).toBe(false);
     expect(deleted).toEqual([]);

@@ -282,7 +282,7 @@ describe("renderInsightExport with a recording instant", () => {
       meetingUrl: noLink,
     });
     // Rome is UTC+2 on 5 October; the label's UTC digits must not appear.
-    expect(out).toContain("- Standup, Mon 5 Oct 2026, 16:30 CEST");
+    expect(out).toContain("- Standup, Mon, 5 Oct 2026, 16:30 CEST");
     expect(out).not.toContain("14:30");
   });
 });

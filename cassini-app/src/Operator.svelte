@@ -1,4 +1,6 @@
 <script module lang="ts">
+  import { get } from "svelte/store";
+  import { dateFormat, formatCount, LL, relativeNow, relativeTimeFormat } from "cassini-viewer/i18n";
   import type { Job, JobAttempt } from "./operator/types";
   import type { OperatorPanel } from "./surfaceRouting";
   import {
@@ -22,32 +24,38 @@
   // Exported because this list and surfaceRouting's OPERATOR_PANELS have to stay
   // the same set — a panel with a route and no nav row is unreachable, and a row
   // with no route cannot be deep-linked. Operator.test.ts holds them together.
+  //
+  // Labels are getters, read from the dictionary each time, so the list follows
+  // the reader's language rather than freezing in the one loaded first.
   export interface OperatorNavItem {
     id: OperatorPanel;
-    label: string;
+    readonly label: string;
   }
 
   export interface OperatorNavGroup {
-    label: string;
+    readonly label: string;
     items: OperatorNavItem[];
   }
 
+  const nav = () => get(LL).app.operator.console.nav;
+  const c = () => get(LL).app.operator.console;
+
   export const OPERATOR_NAV: OperatorNavGroup[] = [
     {
-      label: "Console",
-      items: [{ id: "recordings", label: "Recordings" }],
+      get label() { return nav().group_console(); },
+      items: [{ id: "recordings", get label() { return nav().recordings(); } }],
     },
     {
-      label: "Diagnostics",
-      items: [{ id: "doctor", label: "Doctor" }],
+      get label() { return nav().group_diagnostics(); },
+      items: [{ id: "doctor", get label() { return get(LL).common.place.doctor(); } }],
     },
     {
-      label: "Settings",
+      get label() { return nav().group_settings(); },
       items: [
-        { id: "endpoints", label: "AI providers" },
-        { id: "pipeline", label: "Publish pipeline" },
-        { id: "templates", label: "Insight templates" },
-        { id: "storage", label: "Storage" },
+        { id: "endpoints", get label() { return get(LL).common.place.ai_providers(); } },
+        { id: "pipeline", get label() { return get(LL).common.place.publish_pipeline(); } },
+        { id: "templates", get label() { return get(LL).common.place.insight_templates(); } },
+        { id: "storage", get label() { return get(LL).common.place.storage(); } },
       ],
     },
     {
@@ -55,10 +63,10 @@
       // setting, and it sits where an administrator finds it without it ever
       // getting in the way. Help holds the installation's support bundle
       // (D-910); Browse's own Help links here for an administrator.
-      label: "Support",
+      get label() { return nav().group_support(); },
       items: [
-        { id: "help", label: "Help" },
-        { id: "support", label: "Support Cassini" },
+        { id: "help", get label() { return get(LL).common.place.help(); } },
+        { id: "support", get label() { return nav().support(); } },
       ],
     },
   ];
@@ -68,12 +76,10 @@
   type JobStatus = Pick<Job, "stage" | "state" | "build_retry_not_before"> & AttemptKindOf;
   type RerunnableJob = Pick<Job, "stage" | "state" | "artifact_run_path">;
 
-  const STATUS_STAGE_LABELS: Record<string, string> = {
-    record: "Record",
-    build: "Build",
-    seal: "Seal",
-    publish: "Publish",
-  };
+  // The steps a run's status can name, as the stage bar names them.
+  const STATUS_STAGES = ["record", "build", "seal", "publish"] as const;
+  type StatusStage = (typeof STATUS_STAGES)[number];
+  const isStatusStage = (key: string): key is StatusStage => (STATUS_STAGES as readonly string[]).includes(key);
 
   const FAILURE_STOP_REASONS = new Set([
     "join_failed",
@@ -114,9 +120,10 @@
 
   export function captureModeLabel(requestJSON: string): string {
     const mode = parseRequestJSON(requestJSON).capture_mode;
-    if (mode === "audio-only") return "Audio only";
-    if (mode === "audio-video") return "Audio and video";
-    return "Unknown (older recording)";
+    const t = c().capture_mode;
+    if (mode === "audio-only") return t.audio_only();
+    if (mode === "audio-video") return t.audio_video();
+    return t.unknown();
   }
 
   export function requestUrlLabel(requestJSON: string): string {
@@ -131,7 +138,7 @@
       return meta.baseURL;
     }
     if (meta.roomToken) {
-      return `Call ${meta.roomToken}`;
+      return c().call_label({ token: meta.roomToken });
     }
     return "—";
   }
@@ -153,7 +160,7 @@
       try {
         const token = new URL(meta.url).pathname.split("/").filter(Boolean).pop();
         if (token && token.toLowerCase() !== "call") {
-          return `Call ${token}`;
+          return c().call_label({ token });
         }
         return meta.url;
       } catch {
@@ -161,14 +168,14 @@
       }
     }
     if (meta.roomToken) {
-      return `Call ${meta.roomToken}`;
+      return c().call_label({ token: meta.roomToken });
     }
     if (fallbackId && typeof fallbackId === "string" && fallbackId.trim() !== "") {
       const cleanId = fallbackId.trim();
       const shortId = cleanId.length > 10 ? cleanId.slice(0, 8) : cleanId;
-      return `Recording ${shortId}`;
+      return c().recording_label({ id: shortId });
     }
-    return "Recording";
+    return c().recording_unnamed();
   }
 
   export function hasJobError(
@@ -186,20 +193,22 @@
   export function formatStopReason(reason: string | null | undefined): string {
     if (!reason || typeof reason !== "string" || reason.trim() === "") return "—";
     const trimmed = reason.trim();
+    const t = c().stop_reason;
     switch (trimmed) {
       case "operator_requested":
-        return "Stopped by operator";
+        return t.operator_requested();
       case "room_empty":
-        return "Room empty";
+        return t.room_empty();
       case "duration_limit":
-        return "Duration limit reached";
+        return t.duration_limit();
       case "signaling_connection_error":
-        return "Signaling connection error";
+        return t.signaling_connection_error();
       case "join_failed":
-        return "Failed to join room";
+        return t.join_failed();
       case "record_process_exit_nonzero":
-        return "Process exited with error";
+        return t.record_process_exit_nonzero();
       default:
+        // An operator reason this app has no words for: its own name.
         return trimmed.replace(/_/g, " ");
     }
   }
@@ -254,23 +263,31 @@
   // A summarize attempt's build stage writes the summary into the published
   // meeting and transcribes nothing, so it is not called a build.
   export function stageLabel(key: string, kind: string): string {
-    if (key === "build" && kind === "summarize") return "Summary";
-    return STATUS_STAGE_LABELS[key] ?? key;
+    const stages = get(LL).app.operator.run_stages.stage;
+    if (key === "build" && kind === "summarize") return stages.summary();
+    return isStatusStage(key) ? stages[key]() : key;
   }
 
   export function jobStatusLabel(job: JobStatus): string {
-    if (isBuildBlocked(job)) return "Build blocked";
-    if (isBuildWaitingForResources(job)) return "Waiting for resources";
-    if (job.state === "failed") return "Failed";
-    if (job.state === "stopped") return "Stopped";
-    if (job.state === "interrupted") return "Interrupted";
-    if (job.state === "succeeded" && job.stage === "done") return "Published";
-    if (job.state === "queued") return "Queued";
+    const t = c().status;
+    if (isBuildBlocked(job)) return t.build_blocked();
+    if (isBuildWaitingForResources(job)) return t.waiting_for_resources();
+    if (job.state === "failed") return t.failed();
+    if (job.state === "stopped") return t.stopped();
+    if (job.state === "interrupted") return t.interrupted();
+    if (job.state === "succeeded" && job.stage === "done") return t.published();
+    if (job.state === "queued") return t.queued();
     if (job.state === "running") {
-      if (job.stage === "build" && attemptKind(job) === "summarize") return "Writing summary";
-      const stage = STATUS_STAGE_LABELS[job.stage];
-      return stage ? `${stage}ing` : "Running";
+      if (job.stage === "build" && attemptKind(job) === "summarize") return t.writing_summary();
+      const running: Record<StatusStage, () => string> = {
+        record: t.recording,
+        build: t.building,
+        seal: t.sealing,
+        publish: t.publishing,
+      };
+      return isStatusStage(job.stage) ? running[job.stage]() : t.running();
     }
+    // A stage and state this app has no words for: the operator's own names.
     return `${job.stage} / ${job.state}`;
   }
 
@@ -629,7 +646,7 @@
   async function handleStartJob() {
     const trimmedUrl = meetingUrl.trim();
     if (!operatorClient || trimmedUrl === "") {
-      actionError = "Meeting URL is required.";
+      actionError = c().meeting_url_required();
       return;
     }
     submittingStart = true;
@@ -726,7 +743,8 @@
   }
 
   function cleanupLabel(status: string): string {
-    return ({ waiting: "Media deletion after processing", pending: "Media deletion pending", error: "Media deletion failed", completed: "Media deleted" } as Record<string, string>)[status] ?? status;
+    const t = c().cleanup;
+    return ({ waiting: t.waiting, pending: t.pending, error: t.error, completed: t.completed } as Record<string, () => string>)[status]?.() ?? status;
   }
 
   // Writing a run's summary (D-814): what it would cost is loaded for a
@@ -764,7 +782,7 @@
       const message = asMessage(error);
       summaryError =
         message === "has_summary" || message === "unavailable"
-          ? "The meeting changed since this was loaded. Check it and try again."
+          ? c().summary_changed()
           : message;
     } finally {
       submittingSummary = false;
@@ -938,7 +956,7 @@
     if (Number.isNaN(date.getTime())) {
       return value;
     }
-    return new Intl.DateTimeFormat(undefined, {
+    return dateFormat({
       dateStyle: "medium",
       timeStyle: "medium",
     }).format(date);
@@ -946,12 +964,7 @@
 
   // stageTimes reads `${key}_queued_at` / `_started_at` / `_finished_at`, so a
   // stage appears here only if the operator names its columns to match.
-  const STAGES = [
-    { key: "record", label: "Record" },
-    { key: "build", label: "Build" },
-    { key: "seal", label: "Seal" },
-    { key: "publish", label: "Publish" },
-  ] as const;
+  const STAGES = STATUS_STAGES.map((key) => ({ key }));
 
   // One attempt's bar: its own four steps, each with how long it took.
   // An attempt's own bar has no Summary step, so its Build keeps the summary
@@ -965,18 +978,20 @@
       status: statuses[stage.key],
       ms: stepTime(row, stage.key),
       hint: stage.key === "build" && summaryMs !== null && attemptKind(row) !== "summarize"
-        ? `Includes ${formatSpan(summaryMs)} waiting on the summary model`
+        ? c().build_includes_summary({ span: formatSpan(summaryMs) })
         : undefined,
     }));
   }
 
   // Said under a step that has not finished, so a coloured bar is not the
   // only sign of what is happening.
-  const UNFINISHED_NOTES: Partial<Record<StageStatus, string>> = {
-    active: "In progress",
-    queued: "Queued",
-    blocked: "Blocked",
-  };
+  function unfinishedNote(status: StageStatus): string | undefined {
+    const t = c().unfinished;
+    if (status === "active") return t.active();
+    if (status === "queued") return t.queued();
+    if (status === "blocked") return t.blocked();
+    return undefined;
+  }
 
   function stageBarClass(status: StageStatus): string {
     switch (status) {
@@ -1002,12 +1017,13 @@
     const then = Date.parse(value);
     if (Number.isNaN(then)) return "—";
     const seconds = Math.round((Date.now() - then) / 1000);
-    if (seconds < 60) return "just now";
+    if (seconds < 60) return relativeNow();
+    const ago = relativeTimeFormat({ style: "narrow" });
     const minutes = Math.round(seconds / 60);
-    if (minutes < 60) return `${minutes}m ago`;
+    if (minutes < 60) return ago.format(-minutes, "minute");
     const hours = Math.round(minutes / 60);
-    if (hours < 24) return `${hours}h ago`;
-    return `${Math.round(hours / 24)}d ago`;
+    if (hours < 24) return ago.format(-hours, "hour");
+    return ago.format(-Math.round(hours / 24), "day");
   }
 
   // The one log open in the run detail, read from the operator (D-816). Shown
@@ -1047,17 +1063,25 @@
   // Where an attempt's artifacts sit inside the operator's container, for
   // whoever debugs it there. Its logs are read from the Logs row instead.
   function attemptPaths(attempt: JobAttempt): { label: string; path: string | null; missing: boolean }[] {
+    const t = c().path;
     const entries: [string, string | null, string][] = [
-      ["Run artifact", attempt.artifact_run_path, "run"],
-      ["Meeting artifact", attempt.artifact_meeting_path, "meeting"],
-      ["Sealed meeting", attempt.artifact_opus_path, "opus"],
-      ["Site artifact", attempt.artifact_site_path, "site"],
+      [t.run(), attempt.artifact_run_path, "run"],
+      [t.meeting(), attempt.artifact_meeting_path, "meeting"],
+      [t.opus(), attempt.artifact_opus_path, "opus"],
+      [t.site(), attempt.artifact_site_path, "site"],
     ];
     return entries.map(([label, path, key]) => ({ label, path, missing: !!path && attempt.files_present?.[key] === false }));
   }
 
   function attemptStageLabel(attempt: JobAttempt): string {
     return `${attempt.attempt_number} · ${attempt.stage} / ${attempt.state}`;
+  }
+
+  // What started an attempt; a kind this app has no word for keeps its own name.
+  function triggerKindLabel(kind: string): string {
+    const t = c().trigger_kind;
+    const known: Record<string, () => string> = { initial: t.initial, rerun: t.rerun, summarize: t.summarize, refine: t.refine };
+    return known[kind]?.() ?? kind;
   }
 
   function streamStatusTone(status: typeof streamStatus): string {
@@ -1077,38 +1101,40 @@
   }
 
   function connectionLabel(status: typeof streamStatus): string {
+    const t = c().connection;
     switch (status) {
       case "connected":
       case "unavailable":
-        return "Live";
+        return t.live();
       case "connecting":
-        return "Connecting";
+        return t.connecting();
       case "reconnecting":
-        return "Reconnecting";
+        return t.reconnecting();
       case "disconnected":
-        return "Offline";
+        return t.offline();
       default:
-        return "Unknown";
+        return t.unknown();
     }
   }
 
   function streamStatusLabel(status: typeof streamStatus): string {
+    const t = c().stream;
     switch (status) {
       case "connected":
-        return "live";
+        return t.live();
       case "connecting":
-        return "connecting…";
+        return t.connecting();
       case "reconnecting":
-        return "reconnecting…";
+        return t.reconnecting();
       case "unavailable":
         // The normal mode in Nextcloud (AppAPI can't stream SSE), so state the
         // refresh cadence plainly rather than framing routine operation as a
         // failure.
-        return `auto-refreshing every ${POLL_INTERVAL_MS / 1000}s`;
+        return t.auto_refreshing({ seconds: formatCount(POLL_INTERVAL_MS / 1000) });
       case "disconnected":
-        return "disconnected";
+        return t.disconnected();
       default:
-        return "idle";
+        return t.idle();
     }
   }
 
@@ -1141,8 +1167,8 @@
   $: rerunApplies = !!selectedJob?.job && isRerunnableJob(selectedJob.job);
   $: recordingDeleted = selectedJob?.availability?.source === "deleted" || selectedJob?.availability?.source === "expired" || selectedJob?.job.source_expired === true;
   $: rerunBlockedReason =
-    (selectedJob?.availability?.source === "expired" || selectedJob?.job.source_expired ? "The source recording was deleted by the retention policy. This job can no longer be rerun." : selectedJob?.availability?.rerun_blocked_reason) || (rerunVisible && !selectedJob?.job.artifact_run_path
-      ? "This run produced no recording to rerun from."
+    (selectedJob?.availability?.source === "expired" || selectedJob?.job.source_expired ? $LL.app.operator.console.rerun_blocked_expired() : selectedJob?.availability?.rerun_blocked_reason) || (rerunVisible && !selectedJob?.job.artifact_run_path
+      ? $LL.app.operator.console.rerun_no_recording()
       : "");
   $: canStopSelectedJob = !submittingStop && stopApplies;
   $: canRerunSelectedJob = !submittingRerun && rerunApplies && !rerunBlockedReason;
@@ -1200,7 +1226,7 @@
     </div>
     <div class="mt-1 flex gap-1 text-xs text-base-content/60">
       {#each stages as stage (stage.key)}
-        {@const title = [stage.hint, stage.attempt ? `From attempt ${stage.attempt}` : null].filter(Boolean).join(". ")}
+        {@const title = [stage.hint, stage.attempt ? $LL.app.operator.console.from_attempt({ attempt: stage.attempt }) : null].filter(Boolean).join(". ")}
         <span class="min-w-0 flex-1" title={title || undefined}>
           <span
             class="block"
@@ -1210,8 +1236,8 @@
           </span>
           {#if stage.ms !== null}
             <span class="block whitespace-nowrap text-base-content/45">{formatSpan(stage.ms)}</span>
-          {:else if stage.note ?? UNFINISHED_NOTES[stage.status]}
-            <span class="block whitespace-nowrap text-base-content/45">{stage.note ?? UNFINISHED_NOTES[stage.status]}</span>
+          {:else if stage.note ?? unfinishedNote(stage.status)}
+            <span class="block whitespace-nowrap text-base-content/45">{stage.note ?? unfinishedNote(stage.status)}</span>
           {/if}
         </span>
       {/each}
@@ -1220,10 +1246,10 @@
 {/snippet}
 
 <svelte:head>
-  <title>Cassini Control Panel</title>
+  <title>{$LL.app.operator.console.page_title()}</title>
   <meta
     name="description"
-    content="Operator control panel for Cassini jobs, history, and selected-run inspection."
+    content={$LL.app.operator.console.page_description()}
   />
 </svelte:head>
 
@@ -1237,7 +1263,7 @@
 <!-- The run detail shows a fixed set of fields in fixed places (D-816); one
      with nothing to show says so rather than disappearing. -->
 {#snippet notAvailable()}
-  <span class="text-base-content/45">Not available</span>
+  <span class="text-base-content/45">{$LL.app.operator.console.not_available()}</span>
 {/snippet}
 
 <!-- A known value, or a muted account of why there is none (reused,
@@ -1274,7 +1300,7 @@
       bind:this={navButton}
       type="button"
       class="op-nav-button"
-      aria-label="Choose an Operator section"
+      aria-label={$LL.app.operator.console.nav.open_label()}
       aria-expanded={navOpen}
       on:click={openNav}
     >
@@ -1289,7 +1315,7 @@
       class="op-nav-scrim"
       style:--op-nav-top="{navViewTop}px"
       style:--op-nav-height="{navViewHeight}px"
-      aria-label="Close the section list"
+      aria-label={$LL.app.operator.console.nav.close_label()}
       transition:fade={{ duration: 200 }}
       on:click={closeNav}
     ></button>
@@ -1297,7 +1323,7 @@
 
   <nav
     class="op-nav flex flex-col pt-[16px] pb-3.5 min-[721px]:sticky min-[721px]:top-0 min-[721px]:self-start"
-    aria-label="Operator sections"
+    aria-label={$LL.app.operator.console.nav.label()}
     data-open={navOpen}
     style:--op-nav-top="{navViewTop}px"
     style:--op-nav-height="{navViewHeight}px"
@@ -1337,7 +1363,7 @@
     <header class="op-panel-head">
       <div>
         <div class="op-panel-title">
-          <h1>Recordings</h1>
+          <h1>{$LL.app.operator.console.title()}</h1>
         <span
           class={`badge badge-sm h-auto font-medium rounded-lg gap-1.5 py-1 ${streamStatusTone(streamStatus)}`}
           title={streamStatusLabel(streamStatus)}
@@ -1354,21 +1380,21 @@
             <span class="cassini-tick" style="--cassini-tick: {POLL_INTERVAL_MS}ms">
               <RefreshCw size={12} aria-hidden="true" />
             </span>
-            Checking every {POLL_INTERVAL_MS / 1000}s
+            {$LL.app.operator.console.checking_every({ seconds: formatCount(POLL_INTERVAL_MS / 1000) })}
           </span>
         {:else if streamStatus === "disconnected"}
           <span class="flex items-center gap-1 text-xs text-base-content/60">
             <span class="cassini-tick" style="--cassini-tick: {POLL_INTERVAL_MS}ms">
               <RefreshCw size={12} aria-hidden="true" />
             </span>
-            Retrying every {POLL_INTERVAL_MS / 1000}s
+            {$LL.app.operator.console.retrying_every({ seconds: formatCount(POLL_INTERVAL_MS / 1000) })}
           </span>
         {/if}
         </div>
       </div>
       <div class="op-panel-actions">
         <button class="op-btn" type="button" on:click={openComposer}>
-          Record a meeting
+          {$LL.app.operator.console.record_meeting()}
         </button>
       </div>
     </header>
@@ -1383,7 +1409,7 @@
         <section class="mb-6 rounded-box border border-base-300 bg-base-100 px-4 pt-3 pb-4 shadow-sm">
           <div class="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
             <label class="flex w-full flex-col gap-2">
-              <span class="font-semibold">Meeting link</span>
+              <span class="font-semibold">{$LL.app.operator.console.meeting_link()}</span>
               <input
                 bind:value={meetingUrl}
                 bind:this={meetingUrlInput}
@@ -1395,9 +1421,9 @@
             <button class="btn btn-primary" disabled={!canStartJob} type="button" on:click={handleStartJob}>
               {#if submittingStart}
                 <span class="loading loading-spinner loading-sm" aria-hidden="true"></span>
-                Starting…
+                {$LL.app.operator.console.starting()}
               {:else}
-                Start recording
+                {$LL.app.operator.console.start_recording()}
               {/if}
             </button>
           </div>
@@ -1416,8 +1442,8 @@
         {#if isDesktop || !selectedJobId}
         <section class="flex min-w-0 flex-col overflow-hidden">
           <header class="op-pane-head flex min-h-14 items-center justify-between gap-3 px-4 py-3 @min-[981px]:h-14">
-            <h2 class="font-semibold">Recordings</h2>
-            <button class="icon-btn" on:click={refreshJobs} type="button" aria-label="Refresh jobs">
+            <h2 class="font-semibold">{$LL.app.operator.console.list_heading()}</h2>
+            <button class="icon-btn" on:click={refreshJobs} type="button" aria-label={$LL.app.operator.console.refresh_jobs()}>
               <RefreshCw size={16} aria-hidden="true" />
             </button>
           </header>
@@ -1431,15 +1457,15 @@
                  Background refreshes (the 2s poll fallback and SSE-reconnect
                  reconciles) also flip loadingJobs, but must update the list in
                  place instead of flashing it to "Loading…" every tick (D-494). -->
-            <div class="flex flex-1 items-center justify-center p-6 text-sm text-base-content/60">Loading jobs…</div>
+            <div class="flex flex-1 items-center justify-center p-6 text-sm text-base-content/60">{$LL.app.operator.console.loading_jobs()}</div>
           {:else if jobs.length === 0}
             <div class="flex min-h-0 flex-1 p-3">
               <div
                 class="flex flex-1 flex-col items-center justify-center gap-2 rounded-box border border-dashed border-base-content/20 p-6 text-center"
               >
                 <Inbox size={20} class="text-base-content/40" aria-hidden="true" />
-                <p class="text-sm font-medium">No recordings yet</p>
-                <p class="text-xs text-base-content/60">Start one with "Record a meeting".</p>
+                <p class="text-sm font-medium">{$LL.app.operator.console.empty_title()}</p>
+                <p class="text-xs text-base-content/60">{$LL.app.operator.console.empty_body()}</p>
               </div>
             </div>
           {:else}
@@ -1464,7 +1490,7 @@
                         </p>
                         {#if job.current_attempt_number > 1}
                           <span class="badge badge-outline badge-sm shrink-0 border-base-content/20 text-base-content"
-                            >Attempt {job.current_attempt_number}</span
+                            >{$LL.app.operator.console.attempt_badge({ number: formatCount(job.current_attempt_number) })}</span
                           >
                         {/if}
                       </div>
@@ -1478,21 +1504,20 @@
                         </p>
                         {#if isBuildWaitingForResources(job)}
                           <p class="truncate text-warning" title={job.error || formatTimestamp(job.build_retry_not_before)}>
-                            Next retry {formatTimestamp(job.build_retry_not_before)} · {job.build_deferral_count}
-                            {job.build_deferral_count === 1 ? "deferral" : "deferrals"}
+                            {$LL.app.operator.console.next_retry_deferrals({ time: formatTimestamp(job.build_retry_not_before), count: job.build_deferral_count })}
                           </p>
                         {/if}
                         {#if job.media_cleanup}
-                          <span class="badge badge-outline badge-sm mt-1" class:badge-warning={job.media_cleanup.status === "error"} title={job.media_cleanup.last_error || "Transcription-only publication; source media is deleted after processing."}>{cleanupLabel(job.media_cleanup.status)}</span>
+                          <span class="badge badge-outline badge-sm mt-1" class:badge-warning={job.media_cleanup.status === "error"} title={job.media_cleanup.last_error || $LL.app.operator.console.cleanup_hint()}>{cleanupLabel(job.media_cleanup.status)}</span>
                         {/if}
                         {#if job.source_expired}
-                          <span class="badge badge-outline badge-warning badge-sm mt-1" title="The source recording was deleted by retention. This job can no longer be rerun.">Recording deleted</span>
+                          <span class="badge badge-outline badge-warning badge-sm mt-1" title={$LL.app.operator.console.source_expired_title()}>{$LL.app.operator.console.source_expired_badge()}</span>
                         {/if}
                         {#if job.meeting_deleted}
-                          <span class="badge badge-outline badge-warning badge-sm mt-1" title="The published meeting was deleted by a user. Its local artifacts are reclaimed and this job can no longer be rerun.">Meeting deleted</span>
+                          <span class="badge badge-outline badge-warning badge-sm mt-1" title={$LL.app.operator.console.meeting_deleted_title()}>{$LL.app.operator.console.meeting_deleted_badge()}</span>
                         {/if}
                         {#if job.unshared_count}
-                          <span class="badge badge-outline badge-warning badge-sm mt-1" title={`Not shared with ${job.unshared_count === 1 ? "1 recipient" : `${job.unshared_count} recipients`}: Nextcloud refused them or its share limit held them back. Open the run to see who.`}>Not shared with everyone</span>
+                          <span class="badge badge-outline badge-warning badge-sm mt-1" title={$LL.app.operator.console.not_shared_title({ count: job.unshared_count })}>{$LL.app.operator.console.not_shared_badge()}</span>
                         {/if}
                         {#if job.error}
                           <p class="truncate {hasResourceNotice(job) ? 'text-warning' : 'text-base-content/55'}" title={job.error}>
@@ -1521,15 +1546,15 @@
                   class="btn btn-ghost btn-sm btn-square shrink-0"
                   type="button"
                   on:click={handleBackToList}
-                  aria-label="Back to recordings"
+                  aria-label={$LL.app.operator.console.back_to_recordings()}
                 >
                   <ArrowLeft size={16} aria-hidden="true" />
                 </button>
               {/if}
               <div class="min-w-0 @min-[981px]:flex @min-[981px]:items-center @min-[981px]:gap-2">
-                <h2 class="truncate font-semibold @min-[981px]:shrink-0">Run detail</h2>
+                <h2 class="truncate font-semibold @min-[981px]:shrink-0">{$LL.app.operator.console.detail_heading()}</h2>
                 <p class="truncate text-xs text-base-content/60 @min-[981px]:min-w-0">
-                  Status and history for the selected recording
+                  {$LL.app.operator.console.detail_subtitle()}
                 </p>
               </div>
             </div>
@@ -1543,10 +1568,10 @@
                 >
                   {#if submittingStop}
                     <span class="loading loading-spinner loading-sm" aria-hidden="true"></span>
-                    Stopping…
+                    {$LL.app.operator.console.stopping()}
                   {:else}
                     <Square size={14} aria-hidden="true" />
-                    Stop
+                    {$LL.app.operator.console.stop()}
                   {/if}
                 </button>
               {:else if rerunVisible || submittingRerun}
@@ -1559,10 +1584,10 @@
                 >
                   {#if submittingRerun}
                     <span class="loading loading-spinner loading-sm" aria-hidden="true"></span>
-                    Rerunning…
+                    {$LL.app.operator.console.rerunning()}
                   {:else}
                     <RefreshCw size={14} aria-hidden="true" />
-                    Rerun
+                    {$LL.app.operator.console.rerun()}
                   {/if}
                 </button>
               {/if}
@@ -1579,8 +1604,8 @@
                 class="flex flex-1 flex-col items-center justify-center gap-2 rounded-box border border-dashed border-base-content/20 p-6 text-center"
               >
                 <CassetteTape size={20} class="text-base-content/40" aria-hidden="true" />
-                <p class="text-sm font-medium">No recording selected</p>
-                <p class="text-xs text-base-content/60">Choose one from the list.</p>
+                <p class="text-sm font-medium">{$LL.app.operator.console.no_selection_title()}</p>
+                <p class="text-xs text-base-content/60">{$LL.app.operator.console.no_selection_body()}</p>
               </div>
             </div>
           {:else}
@@ -1599,7 +1624,7 @@
                     </h3>
                     <p class="text-sm {jobStatusToneClass(selectedJob.job)}">
                       {jobStatusLabel(selectedJob.job)}
-                      <span class="text-base-content/50">· updated {relativeTime(selectedJob.job.updated_at)}</span>
+                      <span class="text-base-content/50">· {$LL.app.operator.console.updated_ago({ age: relativeTime(selectedJob.job.updated_at) })}</span>
                     </p>
                   </div>
 
@@ -1608,12 +1633,12 @@
                     {@const cleanup = selectedJob.availability.media_cleanup}
                     <div class="op-tint p-3 grid gap-2" role="status">
                       <p class="font-semibold">{cleanupLabel(cleanup.status)}</p>
-                      <p class="text-sm">Transcription-only publication. Source media is deleted after processing finishes or fails.</p>
-                      {#if cleanup.completed_at}<p class="text-sm">Completed: {cleanup.completed_at}</p>{/if}
+                      <p class="text-sm">{$LL.app.operator.console.cleanup.body()}</p>
+                      {#if cleanup.completed_at}<p class="text-sm">{$LL.app.operator.console.cleanup.completed_at({ time: cleanup.completed_at })}</p>{/if}
                       {#if cleanup.last_error}<p class="text-sm text-warning">{cleanup.last_error}</p>{/if}
                       {#if cleanup.status === "error"}
-                        <button class="btn btn-sm" type="button" disabled={submittingCleanup} on:click={handleRetryCleanup}>Retry media deletion</button>
-                        {#if cleanupQueuedJob === selectedJob.job.id}<p class="text-sm">Retry requested. Cleanup is checked within 30 seconds.</p>{/if}
+                        <button class="btn btn-sm" type="button" disabled={submittingCleanup} on:click={handleRetryCleanup}>{$LL.app.operator.console.cleanup.retry()}</button>
+                        {#if cleanupQueuedJob === selectedJob.job.id}<p class="text-sm">{$LL.app.operator.console.cleanup.retry_requested()}</p>{/if}
                       {/if}
                     </div>
                   {/if}
@@ -1681,7 +1706,7 @@
                             {summaryActionLabel(summaryPlan)}
                           </button>
                           <button class="btn btn-sm btn-ghost" type="button" disabled={submittingSummary} on:click={() => (confirmingSummary = false)}>
-                            Cancel
+                            {$LL.common.action.cancel()}
                           </button>
                         </div>
                       </div>
@@ -1718,12 +1743,12 @@
                       <dl class="flex flex-wrap gap-x-4 gap-y-1 text-xs">
                         {#if isBuildWaitingForResources(selectedJob.job)}
                           <div class="flex gap-1">
-                            <dt class="text-base-content/50">Next retry</dt>
+                            <dt class="text-base-content/50">{$LL.app.operator.console.next_retry()}</dt>
                             <dd>{formatTimestamp(selectedJob.job.build_retry_not_before)}</dd>
                           </div>
                         {/if}
                         <div class="flex gap-1">
-                          <dt class="text-base-content/50">Resource deferrals</dt>
+                          <dt class="text-base-content/50">{$LL.app.operator.console.resource_deferrals()}</dt>
                           <dd>{selectedJob.job.build_deferral_count}</dd>
                         </div>
                       </dl>
@@ -1741,19 +1766,19 @@
                       <dl class="flex flex-wrap gap-x-4 gap-y-1 text-xs">
                         {#if selectedJob.job.record_exit_code !== null}
                           <div class="flex gap-1">
-                            <dt class="text-base-content/50">Exit code</dt>
+                            <dt class="text-base-content/50">{$LL.app.operator.console.exit_code()}</dt>
                             <dd class="font-mono">{selectedJob.job.record_exit_code}</dd>
                           </div>
                         {/if}
                         {#if selectedJob.job.stop_reason}
                           <div class="flex gap-1">
-                            <dt class="text-base-content/50">Reason</dt>
+                            <dt class="text-base-content/50">{$LL.app.operator.console.reason()}</dt>
                             <dd class="font-mono">{formatStopReason(selectedJob.job.stop_reason)}</dd>
                           </div>
                         {/if}
                         {#if selectedJob.job.stop_requested_at}
                           <div class="flex gap-1">
-                            <dt class="text-base-content/50">Stop requested</dt>
+                            <dt class="text-base-content/50">{$LL.app.operator.console.stop_requested()}</dt>
                             <dd>{formatTimestamp(selectedJob.job.stop_requested_at)}</dd>
                           </div>
                         {/if}
@@ -1762,7 +1787,7 @@
                   {:else if selectedJob.job.state === "stopped"}
                     <div class="grid gap-1 rounded-box border border-warning/40 bg-warning/10 p-3">
                       <p class="text-sm font-medium text-warning">
-                        {selectedJob.job.stop_reason ? formatStopReason(selectedJob.job.stop_reason) : "Recording stopped"}
+                        {selectedJob.job.stop_reason ? formatStopReason(selectedJob.job.stop_reason) : $LL.app.operator.console.recording_stopped()}
                       </p>
                       {#if cleanStopDetail(selectedJob.job.record_stop_detail, selectedJob.job.record_exit_code, false)}
                         <p class="text-xs break-words text-base-content/70">{cleanStopDetail(selectedJob.job.record_stop_detail, selectedJob.job.record_exit_code, false)}</p>
@@ -1770,7 +1795,7 @@
                       <dl class="flex flex-wrap gap-x-4 gap-y-1 text-xs">
                         {#if selectedJob.job.stop_requested_at}
                           <div class="flex gap-1">
-                            <dt class="text-base-content/50">Stop requested</dt>
+                            <dt class="text-base-content/50">{$LL.app.operator.console.stop_requested()}</dt>
                             <dd>{formatTimestamp(selectedJob.job.stop_requested_at)}</dd>
                           </div>
                         {/if}
@@ -1781,7 +1806,7 @@
                        into Technical details below (D-816). -->
                   <dl class="mt-2 grid grid-cols-2 gap-x-6 gap-y-3 lg:grid-cols-3">
                     <div>
-                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Recorded</dt>
+                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">{$LL.app.operator.console.field.recorded()}</dt>
                       <dd class="text-sm">
                         {#if selectedJob.job.record_started_at}
                           {formatTimestamp(selectedJob.job.record_started_at)}{#if formatDuration(selectedJob.job.record_started_at, selectedJob.job.record_finished_at)}<span class="text-base-content/60">{" · "}{formatDuration(selectedJob.job.record_started_at, selectedJob.job.record_finished_at)}</span>{/if}
@@ -1791,41 +1816,41 @@
                       </dd>
                     </div>
                     <div>
-                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Processing</dt>
+                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">{$LL.app.operator.console.field.processing()}</dt>
                       <dd class="text-sm" class:text-warning={runSpeed !== null && runSpeed.factor !== null && runSpeed.factor < 1} title={runSpeed ? processingHint(runSpeed) : undefined}>
                         {#if runSpeed}{describeProcessing(runSpeed)}{:else}{@render notAvailable()}{/if}
                       </dd>
                     </div>
                     <div>
-                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Completed</dt>
+                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">{$LL.app.operator.console.field.completed()}</dt>
                       <dd class="text-sm">
                         {#if selectedJob.job.completed_at}{formatTimestamp(selectedJob.job.completed_at)}{:else}{@render notAvailable()}{/if}
                       </dd>
                     </div>
                     <div class="min-w-0">
-                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Speech model</dt>
+                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">{$LL.app.operator.console.field.speech_model()}</dt>
                       <dd class="text-sm break-words">
                         {#if outcomeSource && speechModelLabel(outcomeSource)}{speechModelLabel(outcomeSource)}{:else}{@render notAvailable()}{/if}
                       </dd>
                     </div>
                     <div class="min-w-0">
-                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Summary model</dt>
+                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">{$LL.app.operator.console.field.summary_model()}</dt>
                       <dd class="text-sm break-words">
                         {@render fieldValue(outcomeSource ? attemptSummary(outcomeSource) : null)}
                       </dd>
                     </div>
                     <div>
-                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Capture</dt>
+                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">{$LL.app.operator.console.field.capture()}</dt>
                       <dd class="text-sm">{captureModeLabel(selectedJob.job.request_json)}</dd>
                     </div>
                     <div>
-                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Stopped because</dt>
+                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">{$LL.app.operator.console.field.stopped_because()}</dt>
                       <dd class="text-sm">
                         {#if selectedJob.job.stop_reason}{formatStopReason(selectedJob.job.stop_reason)}{:else}{@render notAvailable()}{/if}
                       </dd>
                     </div>
                     <div class="min-w-0">
-                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Conversation</dt>
+                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">{$LL.app.operator.console.field.conversation()}</dt>
                       <dd class="text-sm">
                         {#if isHttpUrl(requestUrlLabel(selectedJob.job.request_json))}
                           <a
@@ -1835,7 +1860,7 @@
                             target="_blank"
                             rel="noreferrer noopener"
                           >
-                            Open in Talk
+                            {$LL.app.operator.console.open_in_talk()}
                           </a>
                         {:else}
                           {@render notAvailable()}
@@ -1843,11 +1868,11 @@
                       </dd>
                     </div>
                     <div class="min-w-0">
-                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Recording</dt>
+                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">{$LL.app.operator.console.field.recording()}</dt>
                       <dd class="text-sm">
                         {#if recordingHref}
                           <a class="link link-hover text-primary" href={recordingHref} target="_blank" rel="noreferrer noopener">
-                            Open in Files
+                            {$LL.app.operator.console.open_in_files()}
                           </a>
                         {:else}
                           {@render notAvailable()}
@@ -1859,29 +1884,29 @@
                   <details class="group">
                     <summary class="flex w-fit cursor-pointer list-none items-center gap-1 text-xs text-base-content/60 hover:text-base-content">
                       <ChevronRight size={12} class="shrink-0 transition-transform group-open:rotate-90" aria-hidden="true" />
-                      Technical details
+                      {$LL.app.operator.console.technical_details()}
                     </summary>
                     <dl class="mt-2 grid grid-cols-2 gap-x-6 gap-y-3 lg:grid-cols-3">
                       <div class="col-span-2 min-w-0 lg:col-span-3">
-                        <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Run id</dt>
+                        <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">{$LL.app.operator.console.field.run_id()}</dt>
                         <dd class="font-mono text-xs break-all">{selectedJob.job.id}</dd>
                       </div>
                       <div>
-                        <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Created</dt>
+                        <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">{$LL.app.operator.console.field.created()}</dt>
                         <dd class="text-sm">{formatTimestamp(selectedJob.job.created_at)}</dd>
                       </div>
                       <div>
-                        <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Updated</dt>
+                        <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">{$LL.app.operator.console.field.updated()}</dt>
                         <dd class="text-sm">{formatTimestamp(selectedJob.job.updated_at)}</dd>
                       </div>
                       <div>
-                        <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Stop requested</dt>
+                        <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">{$LL.app.operator.console.stop_requested()}</dt>
                         <dd class="text-sm">
                           {#if selectedJob.job.stop_requested_at}{formatTimestamp(selectedJob.job.stop_requested_at)}{:else}{@render notAvailable()}{/if}
                         </dd>
                       </div>
                       <div>
-                        <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Interrupted</dt>
+                        <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">{$LL.app.operator.console.field.interrupted()}</dt>
                         <dd class="text-sm">
                           {#if selectedJob.job.interrupted_at}{formatTimestamp(selectedJob.job.interrupted_at)}{:else}{@render notAvailable()}{/if}
                         </dd>
@@ -1892,7 +1917,7 @@
 
                 <section class="mt-4 grid gap-3">
                   <div class="flex items-center gap-2">
-                    <h3 class="font-semibold">Attempt history</h3>
+                    <h3 class="font-semibold">{$LL.app.operator.console.attempt_history()}</h3>
                     <span class="badge badge-outline badge-sm border-base-content/20 text-base-content">
                       {selectedJob.attempts.length}
                     </span>
@@ -1912,14 +1937,14 @@
                             aria-hidden="true"
                           />
                           <span class="min-w-0 flex-1 truncate text-xs text-base-content/60">
-                            <span class="text-sm font-medium text-base-content">Attempt {attempt.attempt_number}</span>
-                            <span class="ml-2 capitalize">{attempt.trigger_kind}</span>
+                            <span class="text-sm font-medium text-base-content">{$LL.app.operator.console.attempt({ number: formatCount(attempt.attempt_number) })}</span>
+                            <span class="ml-2">{triggerKindLabel(attempt.trigger_kind)}</span>
                             <span class="mx-1.5 text-base-content/40">·</span>
                             <span class={jobStatusToneClass(attempt)}>{jobStatusLabel(attempt)}</span>
                             {#if attemptSpeed}
-                              <span class="text-base-content/50"> · processed in {formatSpan(attemptSpeed.ms)}</span>
+                              <span class="text-base-content/50"> · {$LL.app.operator.console.processed_in({ span: formatSpan(attemptSpeed.ms) })}</span>
                             {:else if formatDuration(attempt.record_started_at, attempt.record_finished_at)}
-                              <span class="text-base-content/50"> · recorded {formatDuration(attempt.record_started_at, attempt.record_finished_at)}</span>
+                              <span class="text-base-content/50"> · {$LL.app.operator.console.recorded_for({ span: formatDuration(attempt.record_started_at, attempt.record_finished_at) ?? "" })}</span>
                             {/if}
                           </span>
                         </summary>
@@ -1937,12 +1962,12 @@
                               <dl class="flex flex-wrap gap-x-4 gap-y-1 text-xs">
                                 {#if isBuildWaitingForResources(attempt)}
                                   <div class="flex gap-1">
-                                    <dt class="text-base-content/50">Next retry</dt>
+                                    <dt class="text-base-content/50">{$LL.app.operator.console.next_retry()}</dt>
                                     <dd>{formatTimestamp(attempt.build_retry_not_before)}</dd>
                                   </div>
                                 {/if}
                                 <div class="flex gap-1">
-                                  <dt class="text-base-content/50">Resource deferrals</dt>
+                                  <dt class="text-base-content/50">{$LL.app.operator.console.resource_deferrals()}</dt>
                                   <dd>{attempt.build_deferral_count}</dd>
                                 </div>
                               </dl>
@@ -1960,13 +1985,13 @@
                               <dl class="flex flex-wrap gap-x-4 gap-y-1 text-xs">
                                 {#if attempt.record_exit_code !== null}
                                   <div class="flex gap-1">
-                                    <dt class="text-base-content/50">Exit code</dt>
+                                    <dt class="text-base-content/50">{$LL.app.operator.console.exit_code()}</dt>
                                     <dd class="font-mono">{attempt.record_exit_code}</dd>
                                   </div>
                                 {/if}
                                 {#if attempt.stop_reason}
                                   <div class="flex gap-1">
-                                    <dt class="text-base-content/50">Reason</dt>
+                                    <dt class="text-base-content/50">{$LL.app.operator.console.reason()}</dt>
                                     <dd class="font-mono">{formatStopReason(attempt.stop_reason)}</dd>
                                   </div>
                                 {/if}
@@ -1975,7 +2000,7 @@
                           {:else if attempt.state === "stopped"}
                             <div class="grid gap-1 rounded-box border border-warning/40 bg-warning/10 p-3">
                               <p class="text-sm font-medium text-warning">
-                                {attempt.stop_reason ? formatStopReason(attempt.stop_reason) : "Recording stopped"}
+                                {attempt.stop_reason ? formatStopReason(attempt.stop_reason) : $LL.app.operator.console.recording_stopped()}
                               </p>
                               {#if cleanStopDetail(attempt.record_stop_detail, attempt.record_exit_code, false)}
                                 <p class="text-xs break-words text-base-content/70">{cleanStopDetail(attempt.record_stop_detail, attempt.record_exit_code, false)}</p>
@@ -1987,35 +2012,35 @@
 
                           <dl class="grid grid-cols-3 gap-x-6 gap-y-3">
                             <div>
-                              <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Queued</dt>
+                              <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">{$LL.app.operator.console.field.queued()}</dt>
                               <dd class="text-sm">
                                 {#if attempt.record_queued_at ?? attempt.build_queued_at}{formatTimestamp(attempt.record_queued_at ?? attempt.build_queued_at)}{:else}{@render notAvailable()}{/if}
                               </dd>
                             </div>
                             <div>
-                              <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Processing</dt>
+                              <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">{$LL.app.operator.console.field.processing()}</dt>
                               <dd class="text-sm" class:text-warning={attemptSpeed !== null && attemptSpeed.factor !== null && attemptSpeed.factor < 1} title={attemptSpeed ? processingHint(attemptSpeed) : undefined}>
                                 {#if attemptSpeed}{describeProcessing(attemptSpeed)}{:else}{@render notAvailable()}{/if}
                               </dd>
                             </div>
                             <div>
-                              <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Completed</dt>
+                              <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">{$LL.app.operator.console.field.completed()}</dt>
                               <dd class="text-sm">
                                 {#if attempt.completed_at}{formatTimestamp(attempt.completed_at)}{:else}{@render notAvailable()}{/if}
                               </dd>
                             </div>
                             <div>
-                              <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Reason</dt>
+                              <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">{$LL.app.operator.console.reason()}</dt>
                               <dd class="text-sm">{attemptReason(attempt, formatStopReason)}</dd>
                             </div>
                             <div class="min-w-0">
-                              <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Speech model</dt>
-                              <dd class="text-sm break-words" title={attempt.transcription_revision && speechModelLabel(attempt) ? `Revision ${attempt.transcription_revision}` : undefined}>
+                              <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">{$LL.app.operator.console.field.speech_model()}</dt>
+                              <dd class="text-sm break-words" title={attempt.transcription_revision && speechModelLabel(attempt) ? $LL.app.operator.console.revision({ revision: attempt.transcription_revision }) : undefined}>
                                 {@render fieldValue(attemptSpeech(attempt, selectedJob.attempts))}
                               </dd>
                             </div>
                             <div class="min-w-0">
-                              <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Summary model</dt>
+                              <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">{$LL.app.operator.console.field.summary_model()}</dt>
                               <dd class="text-sm break-words">{@render fieldValue(attemptSummary(attempt))}</dd>
                             </div>
                           </dl>
@@ -2029,42 +2054,42 @@
                                   type="button"
                                   disabled={!log.present}
                                   title={log.present
-                                    ? `Show the ${log.label.toLowerCase()} log`
+                                    ? $LL.app.operator.console.show_log[log.stage]()
                                     : log.written
-                                      ? "No longer on disk: retention or a cleanup removed it"
+                                      ? $LL.app.operator.console.log_gone()
                                       : log.stage === "record" && attempt.trigger_kind !== "initial"
-                                        ? "Not part of this attempt: only the first one records"
-                                        : "This step has not written a log"}
+                                        ? $LL.app.operator.console.log_not_part()
+                                        : $LL.app.operator.console.log_not_written()}
                                   aria-expanded={isOpen}
                                   on:click={() => selectedJob && toggleLog(selectedJob.job.id, attempt.attempt_number, log)}
                                 >
-                                  <FileText size={14} aria-hidden="true" />{log.label} log
+                                  <FileText size={14} aria-hidden="true" />{$LL.app.operator.console.log_name[log.stage]()}
                                 </button>
                               {/each}
                             </div>
                             {#if openLog && openLog.attempt === attempt.attempt_number}
-                              <div class="grid gap-1 rounded-box border border-base-300 bg-base-100" role="region" aria-label="{openLog.label} log">
+                              <div class="grid gap-1 rounded-box border border-base-300 bg-base-100" role="region" aria-label={$LL.app.operator.console.log_name[openLog.stage]()}>
                                 <div class="flex items-center gap-2 border-b border-base-300 px-3 py-1.5 text-xs">
-                                  <span class="font-medium">{openLog.label} log</span>
+                                  <span class="font-medium">{$LL.app.operator.console.log_name[openLog.stage]()}</span>
                                   {#if openLog.truncated}
-                                    <span class="text-base-content/55">· the end of it</span>
+                                    <span class="text-base-content/55">· {$LL.app.operator.console.log_truncated()}</span>
                                   {/if}
                                   <span class="flex-1"></span>
                                   {#if operatorClient}
                                     <a class="btn btn-ghost btn-xs" href={operatorClient.attemptLogUrl(openLog.jobId, openLog.attempt, openLog.stage, true)} download>
-                                      <Download size={12} aria-hidden="true" />Download
+                                      <Download size={12} aria-hidden="true" />{$LL.app.operator.console.download()}
                                     </a>
                                   {/if}
-                                  <button class="btn btn-ghost btn-xs btn-square" type="button" aria-label="Close the log" on:click={() => (openLog = null)}>
+                                  <button class="btn btn-ghost btn-xs btn-square" type="button" aria-label={$LL.app.operator.console.close_log()} on:click={() => (openLog = null)}>
                                     <X size={12} aria-hidden="true" />
                                   </button>
                                 </div>
                                 {#if openLog.loading}
-                                  <p class="px-3 py-2 text-xs text-base-content/60">Loading…</p>
+                                  <p class="px-3 py-2 text-xs text-base-content/60">{$LL.app.operator.console.loading()}</p>
                                 {:else if openLog.error}
                                   <p class="px-3 py-2 text-xs text-error" role="alert">{openLog.error}</p>
                                 {:else if openLog.text === ""}
-                                  <p class="px-3 py-2 text-xs text-base-content/60">This step wrote nothing to its log.</p>
+                                  <p class="px-3 py-2 text-xs text-base-content/60">{$LL.app.operator.console.log_empty()}</p>
                                 {:else}
                                   <pre class="attempt-log max-h-80 overflow-auto px-3 py-2 font-mono text-xs leading-relaxed whitespace-pre-wrap break-all">{openLog.text}</pre>
                                 {/if}
@@ -2077,14 +2102,14 @@
                           <details class="group/tech">
                             <summary class="flex w-fit cursor-pointer list-none items-center gap-1 text-xs text-base-content/60 hover:text-base-content">
                               <ChevronRight size={12} class="shrink-0 transition-transform group-open/tech:rotate-90" aria-hidden="true" />
-                              Technical details
+                              {$LL.app.operator.console.technical_details()}
                             </summary>
                             <dl class="mt-2 grid gap-x-6 gap-y-3">
                               {#each attemptPaths(attempt) as entry (entry.label)}
                                 <div class="min-w-0">
                                   <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">{entry.label}</dt>
                                   <dd class="font-mono text-xs break-all">
-                                    {#if entry.path}{entry.path}{entry.missing ? " (no longer on disk)" : ""}{:else}{@render notAvailable()}{/if}
+                                    {#if entry.path}{entry.path}{entry.missing ? ` ${$LL.app.operator.console.no_longer_on_disk()}` : ""}{:else}{@render notAvailable()}{/if}
                                   </dd>
                                 </div>
                               {/each}

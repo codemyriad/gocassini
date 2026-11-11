@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from "svelte";
   import ViewerApp from "cassini-viewer/App.svelte";
+  import { LL } from "cassini-viewer/i18n";
   import { AppDataProvider } from "./appDataProvider";
   import GenerateCard from "./GenerateCard.svelte";
   import NeedsSetupCard from "./NeedsSetupCard.svelte";
@@ -136,7 +137,7 @@
       if (!destroyed && generation === retentionGeneration && client === operatorClient) acceptRetention(settings);
     } catch {
       if (!destroyed && generation === retentionGeneration && client === operatorClient) {
-        retentionError = "Could not load retention settings.";
+        retentionError = $LL.app.shell.app.retention_load_failed();
       }
     } finally {
       if (generation === retentionGeneration) retentionLoading = false;
@@ -153,7 +154,7 @@
       if (!destroyed && client === operatorClient) acceptRetention(settings);
     } catch (error) {
       if (!destroyed && client === operatorClient) {
-        retentionError = `Could not dismiss the reminder: ${error instanceof Error ? error.message : String(error)}`;
+        retentionError = $LL.app.shell.app.retention_dismiss_failed({ detail: error instanceof Error ? error.message : String(error) });
       }
     } finally { dismissingRetention = false; }
   }
@@ -621,9 +622,9 @@
      explains why their recordings are not appearing. -->
 {#if recordingNeedsAction}
   <div class="m-3 rounded-box border border-base-300 bg-base-100 p-3 text-sm" role="status">
-    Recording setup needs an administrator’s attention.
+    {$LL.app.shell.app.recording_needs_action()}
     {#if operatorAvailable}
-      <button class="btn btn-sm ml-2" on:click={openRecordingSetup}>Open recording setup</button>
+      <button class="btn btn-sm ml-2" on:click={openRecordingSetup}>{$LL.app.shell.app.open_recording_setup()}</button>
     {/if}
   </div>
 {/if}
@@ -634,7 +635,7 @@
         type="button"
         class="cassini-shell-nav-close"
         tabindex="-1"
-        aria-label="Close"
+        aria-label={$LL.common.action.close()}
         on:click={() => viewerApp?.closeOverlay()}
       ></button>
     {/if}
@@ -643,7 +644,7 @@
       class:cassini-shell-nav-covered={overlayOpen}
       inert={overlayOpen}
       data-theme={themeMode}
-      aria-label="Cassini surfaces"
+      aria-label={$LL.app.shell.app.nav_label()}
     >
       <button
         type="button"
@@ -651,7 +652,7 @@
         aria-current={surface === "browse" ? "page" : undefined}
         on:click={() => selectSurface("browse")}
       >
-        Browse
+        {$LL.app.shell.app.tab_browse()}
       </button>
       <button
         type="button"
@@ -659,7 +660,7 @@
         aria-current={surface === "operator" ? "page" : undefined}
         on:click={() => selectSurface("operator")}
       >
-        Operator
+        {$LL.common.place.operator()}
       </button>
     </nav>
 

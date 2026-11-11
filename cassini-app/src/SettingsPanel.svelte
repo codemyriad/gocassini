@@ -13,9 +13,11 @@
   // page has one Save the way the design does, and a failure in one does not
   // silently roll back the other — each reports itself.
   import { createEventDispatcher, onDestroy, onMount, tick } from "svelte";
+  import { richText, slotMark, type RichPart } from "cassini-viewer/ui/richText";
   import { fly } from "svelte/transition";
   import { cancelLeave, confirmLeave, guardLeave, leavePrompt, unsavedChanges } from "./operator/unsaved";
   import { ChevronDown, TriangleAlert } from "@lucide/svelte";
+  import { LL, numberFormat } from "cassini-viewer/i18n";
   import { OperatorClient, OperatorHttpError, runnableWorkflows } from "./operator/client";
   import SpeechModelCell from "./SpeechModelCell.svelte";
   import PublishedFormatSelect from "./PublishedFormatSelect.svelte";
@@ -80,23 +82,34 @@
     selectable: boolean;
   }
 
-  const QUALITY_OPTIONS: QualityOption[] = [
+  $: t = $LL.app.settings.pipeline;
+
+  let QUALITY_OPTIONS: QualityOption[];
+  $: QUALITY_OPTIONS = [
     {
       value: "fast",
-      label: "Fast",
-      description: "Fastest transcription, lower accuracy.",
+      label: $LL.app.quality.fast(),
+      description: t.quality_fast_description(),
     },
     {
       value: "balanced",
-      label: "Balanced",
-      description: "Default — good accuracy at reasonable speed.",
+      label: $LL.app.quality.balanced(),
+      description: t.quality_balanced_description(),
     },
     {
       value: "best",
-      label: "Best",
-      description: "Highest accuracy (fp32), slowest.",
+      label: $LL.app.quality.best(),
+      description: t.quality_best_description(),
     },
   ];
+
+  // Sentences with marked-up parts in them (a model name in bold, a command
+  // as code, a link to Storage), translated whole and cut where each part goes
+  // (cassini-viewer/ui/richText).
+  type Slot = "model" | "media" | "storage" | "pack" | "import";
+  const slot = (name: Slot): string => slotMark(name);
+  type Segment = RichPart<Slot>;
+  const segments = (sentence: string): Segment[] => richText<Slot>(sentence);
 
   let settings: Settings | null = null;
   let meetingFormat: "opus" | "json" = "opus";
@@ -166,7 +179,7 @@
       modelInventoryError = "";
       pickWhenReady(result, target);
     } catch (e) {
-      if (inventoryMounted && generation === inventoryGeneration) modelInventoryError = `Cannot refresh model status: ${e instanceof Error ? e.message : String(e)}`;
+      if (inventoryMounted && generation === inventoryGeneration) modelInventoryError = t.inventory_refresh_failed({ error: e instanceof Error ? e.message : String(e) });
     } finally {
       refreshingInventory = false;
     }
@@ -435,26 +448,13 @@
     return error instanceof Error ? error.message : String(error);
   }
 
-  // deviceLabel names the resolved execution device the way an administrator
-  // thinks about it. The operator speaks "cuda"/"cpu"; the panel should not
-  // make anyone translate.
-  function deviceLabel(device: string): string {
-    if (device === "cuda") {
-      return "GPU (CUDA)";
-    }
-    if (device === "cpu") {
-      return "CPU";
-    }
-    return device || "—";
-  }
-
   // formatMemory reads a size in MB back to an administrator. Gigabytes are
   // what a host is described in, so a four-digit MB number is the wrong unit.
   function formatMemory(mb: number): string {
     if (mb >= 1024) {
-      return `${(mb / 1024).toFixed(1)} GB`;
+      return t.memory_gb({ size: numberFormat({ minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(mb / 1024) });
     }
-    return `${mb} MB`;
+    return t.memory_mb({ size: numberFormat().format(mb) });
   }
 
   // The id the publish pipeline's summary step runs when nothing names one
@@ -493,12 +493,12 @@
   function unrunnableSummaryTemplateLabel(id: string, list: InsightWorkflow[]): string {
     const broken = list.find((workflow) => workflow.id === id && workflow.error);
     if (broken) {
-      return `${id} cannot run: ${broken.error}`;
+      return t.template_cannot_run({ id, error: broken.error ?? "" });
     }
     if (list.some((workflow) => workflow.id === id && workflowTakesQuestion(workflow))) {
-      return `${id} cannot run: it asks for a question, and a summary has nobody to ask`;
+      return t.template_asks_question({ id });
     }
-    return `${id} — not in this build`;
+    return t.template_not_in_build({ id });
   }
 
   function shippedSummaryTemplate(list: InsightWorkflow[]): string {
@@ -521,8 +521,8 @@
   function providerModelPlaceholder(id: string): string {
     const model = llm?.providers.find((row) => row.id === id)?.model ?? "";
     return model !== ""
-      ? `${model} (the provider's default)`
-      : "no default model set on this provider";
+      ? t.provider_default_model({ model })
+      : t.no_provider_default();
   }
 
   // Switching the step on with nothing chosen would send a body the operator
@@ -572,10 +572,10 @@
     recordingsPolicy: retention?.recordings ?? null,
   });
   $: chips = [
-    { name: "Transcribe", step: status.transcribe, target: () => transcriptionSettings },
-    { name: "Summarise", step: status.summarise, target: () => summarySettings },
-    { name: "Publish", step: status.publish, target: () => publicationSettings },
-    { name: "Media retention", step: status.keep, target: () => keepSettings },
+    { name: t.chip_transcribe(), step: status.transcribe, target: () => transcriptionSettings },
+    { name: t.chip_summarise(), step: status.summarise, target: () => summarySettings },
+    { name: t.chip_publish(), step: status.publish, target: () => publicationSettings },
+    { name: t.chip_retention(), step: status.keep, target: () => keepSettings },
   ] satisfies { name: string; step: StepStatus; target: () => HTMLElement }[];
 
   // Keep the saved state for warnings; editable controls follow the draft.
@@ -589,14 +589,34 @@
   // "the GPU (CUDA)", "the CPU", or "the CPU (no GPU found)": the end of the
   // sentence that names the model in use.
   $: runsOnLine = savedDevice === "cuda"
-    ? `the ${deviceLabel("cuda")}`
-    : settings?.detected_gpu ? "the CPU" : "the CPU (no GPU found)";
+    ? t.runs_on_gpu()
+    : settings?.detected_gpu ? t.runs_on_cpu() : t.runs_on_cpu_no_gpu();
   $: inUseModel = modelInventory?.models.find((m) => m.id === activeModel);
   // While it is not installed: its own download, if one is running, and what
   // recordings get meanwhile (the model it replaced, a wait, or nothing).
   $: inUseDownload = inUseModel && !inUseModel.installed ? runningDownload(modelInventory, inUseModel.id) : null;
   $: inUseState = transcriptionEnabled && inUseModel ? inUseModelState(inUseModel, inUseDownload) : null;
-  $: inUsePercent = inUseDownload?.percent == null ? "" : ` (${inUseDownload.percent}%)`;
+  $: inUsePercent = inUseDownload?.percent ?? null;
+  // The footer's one sentence, cut where the model's name goes (in bold).
+  $: inUseLine = segments(
+    inUseModel && inUseState === "missing"
+      ? t.in_use_missing({ model: slot("model") })
+      : inUseModel && inUseState === "stand-in"
+        ? inUseDownload
+          ? inUsePercent === null
+            ? t.in_use_stand_in_downloading({ model: slot("model"), where: runsOnLine })
+            : t.in_use_stand_in_downloading_percent({ model: slot("model"), where: runsOnLine, percent: inUsePercent })
+          : inUseModel.installed
+            ? t.in_use_stand_in_failed_check({ model: slot("model"), where: runsOnLine })
+            : t.in_use_stand_in_missing({ model: slot("model"), where: runsOnLine })
+        : inUseModel && inUseState === "downloading"
+          ? inUsePercent === null
+            ? t.in_use_downloading({ model: slot("model") })
+            : t.in_use_downloading_percent({ model: slot("model"), percent: inUsePercent })
+          : transcriptionEnabled && inUseModel
+            ? t.in_use_transcribing({ model: slot("model"), where: runsOnLine })
+            : t.in_use_runs_on({ where: runsOnLine }),
+  );
   // The tier rows. On the GPU every tier runs the same model, so the rows
   // then carry no model of their own and one model row follows them.
   $: tierModelIds = QUALITY_OPTIONS.map((option) => speechModelFor(option.value, selectedDevice));
@@ -620,20 +640,38 @@
   // transcribes, then what is happening and whether it is saved.
   $: transcriptLead = !transcriptionEnabled
     ? pendingRow
-      ? `Downloading the ${pendingRow.option.label} model. Transcription turns on when it finishes.`
-      : "Nothing is transcribed. Install and pick a model to turn transcription on."
+      ? t.lead_downloading({ tier: pendingRow.option.label })
+      : t.lead_off()
     : !savedTranscriptionOn
-      ? "Transcription is on. Save to apply it to new recordings."
+      ? t.lead_on_unsaved()
       : activeModel !== (settings?.active_model ?? "")
-        ? `Now transcribing with the ${selectedTier || "chosen"} model. Save to apply it.`
+        ? selectedTier ? t.lead_switched({ tier: selectedTier }) : t.lead_switched_unnamed()
         : selectedTier
-          ? `Transcribing every recording with the ${selectedTier} model.`
-          : "Transcription is on.";
+          ? t.lead_tier({ tier: selectedTier })
+          : t.lead_on();
 
   // How long kept media stays, from the Recordings policy: "for 30 days",
   // "kept forever", or "" when retention could not be read.
   $: keptSpan = retentionSpan(retention?.recordings);
-  $: keptFor = keptSpan === null ? "" : keptSpan === "forever" ? "kept forever" : `for ${keptSpan}`;
+  // How many days the recordings policy keeps media, when it is a number of days.
+  $: keptDays = keptSpan !== null && keptSpan !== "forever" ? (retention?.recordings.count ?? 0) : 0;
+  // "{media}, for 30 days.": one sentence per option, with the option's name in bold.
+  function keptLine(media: string, span: string | null, days: number): Segment[] {
+    const m = slot("media");
+    const sentence = span === null ? t.kept_plain({ media: m })
+      : span === "forever" ? t.kept_forever({ media: m })
+      : t.kept_days({ media: m, count: days });
+    return segments(sentence).map((part) => (part.slot === "media" ? { ...part, text: media } : part));
+  }
+  $: keepVideoLine = keptLine($LL.app.keep.audio_video(), keptSpan, keptDays);
+  $: keepAudioLine = keptLine($LL.app.keep.audio_only(), keptSpan, keptDays);
+  $: keepNothingLine = segments(t.kept_plain({ media: slot("media") })).map((part) => (part.slot === "media" ? { ...part, text: $LL.app.keep.nothing() } : part));
+  $: keepSource = segments(
+    keptSpan === "forever" ? t.source_forever({ storage: slot("storage") })
+      : keptSpan ? t.source_days({ storage: slot("storage"), count: keptDays })
+      : t.source_unset({ storage: slot("storage") }),
+  );
+  $: downloadsDisabled = segments(t.downloads_disabled({ pack: slot("pack"), import: slot("import") }));
 
   $: providers = llm?.providers ?? [];
   // The endpoint new recordings' summaries go to, so Settings can say whether
@@ -717,12 +755,9 @@
 <header class="op-panel-head">
     <div>
       <div class="op-panel-title">
-        <h1>Publish pipeline</h1>
+        <h1>{t.heading()}</h1>
       </div>
-      <p>
-        Every step between the call ending and the meeting being published. These apply to
-        every room.
-      </p>
+      <p>{t.intro()}</p>
     </div>
   </header>
 
@@ -738,19 +773,19 @@
   {#if loadError}
     <div class="err-box" role="alert">{loadError}</div>
   {:else if loading}
-    <p class="op-state">Loading settings…</p>
+    <p class="op-state">{t.loading()}</p>
   {:else if !settings}
-    <p class="op-state">Settings aren't available.</p>
+    <p class="op-state">{t.unavailable()}</p>
   {:else}
     <div class="pipe-body">
       <section class="op-tint p-4 grid gap-4 pipe-card" aria-labelledby="recording-publication-heading">
         <div class="strip-head">
-          <h2 id="recording-publication-heading" class="set-row-name op-card-title">After each meeting</h2>
-          <span class="strip-current" title="The saved settings new recordings get">Current</span>
+          <h2 id="recording-publication-heading" class="set-row-name op-card-title">{t.after_meeting()}</h2>
+          <span class="strip-current" title={t.current_title()}>{t.current()}</span>
         </div>
         <!-- What new recordings get with the SAVED settings, one chip per step;
              chip N carries the number of step N below and jumps to it. -->
-        <ul class="pipe-strip" aria-label="Current settings">
+        <ul class="pipe-strip" aria-label={t.strip_label()}>
           {#each chips as chip, index (chip.name)}
             <li>
               <button type="button" class="strip-chip tone-{chip.step.tone}" on:click={() => focusSection(chip.target())}>
@@ -777,26 +812,26 @@
                usable sits on the tier itself. -->
           <div class="pipe-step-row">
             <span class="q-num" aria-hidden="true">1</span>
-            <section class="pub-q scroll-mt-4" aria-label="Transcription settings" tabindex="-1" bind:this={transcriptionSettings}>
+            <section class="pub-q scroll-mt-4" aria-label={t.transcription_label()} tabindex="-1" bind:this={transcriptionSettings}>
               <div class="q-head">
-                <h3 class="q-title">Transcript</h3>
+                <h3 class="q-title">{t.transcript_heading()}</h3>
               </div>
               <!-- What to do next, and then what is happening; it changes with
                    the draft and with the saved state. -->
               <p class="set-row-sub q-lead" role="status">{transcriptLead}</p>
               {#if runsOnGPU}
-                <p class="set-row-sub">On the GPU, every quality setting uses the same full-precision model, so this only changes transcription on the CPU.</p>
+                <p class="set-row-sub">{t.gpu_same_model()}</p>
               {/if}
               {#if modelInventoryError}
                 <p class="set-row-sub pipe-warn" role="status">{modelInventoryError}</p>
               {/if}
-              <div class="q-list" role="radiogroup" aria-label="What transcribes recordings">
+              <div class="q-list" role="radiogroup" aria-label={t.tiers_label()}>
                 <div class="q-opt q-opt-off" class:selected={!transcriptionEnabled}>
                   <label class="q-pick">
                     <input type="radio" name="stt-model" class="q-radio" value="off" checked={!transcriptionEnabled} on:change={selectOff} />
                     <span class="q-main">
-                      <span class="q-label">Off</span>
-                      <span class="q-desc">Recordings are published without a transcript.</span>
+                      <span class="q-label">{t.off()}</span>
+                      <span class="q-desc">{t.off_description()}</span>
                     </span>
                   </label>
                 </div>
@@ -828,12 +863,12 @@
                 {/if}
               </div>
               {#if modelInventory === null && modelInventoryError === ""}
-                <p class="set-row-sub">Loading model inventory…</p>
+                <p class="set-row-sub">{t.loading_inventory()}</p>
               {:else if modelInventory && !modelInventory.downloads_allowed}
-                <p class="set-row-sub">Downloads are disabled. Prepare a package with <code>cassini models pack</code> on a connected machine, copy it here, and run <code>cassini models import</code> inside this server's Cassini runtime. Imported models appear here automatically.</p>
+                <p class="set-row-sub">{#each downloadsDisabled as part}{#if part.slot === "pack"}<code>cassini models pack</code>{:else if part.slot === "import"}<code>cassini models import</code>{:else}{part.text}{/if}{/each}</p>
               {/if}
               {#if !transcriptionEnabled && savedTranscriptOnlyWithout}
-                <p class="set-row-sub pipe-warn" role="status">Saved settings publish transcript-only meetings with no transcript. Save to publish the audio instead.</p>
+                <p class="set-row-sub pipe-warn" role="status">{t.transcript_only_without()}</p>
               {/if}
               <!-- What transcribes new recordings, and where: the step's
                    footer. Builds use the saved model, not the tier picked
@@ -853,25 +888,11 @@
                 <p class="in-use-text" role="status">
                   {#if inUseModel && inUseState === "missing"}
                     <TriangleAlert size={14} class="in-use-warn-icon" aria-hidden="true" />
-                    <span><strong>{inUseModel.name}</strong> isn't installed, so recordings get no transcript.</span>
-                  {:else if inUseModel && inUseState === "stand-in"}
-                    {#if inUseDownload}
-                      <span>Downloading <strong>{inUseModel.name}</strong>{inUsePercent}; the previous model transcribes recordings on {runsOnLine} meanwhile.</span>
-                    {:else if inUseModel.installed}
-                      <span><strong>{inUseModel.name}</strong> is installed but failed its runtime check; the previous model transcribes recordings on {runsOnLine} meanwhile.</span>
-                    {:else}
-                      <span><strong>{inUseModel.name}</strong> isn't installed; the previous model transcribes recordings on {runsOnLine} meanwhile.</span>
-                    {/if}
-                  {:else if inUseModel && inUseState === "downloading"}
-                    <span>Downloading <strong>{inUseModel.name}</strong>{inUsePercent}; recordings wait for it.</span>
-                  {:else if transcriptionEnabled && inUseModel}
-                    <span>Transcribing with <strong>{inUseModel.name}</strong> on {runsOnLine}.</span>
-                  {:else}
-                    <span>Transcription runs on {runsOnLine}.</span>
                   {/if}
+                  <span>{#each inUseLine as part}{#if part.slot === "model"}<strong>{inUseModel?.name}</strong>{:else}{part.text}{/if}{/each}</span>
                 </p>
                 <button type="button" class="in-use-toggle" aria-expanded={hardwareOpen} aria-controls="hardware-details" on:click={() => (hardwareOpen = !hardwareOpen)}>
-                  Hardware
+                  {t.hardware()}
                   <ChevronDown size={14} class={hardwareOpen ? "in-use-chevron open" : "in-use-chevron"} aria-hidden="true" />
                 </button>
               </div>
@@ -880,31 +901,31 @@
                      What runs and where is already said in the line above. -->
                 <div id="hardware-details" class="hw-details">
                   <dl class="hw-facts">
-                    <dt>GPU</dt>
-                    <dd>{settings.detected_gpu ? "Found" : "None found"}</dd>
-                    <dt>CPU cores</dt>
+                    <dt>{t.hw_gpu()}</dt>
+                    <dd>{settings.detected_gpu ? t.hw_gpu_found() : t.hw_gpu_none()}</dd>
+                    <dt>{t.hw_cores()}</dt>
                     <dd>{settings.cores}</dd>
                     {#if settings.effective.min_free_memory_mb > 0}
-                      <dt>Memory</dt>
-                      <dd>Each recording waits for {formatMemory(settings.effective.min_free_memory_mb)} free</dd>
+                      <dt>{t.hw_memory()}</dt>
+                      <dd>{t.hw_memory_wait({ size: formatMemory(settings.effective.min_free_memory_mb) })}</dd>
                     {/if}
-                    <dt><label for="stt-device">Device</label></dt>
+                    <dt><label for="stt-device">{t.hw_device()}</label></dt>
                     <dd class="hw-device">
                       <span class="op-select hw-device-select">
                         <select id="stt-device" bind:value={deviceOverride} class="op-input">
-                          <option value="">Auto</option>
+                          <option value="">{t.hw_device_auto()}</option>
                           <option value="cpu">CPU</option>
                           <option value="cuda">GPU (CUDA)</option>
                         </select>
                         <ChevronDown size={14} class="op-select-chevron" aria-hidden="true" />
                       </span>
-                      <span class="hw-help">Auto uses the GPU when there is one. Change it only if the hardware above is wrong.</span>
+                      <span class="hw-help">{t.hw_device_help()}</span>
                     </dd>
                   </dl>
                   {#if deviceOverride === "cuda" && !settings.detected_gpu}
-                    <p class="hw-note pipe-warn" role="status">No GPU was found, so recordings won't be processed on this setting.</p>
+                    <p class="hw-note pipe-warn" role="status">{t.hw_no_gpu_forced()}</p>
                   {:else if !settings.detected_gpu}
-                    <p class="hw-note">For faster transcription, run Cassini's CUDA image on a server with a GPU.</p>
+                    <p class="hw-note">{t.hw_cuda_tip()}</p>
                   {:else if settings.effective.note}
                     <p class="hw-note">{settings.effective.note}</p>
                   {/if}
@@ -923,14 +944,14 @@
             <span class="q-num" aria-hidden="true">2</span>
             <section class="pub-q scroll-mt-4" class:off={!transcriptionEnabled} aria-labelledby="summary-heading" tabindex="-1" bind:this={summarySettings}>
               <div class="q-head">
-                <h3 id="summary-heading" class="q-title" class:off={hasProvider === false}>Summary</h3>
+                <h3 id="summary-heading" class="q-title" class:off={hasProvider === false}>{t.summary_heading()}</h3>
                 {#if !transcriptionEnabled}
-                  <span class="q-pill q-pill-warn">needs a transcript</span>
+                  <span class="q-pill q-pill-warn">{t.needs_transcript()}</span>
                 {:else}
                   <input
                     type="checkbox"
                     class="op-switch"
-                    aria-label="Summarise every meeting"
+                    aria-label={t.summarise_switch()}
                     disabled={hasProvider !== true}
                     checked={summary.enabled && hasProvider === true}
                     on:change={(event) => toggleSummary(event.currentTarget.checked)}
@@ -938,12 +959,9 @@
                 {/if}
               </div>
               {#if llmError}
-                <p class="set-row-sub pipe-warn">
-                  Couldn't load the AI provider settings, so this step can't be shown or changed:
-                  {llmError}
-                </p>
+                <p class="set-row-sub pipe-warn">{t.llm_load_failed({ error: llmError })}</p>
               {:else if hasProvider === false}
-                <p class="set-row-sub">Needs a provider. <button type="button" class="link" disabled={!transcriptionEnabled} on:click={() => dispatch("openProviders")}>Add one</button></p>
+                <p class="set-row-sub">{t.needs_provider()} <button type="button" class="link" disabled={!transcriptionEnabled} on:click={() => dispatch("openProviders")}>{t.add_provider()}</button></p>
               {:else if hasProvider === true}
                 <!-- The step's title and fields already say that each meeting
                      gets a summary from this provider. The line carries what
@@ -955,7 +973,7 @@
                 {#if summary.enabled}
                 <fieldset class="step-config" disabled={!transcriptionEnabled || saving}>
                   <label class="op-field">
-                    <span class="op-field-label">Provider</span>
+                    <span class="op-field-label">{t.field_provider()}</span>
                     <span class="op-select">
                       <select
                         class="op-input"
@@ -984,7 +1002,7 @@
                        free-text "workflow" field asked an administrator to know an
                        id the registry could have told them. -->
                   <label class="op-field">
-                    <span class="op-field-label">Insight template</span>
+                    <span class="op-field-label">{t.field_template()}</span>
                     <select
                       bind:value={summary.template}
                       class="op-input"
@@ -997,7 +1015,7 @@
                            resolved to a real id the moment the registry lands, so
                            this option is only ever reachable when it could not be. -->
                       {#if summary.template === ""}
-                        <option value="">The workflow Cassini ships</option>
+                        <option value="">{t.template_shipped()}</option>
                       {/if}
                       {#each summaryTemplates as workflow (workflow.id)}
                         <option value={workflow.id}>{workflow.name}</option>
@@ -1013,15 +1031,11 @@
                       {/if}
                     </select>
                     {#if !workflowsKnown}
-                      <span class="pipe-help">
-                        Templates could not be listed.
-                      </span>
+                      <span class="pipe-help">{t.templates_unlisted()}</span>
                     {/if}
-                    <span class="pipe-help">
-                      Meetings published from now on are summarised with this template.
-                    </span>
+                    <span class="pipe-help">{t.template_help()}</span>
                     <button type="button" class="link-btn pipe-link" on:click={() => dispatch("openTemplates")}>
-                      Edit templates
+                      {t.edit_templates()}
                     </button>
                   </label>
                 </fieldset>
@@ -1037,13 +1051,13 @@
             <span class="q-num" aria-hidden="true">3</span>
             <section class="pub-q scroll-mt-4" aria-labelledby="publication-heading" tabindex="-1" bind:this={publicationSettings}>
               <div class="q-head">
-                <h3 id="publication-heading" class="q-title">What participants receive</h3>
+                <h3 id="publication-heading" class="q-title">{t.publication_heading()}</h3>
               </div>
               <div class="q-stack">
                 <!-- Shows what is published, which is the audio while transcription
                      is off whatever was last chosen. -->
                 <PublishedFormatSelect value={publishedFormat} transcript={transcriptionEnabled} disabled={saving} on:change={(event) => selectMeetingFormat(event.detail)} />
-                <p id="publication-help" class="set-row-sub">Camera video is never published.</p>
+                <p id="publication-help" class="set-row-sub">{t.no_video_published()}</p>
               </div>
             </section>
           </div>
@@ -1056,62 +1070,56 @@
             <span class="q-num" aria-hidden="true">4</span>
             <fieldset class="pub-q grid gap-3 scroll-mt-4" disabled={saving} tabindex="-1" bind:this={keepSettings}>
               <legend class="q-head">
-                <span class="q-title">What media stays on the server</span>
+                <span class="q-title">{t.keep_heading()}</span>
               </legend>
               <label class="flex items-start gap-3 text-sm" class:keep-unavailable={publishedFormat === "opus"}>
-                <input class="radio radio-primary radio-sm" type="radio" name="recording-media" value="nothing" aria-label="Nothing" checked={recordingMedia === "nothing"} disabled={publishedFormat === "opus"} on:change={() => selectRecordingMedia("nothing")} aria-describedby="keep-nothing-help" />
-                <span><strong>Nothing.</strong> <span id="keep-nothing-help">The recording is deleted after publishing and cannot be reprocessed.</span>
-                  {#if publishedFormat === "opus"}<span class="set-row-sub block pipe-warn">Unavailable while audio is published (step 3).</span>{/if}</span>
+                <input class="radio radio-primary radio-sm" type="radio" name="recording-media" value="nothing" aria-label={$LL.app.keep.nothing()} checked={recordingMedia === "nothing"} disabled={publishedFormat === "opus"} on:change={() => selectRecordingMedia("nothing")} aria-describedby="keep-nothing-help" />
+                <span>{#each keepNothingLine as part}{#if part.slot === "media"}<strong>{part.text}</strong>{:else}{part.text}{/if}{/each} <span id="keep-nothing-help">{t.keep_nothing_help()}</span>
+                  {#if publishedFormat === "opus"}<span class="set-row-sub block pipe-warn">{t.keep_nothing_unavailable()}</span>{/if}</span>
               </label>
               <label class="flex items-start gap-3 text-sm">
-                <input class="radio radio-primary radio-sm" type="radio" name="recording-media" value="audio-video" aria-label="Audio and video" checked={recordingMedia === "audio-video"} on:change={() => selectRecordingMedia("audio-video")} aria-describedby="keep-video-help" />
-                <span>{#if keptFor}<strong>Audio and video</strong>, {keptFor}.{:else}<strong>Audio and video.</strong>{/if} <span id="keep-video-help">Uses the most space.</span></span>
+                <input class="radio radio-primary radio-sm" type="radio" name="recording-media" value="audio-video" aria-label={$LL.app.keep.audio_video()} checked={recordingMedia === "audio-video"} on:change={() => selectRecordingMedia("audio-video")} aria-describedby="keep-video-help" />
+                <span>{#each keepVideoLine as part}{#if part.slot === "media"}<strong>{part.text}</strong>{:else}{part.text}{/if}{/each} <span id="keep-video-help">{t.keep_video_help()}</span></span>
               </label>
               <label class="flex items-start gap-3 text-sm">
-                <input class="radio radio-primary radio-sm" type="radio" name="recording-media" value="audio-only" aria-label="Audio only" checked={recordingMedia === "audio-only"} on:change={() => selectRecordingMedia("audio-only")} />
-                <span>{#if keptFor}<strong>Audio only</strong>, {keptFor}.{:else}<strong>Audio only.</strong>{/if}</span>
+                <input class="radio radio-primary radio-sm" type="radio" name="recording-media" value="audio-only" aria-label={$LL.app.keep.audio_only()} checked={recordingMedia === "audio-only"} on:change={() => selectRecordingMedia("audio-only")} />
+                <span>{#each keepAudioLine as part}{#if part.slot === "media"}<strong>{part.text}</strong>{:else}{part.text}{/if}{/each}</span>
               </label>
               {#if recordingMedia !== "nothing"}
-              {#if keptSpan === "forever"}
-                <p class="set-row-sub">Kept forever: change this in <button type="button" class="link" on:click={() => dispatch("openStorage")}>Storage</button>.</p>
-              {:else if keptSpan}
-                <p class="set-row-sub">The {keptSpan} {keptSpan === "1 day" ? "comes" : "come"} from <button type="button" class="link" on:click={() => dispatch("openStorage")}>Storage</button>.</p>
-              {:else}
-                <p class="set-row-sub">How long kept media stays is set in <button type="button" class="link" on:click={() => dispatch("openStorage")}>Storage</button>.</p>
-              {/if}
+                <p class="set-row-sub">{#each keepSource as part}{#if part.slot === "storage"}<button type="button" class="link" on:click={() => dispatch("openStorage")}>{t.storage_link()}</button>{:else}{part.text}{/if}{/each}</p>
               {/if}
             </fieldset>
           </div>
         </div>
         {#if recordingMedia === "nothing" && (!transcriptionEnabled || !activeModel || !activeRevision)}
-          <p class="set-row-sub" role="status"><strong>Transcription must be on to keep nothing.</strong> <button type="button" class="link" on:click={focusTranscriptionSettings}>Set up transcription</button></p>
+          <p class="set-row-sub" role="status"><strong>{t.must_transcribe()}</strong> <button type="button" class="link" on:click={focusTranscriptionSettings}>{t.set_up_transcription()}</button></p>
         {/if}
-        <p class="set-row-sub">Applies to new recordings after saving.</p>
+        <p class="set-row-sub">{t.applies_to_new()}</p>
       </section>
 
 
       <VoiceSeparationModel client={operatorClient} inventory={modelInventory} />
 
       <section class="op-tint pipe-step search-spellings-card" aria-labelledby="search-spellings-heading">
-        <h2 id="search-spellings-heading" class="set-row-name op-card-title">Search spellings</h2>
+        <h2 id="search-spellings-heading" class="set-row-name op-card-title">{t.search_heading()}</h2>
         <div class="set-row-main pipe-text-step">
-          <p class="set-row-sub">Common mishearings of a name, so searching for the name finds them too.</p>
+          <p class="set-row-sub">{t.search_intro()}</p>
           <label class="op-field">
             <span class="pipe-field-head">
-              <span class="op-field-label">One name per line, then its spellings, separated by commas</span>
-              <span class="pipe-limit">(up to 100 names, 25 spellings each)</span>
+              <span class="op-field-label">{t.search_field()}</span>
+              <span class="pipe-limit">{t.search_limit()}</span>
             </span>
             <textarea
               bind:value={searchAliasesText}
               class="op-input pipe-textarea"
               maxlength={10_100}
-              placeholder={'Cassini, casino, casini\nEisbuk, ice book, icebook'}
+              placeholder={t.search_placeholder()}
             ></textarea>
           </label>
           <ul class="pipe-notes">
-            <li>Doesn't change any transcript, only what search finds.</li>
-            <li>Results say when they matched one of these spellings.</li>
-            <li>Use these spellings when the transcriber mishears a name.</li>
+            <li>{t.search_note_transcripts()}</li>
+            <li>{t.search_note_results()}</li>
+            <li>{t.search_note_when()}</li>
           </ul>
         </div>
       </section>
@@ -1126,26 +1134,26 @@
         class="save-bar"
         class:asking={$leavePrompt !== null}
         role={$leavePrompt ? "alertdialog" : "region"}
-        aria-label={$leavePrompt ? "Leave without saving?" : "Unsaved changes"}
+        aria-label={$leavePrompt ? $LL.app.settings.unsaved.leave_title() : t.unsaved_region()}
         transition:fly={{ y: 16, duration: prefersReducedMotion() ? 0 : 180 }}
       >
         {#if $leavePrompt}
           <TriangleAlert size={16} class="save-bar-icon" aria-hidden="true" />
-          <p class="save-bar-text">You have unsaved changes. Leave without saving?</p>
+          <p class="save-bar-text">{$LL.app.settings.unsaved.leave_prompt()}</p>
           <div class="save-bar-actions">
             <button bind:this={stayButton} class="sb-btn sb-light" type="button" on:click={cancelLeave}>
-              Stay
+              {$LL.app.settings.unsaved.stay()}
             </button>
-            <button class="sb-btn sb-danger" type="button" on:click={confirmLeave}>Leave</button>
+            <button class="sb-btn sb-danger" type="button" on:click={confirmLeave}>{$LL.app.settings.unsaved.leave()}</button>
           </div>
         {:else}
-          <p class="save-bar-text">{saving ? "Saving changes…" : "You have unsaved changes"}</p>
+          <p class="save-bar-text">{saving ? t.saving_changes() : t.unsaved()}</p>
           <button class="sb-btn sb-light" type="button" disabled={saving || !isDirty || (sourceRetention === "delete-after-processing" && (!transcriptionEnabled || !activeModel || !activeRevision))} on:click={handleSave}>
             {#if saving}
               <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
-              Saving…
+              {$LL.common.action.saving()}
             {:else}
-              Save
+              {$LL.common.action.save()}
             {/if}
           </button>
         {/if}

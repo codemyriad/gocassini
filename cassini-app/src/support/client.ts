@@ -1,4 +1,6 @@
 import { resolvePublishedUrl } from "cassini-viewer/dataProvider";
+import { get } from "svelte/store";
+import { LL } from "cassini-viewer/i18n";
 import { loadConfig } from "../operator/config";
 
 type CatalogDiagnostic = {
@@ -52,20 +54,21 @@ export async function requestSupportBundle(
     response = await request(userURL);
   }
   if (!response.ok) {
-    const copy: Record<number, string> = {
-      401: "Sign in again, then retry the download.",
-      403: "Your account cannot download this support bundle.",
-      404: "Support bundles aren’t available on this Cassini installation yet.",
-      429: "Another support bundle is being prepared. Try again shortly.",
+    const t = get(LL).app.operator.support_bundle;
+    const copy: Record<number, () => string> = {
+      401: t.error_sign_in,
+      403: t.error_forbidden,
+      404: t.error_unavailable,
+      429: t.error_busy,
     };
-    throw new SupportDownloadError(copy[response.status] ?? "Couldn’t prepare the support bundle. Try again.");
+    throw new SupportDownloadError((copy[response.status] ?? t.error_failed)());
   }
   if (response.headers.get("Content-Type")?.split(";")[0] !== "application/zip") {
-    throw new SupportDownloadError("Cassini didn’t return a support bundle. Sign in again and retry.");
+    throw new SupportDownloadError(get(LL).app.operator.support_bundle.error_not_a_bundle());
   }
   const blob = await response.blob();
   if (blob.size === 0 || blob.size > 21 * 1024 * 1024) {
-    throw new SupportDownloadError("The support bundle download was incomplete. Try again.");
+    throw new SupportDownloadError(get(LL).app.operator.support_bundle.error_incomplete());
   }
   const disposition = response.headers.get("Content-Disposition") ?? "";
   const filename = /filename="(cassini-support-(?:(?:original|scrubbed)-)?[0-9]{8}T[0-9]{6}Z-[0-9a-f]{12}\.zip)"/.exec(disposition)?.[1] ?? `cassini-support-${privacy}.zip`;

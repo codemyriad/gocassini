@@ -1,4 +1,6 @@
+import { get } from "svelte/store";
 import { describe, expect, it } from "vitest";
+import { LL } from "cassini-viewer/i18n";
 import { buildSetupNotice, readRecordingsAccess, readSetupHealth, readSharing, recordingAudience } from "./setupHealth";
 
 const health = { ok: true, state: "provisioned", mode: "direct_shares", cause: "", features: null, sharing: null };
@@ -28,6 +30,34 @@ describe("direct share setup status", () => {
     expect(notice?.title).toBe("Cassini can't save recordings right now");
     expect(notice?.summary).toMatch(/^You can still browse recordings\./);
     expect(notice).not.toHaveProperty("blocking");
+  });
+});
+
+// The cause line an administrator reads: worded here from the failing step
+// (storage_causes.go), in their language; the operator's sentence otherwise.
+describe("the setup notice's cause", () => {
+  const failing = { ...health, ok: false, state: "unavailable", cause: "Health sentence." };
+  const cause = (step: string, serverCause = "Operator sentence.", isAdmin = true) =>
+    buildSetupNotice({ health: failing, access: { ok: false, state: "unavailable", step, detail: "raw", cause: serverCause }, isAdmin, appUrl: "" })?.cause;
+
+  it("words each known step itself", () => {
+    const t = get(LL).app.shell.setup_notice.cause;
+    expect(cause("nextcloud_probe")).toBe(t.nextcloud_probe());
+    expect(cause("private_archive")).toBe(t.private_archive());
+    expect(cause("sharing_api")).toBe(t.sharing_api());
+    expect(cause("owner_account")).toBe("The Cassini recordings account does not exist.");
+    // The raw state text stays as the operator sent it.
+    expect(buildSetupNotice({ health: failing, access: { ok: false, state: "unavailable", step: "owner_account", detail: "raw", cause: "" }, isAdmin: true, appUrl: "" })?.detail).toBe("raw");
+  });
+
+  it("falls back to the operator's sentence for a step it does not know, then /setup's, then its own", () => {
+    expect(cause("administrator")).toBe("Operator sentence.");
+    expect(cause("", "")).toBe("Health sentence.");
+    expect(buildSetupNotice({ health: { ...failing, cause: "" }, access: null, isAdmin: true, appUrl: "" })?.cause).toBe(get(LL).app.shell.setup_notice.cause_unknown());
+  });
+
+  it("is not shown to someone who is not an administrator", () => {
+    expect(cause("owner_account", "x", false)).toBe("");
   });
 });
 

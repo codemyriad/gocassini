@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { render } from "svelte/server";
+import { get } from "svelte/store";
+
+import { LL } from "../i18n";
 
 import type { VocabularyTag } from "../viewer/annotations";
 import RoomsRail from "./RoomsRail.svelte";
@@ -10,7 +13,8 @@ describe("RoomsRail Show filter", () => {
     // Both are narrowings of the same archive, so they belong in the same
     // column — which is the design prototype's own arrangement. It was in the
     // list header while `types` was list-local state.
-    expect(roomsRailSource).toContain(">Show</h2>");
+    expect(roomsRailSource).toContain(">{text.show_heading()}</h2>");
+    expect(get(LL).viewer.browse.rooms_rail.show_heading()).toBe("Show");
     expect(roomsRailSource).toContain('data-type="meetings"');
     expect(roomsRailSource).toContain('data-type="insights"');
   });
@@ -20,7 +24,7 @@ describe("RoomsRail Show filter", () => {
     // narrows to a kind of thing which cannot exist here is a promise the build
     // cannot keep.
     expect(roomsRailSource).toContain("export let insightsOffered = false;");
-    expect(roomsRailSource).toMatch(/\{#if insightsOffered\}[\s\S]{0,200}>Show<\/h2>/);
+    expect(roomsRailSource).toMatch(/\{#if insightsOffered\}[\s\S]{0,200}>\{text\.show_heading\(\)\}<\/h2>/);
   });
 
   it("cannot be narrowed down to showing nothing at all", () => {

@@ -1,3 +1,4 @@
+import { numberFormat } from "cassini-viewer/i18n";
 import type { StorageUsageSource } from "./types";
 
 export interface StorageLoadSample {
@@ -21,7 +22,7 @@ export interface StorageLoadSummary {
 // the panel stay declarative and makes boundary values independently testable.
 export function formatStorageBytes(bytes: number): string {
   const amount = Number.isFinite(bytes) && bytes > 0 ? bytes : 0;
-  const units = ["B", "KB", "MB", "GB", "TB", "PB"];
+  const units = ["byte", "kilobyte", "megabyte", "gigabyte", "terabyte", "petabyte"];
   let value = amount;
   let unit = 0;
   while (value >= 1024 && unit < units.length - 1) {
@@ -29,7 +30,11 @@ export function formatStorageBytes(bytes: number): string {
     unit += 1;
   }
   const digits = unit > 0 && value < 10 ? 1 : 0;
-  return `${value.toFixed(digits)} ${units[unit]}`;
+  const options = { minimumFractionDigits: digits, maximumFractionDigits: digits, useGrouping: false };
+  // Bytes stay "B": Intl spells the byte unit out ("1023 byte", "bajtova").
+  // Larger units come from Intl in the reader's locale (French "Mo", "Go").
+  if (unit === 0) return `${numberFormat(options).format(value)} B`;
+  return numberFormat({ ...options, style: "unit", unit: units[unit], unitDisplay: "short" }).format(value);
 }
 
 // A total is useful only when it covers every row. Returning null makes the
@@ -44,9 +49,10 @@ export function storageUsageTotal(sources: StorageUsageSource[]): number | null 
 export function formatStorageDuration(milliseconds: number): string {
   const duration = Number.isFinite(milliseconds) && milliseconds > 0 ? milliseconds : 0;
   if (duration < 1000) {
-    return `${Math.round(duration)} ms`;
+    return `${numberFormat({ maximumFractionDigits: 0, useGrouping: false }).format(Math.round(duration))} ms`;
   }
-  return `${(duration / 1000).toFixed(duration < 10_000 ? 2 : 1)} s`;
+  const digits = duration < 10_000 ? 2 : 1;
+  return `${numberFormat({ minimumFractionDigits: digits, maximumFractionDigits: digits, useGrouping: false }).format(duration / 1000)} s`;
 }
 
 export function summarizeStorageLoads(samples: StorageLoadSample[]): StorageLoadSummary | null {

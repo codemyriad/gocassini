@@ -1,3 +1,5 @@
+import { get } from "svelte/store";
+import { LL, operatorPlace } from "cassini-viewer/i18n";
 import type { OperatorPanel } from "../surfaceRouting";
 
 export interface SetupFeatures { summaries: boolean; insights: boolean }
@@ -212,14 +214,28 @@ export function shareableAppUrl(href: string): string {
 }
 
 const APP_ID = "gocassini";
-const RERUN_SETUP: SetupNoticeStep = {
-  label: "Re-run Cassini's setup by disabling and enabling the app",
+// Functions rather than constants, so each notice is in the reader's language.
+const rerunSetup = (): SetupNoticeStep => ({
+  label: get(LL).app.shell.setup_notice.step_rerun_setup(),
   commands: [`occ app_api:app:disable ${APP_ID}`, `occ app_api:app:enable ${APP_ID}`],
-};
-const SETTINGS_OFFER: SetupNoticeStep = {
-  label: "Open Operator › Publish pipeline to check the recordings account",
+});
+const settingsOffer = (): SetupNoticeStep => ({
+  label: get(LL).app.shell.setup_notice.step_open_settings({ place: operatorPlace("publish_pipeline") }),
   commands: [], action: "settings",
-};
+});
+
+// What failed, by the operator's step (storage_causes.go, its administrator
+// wording); "" for a step not listed there.
+function stepCause(step: string): string {
+  const t = get(LL).app.shell.setup_notice.cause;
+  switch (step) {
+    case "nextcloud_probe": return t.nextcloud_probe();
+    case "private_archive": return t.private_archive();
+    case "sharing_api": return t.sharing_api();
+    case "owner_account": return t.owner_account();
+    default: return "";
+  }
+}
 
 export function buildSetupNotice(options: {
   health: SetupHealth | null;
@@ -234,31 +250,37 @@ export function buildSetupNotice(options: {
   // it, so the notice never replaces the meeting list (D-849). It promises
   // browsing, not that every read succeeds: a Nextcloud outage that fails this
   // check can fail a reader's share scan too, and the list reports that itself.
+  const t = get(LL).app.shell.setup_notice;
   const failing = verdict.state !== "unknown";
-  const summary = failing
-    ? "You can still browse recordings. Calls will still run, but their recordings will fail until this is fixed."
-    : "You can still browse recordings, but new ones will fail until this check runs.";
+  const summary = failing ? t.summary_failing() : t.summary_unchecked();
   const base: SetupNotice = {
     tone: failing ? "warning" : "neutral",
-    title: failing ? "Cassini can't save recordings right now" : "Cassini hasn't checked that it can save recordings",
+    title: failing ? t.title_failing() : t.title_unchecked(),
     summary, cause: "", steps: [], detail: "", note: "", shareLabel: "", shareUrl: "", reference: "",
   };
   if (!isAdmin) {
-    return { ...base, shareLabel: "Send this link to an administrator for setup instructions.", shareUrl: appUrl };
+    return { ...base, shareLabel: t.share_label(), shareUrl: appUrl };
   }
   const step = access?.step ?? "";
   const steps: SetupNoticeStep[] = step === "owner_account"
-    ? [SETTINGS_OFFER, { label: "Create the cassini account in Nextcloud", commands: ["occ user:add cassini"] }, RERUN_SETUP]
+    ? [settingsOffer(), { label: t.step_create_account({ user: "cassini" }), commands: ["occ user:add cassini"] }, rerunSetup()]
     : step === "administrator"
-      ? [{ label: "Set CASSINI_NC_ADMIN_USER to a Nextcloud administrator", commands: [] }, RERUN_SETUP]
-      : [SETTINGS_OFFER, RERUN_SETUP];
+      ? [{ label: t.step_set_admin_user({ variable: "CASSINI_NC_ADMIN_USER" }), commands: [] }, rerunSetup()]
+      : [settingsOffer(), rerunSetup()];
   return {
     ...base,
-    cause: access?.cause || health?.cause || "Cassini could not confirm its recordings setup.",
+    // The cause is worded here from the failing step, in the reader's
+    // language; for a step this app does not know, the operator's own
+    // sentence, in English. detail is the operator's raw state text, in
+    // English. /setup sends no step, so its cause (health.cause) stays the
+    // operator's sentence too.
+    cause: stepCause(access?.step ?? "") || access?.cause || health?.cause || t.cause_unknown(),
     steps,
-    detail: access?.detail || `The operator reported ${verdict.state}${step ? ` at ${step}` : ""}.`,
-    note: "occ is however your deployment invokes it, for example sudo -u www-data php occ.",
-    reference: "See GET /operator/status for the full recordings access report.",
+    detail: access?.detail || (step
+      ? t.detail_state_at_step({ state: verdict.state, step })
+      : t.detail_state({ state: verdict.state })),
+    note: t.note_occ({ command: "occ", example: "sudo -u www-data php occ" }),
+    reference: t.reference({ endpoint: "GET /operator/status" }),
   };
 }
 
@@ -301,12 +323,9 @@ export interface FeatureNotice {
 const AI_PANEL: OperatorPanel = "endpoints";
 
 // Only an administrator can act, and only they are told there is somewhere to
-// go — see FeatureNotice.panel.
-const ADMIN_ACTION = "Open AI providers";
-// The button on the compact card. Same words as the button on the panel it
-// opens, so the second press is the one the first one promised.
-const ADMIN_ACTION_SHORT = "Add a provider";
-const NOT_YOURS_TO_FIX = " Ask a Nextcloud administrator.";
+// go — see FeatureNotice.panel. The compact card's button (action_short) is the
+// same words as the button on the panel it opens, so the second press is the
+// one the first one promised.
 
 // buildFeatureNotice returns what to say about a capability this deployment does
 // not have, or null when there is nothing to say — which is BOTH "it is
@@ -322,22 +341,17 @@ export function buildFeatureNotice(options: {
   if (features === null || features[feature]) {
     return null;
   }
-  const summary =
-    feature === "insights"
-      ? "Insights need an AI endpoint, and this deployment has none."
-      : "Summaries need an AI endpoint and the summarise step switched on.";
+  const t = get(LL).app.operator.feature_notice;
+  const insights = feature === "insights";
   return {
-    title:
-      feature === "insights" ? "No AI endpoint is available" : "Meetings are not being summarised",
-    summary: isAdmin ? summary : summary + NOT_YOURS_TO_FIX,
+    title: insights ? t.insights_title() : t.summaries_title(),
+    summary: insights
+      ? isAdmin ? t.insights_summary() : t.insights_summary_ask_admin()
+      : isAdmin ? t.summaries_summary() : t.summaries_summary_ask_admin(),
     panel: isAdmin ? AI_PANEL : "",
-    actionLabel: isAdmin ? ADMIN_ACTION : "",
-    actionTitle: isAdmin
-      ? feature === "insights"
-        ? "Add a provider to create insights"
-        : "Add a provider to write summaries"
-      : undefined,
-    actionShortLabel: isAdmin ? ADMIN_ACTION_SHORT : undefined,
+    actionLabel: isAdmin ? t.action({ place: get(LL).common.place.ai_providers() }) : "",
+    actionTitle: isAdmin ? (insights ? t.insights_action_title() : t.summaries_action_title()) : undefined,
+    actionShortLabel: isAdmin ? t.action_short() : undefined,
   };
 }
 

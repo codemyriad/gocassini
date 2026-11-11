@@ -42,7 +42,7 @@ describe("portableMeetingStart (format SPEC 'When the meeting happened')", () =>
       recordedAtUtc: "2026-11-09T09:31:48.000Z",
     });
     // 09:31:48Z is 10:31 in Rome; the label's "09:31" is not what is shown.
-    expect(formatMeetingStartWithDay({ recordedAtUtc: start!.recordedAtUtc })).toBe("Mon 9 Nov 2026, 10:31");
+    expect(formatMeetingStartWithDay({ recordedAtUtc: start!.recordedAtUtc })).toBe("Mon, 9 Nov 2026, 10:31");
   });
 
   // Shaped like conformance vector 028-date-is-created-at.

@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
+  import { get } from "svelte/store";
+  import { LL, operatorPlace } from "cassini-viewer/i18n";
   import { Download, ShieldCheck } from "@lucide/svelte";
   import { requestSupportBundle, SupportDownloadError } from "./support/client";
 
@@ -46,12 +48,15 @@
       try { link.click(); } finally { link.remove(); }
       // Let the browser start reading the Blob before releasing it.
       cleanupTimer = setTimeout(cleanupURL, 1000);
-      result = `${bundle.administrator ? "Administrator support bundle" : "Support bundle"} downloaded. Privacy filtering was ${scrubSensitive ? "on" : "off"}.`;
+      const t = get(LL).app.operator.support_bundle;
+      result = bundle.administrator
+        ? (scrubSensitive ? t.downloaded_admin_scrubbed : t.downloaded_admin_original)()
+        : (scrubSensitive ? t.downloaded_user_scrubbed : t.downloaded_user_original)();
     } catch (cause) {
       cleanupURL();
       if (alive) error = cause instanceof SupportDownloadError ? cause.message : request.signal.aborted
-        ? "The support download timed out. Try again."
-        : "Couldn’t reach Cassini. Check your connection and try again.";
+        ? get(LL).app.operator.support_bundle.error_timeout()
+        : get(LL).app.operator.support_bundle.error_unreachable();
     } finally {
       clearTimeout(timeout);
       if (alive) busy = false;
@@ -60,30 +65,21 @@
   }
 
   onDestroy(() => { alive = false; controller?.abort(); cleanupURL(); });
+
+  $: t = $LL.app.operator.support_bundle;
 </script>
 
-<div class="support-download" aria-label="Cassini support">
+<div class="support-download" aria-label={t.region_label()}>
   <p class="support-lede">
-    {#if administrator}
-      The bundle covers the whole installation: versions and settings, the last seven days of jobs, stage logs
-      and sharing events. It has no recordings, transcripts or summaries.
-    {:else}
-      The bundle includes your Nextcloud user ID, your browser details, the recordings shared with you and any
-      error messages. It has no meeting content and no server logs.
-    {/if}
+    {administrator ? t.lede_admin() : t.lede_user()}
   </p>
 
   <label class="support-choice">
     <input type="checkbox" class="cassini-check" bind:checked={scrubSensitive} disabled={busy} />
     <span>
-      <span class="support-choice-label">Scrub sensitive information</span>
+      <span class="support-choice-label">{t.scrub()}</span>
       <span class="support-hint">
-        {#if administrator}
-          Logs can include names, URLs, passwords or meeting text. Scrubbing removes them, but may also remove
-          details needed to find the problem.
-        {:else}
-          Leaves out your user ID and the error messages. Counts and status codes stay.
-        {/if}
+        {administrator ? t.scrub_hint_admin() : t.scrub_hint_user()}
       </span>
     </span>
   </label>
@@ -92,10 +88,10 @@
     <button class="btn btn-sm btn-primary" type="button" disabled={busy} on:click={download}>
       {#if busy}<span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
       {:else}<Download size={14} aria-hidden="true" />{/if}
-      {busy ? "Preparing support bundle…" : "Download support bundle"}
+      {busy ? t.preparing() : t.download()}
     </button>
   </div>
-  <p class="support-fine">Nothing is sent automatically. Check the ZIP before you share it.</p>
+  <p class="support-fine">{t.fine_print()}</p>
   {#if error}<p class="support-status text-error" role="alert">{error}</p>{/if}
   {#if result}<p class="support-status" role="status">{result}</p>{/if}
 
@@ -103,11 +99,10 @@
     <aside class="support-admin" aria-labelledby="support-admin-title">
       <ShieldCheck size={16} class="support-admin-icon" aria-hidden="true" />
       <div>
-        <h3 id="support-admin-title">Administrators</h3>
-        <p>This bundle covers only your own account. For a problem with recording or processing, download the
-          installation bundle instead: it adds server logs and job history.</p>
+        <h3 id="support-admin-title">{t.admin_heading()}</h3>
+        <p>{t.admin_body()}</p>
         <button type="button" class="btn btn-xs btn-ghost support-admin-link" on:click={openOperatorHelp}>
-          Open Operator › Help
+          {t.admin_link({ place: operatorPlace("help") })}
         </button>
       </div>
     </aside>

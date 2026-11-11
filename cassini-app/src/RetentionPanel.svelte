@@ -2,7 +2,8 @@
   import { createEventDispatcher, onMount, onDestroy } from "svelte";
   import { unsavedChanges, leavePrompt, guardLeave } from "./operator/unsaved";
   import type { OperatorClient } from "./operator/client";
-  import { changeRetentionMode, retentionLabels, type RetentionSettings } from "./operator/retention";
+  import { LL } from "cassini-viewer/i18n";
+  import { changeRetentionMode, retentionLabel, type RetentionSettings } from "./operator/retention";
   import RetentionPolicyField from "./RetentionPolicyField.svelte";
   import { notifyRetentionChanged } from "./operator/retentionSignal";
   import { retentionMutationBusy, withRetentionMutation } from "./operator/retentionReminder";
@@ -31,7 +32,7 @@
   $: zoneOptions = settings && !timezones.includes(settings.schedule.timezone) ? [settings.schedule.timezone, ...timezones] : timezones;
   async function load() {
     busy = true; error = ""; notice = "";
-    try { if (!operatorClient) throw new Error("Operator unavailable"); accept(await operatorClient.getRetention());
+    try { if (!operatorClient) throw new Error($LL.app.settings.retention.operator_unavailable()); accept(await operatorClient.getRetention());
     } catch (e) {
       if (!alive) return;
       error = e instanceof Error ? e.message : String(e);
@@ -58,7 +59,7 @@
       // The shell still needs the committed revision; never restore the draft.
       if (!alive) { notifyRetentionChanged(result); return; }
       accept(result);
-      notice = "Retention settings saved.";
+      notice = $LL.app.settings.retention.saved();
       dispatch("saved", result);
     } catch (e) {
       if (alive) error = e instanceof Error ? e.message : String(e);
@@ -78,51 +79,51 @@
 <section class="retention-panel" id="retention-policies">
   <div class="retention-content">
   <div class="grid gap-1">
-    <h2 class="text-xl font-semibold" tabindex="-1">Retention</h2>
-    <p class="text-sm opacity-80">How long Cassini keeps each kind of file. Saving never deletes anything immediately.</p>
+    <h2 class="text-xl font-semibold" tabindex="-1">{$LL.app.settings.retention.heading()}</h2>
+    <p class="text-sm opacity-80">{$LL.app.settings.retention.intro()}</p>
   </div>
   {#if settings}
     <form id={formId} class="grid gap-4" on:submit|preventDefault={save}>
       <fieldset disabled={busy || disabled || $retentionMutationBusy} class="grid gap-4">
         <section class="op-tint p-4 category">
-          <h3 class="font-semibold">Recordings</h3>
-          <p class="text-sm opacity-80">Audio and video captured on this server. Deleting them means the meeting cannot be reprocessed.</p>
-          <RetentionPolicyField bind:policy={settings.recordings} label="Recordings" hideLabel />
+          <h3 class="font-semibold">{$LL.app.file_kind.recordings()}</h3>
+          <p class="text-sm opacity-80">{$LL.app.settings.retention.recordings_description()}</p>
+          <RetentionPolicyField bind:policy={settings.recordings} label={$LL.app.file_kind.recordings()} hideLabel />
         </section>
         <section class="op-tint p-4 category">
-          <h3 class="font-semibold">Published meetings (on this server)</h3>
-          <p class="text-sm opacity-80">The published meeting stays in Nextcloud Files after this copy is removed.</p>
-          <RetentionPolicyField bind:policy={settings.current} label="Published meetings (on this server)" hideLabel />
+          <h3 class="font-semibold">{$LL.app.file_kind.current()}</h3>
+          <p class="text-sm opacity-80">{$LL.app.settings.retention.current_description()}</p>
+          <RetentionPolicyField bind:policy={settings.current} label={$LL.app.file_kind.current()} hideLabel />
         </section>
         <section class="op-tint p-4 category">
-          <h3 class="font-semibold">Previous attempts</h3>
-          <p class="text-sm opacity-80">Failed recordings, failed processing, replaced output and failed publishing.</p>
+          <h3 class="font-semibold">{$LL.app.file_kind.history()}</h3>
+          <p class="text-sm opacity-80">{$LL.app.settings.retention.history_description()}</p>
           {#if settings.history.mode === "group"}
-            <RetentionPolicyField bind:policy={settings.history.policy} label="Previous attempts" hideLabel />
-            <button type="button" class="link text-sm justify-self-start" on:click={() => mode("fine")}>Set each kind separately</button>
+            <RetentionPolicyField bind:policy={settings.history.policy} label={$LL.app.file_kind.history()} hideLabel />
+            <button type="button" class="link text-sm justify-self-start" on:click={() => mode("fine")}>{$LL.app.settings.retention.split_kinds()}</button>
           {:else}
-            {#each Object.keys(settings.history.fine) as kind (kind)}<RetentionPolicyField bind:policy={settings.history.fine[kind]} label={retentionLabels[kind]} />{/each}
-            <button type="button" class="link text-sm justify-self-start" on:click={() => mode("group")}>Use one setting for all kinds</button>
+            {#each Object.keys(settings.history.fine) as kind (kind)}<RetentionPolicyField bind:policy={settings.history.fine[kind]} label={retentionLabel(kind)} />{/each}
+            <button type="button" class="link text-sm justify-self-start" on:click={() => mode("group")}>{$LL.app.settings.retention.join_kinds()}</button>
           {/if}
         </section>
         <section class="op-tint p-4 category">
-          <h3 class="font-semibold">Processing logs</h3>
-          <p class="text-sm opacity-80">Logs from each recording attempt.</p>
-          <RetentionPolicyField bind:policy={settings.logs} label="Processing logs" hideLabel />
+          <h3 class="font-semibold">{$LL.app.file_kind.logs()}</h3>
+          <p class="text-sm opacity-80">{$LL.app.settings.retention.logs_description()}</p>
+          <RetentionPolicyField bind:policy={settings.logs} label={$LL.app.file_kind.logs()} hideLabel />
         </section>
         {#if settings.nextcloud}
         <section class="op-tint p-4 category">
-          <h3 class="font-semibold">Published meetings in Nextcloud</h3>
-          <p class="text-sm opacity-80">Deletes the published meeting, including its transcript and notes.</p>
-          <RetentionPolicyField bind:policy={settings.nextcloud.meetings} label="Published meetings in Nextcloud" hideLabel />
+          <h3 class="font-semibold">{$LL.app.settings.retention.nextcloud_heading()}</h3>
+          <p class="text-sm opacity-80">{$LL.app.settings.retention.nextcloud_description()}</p>
+          <RetentionPolicyField bind:policy={settings.nextcloud.meetings} label={$LL.app.settings.retention.nextcloud_heading()} hideLabel />
         </section>
         {/if}
         <section class="op-tint p-4 category">
-          <h3 class="font-semibold">Daily cleanup</h3>
+          <h3 class="font-semibold">{$LL.app.settings.retention.schedule_heading()}</h3>
           <div class="flex flex-wrap items-center gap-2 text-sm">
-            <span>Run at</span>
-            <input class="input input-bordered w-32" type="time" step="60" required aria-label="Cleanup time" bind:value={settings.schedule.time} />
-            <select class="select select-bordered w-auto max-w-full" required aria-label="Timezone" bind:value={settings.schedule.timezone}>
+            <span>{$LL.app.settings.retention.run_at()}</span>
+            <input class="input input-bordered w-32" type="time" step="60" required aria-label={$LL.app.settings.retention.cleanup_time_label()} bind:value={settings.schedule.time} />
+            <select class="select select-bordered w-auto max-w-full" required aria-label={$LL.app.settings.retention.timezone_label()} bind:value={settings.schedule.timezone}>
               {#each zoneOptions as timezone (timezone)}<option value={timezone}>{timezone}</option>{/each}
             </select>
           </div>
@@ -130,7 +131,7 @@
       </fieldset>
     </form>
   {:else if busy}
-    <p role="status">Loading retention settings…</p>
+    <p role="status">{$LL.app.settings.retention.loading()}</p>
   {/if}
   </div>
   <div class="retention-footer">

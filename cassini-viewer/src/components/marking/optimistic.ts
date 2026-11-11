@@ -1,3 +1,6 @@
+import { get } from "svelte/store";
+
+import { LL } from "../../i18n";
 import {
   labelKey,
   type AnnotationItem,
@@ -129,7 +132,7 @@ export function optimisticMarks(value: MeetingAnnotations, intent: MarkIntent): 
         }
         if (!doc.items.some((item) => item.tagId === tag.id && sameTarget(item.target, op.target))) {
           doc.items.push({ id: intent.itemIds[index], tagId: tag.id, target: op.target,
-            createdAtUtc: "", actor: { kind: "person", id: "You" }, operationId: "" });
+            createdAtUtc: "", actor: { kind: "person", id: get(LL).viewer.meeting.marking.you() }, operationId: "" });
         }
         break;
       }

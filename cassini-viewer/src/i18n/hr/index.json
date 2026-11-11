@@ -1,0 +1,46 @@
+{
+  "common": {
+    "action": {
+      "cancel": "Odustani",
+      "save": "Spremi",
+      "saving": "Spremanje…",
+      "retry": "Pokušaj ponovno",
+      "retrying": "Ponovni pokušaj…",
+      "dismiss": "Odbaci",
+      "delete": "Izbriši",
+      "remove": "Ukloni",
+      "edit": "Uredi",
+      "close": "Zatvori",
+      "try_again": "Pokušaj ponovno"
+    },
+    "summary_request": {
+      "write": "Napiši sažetak",
+      "regenerate": "Ponovno napiši sažetak",
+      "confirm_write_title": "Napisati sažetak ovog sastanka?",
+      "confirm_replace_title": "Zamijeniti sažetak ovog sastanka?",
+      "cost": "{target}: {count:number|num} {{count:|poziv||poziva||poziva}} · oko {tokens:number|compact} {{tokens:|ulaznog tokena||ulazna tokena||ulaznih tokena}}, {words:number|num} {{words:|riječ||riječi||riječi}}",
+      "cost_target_fallback": "Model za sažetke",
+      "cost_target": "{model} ({provider})",
+      "endpoint_external": "Transkript se šalje vanjskoj usluzi, koja ga može naplatiti.",
+      "endpoint_local": "Model radi na tvojoj vlastitoj mreži."
+    },
+    "audience": {
+      "intro": "Nextcloud Datoteke određuju tko može čitati pojedinu snimku.",
+      "point_participants": "Svaka snimka dijeli se sa svim sudionicima sobe u Talku, bez obzira na to jesu li bili u pozivu ili ne.",
+      "point_guests": "Gosti bez Nextcloud računa ne mogu je otvoriti.",
+      "point_public_links": "Cassini nikad ne stvara javnu poveznicu. U javnim sobama ljudi mogu ponovno podijeliti datoteku ako ovaj Nextcloud to dopušta."
+    },
+    "place": {
+      "operator": "Operater",
+      "publish_pipeline": "Cjevovod objave",
+      "ai_providers": "Pružatelji AI-ja",
+      "insight_templates": "Predlošci uvida",
+      "doctor": "Doktor",
+      "storage": "Pohrana",
+      "help": "Pomoć"
+    },
+    "status": {
+      "copied": "Kopirano"
+    }
+  }
+}

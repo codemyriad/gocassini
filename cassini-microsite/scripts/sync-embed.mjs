@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Build the public embed and put it where the microsite publishes it (D-775).
 //
-// The bundle, stylesheet, and source map land in cassini-microsite/public/embed/v1/ and is COMMITTED.
+// The bundle, stylesheet, source map and language files (i18n/<lang>.json)
+// land in cassini-microsite/public/embed/v1/ and are COMMITTED.
 // Astro copies public/ verbatim, so local microsite builds can serve the
 // embed without installing and compiling the viewer workspace. CI verifies
 // these committed assets against a fresh viewer build before deployment.
@@ -31,6 +32,9 @@ const builtDir = join(viewerDir, "dist", "public");
 const CHANNEL = "v1";
 const publishedDir = join(micrositeDir, "public", "embed", CHANNEL);
 const FILES = ["viewer.js", "viewer.css", "viewer.js.map"];
+// The languages the embed fetches beside viewer.js, one file each.
+const languageFiles = (dir) =>
+  existsSync(join(dir, "i18n")) ? readdirSync(join(dir, "i18n")).map((name) => `i18n/${name}`).sort() : [];
 
 const check = process.argv.includes("--check");
 
@@ -43,9 +47,15 @@ for (const file of FILES) {
   }
 }
 
+const files = [...FILES, ...languageFiles(builtDir)];
+
 if (check) {
   let drifted = false;
-  for (const file of FILES) {
+  for (const file of languageFiles(publishedDir).filter((name) => !files.includes(name))) {
+    console.error(`sync-embed: public/embed/${CHANNEL}/${file} is no longer built.`);
+    drifted = true;
+  }
+  for (const file of files) {
     const built = readFileSync(join(builtDir, file));
     const published = existsSync(join(publishedDir, file))
       ? readFileSync(join(publishedDir, file))
@@ -64,8 +74,8 @@ if (check) {
 }
 
 rmSync(publishedDir, { recursive: true, force: true });
-mkdirSync(publishedDir, { recursive: true });
-for (const file of FILES) {
+mkdirSync(join(publishedDir, "i18n"), { recursive: true });
+for (const file of files) {
   copyFileSync(join(builtDir, file), join(publishedDir, file));
   console.log(`embed -> public/embed/${CHANNEL}/${file}`);
 }

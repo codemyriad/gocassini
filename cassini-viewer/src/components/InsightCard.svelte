@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
+  import { LL } from "../i18n";
   import {
     formatInsightCreated,
     formatInsightStatus,
@@ -57,7 +58,7 @@
       on:click={() => dispatch("open")}
     >
       <span class="insight-eyebrow">
-        <span class="insight-kind">Insight</span>
+        <span class="insight-kind">{$LL.viewer.insights.card.kind()}</span>
         {#if pending}
           <span class="insight-status" data-status={insight.status}>
             {formatInsightStatus(insight.status)}
@@ -72,7 +73,7 @@
              this caller cannot see does not report how many there were. -->
           {#if sourceCount > 0}
             <span class="rule" aria-hidden="true"></span>
-            <span>{sourceCount} {sourceCount === 1 ? "meeting" : "meetings"}</span>
+            <span>{$LL.viewer.insights.card.meetings({ count: sourceCount })}</span>
           {/if}
         </span>
       </span>
@@ -87,7 +88,7 @@
         disabled={retrying}
         on:click={() => dispatch("retry")}
       >
-        {retrying ? "Retrying…" : "Retry"}
+        {retrying ? $LL.common.action.retrying() : $LL.common.action.retry()}
       </button>
       {#if retryError}
         <p class="insight-retry-error" role="status">{retryError}</p>

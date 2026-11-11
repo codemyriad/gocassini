@@ -1,3 +1,6 @@
+import { get } from "svelte/store";
+
+import { LL } from "../i18n";
 import type { MeetingCatalogEntry } from "./catalog";
 
 // What the shell should show once a catalog has actually been observed.
@@ -42,7 +45,7 @@ export function resolveCatalogSelection(
     const found = meetings.some((meeting) => meeting.id === requested);
     return {
       selectedMeetingId: requested,
-      notFoundMessage: found ? "" : `Meeting not found in catalog: ${requested}`,
+      notFoundMessage: found ? "" : get(LL).viewer.browse.app.meeting_not_found({ id: requested }),
       seedHistory: true,
     };
   }

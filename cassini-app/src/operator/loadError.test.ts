@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { OperatorHttpError } from "./client";
-import { LOAD_ERROR_TITLE, buildLoadError } from "./loadError";
+import { get } from "svelte/store";
+import { LL } from "cassini-viewer/i18n";
+import { buildLoadError } from "./loadError";
 
 describe("failed operator calls", () => {
   it("suggests an update check for a missing route without claiming its cause", () => {
@@ -57,7 +59,8 @@ describe("failed operator calls", () => {
 
   it("names what failed, in words, and never a route or a status code", () => {
     const error = buildLoadError(new OperatorHttpError(500, "boom"));
-    expect(error.title).toBe(LOAD_ERROR_TITLE);
+    expect(error.title).toBe(get(LL).app.shell.load_error.title());
+    expect(error.title).toBe("Cassini couldn't read these settings");
     expect(error.title).not.toMatch(/\/|HTTP|operator|occ/);
   });
 });
