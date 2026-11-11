@@ -284,20 +284,20 @@ func (rt *Runtime) talkBackendMisconfigured() string {
 	return message
 }
 
-// talkBackendURLProblem is talkBackendMisconfigured with which of its two
-// sentences it is, for the app to word (D-921).
-func (rt *Runtime) talkBackendURLProblem() (variant, message string) {
+// talkBackendURLProblem is talkBackendMisconfigured with params naming which
+// of its two sentences it is, for the app to word (D-921).
+func (rt *Runtime) talkBackendURLProblem() (params readinessParams, message string) {
 	raw := strings.TrimSpace(rt.cfg.TalkBackendURL)
 	if raw == "" {
-		return "", ""
+		return nil, ""
 	}
 	if u, err := url.Parse(raw); err == nil && strings.Contains(u.Path, appAPIProxyPath) {
-		return "app_api_proxy", "Cassini's configured Talk backend URL addresses Cassini's own AppAPI proxy, so requests for Talk's settings never reach Talk. Clear CASSINI_TALK_BACKEND_URL unless a deployment genuinely needs an override; Talk sends the correct backend URL with each recording request."
+		return readinessParams{"variant": "app_api_proxy"}, "Cassini's configured Talk backend URL addresses Cassini's own AppAPI proxy, so requests for Talk's settings never reach Talk. Clear CASSINI_TALK_BACKEND_URL unless a deployment genuinely needs an override; Talk sends the correct backend URL with each recording request."
 	}
 	if rt.readinessBackendURL() == "" {
-		return "not_a_base_url", "Cassini's configured Talk backend URL is not a usable base URL. It must be a plain http(s) URL with no query or fragment. Clear CASSINI_TALK_BACKEND_URL unless a deployment genuinely needs an override."
+		return readinessParams{"variant": "not_a_base_url"}, "Cassini's configured Talk backend URL is not a usable base URL. It must be a plain http(s) URL with no query or fragment. Clear CASSINI_TALK_BACKEND_URL unless a deployment genuinely needs an override."
 	}
-	return "", ""
+	return nil, ""
 }
 
 func (rt *Runtime) validTestRoom(raw string) bool {
@@ -783,11 +783,11 @@ func (rt *Runtime) readinessWithOptional(ctx context.Context, includeOptional bo
 			readinessStep{ID: "restart_app_new_secret", Label: "Then restart Cassini by disabling and re-enabling it in Nextcloud's apps, which creates the secret again"},
 			readinessStep{ID: "set_recording_secret", Label: "Or set one yourself in `CASSINI_TALK_RECORDING_SECRET`, in Cassini's deploy options. A secret set there always wins"})
 	}
-	if variant, refusal := rt.talkBackendURLProblem(); refusal != "" {
+	if params, refusal := rt.talkBackendURLProblem(); refusal != "" {
 		// Ahead of the room check: no room can make this work, and "choose a
 		// test room" would send a reader to fix the one thing that is fine.
 		add("talk.discovery", "needs_action", "talk_backend_url_invalid", refusal, "")
-		resp.Checks[len(resp.Checks)-1].Params = readinessParams{"variant": variant}
+		resp.Checks[len(resp.Checks)-1].Params = params
 	} else if len(probes) == 0 {
 		// The message this replaces named both cases — "Previous results have
 		// expired OR this process restarted" — while treating them as one. They
@@ -1074,7 +1074,7 @@ func (rt *Runtime) readinessHandler(w http.ResponseWriter, r *http.Request) {
 		switch body.Action {
 		case repairBackfillSearch:
 			if !rt.canBackfillSearch() {
-				writeJSONError(w, http.StatusBadRequest, "Search re-indexing is available only for Nextcloud recording archives.")
+				writeCodedJSONError(w, http.StatusBadRequest, "reindex_unavailable", "Search re-indexing is available only for Nextcloud recording archives.")
 				return
 			}
 			rt.startSearchBackfill()
@@ -1108,11 +1108,11 @@ func (rt *Runtime) recordingSetupHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if body.InternalSecret != nil && strings.TrimSpace(os.Getenv(envTalkSignalingInternalSecret)) != "" {
-		writeJSONError(w, 409, "The internal secret is managed by deployment configuration.")
+		writeCodedJSONError(w, 409, "secret_managed_by_deployment", "The internal secret is managed by deployment configuration.")
 		return
 	}
 	if body.TestRoomURL != nil && !rt.validTestRoom(strings.TrimSpace(*body.TestRoomURL)) {
-		writeJSONError(w, 400, "Use a Talk room URL without query parameters. Configure NEXTCLOUD_URL or the Talk backend URL on the server first.")
+		writeCodedJSONError(w, 400, "test_room_url_invalid", "Use a Talk room URL without query parameters. Configure NEXTCLOUD_URL or the Talk backend URL on the server first.")
 		return
 	}
 	if body.Action != "" && body.Action != "arm_test" && body.Action != "confirm_playback" {
@@ -1127,7 +1127,7 @@ func (rt *Runtime) recordingSetupHandler(w http.ResponseWriter, r *http.Request)
 	rt.loadRecordingSetupLocked()
 	if s.loadFailed {
 		s.mu.Unlock()
-		writeJSONError(w, 409, "Restore the saved recording setup before making changes.")
+		writeCodedJSONError(w, 409, "setup_store_needs_restore", "Restore the saved recording setup before making changes.")
 		return
 	}
 	next := s.state
@@ -1159,7 +1159,7 @@ func (rt *Runtime) recordingSetupHandler(w http.ResponseWriter, r *http.Request)
 			if err != nil {
 				s.mu.Unlock()
 				rt.logger.Printf("ERROR: could not prepare a test room: %v", err)
-				writeJSONError(w, 502, "Cassini could not create a test room in Talk. Check that Talk is installed and reachable, then try again.")
+				writeCodedJSONError(w, 502, "test_room_create_failed", "Cassini could not create a test room in Talk. Check that Talk is installed and reachable, then try again.")
 				return
 			}
 			next.TestRoomURL = created
@@ -1182,7 +1182,7 @@ func (rt *Runtime) recordingSetupHandler(w http.ResponseWriter, r *http.Request)
 		s.mu.Lock()
 		if !test.Published || body.JobID == "" || test.JobID != body.JobID {
 			s.mu.Unlock()
-			writeJSONError(w, 409, "The selected Talk test recording has not finished publishing.")
+			writeCodedJSONError(w, 409, "test_not_published", "The selected Talk test recording has not finished publishing.")
 			return
 		}
 		next.PlaybackJobID = body.JobID
@@ -1190,7 +1190,7 @@ func (rt *Runtime) recordingSetupHandler(w http.ResponseWriter, r *http.Request)
 	}
 	if err := rt.saveRecordingSetupLocked(next); err != nil {
 		s.mu.Unlock()
-		writeJSONError(w, 500, "Could not save recording setup on the persistent volume.")
+		writeCodedJSONError(w, 500, "setup_save_failed", "Could not save recording setup on the persistent volume.")
 		return
 	}
 	if body.InternalSecret != nil || body.TestRoomURL != nil {

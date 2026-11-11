@@ -314,7 +314,7 @@ func (rt *Runtime) recordedAtMigrationHandler(w http.ResponseWriter, r *http.Req
 	}
 	worker := rt.recordedAtFiles.Load()
 	if worker == nil {
-		writeJSONError(w, http.StatusConflict, "this deployment has no delivered files Cassini can rewrite")
+		writeCodedJSONError(w, http.StatusConflict, "migration_not_applicable", "this deployment has no delivered files Cassini can rewrite")
 		return
 	}
 	who := appapi.UserID(r.Context())
@@ -327,7 +327,7 @@ func (rt *Runtime) recordedAtMigrationHandler(w http.ResponseWriter, r *http.Req
 		// pass has finished that is part of the archive, and the rest would
 		// arrive as needed after the run, asking for a second press.
 		if !rt.recordedAtIndexChecked.Load() {
-			writeJSONError(w, http.StatusConflict, "Cassini is still counting the past recordings that need this; try again once it has finished")
+			writeCodedJSONError(w, http.StatusConflict, "migration_still_counting", "Cassini is still counting the past recordings that need this; try again once it has finished")
 			return
 		}
 		n, err := worker.startMigration(r.Context())
