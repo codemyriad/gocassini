@@ -501,14 +501,23 @@
     }
   }
 
+  /* The chip drops under the heading when both don't fit on one line
+     (German "Unterhaltungen" + "Mit Teilnehmern geteilt"), rather than
+     breaking its own text across lines. */
   .rail-head-row.rooms-head {
     position: relative;
+    flex-wrap: wrap;
     gap: 6px;
+  }
+  .audience {
+    max-width: 100%;
   }
   .audience-note {
     display: inline-flex;
     align-items: center;
     gap: 4px;
+    max-width: 100%;
+    white-space: nowrap;
     margin: -3px 0;
     padding: 2px 6px;
     cursor: help;

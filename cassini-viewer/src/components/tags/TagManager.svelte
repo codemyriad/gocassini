@@ -209,10 +209,10 @@
     </div>
     {#if menu}
       <div bind:this={menuEl} use:popover={{ anchor: menu.anchor, close: () => (menu = null) }} role="menu" tabindex="-1"
-        aria-label={text.actions_for({ name: menu.tag.label })} class="tag-popover grid w-44 p-1" on:keydown={onMenuKeydown}>
+        aria-label={text.actions_for({ name: menu.tag.label })} class="tag-popover grid w-max min-w-44 max-w-[calc(100vw-24px)] p-1" on:keydown={onMenuKeydown}>
         {#each MENU as [id, itemText], index (id)}
           <button type="button" role="menuitem" use:focus={index === 0} disabled={id === "merge" && tags.length < 2} class:text-error={id === "delete"}
-            class="rounded-field px-2.5 py-1.5 text-left text-sm hover:bg-base-content/8 focus-visible:bg-base-content/8 focus-visible:outline-none disabled:opacity-40"
+            class="rounded-field px-2.5 py-1.5 text-left text-sm whitespace-nowrap hover:bg-base-content/8 focus-visible:bg-base-content/8 focus-visible:outline-none disabled:opacity-40"
             on:click={() => choose(id)}>{itemText}</button>
         {/each}
       </div>

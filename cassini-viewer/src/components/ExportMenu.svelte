@@ -73,7 +73,7 @@
     role="menu"
     tabindex="-1"
     aria-label={label || $LL.viewer.export.menu_label()}
-    class="tag-popover grid w-52 p-1"
+    class="tag-popover grid w-max min-w-52 max-w-[calc(100vw-24px)] p-1"
     on:keydown={onKeydown}
   >
     {#if includeContext}
@@ -99,8 +99,11 @@
 {/if}
 
 <style>
+  /* One line per item, the menu as wide as its longest label: German
+     "Transkript herunterladen" broke in two at a fixed width. */
   .em-item {
     display: flex;
+    white-space: nowrap;
     align-items: center;
     gap: 8px;
     padding: 6px 10px;
