@@ -1,3 +1,4 @@
+import { get } from "svelte/store";
 import { describe, expect, it } from "vitest";
 
 import attributesDoc from "../ATTRIBUTES.md?raw";
@@ -11,10 +12,14 @@ import {
   LIVE_ATTRIBUTES,
   PALETTE_PROPERTIES,
   PLAYBACK_ERROR_EVENT,
+  embedLanguageHref,
   embedLanguages,
   embedStylesheetHref,
+  loadEmbedLanguage,
   findEmbedScriptSrc,
 } from "./public";
+import { LL, setLocale } from "./i18n/i18n-svelte";
+import { loadedLocales } from "./i18n/i18n-util";
 
 // The bootstrap is guarded on import.meta.env.VITEST, so importing this module
 // exercises the exported helpers without defining a custom element in node.
@@ -141,5 +146,33 @@ describe("the embed's language", () => {
     expect(embedLanguages(element(null, null))).toEqual(
       [...(navigator.languages ?? []), navigator.language].filter(Boolean),
     );
+  });
+});
+
+describe("language files", () => {
+  it("sit beside the script, cache-buster and all", () => {
+    expect(embedLanguageHref("https://gocassini.com/embed/v1/viewer.js?v=3", "de-DE")).toBe(
+      "https://gocassini.com/embed/v1/i18n/de-DE.json?v=3",
+    );
+    expect(embedLanguageHref("", "fr")).toBe("i18n/fr.json");
+  });
+
+  const respond = (body: unknown, ok = true) =>
+    (async () => ({ ok, json: async () => body })) as unknown as typeof fetch;
+
+  it("load over English, so a missing string reads in English", async () => {
+    const english = loadedLocales.en;
+    expect(await loadEmbedLanguage("nl", "x", respond({ viewer: { embed: { badge: "Gemaakt met Cassini" } } }))).toBe(true);
+    setLocale("nl");
+    expect(get(LL).viewer.embed.badge()).toBe("Gemaakt met Cassini");
+    expect(get(LL).common.action.save()).toBe(english.common.action.save);
+    setLocale("en");
+  });
+
+  it("answer false, and change nothing, when the file cannot be had", async () => {
+    const before = loadedLocales.pl;
+    expect(await loadEmbedLanguage("pl", "x", respond(null, false))).toBe(false);
+    expect(await loadEmbedLanguage("pl", "x", (async () => { throw new TypeError("CSP"); }) as typeof fetch)).toBe(false);
+    expect(loadedLocales.pl).toBe(before);
   });
 });

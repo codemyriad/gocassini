@@ -7,8 +7,9 @@
 # The public embed (D-775). A page on another origin loads viewer.js with a
 # plain <script src>, which needs no CORS at all; what needs it is the fetch the
 # script then makes for the recording, which is cross-origin whenever the
-# embedding page is not this site. Allowing it on the assets too costs nothing
-# and lets a page preload them.
+# embedding page is not this site, and for the language files it fetches from
+# i18n/ beside itself. Allowing it on the other assets too costs nothing and
+# lets a page preload them.
 /embed/*
   Access-Control-Allow-Origin: *
 

@@ -18,7 +18,7 @@ import { i18nBundle } from "./scripts/i18n-bundle-plugin.mjs";
 // embed by allowing one URL. scripts/assert-single-bundle.mjs fails the build
 // if that ever stops being true.
 export default defineConfig({
-  plugins: [i18nBundle({ withoutApp: true }), tailwindcss(), svelte()],
+  plugins: [i18nBundle({ withoutApp: true, languageFiles: true }), tailwindcss(), svelte()],
   base: "./",
   build: {
     // External maps keep production code minified and make installed builds debuggable.

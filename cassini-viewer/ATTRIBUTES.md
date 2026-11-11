@@ -30,6 +30,12 @@ the recording in step with it.
 One page shows one language: two embeds on the same page that ask for
 different languages both use the language of the one added last.
 
+Every language but English is a small file the script fetches from beside
+itself (`/embed/v1/i18n/<lang>.json`) before the viewer appears. A page with a
+Content Security Policy that limits `connect-src` must allow
+`https://gocassini.com` there to show a language other than English; without
+it the viewer shows in English.
+
 ## Events
 
 | Event | `detail` | When |

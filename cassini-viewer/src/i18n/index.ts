@@ -8,9 +8,13 @@
 //
 // Every language is bundled. The embedded entries must stay one file
 // (scripts/assert-embedded-single-bundle.mjs), and the dictionaries are small,
-// so there is nothing to load later. English is set the moment this module is
-// imported, so a component that renders before any entry point chooses a
-// language (or in a unit test) gets English rather than an empty string.
+// so there is nothing to load later. The public embed is the exception: its
+// build bundles English in every language's place and src/public.ts fetches
+// the one language it shows (scripts/i18n-bundle-plugin.mjs).
+//
+// English is set the moment this module is imported, so a component that
+// renders before any entry point chooses a language (or in a unit test) gets
+// English rather than an empty string.
 import { get } from "svelte/store";
 
 import { LL, locale, setLocale } from "./i18n-svelte.js";

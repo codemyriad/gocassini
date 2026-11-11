@@ -67,11 +67,16 @@ case and accepts `de_DE` or `de-DE`, and falls back to the base language
 | The standalone viewer and the operator's `/viewer` page | A `?lang=` on the address (e.g. `?lang=pt-PT`), then the browser |
 | The public embed (`cassini-viewer/src/public.ts`) | The element's `lang` attribute, then the nearest `lang` on the page around it, then the browser |
 
-Every language is bundled: the embedded entry points must stay a single file
+Inside Nextcloud and in the standalone viewer every language is bundled: the
+embedded entry points must stay a single file
 (`scripts/assert-embedded-single-bundle.mjs`). Builds drop untranslated
-(empty) strings, and the public embed carries only the `common` and `viewer`
-strings (`cassini-viewer/scripts/i18n-bundle-plugin.mjs`). Loading the embed's
-languages on demand is D-920.
+(empty) strings (`cassini-viewer/scripts/i18n-bundle-plugin.mjs`).
+
+The public embed bundles English only. Each other language's `common` and
+`viewer` strings are published beside `viewer.js` as `i18n/<lang>.json` (a
+regional variant such as `de-DE` already has its base language merged in), and
+the embed fetches the one it needs before it shows anything. If that fetch
+fails, for example under a page's CSP, it shows English (D-920).
 
 ## Dates, times and numbers
 
