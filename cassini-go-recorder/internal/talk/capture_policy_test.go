@@ -184,9 +184,9 @@ func TestCapturePolicyRecoveryMatrix(t *testing.T) {
 
 // A muted call captures nothing. When the recorder held a live, audio-bearing
 // subscription, zero packets is conclusive: nobody sent audio, so the run is
-// an empty recording (ErrNoAudio), not a failure. The CLI finalizes it as an
-// empty run bundle and the operator finishes the job as succeeded.
-func TestNoAudioWithLiveSubscriptionConcludesEmpty(t *testing.T) {
+// a no-audio failure (ErrNoAudio), not a generic capture error. The CLI exits
+// 3 and the operator reports the no_audio_captured reason.
+func TestNoAudioWithLiveSubscriptionConcludesNoAudio(t *testing.T) {
 	output := filepath.Join(t.TempDir(), "empty.mkv")
 	artifact, err := newSessionCaptureArtifact(output, "", "room", "recorder", false)
 	if err != nil {
@@ -200,7 +200,7 @@ func TestNoAudioWithLiveSubscriptionConcludesEmpty(t *testing.T) {
 		t.Fatalf("muted call should complete empty, got %v", err)
 	}
 	if _, err := os.Stat(output); !os.IsNotExist(err) {
-		t.Fatalf("empty recording published: %v", err)
+		t.Fatalf("no-audio recording published: %v", err)
 	}
 }
 
@@ -258,7 +258,7 @@ func TestVideoOnlyCaptureIsNotEmptyRun(t *testing.T) {
 	r.audioSubscribed.Store(true)
 	err = r.composeFinalOutputFromSessionArtifact()
 	if err == nil || errors.Is(err, ErrNoAudio) {
-		t.Fatalf("video-only capture must not complete as an empty run, got %v", err)
+		t.Fatalf("video-only capture must not complete as a no-audio run, got %v", err)
 	}
 }
 

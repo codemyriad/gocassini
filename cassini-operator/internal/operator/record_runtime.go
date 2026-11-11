@@ -118,10 +118,6 @@ type recordResult struct {
 	StopReason      string
 	StopDetail      string
 	ExitCode        *int
-	// NoAudio says the recorder completed but captured no audio (every
-	// participant muted or silent). The run bundle carries no recording;
-	// the job finishes as a succeeded empty run rather than a failure.
-	NoAudio bool
 }
 
 type recordLiveSignalWriter struct {
@@ -320,19 +316,6 @@ func (rt *Runtime) executeRecordCLI(_ context.Context, job Job, req TriggerReque
 	}
 	if _, err := os.Stat(filepath.Join(runPath, "cassini.json")); err != nil {
 		return result, fmt.Errorf("record output missing cassini.json: %w", err)
-	}
-	// The recorder finalizes a muted/silent call as an empty run: exit 0,
-	// state "empty" and no recording. Read the marker so runRecordJob can
-	// finish the job as succeeded instead of queueing a build that has no
-	// media to read (see ErrNoAudio in cassini-go-recorder).
-	manifest, err := readRunManifest(filepath.Join(runPath, "cassini.json"))
-	if err != nil {
-		return result, fmt.Errorf("read record manifest: %w", err)
-	}
-	if manifest.NoAudio {
-		result.NoAudio = true
-		result.StopReason = stopReasonNoAudio
-		result.StopDetail = firstNonEmpty(strings.TrimSpace(manifest.EmptyReason), "no audio captured")
 	}
 	return result, nil
 }
@@ -757,10 +740,10 @@ func reverseLogLines(logs string) []string {
 	return lines
 }
 
-// stopReasonNoAudio is the stop reason of a run that completed with no audio
-// at all: every participant was muted or silent. The app treats it as a
-// succeeded empty run, not an error, so it is deliberately absent from the
-// failure stop reasons.
+// stopReasonNoAudio is the stop reason of a failed run that captured no audio
+// at all: every participant was muted or silent. The recorder exits 3 for it
+// and the app shows the real cause instead of a generic process exit; the run
+// remains failed because somebody pressed Record and got no recording.
 const stopReasonNoAudio = "no_audio_captured"
 
 func classifyRecordStopReason(stopAccepted bool, exitCode *int, stopDetail string, runErr error) string {
@@ -774,6 +757,10 @@ func classifyRecordStopReason(stopAccepted bool, exitCode *int, stopDetail strin
 		combined = combined + " " + strings.ToLower(strings.TrimSpace(runErr.Error()))
 	}
 	switch {
+	case exitCode != nil && *exitCode == 3:
+		return stopReasonNoAudio
+	case strings.Contains(combined, "no audio captured"):
+		return stopReasonNoAudio
 	case strings.Contains(combined, "room empty"):
 		return "room_empty"
 	case strings.Contains(combined, "duration limit reached"):

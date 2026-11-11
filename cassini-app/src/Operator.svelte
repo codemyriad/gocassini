@@ -170,6 +170,11 @@
       | Pick<Job, "error" | "state" | "record_exit_code" | "stop_reason">
       | Pick<JobAttempt, "error" | "state" | "record_exit_code" | "stop_reason">,
   ): boolean {
+    // A no-audio run is a failure in the operator, but it has its own warning
+    // treatment below: "Process exited with error" or a red error banner tells
+    // the muted-call owner nothing. The operator stores the real reason and
+    // the run detail names it explicitly.
+    if (item.stop_reason === NO_AUDIO_STOP_REASON) return false;
     if (item.error != null && item.error.trim() !== "") return true;
     if (item.state === "failed" || item.state === "interrupted") return true;
     if (item.record_exit_code != null && item.record_exit_code !== 0) return true;
@@ -255,14 +260,13 @@
   }
 
   export function jobStatusLabel(job: JobStatus): string {
+    if (job.stop_reason === NO_AUDIO_STOP_REASON) return "No audio captured";
     if (isBuildBlocked(job)) return "Build blocked";
     if (isBuildWaitingForResources(job)) return "Waiting for resources";
     if (job.state === "failed") return "Failed";
     if (job.state === "stopped") return "Stopped";
     if (job.state === "interrupted") return "Interrupted";
-    if (job.state === "succeeded" && job.stage === "done") {
-      return job.stop_reason === NO_AUDIO_STOP_REASON ? "No audio captured" : "Published";
-    }
+    if (job.state === "succeeded" && job.stage === "done") return "Published";
     if (job.state === "queued") return "Queued";
     if (job.state === "running") {
       if (job.stage === "build" && attemptKind(job) === "summarize") return "Writing summary";
@@ -273,9 +277,9 @@
   }
 
   export function jobStatusToneClass(job: JobStatus): string {
+    if (job.stop_reason === NO_AUDIO_STOP_REASON) return "text-warning";
     if (hasResourceNotice(job) || job.state === "stopped") return "text-warning";
     if (job.state === "failed" || job.state === "interrupted") return "text-error";
-    if (job.state === "succeeded" && job.stop_reason === NO_AUDIO_STOP_REASON) return "text-warning";
     if (job.state === "succeeded") return "text-success";
     return "text-base-content/70";
   }
@@ -1633,16 +1637,17 @@
                       </dl>
                     </div>
                   {:else if noAudioCaptured}
-                    <!-- A call that captured no audio is a finished run, not a
-                         failure. Say so plainly, with nothing to transcribe or
-                         publish and no rerun to offer. -->
-                    <div class="grid gap-1 rounded-box border border-info/40 bg-info/10 p-3">
-                      <div class="flex items-center gap-2 text-info">
-                        <Info size={16} class="shrink-0" aria-hidden="true" />
-                        <p class="text-sm font-semibold">No audio was captured</p>
+                    <!-- A no-audio run is still a failure — somebody pressed
+                         Record and got no recording — but the useful message is
+                         "were all participants muted?", not a generic process
+                         exit. Yellow marks it as a warning, not a red error. -->
+                    <div class="grid gap-1 rounded-box border border-warning/50 bg-warning/10 p-3" role="status">
+                      <div class="flex items-center gap-2 text-warning">
+                        <TriangleAlert size={16} class="shrink-0" aria-hidden="true" />
+                        <p class="text-sm font-semibold">No audio was captured. Were all participants muted?</p>
                       </div>
                       <p class="text-xs break-words text-base-content/75">
-                        Every participant was muted or silent, so this recording has no audio to transcribe or publish.
+                        This recording has no audio to transcribe or publish.
                       </p>
                       {#if cleanStopDetail(selectedJob.job.record_stop_detail, selectedJob.job.record_exit_code, false)}
                         <p class="text-xs break-words text-base-content/60">{cleanStopDetail(selectedJob.job.record_stop_detail, selectedJob.job.record_exit_code, false)}</p>
@@ -1866,6 +1871,11 @@
                                   <dd>{attempt.build_deferral_count}</dd>
                                 </div>
                               </dl>
+                            </div>
+                          {:else if attempt.stop_reason === NO_AUDIO_STOP_REASON}
+                            <div class="grid gap-1 rounded-box border border-warning/50 bg-warning/10 p-3" role="status">
+                              <p class="text-sm font-semibold text-warning">No audio was captured. Were all participants muted?</p>
+                              <p class="text-xs break-words text-base-content/75">This recording has no audio to transcribe or publish.</p>
                             </div>
                           {:else if hasJobError(attempt)}
                             <div class="grid gap-1 rounded-box border border-error/40 bg-error/10 p-3">

@@ -224,21 +224,23 @@ it("tells a summary-only attempt apart by what it did", async () => {
   await page.screenshot({ element: document.querySelector(".op-detail-pane")!, path: `${SHOTS}/05-kinds.png` });
 });
 
-it("says a muted call captured no audio, and does not call it a failure", async () => {
-  // A run whose participants were all muted finishes as an empty run. It has
-  // nothing to publish and nothing to rerun, and must read as completed — not
-  // as "Failed, exit status 1".
+it("says a muted call failed to capture audio, and names the real reason", async () => {
+  // A run whose participants were all muted fails with exit code 3. It has
+  // nothing to publish and nothing to rerun, and the detail pane must name the
+  // reason — not show "Failed · Process exited with error".
   const emptyJob = {
-    ...job, id: "01KEMPTYRUN", stop_reason: "no_audio_captured",
+    ...job, id: "01KEMPTYRUN", state: "failed", stop_reason: "no_audio_captured",
+    record_exit_code: 3, error: "no audio captured: every participant was muted or silent",
     artifact_run_path: "/var/lib/cassini-operator/jobs/current/01KEMPTYRUN.run",
     artifact_meeting_path: null, artifact_opus_path: null, artifact_opus_sha256: null, artifact_site_path: null,
     build_queued_at: null, build_started_at: null, build_finished_at: null,
     seal_queued_at: null, seal_started_at: null, seal_finished_at: null,
     publish_queued_at: null, publish_started_at: null, publish_finished_at: null,
-    completed_at: at(2), error: null,
+    completed_at: at(2),
   };
   const emptyAttempt = {
-    ...attempt, job_id: "01KEMPTYRUN", stop_reason: "no_audio_captured",
+    ...attempt, job_id: "01KEMPTYRUN", state: "failed", stage: "done", stop_reason: "no_audio_captured",
+    record_exit_code: 3, error: "no audio captured: every participant was muted or silent",
     artifact_run_path: emptyJob.artifact_run_path, artifact_meeting_path: null, artifact_opus_path: null, artifact_opus_sha256: null, artifact_site_path: null,
     build_queued_at: null, build_started_at: null, build_finished_at: null,
     seal_queued_at: null, seal_started_at: null, seal_finished_at: null,
@@ -258,13 +260,13 @@ it("says a muted call captured no audio, and does not call it a failure", async 
     return Response.json({});
   }));
   await openRun();
-  await expect.element(page.getByText("No audio was captured", { exact: true }).first()).toBeVisible();
-  await expect.element(page.getByText("Every participant was muted or silent, so this recording has no audio to transcribe or publish.", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("No audio was captured. Were all participants muted?", { exact: true }).first()).toBeVisible();
+  await expect.element(page.getByText("This recording has no audio to transcribe or publish.", { exact: true }).first()).toBeVisible();
   await expect.element(page.getByText("No audio captured", { exact: true }).first()).toBeVisible();
   const pane = document.querySelector(".op-detail-pane")!;
   expect(pane.textContent).not.toContain("Failed");
   expect(pane.textContent).not.toContain("Process exited with error");
   // There is no recording, so rerun has nothing to offer.
   await expect.element(page.getByText("No audio was captured; this run has nothing to rerun.", { exact: true })).toBeVisible();
-  await page.screenshot({ element: pane, path: `${SHOTS}/06-empty.png` });
+  await page.screenshot({ element: pane, path: `${SHOTS}/06-no-audio.png` });
 });

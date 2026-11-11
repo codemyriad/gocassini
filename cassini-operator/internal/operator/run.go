@@ -1340,12 +1340,20 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 	finishedAt := nowUTCString()
 	if err != nil {
 		rt.logger.Printf("record failed id=%s: %v", job.ID, err)
+		// A no-audio run is a failure, but "cassini record: exit status 3"
+		// says nothing to the person who pressed Record. Store the real
+		// reason; the app turns it into "No audio was captured. Were all
+		// participants muted?".
+		failureText := err.Error()
+		if result.StopReason == stopReasonNoAudio {
+			failureText = "no audio captured: every participant was muted or silent"
+		}
 		if talkState, ok := rt.lookupTalkJobState(job.ID); ok {
 			if notifyErr := rt.notifyTalkFailed(talkState); notifyErr != nil {
 				rt.logger.Printf("talk failed callback failed id=%s: %v", job.ID, notifyErr)
 			}
 		}
-		if updateErr := rt.store.MarkRecordFailed(context.Background(), job.ID, err.Error(), result, finishedAt); updateErr != nil {
+		if updateErr := rt.store.MarkRecordFailed(context.Background(), job.ID, failureText, result, finishedAt); updateErr != nil {
 			rt.logger.Printf("record fail update failed id=%s: %v", job.ID, updateErr)
 		}
 		return
@@ -1356,28 +1364,6 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 		if failErr := rt.store.MarkRecordFailed(context.Background(), job.ID, promoteErr.Error(), result, finishedAt); failErr != nil {
 			rt.logger.Printf("record promote failure update failed id=%s: %v", job.ID, failErr)
 		}
-		return
-	}
-	if result.NoAudio {
-		// A call nobody spoke into is a completed run, not a failure: there
-		// is no recording to build, transcribe or publish, so finish the job
-		// here (stage done, state succeeded) and keep the attempt's run bundle
-		// and logs. The stop reason tells the app to say "No audio captured"
-		// and to offer no rerun.
-		if err := rt.store.MarkRecordSucceededTerminal(context.Background(), job.ID, canonicalRunPath, result.ArtifactRunPath, result, finishedAt); err != nil {
-			rt.logger.Printf("record empty-run update failed id=%s: %v", job.ID, err)
-			if failErr := rt.store.MarkRecordFailed(context.Background(), job.ID, err.Error(), result, finishedAt); failErr != nil {
-				rt.logger.Printf("record empty-run failure update failed id=%s: %v", job.ID, failErr)
-			}
-			return
-		}
-		// spreed still needs the stopped callback so the room stops showing a
-		// live recording; nothing is published, so there is no audience to
-		// capture.
-		if talkState, ok := rt.lookupTalkJobState(job.ID); ok {
-			rt.reportTalkRecordingStopped(job.ID, talkState)
-		}
-		rt.logger.Printf("record succeeded with no audio id=%s attempt_run=%s canonical_run=%s stop_reason=%s", job.ID, result.ArtifactRunPath, canonicalRunPath, result.StopReason)
 		return
 	}
 	if updateErr := rt.store.UpdateRecordOutcome(context.Background(), job.ID, result, canonicalRunPath, finishedAt); updateErr != nil {
@@ -1817,59 +1803,6 @@ WHERE job_id = ? AND attempt_number = ?`, nullableString(result.StopReason), int
 		return fmt.Errorf("commit record outcome update: %w", err)
 	}
 	s.emitStateChange(ctx, "attempt.updated", id, attemptNumber)
-	return nil
-}
-
-func (s *Store) MarkRecordSucceededTerminal(ctx context.Context, id, canonicalRunPath, attemptRunPath string, result recordResult, finishedAt string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin record success update: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	_, err = tx.ExecContext(ctx, `
-UPDATE jobs
-SET stage = ?, state = ?,
-    artifact_run_path = ?, artifact_meeting_path = NULL, artifact_site_path = NULL,
-    error = NULL,
-    stop_reason = ?, record_exit_code = ?, record_stop_detail = ?,
-    updated_at = ?, record_finished_at = ?, completed_at = ?,
-    build_queued_at = NULL, build_started_at = NULL, build_finished_at = NULL,
-    publish_queued_at = NULL, publish_started_at = NULL, publish_finished_at = NULL,
-    interrupted_at = NULL
-WHERE id = ?`,
-		"done", "succeeded",
-		canonicalRunPath,
-		nullableString(result.StopReason), intOrNil(result.ExitCode), nullableString(result.StopDetail),
-		finishedAt, finishedAt, finishedAt,
-		id)
-	if err != nil {
-		return fmt.Errorf("update record success: %w", err)
-	}
-	attemptNumber, err := currentAttemptNumberTx(ctx, tx, id)
-	if err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `
-UPDATE job_attempts
-SET stage = ?, state = ?,
-    artifact_run_path = ?,
-    error = NULL,
-    stop_reason = ?, record_exit_code = ?, record_stop_detail = ?,
-    updated_at = ?, record_finished_at = ?, completed_at = ?,
-    interrupted_at = NULL
-WHERE job_id = ? AND attempt_number = ?`,
-		"done", "succeeded",
-		attemptRunPath,
-		nullableString(result.StopReason), intOrNil(result.ExitCode), nullableString(result.StopDetail),
-		finishedAt, finishedAt, finishedAt,
-		id, attemptNumber); err != nil {
-		return fmt.Errorf("update attempt record success: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit record success update: %w", err)
-	}
-	s.emitStateChange(ctx, "job.updated", id, attemptNumber)
 	return nil
 }
 

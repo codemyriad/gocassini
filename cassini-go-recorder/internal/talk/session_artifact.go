@@ -859,9 +859,9 @@ func (a *sessionCaptureArtifact) hasAudio() bool {
 }
 
 // hasVideo reports whether any video packets were captured. An audio-video
-// run with video but no audio is not an empty recording: the video is real
-// media, so callers must not discard it as "no audio captured" (see
-// ErrNoAudio in recorder.go).
+// run with video but no audio is not a no-audio run: the video is real media,
+// so callers must not report it as "no audio captured" (see ErrNoAudio in
+// recorder.go).
 func (a *sessionCaptureArtifact) hasVideo() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()

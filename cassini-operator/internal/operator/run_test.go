@@ -2341,11 +2341,12 @@ func TestRecordFailureRetainsAttemptRunWithoutCanonicalRun(t *testing.T) {
 	}
 }
 
-func TestRecordWithoutAudioFinishesEmptyRun(t *testing.T) {
+func TestRecordWithoutAudioFailsWithDescriptiveReason(t *testing.T) {
 	// A call whose participants were all muted captures zero audio. The
-	// recorder finalizes the run as "empty" (no_audio) and exits 0; the
-	// operator must finish the job as succeeded — not "failed, exit status 1"
-	// — with no build, transcription or publish, and say "No audio captured".
+	// recorder exits 3 for it; the operator must keep the run failed, map the
+	// exit code to no_audio_captured, and store a reason a person can read —
+	// not "cassini record: exit status 3" and not a false success with no
+	// build or publish.
 	rt, cleanup, _, _ := newCLITestRuntime(t)
 	defer cleanup()
 	t.Setenv("FAKE_RECORD_NO_AUDIO", "1")
@@ -2361,32 +2362,24 @@ func TestRecordWithoutAudioFinishesEmptyRun(t *testing.T) {
 		t.Fatalf("decode response: %v", err)
 	}
 
-	job := waitForJobState(t, rt.store, resp.ID, "succeeded")
+	job := waitForJobState(t, rt.store, resp.ID, "failed")
 	if job.Stage != "done" {
 		t.Fatalf("stage = %q, want done", job.Stage)
 	}
 	if job.StopReason == nil || *job.StopReason != stopReasonNoAudio {
 		t.Fatalf("stop_reason = %#v, want %q", job.StopReason, stopReasonNoAudio)
 	}
-	if job.Error != nil {
-		t.Fatalf("empty run carries an error: %#v", job.Error)
+	if job.Error == nil || !strings.Contains(*job.Error, "no audio captured") {
+		t.Fatalf("error = %#v, want the descriptive no-audio reason", job.Error)
+	}
+	if job.RecordExitCode == nil || *job.RecordExitCode != 3 {
+		t.Fatalf("record_exit_code = %#v, want 3", job.RecordExitCode)
 	}
 	if job.BuildQueuedAt != nil || job.BuildStartedAt != nil || job.BuildFinishedAt != nil {
-		t.Fatalf("empty run must not queue a build, got build stamps %#v", job)
+		t.Fatalf("no-audio run must not queue a build, got build stamps %#v", job)
 	}
 	if job.ArtifactMeetingPath != nil || job.ArtifactOpusPath != nil || job.ArtifactSitePath != nil {
-		t.Fatalf("empty run must not publish artifacts, got %#v", job)
-	}
-	if job.ArtifactRunPath == nil || !strings.Contains(*job.ArtifactRunPath, filepath.Join("current", resp.ID+".run")) {
-		t.Fatalf("expected the canonical empty run to be retained, got %#v", job.ArtifactRunPath)
-	}
-
-	manifest, err := readRunManifest(filepath.Join(*job.ArtifactRunPath, "cassini.json"))
-	if err != nil {
-		t.Fatalf("read empty run manifest: %v", err)
-	}
-	if !manifest.NoAudio || manifest.State != "empty" || manifest.Recording.Path != "" {
-		t.Fatalf("empty run manifest = %#v", manifest)
+		t.Fatalf("no-audio run must not publish artifacts, got %#v", job)
 	}
 
 	attempts, err := rt.store.ListJobAttempts(context.Background(), resp.ID)
@@ -2396,11 +2389,14 @@ func TestRecordWithoutAudioFinishesEmptyRun(t *testing.T) {
 	if len(attempts) != 1 {
 		t.Fatalf("expected 1 attempt, got %d", len(attempts))
 	}
-	if attempts[0].State != "succeeded" || attempts[0].Stage != "done" {
-		t.Fatalf("attempt = %q/%q, want done/succeeded", attempts[0].Stage, attempts[0].State)
+	if attempts[0].State != "failed" || attempts[0].Stage != "done" {
+		t.Fatalf("attempt = %q/%q, want done/failed", attempts[0].Stage, attempts[0].State)
 	}
 	if attempts[0].ArtifactRunPath == nil {
-		t.Fatal("attempt lost its run path")
+		t.Fatal("failed attempt lost its run path")
+	}
+	if attempts[0].Error == nil || !strings.Contains(*attempts[0].Error, "no audio captured") {
+		t.Fatalf("attempt error = %#v, want the descriptive no-audio reason", attempts[0].Error)
 	}
 }
 
@@ -2650,11 +2646,11 @@ write_run() {
 {"kind":"run","version":"cassini.run.v1","state":"ready","stage":"ready","source_mode":"talk","recording":{"path":"recording.mkv","format":"mkv"}}
 EOF
 }
-write_empty_run() {
+write_failed_run() {
   out="$1"
   mkdir -p "$out"
   cat > "$out/cassini.json" <<'EOF'
-{"kind":"run","version":"cassini.run.v1","state":"empty","stage":"done","source_mode":"talk","no_audio":true,"empty_reason":"no audio captured: every participant was muted or silent","recording":{"path":"","format":""}}
+{"kind":"run","version":"cassini.run.v1","state":"failed","stage":"record","source_mode":"talk","error":"no audio captured: every participant was muted or silent","recording":{"path":"","format":""}}
 EOF
 }
 finalize_run() {
@@ -2703,8 +2699,9 @@ case "$cmd" in
       while :; do sleep 0.1; done
     fi
     if [ "${FAKE_RECORD_NO_AUDIO:-0}" = "1" ]; then
-      write_empty_run "$out"
-      exit 0
+      write_failed_run "$out"
+      echo "talk recorder stopping: no audio captured: every participant was muted or silent" >&2
+      exit 3
     fi
     write_run "$out"
     exit 0

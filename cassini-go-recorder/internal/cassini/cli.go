@@ -235,17 +235,13 @@ func runRecord(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	recordErr := runRecorderApp(ctx, cfg)
 	if recordErr != nil && errors.Is(recordErr, talk.ErrNoAudio) {
 		// Nothing was captured: the call was muted or silent for its whole
-		// length. This is a completed empty run, not a failure: finalize the
-		// bundle with the no_audio marker so the operator finishes the job
-		// without build, transcription or publish.
-		if err := FinalizeEmptyRunBundle(bundle, cfg.Mode, recordErr.Error()); err != nil {
-			fmt.Fprintf(stderr, "finalize empty run bundle: %v\n", err)
-			fmt.Fprintf(stderr, "partial_run -> %s\n", bundle.RootDir)
-			return 1
-		}
-		fmt.Fprintf(stdout, "no audio captured: %v\n", recordErr)
-		fmt.Fprintf(stdout, "run -> %s (empty)\n", bundle.RootDir)
-		return 0
+		// length. This is still a failure — somebody pressed Record and got
+		// no recording — but it has a dedicated exit code so the operator
+		// can show the real reason instead of "Process exited with error".
+		_ = UpdateRunBundleStatus(bundle, bundleStateFailed, "record", recordErr.Error())
+		fmt.Fprintf(stderr, "record failed: %v\n", recordErr)
+		fmt.Fprintf(stderr, "partial_run -> %s\n", bundle.RootDir)
+		return 3
 	}
 	if recordErr != nil && !salvageableRecording(recordErr, bundle) {
 		_ = UpdateRunBundleStatus(bundle, bundleStateFailed, "record", recordErr.Error())
@@ -322,14 +318,10 @@ func runRecordPortable(ctx context.Context, opts recordOptions, stdout, stderr i
 		fmt.Fprintln(stdout, "[3/5] Recording meeting")
 		recordErr := runRecorderApp(ctx, cfg)
 		if recordErr != nil && errors.Is(recordErr, talk.ErrNoAudio) {
-			if err := FinalizeEmptyRunBundle(bundle, cfg.Mode, recordErr.Error()); err != nil {
-				fmt.Fprintf(stderr, "finalize empty run bundle: %v\n", err)
-				printPortableResumeHint(stderr, workspace.RootDir, outPath)
-				return 1
-			}
-			fmt.Fprintf(stdout, "no audio captured: %v\n", recordErr)
-			fmt.Fprintf(stdout, "no portable meeting was written; the empty run is at %s\n", bundle.RootDir)
-			return 0
+			_ = UpdateRunBundleStatus(bundle, bundleStateFailed, "record", recordErr.Error())
+			fmt.Fprintf(stderr, "record failed: %v\n", recordErr)
+			printPortableResumeHint(stderr, workspace.RootDir, outPath)
+			return 3
 		}
 		if recordErr != nil && !salvageableRecording(recordErr, bundle) {
 			_ = UpdateRunBundleStatus(bundle, bundleStateFailed, "record", recordErr.Error())

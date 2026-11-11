@@ -364,26 +364,28 @@ describe("Operator left nav (D-723)", () => {
 });
 
 describe("Operator no-audio runs", () => {
-  // A call whose participants were all muted records nothing. The operator
-  // finishes it as succeeded with the no_audio_captured stop reason, and the
-  // app must read that as a completed empty run, not an error.
-  const empty = {
-    stage: "done", state: "succeeded", stop_reason: "no_audio_captured",
+  // A call whose participants were all muted captures no audio. The recorder
+  // exits 3 and the operator keeps the run failed, but names the real reason;
+  // the app must not fall back to "Failed · Process exited with error".
+  const noAudio = {
+    stage: "done", state: "failed", stop_reason: "no_audio_captured",
     artifact_run_path: "/var/lib/cassini-operator/jobs/current/J.run",
-    build_retry_not_before: null, error: null, record_exit_code: 0,
+    build_retry_not_before: null, error: "no audio captured: every participant was muted or silent", record_exit_code: 3,
   };
 
-  it("presents a muted call as captured-with-no-audio, not a failure", () => {
-    expect(hasJobError(empty)).toBe(false);
-    expect(jobStatusLabel(empty)).toBe("No audio captured");
-    expect(jobStatusToneClass(empty)).toBe("text-warning");
+  it("presents a muted call with its own warning, not a generic process failure", () => {
+    expect(hasJobError(noAudio)).toBe(false);
+    expect(jobStatusLabel(noAudio)).toBe("No audio captured");
+    expect(jobStatusToneClass(noAudio)).toBe("text-warning");
     expect(formatStopReason("no_audio_captured")).toBe("No audio captured");
     // Nothing was recorded, so there is nothing to rerun.
-    expect(isRerunnableJob(empty)).toBe(false);
+    expect(isRerunnableJob(noAudio)).toBe(false);
   });
 
   it("still presents a real record failure as an error", () => {
-    expect(hasJobError({ ...empty, state: "failed", stop_reason: "record_process_exit_nonzero", error: "boom", record_exit_code: 1 })).toBe(true);
-    expect(jobStatusLabel({ ...empty, state: "failed", stop_reason: "record_process_exit_nonzero" })).toBe("Failed");
+    const real = { ...noAudio, stop_reason: "record_process_exit_nonzero", error: "boom", record_exit_code: 1 };
+    expect(hasJobError(real)).toBe(true);
+    expect(jobStatusLabel(real)).toBe("Failed");
+    expect(jobStatusToneClass(real)).toBe("text-error");
   });
 });
