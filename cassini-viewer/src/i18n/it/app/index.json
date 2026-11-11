@@ -64,10 +64,10 @@
       "step_set_admin_user": "Imposta {variable} su un amministratore di Nextcloud",
       "cause_unknown": "Cassini non ha potuto confermare la configurazione delle registrazioni.",
       "cause": {
-        "nextcloud_probe": "",
-        "private_archive": "",
-        "sharing_api": "",
-        "owner_account": ""
+        "nextcloud_probe": "Nextcloud non ha risposto al controllo dell’account delle registrazioni.",
+        "private_archive": "Cassini non ha potuto confermare che la sua cartella delle registrazioni sia privata e scrivibile.",
+        "sharing_api": "La condivisione dei file di Nextcloud non è disponibile per l’account delle registrazioni di Cassini.",
+        "owner_account": "L’account delle registrazioni di Cassini non esiste."
       },
       "detail_state": "L’operatore ha segnalato {state}.",
       "detail_state_at_step": "L’operatore ha segnalato {state} in {step}.",
@@ -385,18 +385,18 @@
         "web_push_off": "Non consentito"
       },
       "notices": {
-        "saved_again": "",
-        "unreadable": "",
-        "unreadable_defaults": "",
-        "email_defaults": "",
-        "versioning_on": "",
-        "versioning_off": "",
-        "activity_on": "",
-        "activity_off": "",
-        "notifications_off": "",
-        "notifications_on": "",
-        "web_push_browsers": "",
-        "web_push_apps": ""
+        "saved_again": "Ogni registrazione viene salvata di nuovo dall’account {account} di Cassini, sullo stesso file: condivisioni, link e ID del file restano invariati, e l’audio non cambia.",
+        "unreadable": "Cassini non ha potuto leggere le capacità di Nextcloud, quindi non può sapere se le app Attività e Notifiche o le versioni dei file sono abilitate.",
+        "unreadable_defaults": "Dove le versioni dei file sono abilitate (impostazione predefinita di Nextcloud), il file com’era prima viene conservato come versione precedente. Dove l’app Attività è abilitata (anche questa predefinita), tutte le persone con cui la registrazione è condivisa ricevono una voce “file modificato” per ogni registrazione nel loro flusso delle attività; Nextcloud può raggruppare le modifiche che arrivano a breve distanza.",
+        "email_defaults": "Con le impostazioni predefinite di Nextcloud la modifica non viene inviata per email né come notifica: entrambe sono disattivate per “Un file o una cartella è stato modificato”. Un amministratore può cambiare queste impostazioni predefinite in Impostazioni di amministrazione › Attività, e ogni persona può attivarle nelle proprie impostazioni delle attività. Cassini non può leggere né le une né le altre. Chi ha attivato le notifiche ne riceve una per registrazione; chi ha attivato l’email trova le modifiche nell’email delle attività, che Nextcloud raccoglie e invia con la frequenza scelta anziché una per modifica.",
+        "versioning_on": "Le versioni dei file sono abilitate, quindi il file com’era prima viene conservato come versione precedente nell’account {account}. Occupa spazio su disco ma non conta nella quota di quell’account. Nextcloud fa scadere le versioni secondo versions_retention_obligation nel suo config.php, che Cassini non può leggere, e secondo il limite dell’app Versioni pari alla metà dello spazio libero dell’account, oltre il quale vengono eliminate per prime le più vecchie.",
+        "versioning_off": "Le versioni dei file non sono abilitate, quindi Nextcloud non conserva alcuna copia del file com’era prima.",
+        "activity_on": "L’app Attività è abilitata, quindi tutte le persone con cui la registrazione è condivisa ricevono una voce “file modificato” per ogni registrazione nel loro flusso delle attività; Nextcloud può raggruppare le modifiche che arrivano a breve distanza.",
+        "activity_off": "L’app Attività non è abilitata, quindi la modifica non compare nel flusso delle attività di nessuno e non viene inviata alcuna email delle attività.",
+        "notifications_off": "L’app Notifiche non è abilitata, quindi non è possibile inviare alcuna notifica per la modifica.",
+        "notifications_on": "L’app Notifiche è abilitata, quindi chi ha attivato le notifiche per i file modificati ne riceve una per registrazione in Nextcloud e sui propri dispositivi in cui sono configurate le notifiche push.",
+        "web_push_browsers": "Il web push è consentito, anche per i browser, quindi la notifica può raggiungere anche un browser in cui quella persona ha accettato le notifiche push.",
+        "web_push_apps": "Il web push è consentito, ma non per i browser."
       },
       "panel": {
         "title": "Ora di registrazione nelle registrazioni passate",
