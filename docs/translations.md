@@ -54,6 +54,11 @@ embeds, and the app words the sentence again in the reader's language:
 - **Why a recording is blocked** in the recording-time migration:
   `blocked_items[].reason_code` and `reason_params`, beside the English
   `reason` (`blockedReason` in the same module).
+- **Doctor's refusals**: a route that refuses with a sentence for the reader
+  (a secret managed by the deployment, a test room Cassini could not create,
+  the migration still counting) sends `error_code` beside `error`
+  (`writeCodedJSONError`; `operatorErrorText` in the same module). Errors
+  that embed a raw failure keep only `error`.
 - **The migration's "What this does in Nextcloud"** (`operator/recordedAtNotices.ts`)
   and **the setup notice's cause** (`operator/setupHealth.ts`, by step).
 
@@ -61,29 +66,40 @@ Anything the app cannot word shows the operator's English: a code, step,
 variant or reason this build does not know (a newer operator), or a missing
 param (an older operator, or a file blocked before it sent codes).
 
-**Adding a check, a step or a reason.** Every code, step id and reason the
-operator and the recorder can emit is listed in
-`cassini-app/src/operator/doctorCatalog.json`. Two tests keep it honest:
+**Adding a check, a step or a reason.** Every code, step id, reason,
+`variant`, sharing issue, `reindex` outcome and `error_code` the operator and
+the recorder can emit is listed in `cassini-app/src/operator/doctorCatalog.json`.
+Two tests keep it honest:
 
 1. `cassini-operator/internal/operator/doctor_catalog_test.go` reads the Go
    source of the files that build Doctor's rows (and the recorder's
-   `talk/readiness.go` and `talk/unreachable.go`) and collects every string
-   literal in a code position: a row's `Code`, a step's `ID`, a blocked
-   file's `code`. It fails if that set differs from the JSON, if a step
+   `talk/readiness.go`, `talk/unreachable.go` and `cassini/doctor.go`) and
+   collects every string literal in a code position: a row's `Code`, a
+   step's `ID`, a blocked file's `code`, a sharing issue's `id`, the code
+   passed to `writeCodedJSONError`, and the value of `"variant"` or
+   `"reindex"` in a params map. It fails if that set differs from the JSON, if a step
    written there has no `ID`, or if a row is built in a file it does not
    read. Regenerate the JSON with
    `CASSINI_UPDATE_DOCTOR_CATALOG=1 go test ./internal/operator -run TestDoctorCatalog`
    (in `cassini-operator`).
 2. `cassini-app/src/operator/doctorText.test.ts` fails unless `doctorText.ts`
-   words exactly the codes, steps and reasons in the JSON.
+   words exactly what is in each of the JSON's lists.
 
 So a new code fails CI until it has English in
 `cassini-viewer/src/i18n/en/app/doctor_checks.ts` and a line in
 `doctorText.ts`. Write the English as the Go sentence, word for word.
 `preview/doctorScenarios.test.ts` words every Doctor preview row and checks
 it gives back the fixture's English, so keep the fixtures' params with their
-messages. Neither test catches a reworded Go sentence under an existing
-code: change the dictionary in the same commit.
+messages.
+
+What the tests do not see, by design (keep to the patterns above instead):
+
+- A code, id or variant held in a constant or a variable rather than written
+  as a literal where it is used.
+- A step whose label is passed in from elsewhere (doctor's advice): it may
+  have no id and stays English.
+- A Go sentence reworded under an existing code: change the dictionary in the
+  same commit.
 
 ## Languages
 
