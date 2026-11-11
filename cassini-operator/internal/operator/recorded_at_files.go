@@ -295,7 +295,16 @@ type recordedAtFileDeferred struct{ reason string }
 func (e *recordedAtFileDeferred) Error() string { return e.reason }
 
 // recordedAtFileBlocked needs a person; retrying cannot help.
-type recordedAtFileBlocked struct{ reason string }
+//
+// reason is the English kept in last_error, for the log, the CLI and older
+// apps; code and params are stored beside it so the app can word the reason
+// in its reader's language (D-921). Every code is listed in
+// cassini-app/src/operator/doctorCatalog.json (doctor_catalog_test.go).
+type recordedAtFileBlocked struct {
+	code   string
+	reason string
+	params map[string]any
+}
 
 func (e *recordedAtFileBlocked) Error() string { return e.reason }
 
@@ -334,7 +343,13 @@ func (w *recordedAtFileWorker) processOne(ctx context.Context, name string) {
 		time.AfterFunc(recordedAtFileDeferral, w.poke)
 	case errors.As(err, &blocked):
 		w.logf("recorded-at: %s blocked: %s", name, blocked.reason)
-		if _, e := store.db.ExecContext(persist, `UPDATE recorded_at_file_backfill SET state='blocked', last_error=?, updated_at=? WHERE opus_name=?`, blocked.reason, nowUTCString(), name); e != nil {
+		params := ""
+		if len(blocked.params) > 0 {
+			if raw, e := json.Marshal(blocked.params); e == nil {
+				params = string(raw)
+			}
+		}
+		if _, e := store.db.ExecContext(persist, `UPDATE recorded_at_file_backfill SET state='blocked', last_error=?, last_error_code=?, last_error_params=?, updated_at=? WHERE opus_name=?`, blocked.reason, blocked.code, params, nowUTCString(), name); e != nil {
 			w.logf("recorded-at: persist block %s: %v", name, e)
 		}
 	default:
@@ -390,7 +405,7 @@ func (w *recordedAtFileWorker) retagFile(ctx context.Context, name string) error
 		return nil
 	}
 	if _, ok := parseRecordedAtUTC(value); !ok {
-		return &recordedAtFileBlocked{"queued recordedAtUtc is not a valid instant"}
+		return &recordedAtFileBlocked{code: "queued_instant_invalid", reason: "queued recordedAtUtc is not a valid instant"}
 	}
 	if w.exapp.lifecycle != nil {
 		var pending int
@@ -430,7 +445,7 @@ func (w *recordedAtFileWorker) retagFile(ctx context.Context, name string) error
 		return err
 	}
 	if !before.Exists {
-		return &recordedAtFileBlocked{"recording is missing; restore it and retry"}
+		return &recordedAtFileBlocked{code: "recording_missing", reason: "recording is missing; restore it and retry"}
 	}
 	if before.ETag == "" {
 		return fmt.Errorf("missing ETag")
@@ -448,12 +463,12 @@ func (w *recordedAtFileWorker) retagFile(ctx context.Context, name string) error
 	if err != nil {
 		var cliErr *retagCLIError
 		if errors.As(err, &cliErr) && cliErr.Code == 2 {
-			return &recordedAtFileBlocked{"the cassini CLI cannot set recordedAtUtc; upgrade it and retry"}
+			return &recordedAtFileBlocked{code: "cli_too_old", reason: "the cassini CLI cannot set recordedAtUtc; upgrade it and retry"}
 		}
 		return err
 	}
 	if retag.Previous != "" && normalizedRecordedAtUTC(retag.Previous) == "" {
-		return &recordedAtFileBlocked{"the delivered file states an invalid recordedAtUtc; repair it and retry"}
+		return &recordedAtFileBlocked{code: "file_instant_invalid", reason: "the delivered file states an invalid recordedAtUtc; repair it and retry"}
 	}
 	ownValue := retag.Previous != "" && normalizedRecordedAtUTC(retag.Previous) != normalizedRecordedAtUTC(value)
 	if ownValue {
@@ -499,7 +514,7 @@ func (w *recordedAtFileWorker) retagFile(ctx context.Context, name string) error
 		return err
 	}
 	if info.Size() > maxAnnotateRecordingBytes {
-		return &recordedAtFileBlocked{"recording exceeds the staging limit"}
+		return &recordedAtFileBlocked{code: "recording_too_large", reason: "recording exceeds the staging limit"}
 	}
 	digest, err := fileSHA256(out)
 	if err != nil {
@@ -543,7 +558,9 @@ func (w *recordedAtFileWorker) retagFile(ctx context.Context, name string) error
 		return err
 	}
 	if before.FileID > 0 && after.FileID != before.FileID {
-		return &recordedAtFileBlocked{fmt.Sprintf("Nextcloud changed the file id from %d to %d; existing shares must be repaired", before.FileID, after.FileID)}
+		return &recordedAtFileBlocked{code: "file_id_changed",
+			reason: fmt.Sprintf("Nextcloud changed the file id from %d to %d; existing shares must be repaired", before.FileID, after.FileID),
+			params: map[string]any{"from": before.FileID, "to": after.FileID}}
 	}
 	if err := w.reconcileAnnotations(ctx, name, in); err != nil {
 		return err
