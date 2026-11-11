@@ -64,10 +64,10 @@
       "step_set_admin_user": "Defina {variable} como um administrador do Nextcloud",
       "cause_unknown": "O Cassini não conseguiu confirmar a configuração das gravações.",
       "cause": {
-        "nextcloud_probe": "",
-        "private_archive": "",
-        "sharing_api": "",
-        "owner_account": ""
+        "nextcloud_probe": "O Nextcloud não respondeu à verificação da conta de gravações.",
+        "private_archive": "O Cassini não conseguiu confirmar que a sua pasta de gravações é privada e permite escrita.",
+        "sharing_api": "A partilha de ficheiros do Nextcloud não está disponível para a conta de gravações do Cassini.",
+        "owner_account": "A conta de gravações do Cassini não existe."
       },
       "detail_state": "O operador comunicou {state}.",
       "detail_state_at_step": "O operador comunicou {state} em {step}.",
@@ -385,18 +385,18 @@
         "web_push_off": "Não permitidas"
       },
       "notices": {
-        "saved_again": "",
-        "unreadable": "",
-        "unreadable_defaults": "",
-        "email_defaults": "",
-        "versioning_on": "",
-        "versioning_off": "",
-        "activity_on": "",
-        "activity_off": "",
-        "notifications_off": "",
-        "notifications_on": "",
-        "web_push_browsers": "",
-        "web_push_apps": ""
+        "saved_again": "Cada gravação é guardada de novo pela conta {account} do Cassini, sobre o mesmo ficheiro: as partilhas, ligações e ID do ficheiro mantêm-se, e o áudio não é alterado.",
+        "unreadable": "O Cassini não conseguiu ler as capacidades do Nextcloud, por isso não consegue saber se as aplicações Atividade e Notificações ou as versões de ficheiros estão ativadas.",
+        "unreadable_defaults": "Onde as versões de ficheiros estão ativadas (a predefinição do Nextcloud), o ficheiro tal como estava antes é mantido como versão anterior. Onde a aplicação Atividade está ativada (também predefinido), todas as pessoas com quem a gravação é partilhada recebem uma entrada «ficheiro alterado» por cada gravação no seu fluxo de atividade; o Nextcloud pode agrupar alterações que cheguem com pouco intervalo.",
+        "email_defaults": "Com as predefinições do Nextcloud, a alteração não é enviada por e-mail nem como notificação: ambos estão desativados para «Foi alterado um ficheiro ou pasta». Um administrador pode mudar essas predefinições em Configurações de administração › Atividade, e cada pessoa pode ativá-los nas suas próprias definições de atividade. O Cassini não consegue ler nenhuma delas. Quem ativou as notificações recebe uma por gravação; quem ativou o e-mail encontra as alterações no seu e-mail de atividade, que o Nextcloud reúne e envia com a frequência escolhida, em vez de um por alteração.",
+        "versioning_on": "As versões de ficheiros estão ativadas, por isso o ficheiro tal como estava antes é mantido como versão anterior na conta {account}. Ocupa espaço em disco, mas não conta para a quota dessa conta. O Nextcloud faz expirar as versões segundo versions_retention_obligation no seu config.php, que o Cassini não consegue ler, e segundo o limite da aplicação Versões de metade do espaço livre da conta, acima do qual as mais antigas são removidas primeiro.",
+        "versioning_off": "As versões de ficheiros não estão ativadas, por isso o Nextcloud não guarda nenhuma cópia do ficheiro tal como estava antes.",
+        "activity_on": "A aplicação Atividade está ativada, por isso todas as pessoas com quem a gravação é partilhada recebem uma entrada «ficheiro alterado» por cada gravação no seu fluxo de atividade; o Nextcloud pode agrupar alterações que cheguem com pouco intervalo.",
+        "activity_off": "A aplicação Atividade não está ativada, por isso a alteração não aparece no fluxo de atividade de ninguém e não é enviado nenhum e-mail de atividade.",
+        "notifications_off": "A aplicação Notificações não está ativada, por isso não pode ser enviada nenhuma notificação sobre a alteração.",
+        "notifications_on": "A aplicação Notificações está ativada, por isso uma pessoa que tenha ativado as notificações de ficheiros alterados recebe uma por gravação no Nextcloud e nos seus dispositivos onde as notificações push estejam configuradas.",
+        "web_push_browsers": "As notificações push web são permitidas, também para navegadores, por isso a notificação pode chegar também a um navegador onde essa pessoa tenha aceitado notificações push.",
+        "web_push_apps": "As notificações push web são permitidas, mas não para navegadores."
       },
       "panel": {
         "title": "Horas de gravação em gravações anteriores",
