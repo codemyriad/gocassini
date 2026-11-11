@@ -64,10 +64,10 @@
       "step_set_admin_user": "Postavi {variable} na Nextcloud administratora",
       "cause_unknown": "Cassini nije mogao potvrditi postavke snimanja.",
       "cause": {
-        "nextcloud_probe": "",
-        "private_archive": "",
-        "sharing_api": "",
-        "owner_account": ""
+        "nextcloud_probe": "Nextcloud nije odgovorio na provjeru računa za snimke.",
+        "private_archive": "Cassini nije mogao potvrditi da je njegova mapa za snimke privatna i da se u nju može pisati.",
+        "sharing_api": "Dijeljenje datoteka u Nextcloudu nije dostupno Cassinijevu računu za snimke.",
+        "owner_account": "Cassinijev račun za snimke ne postoji."
       },
       "detail_state": "Operater je prijavio {state}.",
       "detail_state_at_step": "Operater je prijavio {state} u koraku {step}.",
@@ -385,18 +385,18 @@
         "web_push_off": "Nije dopušteno"
       },
       "notices": {
-        "saved_again": "",
-        "unreadable": "",
-        "unreadable_defaults": "",
-        "email_defaults": "",
-        "versioning_on": "",
-        "versioning_off": "",
-        "activity_on": "",
-        "activity_off": "",
-        "notifications_off": "",
-        "notifications_on": "",
-        "web_push_browsers": "",
-        "web_push_apps": ""
+        "saved_again": "Svaku snimku Cassinijev račun {account} ponovno sprema preko iste datoteke: njezina dijeljenja, poveznice i ID datoteke ostaju kakvi jesu, a zvuk se ne mijenja.",
+        "unreadable": "Cassini nije mogao pročitati mogućnosti Nextclouda pa ne može utvrditi jesu li aplikacije Aktivnost i Obavijesti ili verzioniranje datoteka omogućeni.",
+        "unreadable_defaults": "Gdje je verzioniranje datoteka omogućeno (zadano u Nextcloudu), datoteka kakva je bila prije čuva se kao ranija verzija. Gdje je aplikacija Aktivnost omogućena (također zadano), svi s kojima je snimka podijeljena dobivaju unos „datoteka promijenjena” za svaku snimku u svom toku aktivnosti; Nextcloud može grupirati promjene koje stignu kratko jedna za drugom.",
+        "email_defaults": "Uz zadane postavke Nextclouda promjena se ne šalje e-poštom ni kao obavijest: oboje je isključeno za „Datoteka ili mapa su promijenjeni”. Administrator može promijeniti te zadane postavke u Administracijske postavke › Aktivnost, a svaka osoba može ih uključiti u vlastitim postavkama aktivnosti. Cassini ne može pročitati ni jedno ni drugo. Tko je uključio obavijesti, dobiva jednu po snimci; tko je uključio e-poštu, pronalazi promjene u svojoj e-pošti o aktivnosti, koju Nextcloud skuplja i šalje odabranom učestalošću, a ne jednu po promjeni.",
+        "versioning_on": "Verzioniranje datoteka je omogućeno pa se datoteka kakva je bila prije čuva kao ranija verzija na računu {account}. Zauzima prostor na disku, ali se ne računa u kvotu tog računa. Nextcloud uklanja istekle verzije prema versions_retention_obligation u svom config.php, koji Cassini ne može pročitati, i prema ograničenju aplikacije Verzije na polovicu slobodnog prostora računa, iznad kojeg se najprije uklanjaju najstarije.",
+        "versioning_off": "Verzioniranje datoteka nije omogućeno pa Nextcloud ne čuva kopiju datoteke kakva je bila prije.",
+        "activity_on": "Aplikacija Aktivnost je omogućena pa svi s kojima je snimka podijeljena dobivaju unos „datoteka promijenjena” za svaku snimku u svom toku aktivnosti; Nextcloud može grupirati promjene koje stignu kratko jedna za drugom.",
+        "activity_off": "Aplikacija Aktivnost nije omogućena pa se promjena ne pojavljuje ni u čijem toku aktivnosti i ne šalje se e-pošta o aktivnosti.",
+        "notifications_off": "Aplikacija Obavijesti nije omogućena pa se za promjenu ne može poslati obavijest.",
+        "notifications_on": "Aplikacija Obavijesti je omogućena pa osoba koja je uključila obavijesti o promijenjenim datotekama dobiva jednu po snimci u Nextcloudu i na svojim uređajima na kojima su postavljene push obavijesti.",
+        "web_push_browsers": "Web push je dopušten, i za preglednike, pa obavijest može stići i u preglednik u kojem je ta osoba prihvatila push obavijesti.",
+        "web_push_apps": "Web push je dopušten, ali ne za preglednike."
       },
       "panel": {
         "title": "Vremena snimanja u prošlim snimkama",
