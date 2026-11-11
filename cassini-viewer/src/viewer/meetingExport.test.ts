@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { get } from "svelte/store";
 
 import { LL } from "../i18n";
-import { transcriptMarkdown, safeMeetingStem, summaryExportName } from "./meetingExport";
+import { transcriptMarkdown, safeMeetingStem } from "./meetingExport";
 import type { JudgedDisplaySegment } from "../core/transcript";
 
 const segment = (id: string, speakerLabel: string, startMs: number, text: string): JudgedDisplaySegment => ({
@@ -55,9 +55,5 @@ describe("transcript export", () => {
     expect(safeMeetingStem({ title: "Review / launch", id: "id:2" })).not.toBe(
       safeMeetingStem({ title: "Review / launch", id: "id:1" }),
     );
-  });
-
-  it("names the notes file so it sits beside the transcript export", () => {
-    expect(summaryExportName({ title: "Review / launch", id: "id:1" })).toBe("Review-launch-id-1-summary.md");
   });
 });

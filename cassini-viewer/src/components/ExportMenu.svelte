@@ -26,7 +26,6 @@
   // callers that have no summary leave it out entirely.
   export let includeSummary = false;
   export let canDownloadSummary = true;
-  export let summaryLabel = "Download summary";
 
   const dispatch = createEventDispatcher<{ copy: void; transcript: void; audio: void; summary: void; copyContext: void; context: void }>();
 
@@ -97,7 +96,7 @@
     </button>
     {#if includeSummary}
       <button type="button" role="menuitem" class="em-item" disabled={!canDownloadSummary} on:click={() => choose("summary")}>
-        <NotebookText size={14} aria-hidden="true" />{summaryLabel}
+        <NotebookText size={14} aria-hidden="true" />{$LL.viewer.export.download_summary()}
       </button>
     {/if}
     {#if includeAudio}

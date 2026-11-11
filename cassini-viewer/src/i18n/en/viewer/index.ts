@@ -21,6 +21,7 @@ const en_viewer = {
     copy_transcripts: "Copy transcripts",
     download_transcript: "Download transcript",
     download_transcripts: "Download transcripts",
+    download_summary: "Download summary",
     download_audio: "Download audio",
   },
 } satisfies BaseTranslation;

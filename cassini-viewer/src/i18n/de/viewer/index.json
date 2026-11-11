@@ -449,6 +449,7 @@
       "export_copied": "Transkript kopiert.",
       "export_clipboard_blocked": "Zwischenablage hier blockiert – nutze „Transkript herunterladen“.",
       "export_downloaded": "Transkript heruntergeladen.",
+      "export_summary_downloaded": "",
       "export_preparing_file": "Besprechungsdatei wird vorbereitet…",
       "export_file_downloaded": "Besprechungsdatei heruntergeladen.",
       "reload_failed": "Die Aufnahme konnte nicht neu geladen werden: {error}",
@@ -832,6 +833,7 @@
     "copy_transcripts": "Transkripte kopieren",
     "download_transcript": "Transkript herunterladen",
     "download_transcripts": "Transkripte herunterladen",
+    "download_summary": "",
     "download_audio": "Audio herunterladen"
   }
 }

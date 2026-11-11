@@ -94,7 +94,7 @@
     LoadedArtifact,
   } from "../viewer/loadArtifact";
   import type { PortableTranscriptDescriptor } from "../viewer/portable";
-  import { displaySegmentsForArtifact, formatNameList, safeMeetingStem, shownSpeakerLabel, summaryExportName, transcriptMarkdown } from "../viewer/meetingExport";
+  import { displaySegmentsForArtifact, formatNameList, safeMeetingStem, shownSpeakerLabel, transcriptMarkdown } from "../viewer/meetingExport";
   import { loadAudioFile, saveBlob, saveTranscript } from "../viewer/exportTransfer";
   import type { MeetingCatalogEntry } from "../viewer/catalog";
   import { hasRoom, roomLabelOf } from "../viewer/rooms";
@@ -686,8 +686,8 @@
   function downloadSummary() {
     if (!summaryMarkdown) return;
     exportRequestId += 1;
-    saveTranscript(summaryMarkdown, summaryExportName(meeting ?? { title: "Meeting", id: "transcript" }));
-    exportStatus = "Summary downloaded.";
+    saveTranscript(summaryMarkdown, `${exportStem()}-summary.md`);
+    exportStatus = get(LL).viewer.meeting.view.export_summary_downloaded();
   }
 
   async function downloadAudio() {

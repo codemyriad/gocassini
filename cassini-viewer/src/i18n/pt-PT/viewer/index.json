@@ -449,6 +449,7 @@
       "export_copied": "Transcrição copiada.",
       "export_clipboard_blocked": "Área de transferência bloqueada aqui — use Transferir transcrição.",
       "export_downloaded": "Transcrição transferida.",
+      "export_summary_downloaded": "",
       "export_preparing_file": "A preparar o ficheiro da reunião…",
       "export_file_downloaded": "Ficheiro da reunião transferido.",
       "reload_failed": "Não foi possível recarregar a gravação: {error}",
@@ -832,6 +833,7 @@
     "copy_transcripts": "Copiar transcrições",
     "download_transcript": "Transferir transcrição",
     "download_transcripts": "Transferir transcrições",
+    "download_summary": "",
     "download_audio": "Transferir áudio"
   }
 }
