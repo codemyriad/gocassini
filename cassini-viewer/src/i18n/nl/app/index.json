@@ -64,10 +64,10 @@
       "step_set_admin_user": "Stel {variable} in op een Nextcloud-beheerder",
       "cause_unknown": "Cassini kon de opname-instellingen niet bevestigen.",
       "cause": {
-        "nextcloud_probe": "",
-        "private_archive": "",
-        "sharing_api": "",
-        "owner_account": ""
+        "nextcloud_probe": "Nextcloud heeft niet gereageerd op de controle van het opname-account.",
+        "private_archive": "Cassini kon niet bevestigen dat zijn opnamemap privé en beschrijfbaar is.",
+        "sharing_api": "Bestanden delen in Nextcloud is niet beschikbaar voor het opname-account van Cassini.",
+        "owner_account": "Het opname-account van Cassini bestaat niet."
       },
       "detail_state": "De operator meldde {state}.",
       "detail_state_at_step": "De operator meldde {state} bij {step}.",
@@ -385,18 +385,18 @@
         "web_push_off": "Niet toegestaan"
       },
       "notices": {
-        "saved_again": "",
-        "unreadable": "",
-        "unreadable_defaults": "",
-        "email_defaults": "",
-        "versioning_on": "",
-        "versioning_off": "",
-        "activity_on": "",
-        "activity_off": "",
-        "notifications_off": "",
-        "notifications_on": "",
-        "web_push_browsers": "",
-        "web_push_apps": ""
+        "saved_again": "Elke opname wordt opnieuw opgeslagen door het account {account} van Cassini, over hetzelfde bestand heen: de delingen, links en het bestands-ID blijven zoals ze zijn, en de audio is ongewijzigd.",
+        "unreadable": "Cassini kon de mogelijkheden van Nextcloud niet lezen, dus het kan niet zien of de Activiteiten-app en de Meldingen-app of bestandsversies zijn ingeschakeld.",
+        "unreadable_defaults": "Waar bestandsversies zijn ingeschakeld (de standaard van Nextcloud), blijft het bestand zoals het was als eerdere versie bewaard. Waar de Activiteiten-app is ingeschakeld (ook de standaard), krijgt iedereen met wie de opname is gedeeld voor elke opname een item “bestand gewijzigd” in zijn activiteitenstroom; Nextcloud kan wijzigingen die kort na elkaar binnenkomen samenvoegen.",
+        "email_defaults": "Met de standaardinstellingen van Nextcloud wordt de wijziging niet gemaild en niet als melding verstuurd: beide staan uit voor “Een bestand of map is gewijzigd”. Een beheerder kan die standaarden wijzigen onder Beheerdersinstellingen › Activiteit, en iedereen kan ze in zijn eigen activiteitsinstellingen aanzetten. Cassini kan geen van beide lezen. Wie meldingen heeft aangezet, krijgt er één per opname; wie e-mail heeft aangezet, vindt de wijzigingen in zijn activiteitenmail, die Nextcloud verzamelt en verstuurt met de gekozen frequentie in plaats van één per wijziging.",
+        "versioning_on": "Bestandsversies zijn ingeschakeld, dus het bestand zoals het was blijft als eerdere versie bewaard in het account {account}. Dat neemt schijfruimte in, maar telt niet mee voor het quotum van dat account. Nextcloud laat versies verlopen volgens versions_retention_obligation in zijn config.php, die Cassini niet kan lezen, en volgens de limiet van de Versies-app van de helft van de vrije ruimte van het account; daarboven gaan de oudste eerst weg.",
+        "versioning_off": "Bestandsversies zijn niet ingeschakeld, dus Nextcloud bewaart geen kopie van het bestand zoals het was.",
+        "activity_on": "De Activiteiten-app is ingeschakeld, dus iedereen met wie de opname is gedeeld krijgt voor elke opname een item “bestand gewijzigd” in zijn activiteitenstroom; Nextcloud kan wijzigingen die kort na elkaar binnenkomen samenvoegen.",
+        "activity_off": "De Activiteiten-app is niet ingeschakeld, dus de wijziging verschijnt in niemands activiteitenstroom en er wordt geen activiteitenmail verstuurd.",
+        "notifications_off": "De Meldingen-app is niet ingeschakeld, dus er kan geen melding voor de wijziging worden verstuurd.",
+        "notifications_on": "De Meldingen-app is ingeschakeld, dus iemand die meldingen voor gewijzigde bestanden heeft aangezet, krijgt er één per opname in Nextcloud, en op zijn apparaten waar pushmeldingen zijn ingesteld.",
+        "web_push_browsers": "Webpush is toegestaan, ook voor browsers, dus de melding kan ook een browser bereiken waarin die persoon pushmeldingen heeft geaccepteerd.",
+        "web_push_apps": "Webpush is toegestaan, maar niet voor browsers."
       },
       "panel": {
         "title": "Opnametijden in eerdere opnames",
