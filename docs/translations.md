@@ -21,6 +21,23 @@ translators, the guide is [Help translate Cassini](https://gocassini.com/docs/gu
 Strings are being moved into the dictionaries area by area. Anything still
 written into a component appears in English in every language.
 
+### Not translated yet
+
+Some sentences are written by the operator (Go) and shown as it sends them,
+so they are English in every language:
+
+- **Doctor check messages and remedy steps.**
+- **Why a recording is blocked** in the recording-time migration. A follow-up
+  has the operator send a code and parameters, so the app can word them.
+- **Raw errors from Nextcloud or the system** (an HTTP failure, a file-system
+  error, the operator's state names). These stay English on purpose: they are
+  what an administrator searches for and quotes in a bug report.
+
+Where the operator sends facts or a step instead, the app words them itself:
+the migration's "What this does in Nextcloud" (`operator/recordedAtNotices.ts`)
+and the setup notice's cause (`operator/setupHealth.ts`, by step, falling back
+to the operator's sentence for a step it does not know).
+
 ## Languages
 
 | Code | Language | Note |
