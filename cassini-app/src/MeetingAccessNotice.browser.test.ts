@@ -1,6 +1,8 @@
 import { mount, unmount } from "svelte";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { page, userEvent } from "vitest/browser";
+import { get } from "svelte/store";
+import { LL, useLocale } from "cassini-viewer/i18n";
 import MeetingAccessNotice from "./MeetingAccessNotice.svelte";
 import type { AcceptSharesResult, MeetingAccess } from "./operator/sharingNotice";
 import type { PendingRecording, RecordingNotice } from "./operator/setupHealth";
@@ -94,4 +96,18 @@ it("tells the starter their recording could not be published", async () => {
   show({ kind: "unpublished", entry: null });
   await expect.element(page.getByRole("heading", { name: "This recording you started could not be published." })).toBeVisible();
   expect(host.textContent).toContain("Nextcloud refused to share it with you.");
+});
+
+it("speaks the reader's language, not the one loaded first", async () => {
+  const english = get(LL).app.shell.sharing_notice.send_link();
+  useLocale(["fr"]);
+  try {
+    const t = get(LL).app.shell.sharing_notice;
+    expect(t.send_link()).not.toBe(english);
+    show({ kind: "refused", entry: null });
+    await expect.element(page.getByRole("heading", { name: t.refused_this() })).toBeVisible();
+    await expect.element(page.getByRole("link", { name: t.send_link() })).toHaveAttribute("href", appUrl);
+  } finally {
+    useLocale(["en"]);
+  }
 });

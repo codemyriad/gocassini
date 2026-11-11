@@ -168,19 +168,6 @@ export function adminFixParts(): AdminFixParts {
 
 export const adminFixPlain = (): string => copy().admin_fix_plain();
 
-// Kept for MeetingAccessNotice.svelte until it reads the functions above.
-// Read once at import, so they are English whatever the reader's language.
-/** @deprecated Use adminFixParts(). */
-export const ADMIN_FIX_LEAD = adminFixParts().before.trimEnd();
-/** @deprecated Use adminFixPlain(). */
-export const ADMIN_FIX_PLAIN = adminFixPlain();
-/** @deprecated Use adminFixParts(). */
-export const SEND_LINK = adminFixParts().link;
-/** @deprecated Use adminFixParts(). */
-export const SEND_LINK_TITLE = adminFixParts().title;
-/** @deprecated Use whyAccept(). */
-export const WHY_ACCEPT = whyAccept();
-
 // --- Rows ---
 
 export interface DateFormatOptions {
@@ -341,9 +328,6 @@ export function explainedMeetingIds(sharing: SharingStatus | null | undefined): 
 
 export const waitingTitle = (): string => copy().waiting_title();
 export const acceptLabel = (): string => copy().accept();
-
-/** @deprecated Use acceptLabel(); kept for MeetingAccessNotice.svelte, English only. */
-export const ACCEPT = acceptLabel();
 
 // The bold sentence for a refused or unpublished meeting opened from a link.
 // With the notice's room and time it is the list's own sentence; for one
