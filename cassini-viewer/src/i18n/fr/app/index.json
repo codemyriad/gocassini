@@ -64,10 +64,10 @@
       "step_set_admin_user": "Définissez {variable} sur un administrateur Nextcloud",
       "cause_unknown": "Cassini n’a pas pu confirmer la configuration de ses enregistrements.",
       "cause": {
-        "nextcloud_probe": "",
-        "private_archive": "",
-        "sharing_api": "",
-        "owner_account": ""
+        "nextcloud_probe": "Nextcloud n’a pas répondu à la vérification du compte des enregistrements.",
+        "private_archive": "Cassini n’a pas pu confirmer que son dossier d’enregistrements est privé et accessible en écriture.",
+        "sharing_api": "Le partage de fichiers de Nextcloud n’est pas disponible pour le compte des enregistrements de Cassini.",
+        "owner_account": "Le compte des enregistrements de Cassini n’existe pas."
       },
       "detail_state": "L’Opérateur a signalé {state}.",
       "detail_state_at_step": "L’Opérateur a signalé {state} à l’étape {step}.",
@@ -385,18 +385,18 @@
         "web_push_off": "Non autorisées"
       },
       "notices": {
-        "saved_again": "",
-        "unreadable": "",
-        "unreadable_defaults": "",
-        "email_defaults": "",
-        "versioning_on": "",
-        "versioning_off": "",
-        "activity_on": "",
-        "activity_off": "",
-        "notifications_off": "",
-        "notifications_on": "",
-        "web_push_browsers": "",
-        "web_push_apps": ""
+        "saved_again": "Chaque enregistrement est sauvegardé à nouveau par le compte {account} de Cassini, à la place du même fichier : ses partages, ses liens et son identifiant de fichier restent tels quels, et l’audio est inchangé.",
+        "unreadable": "Cassini n’a pas pu lire les capacités de Nextcloud ; il ne peut donc pas savoir si les applications Activité et Notifications ou la gestion des versions des fichiers sont activées.",
+        "unreadable_defaults": "Là où la gestion des versions des fichiers est activée (par défaut dans Nextcloud), le fichier tel qu’il était avant est conservé comme version antérieure. Là où l’application Activité est activée (également par défaut), toutes les personnes avec qui l’enregistrement est partagé reçoivent une entrée « fichier modifié » pour chaque enregistrement dans leur flux d’activité ; Nextcloud peut regrouper les modifications qui arrivent à peu d’intervalle.",
+        "email_defaults": "Avec les réglages par défaut de Nextcloud, la modification n’est envoyée ni par e-mail ni sous forme de notification : les deux sont désactivés pour « Un fichier ou un dossier a été modifié ». Un administrateur peut changer ces valeurs par défaut dans Paramètres d’administration › Activité, et chaque personne peut les activer dans ses propres paramètres d’activité. Cassini ne peut lire ni les uns ni les autres. Toute personne ayant activé les notifications en reçoit une par enregistrement ; toute personne ayant activé l’e-mail trouve les modifications dans son e-mail d’activité, que Nextcloud regroupe et envoie à la fréquence choisie plutôt qu’un par modification.",
+        "versioning_on": "La gestion des versions des fichiers est activée : le fichier tel qu’il était avant est donc conservé comme version antérieure dans le compte {account}. Cette version occupe de l’espace disque mais n’est pas comptée dans le quota de ce compte. Nextcloud fait expirer les versions selon versions_retention_obligation dans son config.php, que Cassini ne peut pas lire, et selon la limite de l’application Versions, la moitié de l’espace libre du compte, au-delà de laquelle les plus anciennes sont supprimées en premier.",
+        "versioning_off": "La gestion des versions des fichiers n’est pas activée : Nextcloud ne conserve donc aucune copie du fichier tel qu’il était avant.",
+        "activity_on": "L’application Activité est activée : toutes les personnes avec qui l’enregistrement est partagé reçoivent donc une entrée « fichier modifié » pour chaque enregistrement dans leur flux d’activité ; Nextcloud peut regrouper les modifications qui arrivent à peu d’intervalle.",
+        "activity_off": "L’application Activité n’est pas activée : la modification n’apparaît donc dans le flux d’activité de personne et aucun e-mail d’activité n’est envoyé.",
+        "notifications_off": "L’application Notifications n’est pas activée : aucune notification ne peut donc être envoyée pour la modification.",
+        "notifications_on": "L’application Notifications est activée : une personne ayant activé les notifications pour les fichiers modifiés en reçoit donc une par enregistrement dans Nextcloud, ainsi que sur ses appareils où les notifications push sont configurées.",
+        "web_push_browsers": "Les notifications push web sont autorisées, y compris pour les navigateurs : la notification peut donc aussi atteindre un navigateur où cette personne a accepté les notifications push.",
+        "web_push_apps": "Les notifications push web sont autorisées, mais pas pour les navigateurs."
       },
       "panel": {
         "title": "Heures d’enregistrement dans les enregistrements passés",
