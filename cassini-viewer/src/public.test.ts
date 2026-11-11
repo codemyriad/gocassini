@@ -175,4 +175,12 @@ describe("language files", () => {
     expect(await loadEmbedLanguage("pl", "x", (async () => { throw new TypeError("CSP"); }) as typeof fetch)).toBe(false);
     expect(loadedLocales.pl).toBe(before);
   });
+
+  it("gives up on a request that never answers", async () => {
+    const stalled = ((_href: string, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+      })) as typeof fetch;
+    expect(await loadEmbedLanguage("pl", "x", stalled, 10)).toBe(false);
+  });
 });

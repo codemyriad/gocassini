@@ -213,15 +213,20 @@ function siblingHref(scriptSrc: string, name: string): string {
 
 // Fetch a language file and make it the locale's dictionary, laid over English
 // so a string it lacks reads in English. False when it could not be had: a CSP
-// without gocassini.com in connect-src, a 404, offline. The caller then stays
-// in English rather than showing nothing.
+// without gocassini.com in connect-src, a 404, offline, or no answer within
+// timeoutMs. The viewer waits for this before it shows anything, so a stalled
+// request must not leave it blank; the caller then stays in English.
+export const EMBED_LANGUAGE_TIMEOUT_MS = 5000;
 export async function loadEmbedLanguage(
   locale: Locales,
   href: string,
   fetchImpl: typeof fetch = globalThis.fetch,
+  timeoutMs = EMBED_LANGUAGE_TIMEOUT_MS,
 ): Promise<boolean> {
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), timeoutMs);
   try {
-    const response = await fetchImpl(href);
+    const response = await fetchImpl(href, { signal: abort.signal });
     if (!response.ok) return false;
     const json: unknown = await response.json();
     if (!json || typeof json !== "object") return false;
@@ -230,6 +235,8 @@ export async function loadEmbedLanguage(
     return true;
   } catch {
     return false;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
