@@ -64,10 +64,10 @@
       "step_set_admin_user": "Ustaw {variable} na administratora Nextcloud",
       "cause_unknown": "Cassini nie mógł potwierdzić konfiguracji nagrań.",
       "cause": {
-        "nextcloud_probe": "",
-        "private_archive": "",
-        "sharing_api": "",
-        "owner_account": ""
+        "nextcloud_probe": "Nextcloud nie odpowiedział na sprawdzenie konta nagrań.",
+        "private_archive": "Cassini nie mógł potwierdzić, że jego katalog nagrań jest prywatny i zapisywalny.",
+        "sharing_api": "Udostępnianie plików Nextcloud jest niedostępne dla konta nagrań Cassini.",
+        "owner_account": "Konto nagrań Cassini nie istnieje."
       },
       "detail_state": "Operator zgłosił stan {state}.",
       "detail_state_at_step": "Operator zgłosił stan {state} w kroku {step}.",
@@ -385,18 +385,18 @@
         "web_push_off": "Niedozwolone"
       },
       "notices": {
-        "saved_again": "",
-        "unreadable": "",
-        "unreadable_defaults": "",
-        "email_defaults": "",
-        "versioning_on": "",
-        "versioning_off": "",
-        "activity_on": "",
-        "activity_off": "",
-        "notifications_off": "",
-        "notifications_on": "",
-        "web_push_browsers": "",
-        "web_push_apps": ""
+        "saved_again": "Każde nagranie jest ponownie zapisywane przez konto {account} Cassini w tym samym pliku: jego udostępnienia, linki i identyfikator pliku pozostają bez zmian, a dźwięk się nie zmienia.",
+        "unreadable": "Cassini nie mógł odczytać możliwości Nextcloud, więc nie może ustalić, czy aplikacje Aktywność i Powiadomienia lub wersjonowanie plików są włączone.",
+        "unreadable_defaults": "Tam, gdzie wersjonowanie plików jest włączone (domyślnie w Nextcloud), plik w poprzedniej postaci jest zachowywany jako wcześniejsza wersja. Tam, gdzie aplikacja Aktywność jest włączona (również domyślnie), każda osoba, której udostępniono nagranie, dostaje wpis „plik zmieniony” dla każdego nagrania w swoim strumieniu aktywności; Nextcloud może grupować zmiany, które docierają krótko po sobie.",
+        "email_defaults": "Przy domyślnych ustawieniach Nextcloud zmiana nie jest wysyłana e-mailem ani jako powiadomienie: oba są wyłączone dla „Plik lub katalog został zmieniony”. Administrator może zmienić te ustawienia domyślne w Ustawienia administracyjne › Aktywność, a każda osoba może je włączyć we własnych ustawieniach aktywności. Cassini nie może odczytać żadnych z nich. Kto włączył powiadomienia, dostaje jedno na nagranie; kto włączył e-mail, znajdzie zmiany w swoim e-mailu z aktywnością, który Nextcloud zbiera i wysyła z wybraną częstotliwością, a nie po jednym na zmianę.",
+        "versioning_on": "Wersjonowanie plików jest włączone, więc plik w poprzedniej postaci jest zachowywany jako wcześniejsza wersja na koncie {account}. Zajmuje miejsce na dysku, ale nie wlicza się do limitu tego konta. Nextcloud usuwa wygasłe wersje zgodnie z versions_retention_obligation w swoim config.php, którego Cassini nie może odczytać, oraz zgodnie z limitem aplikacji Wersje wynoszącym połowę wolnego miejsca konta; po jego przekroczeniu najstarsze są usuwane jako pierwsze.",
+        "versioning_off": "Wersjonowanie plików nie jest włączone, więc Nextcloud nie zachowuje kopii pliku w poprzedniej postaci.",
+        "activity_on": "Aplikacja Aktywność jest włączona, więc każda osoba, której udostępniono nagranie, dostaje wpis „plik zmieniony” dla każdego nagrania w swoim strumieniu aktywności; Nextcloud może grupować zmiany, które docierają krótko po sobie.",
+        "activity_off": "Aplikacja Aktywność nie jest włączona, więc zmiana nie pojawia się w niczyim strumieniu aktywności i nie jest wysyłany żaden e-mail z aktywnością.",
+        "notifications_off": "Aplikacja Powiadomienia nie jest włączona, więc nie można wysłać powiadomienia o zmianie.",
+        "notifications_on": "Aplikacja Powiadomienia jest włączona, więc osoba, która włączyła powiadomienia o zmienionych plikach, dostaje jedno na nagranie w Nextcloud oraz na swoich urządzeniach, na których skonfigurowano powiadomienia push.",
+        "web_push_browsers": "Powiadomienia web push są dozwolone, także dla przeglądarek, więc mogą też dotrzeć do przeglądarki, w której ta osoba zaakceptowała powiadomienia push.",
+        "web_push_apps": "Powiadomienia web push są dozwolone, ale nie dla przeglądarek."
       },
       "panel": {
         "title": "Czas nagrania w dawnych nagraniach",
