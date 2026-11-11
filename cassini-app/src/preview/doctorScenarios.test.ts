@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { createPreviewClient, doctorScenarios, scenarioReport } from "./doctorScenarios";
+import { createPreviewClient, doctorScenarios, scenarioMigration, scenarioReport } from "./doctorScenarios";
+import { blockedReason, checkMessage, stepLabel } from "../operator/doctorText";
 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
@@ -149,4 +150,21 @@ it("simulates the recording-time migration only in its own scenarios", async () 
   await vi.runAllTimersAsync();
   expect(await paused).toMatchObject({ state: "pausing", in_progress: 2 });
   expect(await client.getRecordedAtMigration()).toMatchObject({ state: "paused", in_progress: 0, done: 2, queued: 35 });
+});
+
+// The fixtures carry the operator's English beside its codes and params, as
+// the operator sends them. Wording a row in English must give back the same
+// sentence, which holds the dictionary to the operator's wording (D-921).
+it("words every fixture row and step as the operator does", () => {
+  for (const scenario of doctorScenarios) {
+    for (const check of scenarioReport(scenario.id).checks) {
+      expect(checkMessage(check), `${scenario.id} ${check.id}`).toBe(check.message);
+      for (const step of check.steps ?? []) {
+        expect(stepLabel(step), `${scenario.id} ${check.id} step`).toBe(step.label);
+      }
+    }
+    for (const item of scenarioMigration(scenario.id).blocked_items) {
+      expect(blockedReason(item), `${scenario.id} ${item.meeting}`).toBe(item.reason);
+    }
+  }
 });

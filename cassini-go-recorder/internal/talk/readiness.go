@@ -21,7 +21,10 @@ type ConnectionCheck struct {
 	Steps   []ConnectionStep `json:"steps,omitempty"`
 }
 
+// ConnectionStep is one remedy. ID is stable, so the app can word the step in
+// its reader's language (D-921); Label stays the English.
 type ConnectionStep struct {
+	ID       string   `json:"id"`
 	Label    string   `json:"label"`
 	Commands []string `json:"commands,omitempty"`
 }

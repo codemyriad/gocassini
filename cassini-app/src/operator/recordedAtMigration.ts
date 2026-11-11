@@ -1,5 +1,6 @@
 import { get } from "svelte/store";
 import { formatCount, LL } from "cassini-viewer/i18n";
+import { readParams, type ReadinessParams } from "./doctorText";
 
 // The recordedAtUtc file migration, as the Doctor shows it: /status's
 // recorded_at_migration (cassini-operator recorded_at_migration.go). The
@@ -15,7 +16,11 @@ export interface RecordedAtBlockedFile {
   meeting: string;
   title?: string;
   date_label?: string;
+  // The operator's English. reason_code and reason_params word it in the
+  // reader's language (doctorText.ts); absent from an older operator.
   reason: string;
+  reason_code?: string;
+  reason_params?: ReadinessParams;
 }
 
 export interface RecordedAtNotifications {
@@ -75,7 +80,8 @@ export function normalizeRecordedAtMigration(raw: unknown): RecordedAtMigration 
     blocked: count(value.blocked),
     blocked_items: Array.isArray(value.blocked_items)
       ? value.blocked_items.filter((item): item is Record<string, unknown> => !!item && typeof item === "object")
-        .map(item => ({ meeting: text(item.meeting), title: text(item.title) || undefined, date_label: text(item.date_label) || undefined, reason: text(item.reason) }))
+        .map(item => ({ meeting: text(item.meeting), title: text(item.title) || undefined, date_label: text(item.date_label) || undefined, reason: text(item.reason),
+          reason_code: text(item.reason_code) || undefined, reason_params: readParams(item.reason_params) }))
       : [],
     workers: count(value.workers),
     pace_seconds: count(value.pace_seconds),

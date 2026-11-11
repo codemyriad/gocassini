@@ -6,7 +6,8 @@
 // search_readiness.go, and the recorder's talk/readiness.go. Change a message,
 // a code or an action there and change it here in the same commit: the tests
 // pin the shape (row order, no removed rows, every action named, checkable and
-// probe agreeing), not the wording.
+// probe agreeing), and that each row's code and params, worded in English by
+// the app (operator/doctorText.ts), give back the message beside them.
 import type { OperatorClient } from "../operator/client";
 import { checkLabels, type CheckState, type ReadinessCheck, type RecordingReadiness } from "../operator/readiness";
 import { normalizeRecordedAtMigration, type RecordedAtMigration } from "../operator/recordedAtMigration";
@@ -98,27 +99,40 @@ function uncheckedBackend(): ReadinessCheck {
 // A row waiting on another check, exactly as the operator rewrites one: no
 // action, no steps, and a sentence naming what it waits for. Written as data
 // because these fixtures do not run the operator's suppression — they show its
-// OUTPUT, which is what a designer is laying out.
+// OUTPUT, which is what a designer is laying out. `blocker` is the row's id,
+// as the operator sends it in params; the English names it by its label.
 function blocked(id: string, blocker: string, unchecked = false): ReadinessCheck {
+  const name = checkLabels[blocker] ?? blocker;
   return { id, state: "not_verified", code: "check_blocked",
+    params: { variant: unchecked ? "unchecked" : "needs_attention", blocker },
     message: unchecked
-      ? `Not checked: this depends on ${blocker}, which has not been checked yet. Run all checks first.`
-      : `Not checked: this depends on ${blocker}, which needs attention first.` };
+      ? `Not checked: this depends on ${name}, which has not been checked yet. Run all checks first.`
+      : `Not checked: this depends on ${name}, which needs attention first.` };
 }
+
+// The archive search row's params, as search_readiness.go sends them: the
+// counts behind "N meetings are searchable", under the variant that names the
+// sentence after them.
+function searchParams(variant: string, counts: { indexed: number; untracked?: number }) {
+  return { variant, indexed: counts.indexed, silent: 0, disabled: 0, model_unavailable: 0, transcription_failed: 0, unknown_empty: 0,
+    missing_transcript: 0, unreadable_transcript: 0, backfill_candidates: 0, other_unavailable: 0, untracked: counts.untracked ?? 0 };
+}
+const partialSearch = searchParams("coverage", { indexed: 9, untracked: 3 });
+const searchLogStep = { id: "read_search_backfill_log", label: "The full error is in Cassini's log. On the Docker host:", commands: ["docker logs nc_app_gocassini 2>&1 | grep 'search backfill'"] };
 
 // The Recording sharing row's wording, as nc_sharing_policy.go writes it
 // (D-885): VERDICT, then the setting by its Nextcloud name and that Cassini
 // shares from its cassini account, then the consequence. Steps are full
 // sentences.
 const sharingPermitted = "Nextcloud's sharing settings let Cassini share recordings with everyone in a meeting. Whether each person has accepted the share is theirs to decide; anyone with recordings waiting sees them in Browse.";
-const restrictOff = { label: "Turn off “Restrict users to only share with users in their groups” under Administration settings › Sharing." };
+const restrictOff = { id: "lift_group_restriction", label: "Turn off “Restrict users to only share with users in their groups” under Administration settings › Sharing." };
 const sharingRestrictedSteps = [
   restrictOff,
-  { label: "Or add `cassini` to every group whose members should receive recordings. A group everyone is in covers everybody; `cassini` does not need to be an administrator. Keep it there: removing it later makes Nextcloud remove people's access to recordings already shared through that group." },
+  { id: "join_every_group", params: { account: "cassini" }, label: "Or add `cassini` to every group whose members should receive recordings. A group everyone is in covers everybody; `cassini` does not need to be an administrator. Keep it there: removing it later makes Nextcloud remove people's access to recordings already shared through that group." },
 ];
 const sharingBlockedSteps = [
   restrictOff,
-  { label: "Or add `cassini` to a group everyone who records is in. It does not need to be an administrator. Keep it there: removing it later makes Nextcloud remove people's access to recordings already shared through that group." },
+  { id: "join_common_group", params: { account: "cassini" }, label: "Or add `cassini` to a group everyone who records is in. It does not need to be an administrator. Keep it there: removing it later makes Nextcloud remove people's access to recordings already shared through that group." },
 ];
 
 export function scenarioReport(id: string, now = new Date()): RecordingReadiness {
@@ -133,15 +147,15 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
     test_room_mine: true,
     test: { state: "not_started", published: false },
     checks: [
-      { id: "host.workdir", state: "passed", code: "workdir", message: "working directory is writable", checked_at },
-      { id: "host.tmpdir.writable", state: "passed", code: "tmpdir.writable", message: "temporary directory is writable", checked_at },
+      { id: "host.workdir", state: "passed", code: "workdir", message: "working directory /data", params: { variant: "found", path: "/data" }, checked_at },
+      { id: "host.tmpdir.writable", state: "passed", code: "tmpdir.writable", message: "temporary directory writable: /tmp", params: { variant: "writable", path: "/tmp" }, checked_at },
       { id: "storage", state: "passed", code: "storage_ready", message: "Cassini can store recordings in Nextcloud: its own account exists, its recordings folder is writable, and Nextcloud's sharing API answers. Whether its shares are accepted is the Recording sharing check.", checked_at },
       { id: "storage.sharing", state: "passed", code: "sharing_permitted", message: sharingPermitted, checked_at },
       // Keeps its credential action even while passing: the form has to stay
       // reachable, or the secret can never be rotated from the panel again.
       { id: "talk.hpb", state: "passed", code: "hpb_authenticated", message: "The signaling server accepted Cassini and advertises media support. A test recording verifies the actual call path.", action: "configure_talk", checked_at },
       { id: "talk.discovery", state: "passed", code: "recording_auth_verified", message: "Talk accepted Cassini's recording credential.", checked_at },
-      { id: "archive.search", state: "passed", code: "search_archive_files_accounted_for", message: "12 meetings are searchable. Every recording in the archive is accounted for.", checked_at },
+      { id: "archive.search", state: "passed", code: "search_archive_files_accounted_for", message: "12 meetings are searchable. Every meeting file in the archive is accounted for.", params: searchParams("coverage_complete", { indexed: 12 }), checked_at },
     ],
   };
   const set = (check: ReadinessCheck) => {
@@ -172,7 +186,7 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
         { id: "storage.sharing", state: "not_verified", code: "sharing_not_checked", message: "Nextcloud's sharing settings have not been checked yet.", action: "recheck" },
         uncheckedBackend(),
         { id: "talk.discovery", state: "not_verified", code: "connection_not_checked", message: "The Talk connection has not been checked yet.", action: "recheck" },
-        { id: "archive.search", state: "not_verified", code: "search_coverage_not_checked", message: "Archive search coverage has not been checked yet.", action: "recheck" },
+        { id: "archive.search", state: "not_verified", code: "search_coverage_not_checked", message: "Archive search coverage has not been checked yet.", params: { variant: "not_checked" }, action: "recheck" },
       ];
       report.test_room_url = "";
       report.test_room_mine = false;
@@ -188,19 +202,19 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
       // three below it carry a sentence each.
       report.secret_configured = false; report.secret_source = "unset";
       set({ id: "talk.hpb", state: "needs_action", code: "hpb_disabled", message: "Recording cannot work until Talk has a High Performance Backend. Cassini records by joining the call as a hidden participant, and Talk only allows that through standalone signaling — here it is signalling by itself. Nothing else about Talk is affected.", docs: "https://nextcloud-talk.readthedocs.io/en/stable/quick-install/", checked_at });
-      set(blocked("talk.discovery", "High Performance Backend"));
-      report.checks.push(blocked("test", "High Performance Backend"));
+      set(blocked("talk.discovery", "talk.hpb"));
+      report.checks.push(blocked("test", "talk.hpb"));
       break;
     case "missing-secret":
       report.secret_configured = false; report.secret_source = "unset";
       // One row, because it is one fact: the backend exists and Cassini has no
       // credential for it.
       set({ id: "talk.hpb", state: "needs_action", code: "internal_secret_missing", message: "Talk has a High Performance Backend, and Cassini needs that server's internal secret to join calls invisibly. This is not a Nextcloud setting: it belongs to the signaling server, which is why Cassini cannot read it for you.", action: "configure_talk", checked_at, steps: [
-        { label: "On Nextcloud All-in-One, print it with:", commands: ["docker exec nextcloud-aio-talk printenv INTERNAL_SECRET"] },
-        { label: "On a standalone signaling server, it is `internalsecret` under `[clients]` in its configuration file" },
-        { label: "Paste it unchanged — one differing character fails exactly as a wrong credential would, and nothing can tell the difference until this check runs" },
+        { id: "print_aio_internal_secret", label: "On Nextcloud All-in-One, print it with:", commands: ["docker exec nextcloud-aio-talk printenv INTERNAL_SECRET"] },
+        { id: "find_standalone_internal_secret", label: "On a standalone signaling server, it is `internalsecret` under `[clients]` in its configuration file" },
+        { id: "paste_secret_unchanged", label: "Paste it unchanged — one differing character fails exactly as a wrong credential would, and nothing can tell the difference until this check runs" },
       ] });
-      set(blocked("talk.discovery", "High Performance Backend"));
+      set(blocked("talk.discovery", "talk.hpb"));
       break;
     case "rejected-secret":
       set({ id: "talk.hpb", state: "needs_action", code: "signaling_auth_failed", message: "HPB rejected internal-client authentication. Check the internal secret and server authentication configuration.", action: "configure_talk", checked_at }); break;
@@ -208,32 +222,33 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
       set({ id: "talk.hpb", state: "needs_action", code: "hpb_missing", message: "Talk has no standalone signaling server configured. Enable its high-performance backend.", action: "setup_hpb", checked_at }); break;
     case "connection-unreachable":
       set({ id: "talk.discovery", state: "warn", code: "nextcloud_host_not_found", message: "Cassini could not find Nextcloud at the address it was given: the name does not resolve from Cassini's container.", action: "recheck", checked_at, steps: [
-        { label: "Cassini reaches Nextcloud at `NEXTCLOUD_URL`, or at `CASSINI_TALK_BACKEND_URL` when that is set. The address has to work from inside Cassini's container, not only from your browser" },
-        { label: "To test the address, run this on the Nextcloud host. It should print an HTTP status such as 200, not an error:", commands: [`docker exec nc_app_gocassini sh -lc 'curl -k -s -o /dev/null -w "%{http_code}\\n" "\${CASSINI_TALK_BACKEND_URL:-$NEXTCLOUD_URL}/status.php"'`] },
+        { id: "nextcloud_address", label: "Cassini reaches Nextcloud at `NEXTCLOUD_URL`, or at `CASSINI_TALK_BACKEND_URL` when that is set. The address has to work from inside Cassini's container, not only from your browser" },
+        { id: "test_nextcloud_address", label: "To test the address, run this on the Nextcloud host. It should print an HTTP status such as 200, not an error:", commands: [`docker exec nc_app_gocassini sh -lc 'curl -k -s -o /dev/null -w "%{http_code}\\n" "\${CASSINI_TALK_BACKEND_URL:-$NEXTCLOUD_URL}/status.php"'`] },
       ] });
-      set(blocked("talk.hpb", "Talk connection"));
-      set(blocked("test", "Talk connection"));
+      set(blocked("talk.hpb", "talk.discovery"));
+      set(blocked("test", "talk.discovery"));
       break;
     case "recording-handoff":
       set({ id: "talk.discovery", state: "needs_action", code: "recording_auth_rejected", message: "Talk refused Cassini. Cassini is not set up as Talk's recording backend yet, or the recording secret Talk has does not match Cassini's.", action: "connect_talk", checked_at });
-      set(blocked("talk.hpb", "Talk connection"));
+      set(blocked("talk.hpb", "talk.discovery"));
       break;
     case "secret-missing":
       set({ id: "talk.handoff", state: "needs_action", code: "recording_secret_missing", message: "Cassini has no recording secret. It creates one when it starts and keeps it on its data volume, and that did not succeed.", steps: [
-        { label: "Check that Cassini's data volume is mounted and writable: the secret is saved next to its database" },
-        { label: "Then restart Cassini by disabling and re-enabling it in Nextcloud's apps, which creates the secret again" },
-        { label: "Or set one yourself in `CASSINI_TALK_RECORDING_SECRET`, in Cassini's deploy options. A secret set there always wins" },
+        { id: "check_data_volume_secret", label: "Check that Cassini's data volume is mounted and writable: the secret is saved next to its database" },
+        { id: "restart_app_new_secret", label: "Then restart Cassini by disabling and re-enabling it in Nextcloud's apps, which creates the secret again" },
+        { id: "set_recording_secret", label: "Or set one yourself in `CASSINI_TALK_RECORDING_SECRET`, in Cassini's deploy options. A secret set there always wins" },
       ] });
-      set(blocked("talk.discovery", "Recording credential"));
-      set(blocked("talk.hpb", "Recording credential"));
-      set(blocked("test", "Recording credential"));
+      set(blocked("talk.discovery", "talk.handoff"));
+      set(blocked("talk.hpb", "talk.handoff"));
+      set(blocked("test", "talk.handoff"));
       break;
     case "storage-blocked":
       set({ id: "storage", state: "needs_action", code: "storage_admission_blocked", message: "Cassini currently blocks recording on its stored storage status. Review the storage details below and check again after repairing them.", action: "setup_storage", checked_at });
-      set(blocked("storage.sharing", "Recording storage"));
+      set(blocked("storage.sharing", "storage"));
       break;
     case "sharing-restricted":
       set({ id: "storage.sharing", state: "warn", code: "sharing_limited_to_groups", checked_at, steps: sharingRestrictedSteps,
+        params: { issues: ["only_admins"], account: "cassini", shareable_groups: ["admin"] },
         message: "Only administrators can receive recordings. Nextcloud's “Restrict users to only share with users in their groups” is on, and Cassini shares from its cassini account, which is only in “admin”, the administrators' group. Anyone who is not an administrator cannot open the recordings of their meetings, and a recording they start is not published at all.",
         // What the setting has already cost, from job_share_outcomes.
         unshared: { jobs: 7, users: 3, groups: 1, since: "2026-10-12T09:14:00Z" } });
@@ -245,16 +260,17 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
       break;
     case "sharing-blocked":
       set({ id: "storage.sharing", state: "needs_action", code: "sharing_no_common_group", checked_at, steps: sharingBlockedSteps,
+        params: { issues: ["in_no_group"], account: "cassini" },
         message: "Nobody can receive recordings. Nextcloud's “Restrict users to only share with users in their groups” is on, and Cassini shares from its cassini account, which is in no group. Every share is refused, so no new meetings can be published." });
       break;
     case "setup-unreadable":
       set({ id: "configuration", state: "needs_action", code: "setup_store_unreadable", message: "Cassini could not read its saved recording setup, so its Talk credentials cannot be confirmed.", action: "repair_configuration", steps: [
-        { label: "Check that Cassini's persistent volume is mounted and writable, then restore recording-setup.json from a backup if it is missing" },
-        { label: "Disable and re-enable Cassini in Nextcloud, which re-runs its setup" },
+        { id: "restore_setup_store", label: "Check that Cassini's persistent volume is mounted and writable, then restore recording-setup.json from a backup if it is missing" },
+        { id: "reenable_app", label: "Disable and re-enable Cassini in Nextcloud, which re-runs its setup" },
       ] }); break;
     case "test-waiting":
       report.test = { state: "waiting_for_talk", published: false, started_at: new Date(now.getTime() - 90000).toISOString() };
-      set({ id: "test", state: "not_verified", code: "test_in_progress", message: "Cassini is waiting for a recording started in the test room.", action: "test_recording" });
+      set({ id: "test", state: "not_verified", code: "test_in_progress", message: "Cassini is waiting for a recording started in the test room.", params: { variant: "waiting_for_talk" }, action: "test_recording" });
       break;
     case "test-published":
       report.test = { state: "succeeded", published: true, job_id: "preview-recording", started_at: new Date(now.getTime() - 600000).toISOString(), viewer_url: "https://preview.invalid/recording" };
@@ -262,32 +278,36 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
       break;
     case "test-failed":
       report.test = { state: "failed", published: false, job_id: "preview-recording", stage: "upload", started_at: new Date(now.getTime() - 600000).toISOString() };
-      set({ id: "test", state: "needs_action", code: "test_failed", message: "The test recording did not finish; it stopped at upload.", action: "test_recording" });
+      set({ id: "test", state: "needs_action", code: "test_failed", message: "The test recording did not finish; it stopped at upload.", params: { variant: "stopped_at_stage", stage: "upload" }, action: "test_recording" });
       break;
     case "search-partial": case "search-running":
       set({ id: "archive.search", state: "warn", code: "search_coverage_partial", message: "9 meetings are searchable. Of the others, 3 are in the archive but not indexed yet." +
         (id === "search-running" ? " Re-indexing is running now." : ""),
+        params: id === "search-running" ? { ...partialSearch, reindex: "running" } : partialSearch,
         action: "recheck", repair: id === "search-running" ? undefined : "backfill_search", running: id === "search-running" || undefined,
-        steps: id === "search-running" ? undefined : [{ label: "Re-index now adds the 3 recordings that are not in search yet" }], checked_at }); break;
+        steps: id === "search-running" ? undefined : [{ id: "reindex_adds", params: { count: 3 }, label: "Re-index now adds the 3 recordings that are not in search yet" }], checked_at }); break;
     case "search-failed":
       set({ id: "archive.search", state: "warn", code: "search_reindex_archive_unreadable", message: "9 meetings are searchable. Of the others, 3 are in the archive but not indexed yet. The last re-index could not list the recordings archive in Nextcloud.",
+        params: { ...partialSearch, reindex: "archive_unreadable" },
         action: "recheck", repair: "backfill_search", repair_failed: true, steps: [
-          { label: "Recording storage uses the same access to the archive. If it needs attention, fix that first" },
-          { label: "If it passes, Nextcloud was probably busy or restarting, so try re-indexing again" },
-          { label: "The full error is in Cassini's log. On the Docker host:", commands: ["docker logs nc_app_gocassini 2>&1 | grep 'search backfill'"] },
+          { id: "fix_storage_first", label: "Recording storage uses the same access to the archive. If it needs attention, fix that first" },
+          { id: "retry_reindex", label: "If it passes, Nextcloud was probably busy or restarting, so try re-indexing again" },
+          searchLogStep,
         ], checked_at }); break;
     case "search-failed-environment":
       set({ id: "archive.search", state: "warn", code: "search_reindex_environment", message: "9 meetings are searchable. Of the others, 3 are in the archive but not indexed yet. The last re-index could not read the settings AppAPI gives Cassini, so trying again would fail the same way.",
+        params: { ...partialSearch, reindex: "environment" },
         action: "recheck", repair_failed: true, steps: [
-          { label: "Cassini is running without its AppAPI settings (`NEXTCLOUD_URL`, `APP_SECRET`, `APP_ID`). Deploy it through AppAPI rather than starting its container by hand" },
-          { label: "The full error is in Cassini's log. On the Docker host:", commands: ["docker logs nc_app_gocassini 2>&1 | grep 'search backfill'"] },
+          { id: "deploy_through_appapi", label: "Cassini is running without its AppAPI settings (`NEXTCLOUD_URL`, `APP_SECRET`, `APP_ID`). Deploy it through AppAPI rather than starting its container by hand" },
+          searchLogStep,
         ], checked_at }); break;
     case "search-failed-index":
       set({ id: "archive.search", state: "warn", code: "search_reindex_index_unavailable", message: "9 meetings are searchable. Of the others, 3 are in the archive but not indexed yet. The last re-index could not use the search index, so trying again would fail the same way.",
+        params: { ...partialSearch, reindex: "index_unavailable" },
         action: "recheck", repair_failed: true, steps: [
-          { label: "Check that Cassini's data volume is mounted and writable: the search index is kept on it" },
-          { label: "Then restart Cassini by disabling and re-enabling it in Nextcloud's apps" },
-          { label: "The full error is in Cassini's log. On the Docker host:", commands: ["docker logs nc_app_gocassini 2>&1 | grep 'search backfill'"] },
+          { id: "check_data_volume_search", label: "Check that Cassini's data volume is mounted and writable: the search index is kept on it" },
+          { id: "restart_app", label: "Then restart Cassini by disabling and re-enabling it in Nextcloud's apps" },
+          searchLogStep,
         ], checked_at }); break;
   }
   // The test row is on EVERY report the operator sends — offered where a test
@@ -309,7 +329,7 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
     // test's own starter reachable.
     const blocker = chain.find(failed) ?? chain.find(id => !proven(id)) ?? (failed("storage.sharing") ? "storage.sharing" : undefined);
     report.checks.push(blocker
-      ? blocked("test", checkLabels[blocker] ?? blocker, report.checks.find(check => check.id === blocker)?.state !== "needs_action")
+      ? blocked("test", blocker, report.checks.find(check => check.id === blocker)?.state !== "needs_action")
       : { id: "test", state: "not_verified", code: "test_not_run", action: "test_recording",
           message: "Nothing has been recorded through Talk yet. A short test recording is what proves the whole path, from a call to audio you can play." });
   }
@@ -359,8 +379,8 @@ export function scenarioMigration(id: string): RecordedAtMigration {
       return normalizeRecordedAtMigration({ ...base, state: "paused", paused: true, queued: 21, done: 16, notifications: noticesEnabled });
     case "recorded-at-blocked":
       return normalizeRecordedAtMigration({ ...base, state: "blocked", done: 35, blocked: 2, notifications: noticesUnknown, blocked_items: [
-        { meeting: "01KXQT6N0000000000000000AA.opus", title: "Weekly sync", date_label: "2026-07-17 10:33", reason: "recording is missing; restore it and retry" },
-        { meeting: "01KXQT6N0000000000000000BB.opus", title: "Design review", date_label: "2026-07-21 15:00", reason: "the cassini CLI cannot set recordedAtUtc; upgrade it and retry" },
+        { meeting: "01KXQT6N0000000000000000AA.opus", title: "Weekly sync", date_label: "2026-07-17 10:33", reason: "recording is missing; restore it and retry", reason_code: "recording_missing" },
+        { meeting: "01KXQT6N0000000000000000BB.opus", title: "Design review", date_label: "2026-07-21 15:00", reason: "the cassini CLI cannot set recordedAtUtc; upgrade it and retry", reason_code: "cli_too_old" },
       ] });
     default:
       return normalizeRecordedAtMigration({ ...base, state: "not_needed" });
@@ -391,7 +411,8 @@ export function createPreviewClient(id: string): DoctorClient {
       const healthy = scenarioReport("healthy");
       report.checks = report.checks.map(check => check.id === "archive.search" ? {
         ...healthy.checks.find(row => row.id === "archive.search")!, checked_at: new Date().toISOString(),
-        message: "12 meetings are searchable. Every recording in the archive is accounted for. The last re-index added 3, left 9 unchanged, found 0 not searchable and failed on 0.",
+        message: "12 meetings are searchable. Every meeting file in the archive is accounted for. The last re-index added 3, left 9 unchanged, found 0 not searchable and failed on 0.",
+        params: { ...searchParams("coverage_complete", { indexed: 12 }), reindex: "finished", reindex_added: 3, reindex_unchanged: 9, reindex_unsearchable: 0, reindex_failed: 0 },
       } : check);
       updateVerdict(report); repairStarted = 0;
     }
@@ -437,6 +458,7 @@ export function createPreviewClient(id: string): DoctorClient {
         delete check.repair_failed;
         check.running = true;
         check.message = "9 meetings are searchable. Of the others, 3 are in the archive but not indexed yet. Re-indexing is running now.";
+        check.params = { ...partialSearch, reindex: "running" };
         repairStarted = Date.now();
       }
       return read();
@@ -462,8 +484,8 @@ export function createPreviewClient(id: string): DoctorClient {
       }
       if (payload.action === "confirm_playback") report.test.playback_verified_at = new Date().toISOString();
       const testRow = report.checks.find(check => check.id === "test");
-      if (testRow && payload.action === "arm_test") Object.assign(testRow, { state: "not_verified", code: "test_in_progress", message: "Cassini is waiting for a recording started in the test room.", checked_at: undefined });
-      if (testRow && payload.action === "confirm_playback") Object.assign(testRow, { state: "passed", code: "test_playback", message: "A recording started in Talk was published, and its audio was confirmed by playing it.", checked_at: report.test.playback_verified_at });
+      if (testRow && payload.action === "arm_test") Object.assign(testRow, { state: "not_verified", code: "test_in_progress", message: "Cassini is waiting for a recording started in the test room.", params: { variant: "waiting_for_talk" }, checked_at: undefined });
+      if (testRow && payload.action === "confirm_playback") Object.assign(testRow, { state: "passed", code: "test_playback", message: "A recording started in Talk was published, and its audio was confirmed by playing it.", params: undefined, checked_at: report.test.playback_verified_at });
       updateVerdict(report); return read();
     },
   };

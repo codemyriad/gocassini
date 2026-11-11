@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -1207,5 +1208,31 @@ func TestTheTestRoomIsCreatedPrivate(t *testing.T) {
 	// nothing can later ask Talk whether it is still there.
 	if owner != "admin" {
 		t.Fatalf("owner = %q, want the administrator it was created for", owner)
+	}
+}
+
+// A blocked row names its blocker by id in params, so the app can name it by
+// the panel's own label; the English keeps the label (D-921).
+func TestBlockedRowCarriesTheBlockersID(t *testing.T) {
+	row := readinessCheck{ID: "talk.discovery", State: "needs_action", Code: "recording_auth_rejected", Params: readinessParams{"variant": "x"}}
+	blockRow(&row, "talk.hpb", true)
+	if row.Message != "Not checked: this depends on High Performance Backend, which has not been checked yet. Run all checks first." ||
+		!reflect.DeepEqual(row.Params, readinessParams{"variant": "unchecked", "blocker": "talk.hpb"}) {
+		t.Fatalf("row = %+v", row)
+	}
+}
+
+// doctor's advice keeps its English and gains the id of what doctor found.
+func TestHostAdviceStepIsWordedByWhatDoctorFound(t *testing.T) {
+	step := hostAdviceStep("workdir.writable", readinessParams{"variant": "not_accessible", "path": "/data"}, "create /data or choose a path you can write to")
+	if step.ID != "create_directory" || step.Params["path"] != "/data" || step.Label != "create /data or choose a path you can write to" {
+		t.Fatalf("step = %+v", step)
+	}
+	if step := hostAdviceStep("tmpdir.writable", readinessParams{"variant": "not_writable"}, "free space"); step.ID != "fix_tmpdir" {
+		t.Fatalf("step = %+v", step)
+	}
+	// Advice from a doctor that sent no variant stays English, with no id.
+	if step := hostAdviceStep("workdir", nil, "advice"); step.ID != "" || step.Label != "advice" {
+		t.Fatalf("step = %+v", step)
 	}
 }

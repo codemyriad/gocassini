@@ -113,6 +113,20 @@ func openMeetingMetadataStore(file string, logger *log.Logger) (*meetingMetadata
 	if _, err := tx.Exec(meetingMetadataRecordedAtSchema); err != nil {
 		return fail(err)
 	}
+	// Why a file is blocked, as a code and its params beside last_error's
+	// English, for the app to word (D-921). Added in place like
+	// recorded_at_utc: an older operator ignores the columns.
+	for _, column := range []string{"last_error_code", "last_error_params"} {
+		var present int
+		if err := tx.QueryRow(`SELECT count(*) FROM pragma_table_info('recorded_at_file_backfill') WHERE name=?`, column).Scan(&present); err != nil {
+			return fail(err)
+		}
+		if present == 0 {
+			if _, err := tx.Exec(`ALTER TABLE recorded_at_file_backfill ADD COLUMN ` + column + ` TEXT NOT NULL DEFAULT ''`); err != nil {
+				return fail(err)
+			}
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return fail(err)
 	}
