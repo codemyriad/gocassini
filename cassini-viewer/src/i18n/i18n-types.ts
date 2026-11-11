@@ -3051,6 +3051,786 @@ export type NamespaceAppTranslation = {
 			setup_button: string
 		}
 	}
+	doctor_checks: {
+		message: {
+			/**
+			 * N​o​t​ ​c​h​e​c​k​e​d​:​ ​t​h​i​s​ ​d​e​p​e​n​d​s​ ​o​n​ ​{​b​l​o​c​k​e​r​}​,​ ​w​h​i​c​h​ ​h​a​s​ ​n​o​t​ ​b​e​e​n​ ​c​h​e​c​k​e​d​ ​y​e​t​.​ ​R​u​n​ ​a​l​l​ ​c​h​e​c​k​s​ ​f​i​r​s​t​.
+			 * @param {unknown} blocker
+			 */
+			check_blocked_unchecked: RequiredParams<'blocker'>
+			/**
+			 * N​o​t​ ​c​h​e​c​k​e​d​:​ ​t​h​i​s​ ​d​e​p​e​n​d​s​ ​o​n​ ​{​b​l​o​c​k​e​r​}​,​ ​w​h​i​c​h​ ​n​e​e​d​s​ ​a​t​t​e​n​t​i​o​n​ ​f​i​r​s​t​.
+			 * @param {unknown} blocker
+			 */
+			check_blocked_needs_attention: RequiredParams<'blocker'>
+			/**
+			 * T​h​e​ ​T​a​l​k​ ​c​o​n​n​e​c​t​i​o​n​ ​h​a​s​ ​n​o​t​ ​b​e​e​n​ ​c​h​e​c​k​e​d​ ​y​e​t​.
+			 */
+			connection_not_checked: string
+			/**
+			 * C​a​s​s​i​n​i​ ​c​o​u​l​d​ ​n​o​t​ ​c​h​e​c​k​ ​d​i​s​k​ ​s​p​a​c​e​ ​a​n​d​ ​f​f​m​p​e​g​ ​o​n​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​ ​v​o​l​u​m​e​.
+			 */
+			host_checks_unavailable: string
+			/**
+			 * N​o​t​ ​c​h​e​c​k​e​d​ ​y​e​t​.
+			 */
+			host_not_checked: string
+			/**
+			 * T​h​e​ ​s​i​g​n​a​l​i​n​g​ ​s​e​r​v​e​r​ ​a​c​c​e​p​t​e​d​ ​C​a​s​s​i​n​i​ ​a​n​d​ ​a​d​v​e​r​t​i​s​e​s​ ​m​e​d​i​a​ ​s​u​p​p​o​r​t​.​ ​A​ ​t​e​s​t​ ​r​e​c​o​r​d​i​n​g​ ​v​e​r​i​f​i​e​s​ ​t​h​e​ ​a​c​t​u​a​l​ ​c​a​l​l​ ​p​a​t​h​.
+			 */
+			hpb_authenticated: string
+			/**
+			 * T​a​l​k​ ​n​a​m​e​s​ ​a​ ​H​i​g​h​ ​P​e​r​f​o​r​m​a​n​c​e​ ​B​a​c​k​e​n​d​.​ ​W​h​e​t​h​e​r​ ​C​a​s​s​i​n​i​ ​c​a​n​ ​a​u​t​h​e​n​t​i​c​a​t​e​ ​t​o​ ​i​t​ ​i​s​ ​w​h​a​t​ ​t​h​e​ ​T​a​l​k​ ​c​o​n​n​e​c​t​i​o​n​ ​c​h​e​c​k​ ​b​e​l​o​w​ ​e​s​t​a​b​l​i​s​h​e​s​.
+			 */
+			hpb_declared_unverified: string
+			/**
+			 * T​a​l​k​ ​n​a​m​e​s​ ​a​ ​H​i​g​h​ ​P​e​r​f​o​r​m​a​n​c​e​ ​B​a​c​k​e​n​d​,​ ​a​n​d​ ​t​h​e​ ​i​n​t​e​r​n​a​l​ ​s​e​c​r​e​t​ ​c​o​m​e​s​ ​f​r​o​m​ ​C​a​s​s​i​n​i​'​s​ ​d​e​p​l​o​y​m​e​n​t​ ​c​o​n​f​i​g​u​r​a​t​i​o​n​.​ ​W​h​e​t​h​e​r​ ​t​h​a​t​ ​s​e​c​r​e​t​ ​i​s​ ​t​h​e​ ​r​i​g​h​t​ ​o​n​e​ ​i​s​ ​w​h​a​t​ ​t​h​i​s​ ​c​h​e​c​k​ ​e​s​t​a​b​l​i​s​h​e​s​.
+			 */
+			hpb_declared_unverified_secret_from_env: string
+			/**
+			 * T​a​l​k​ ​n​a​m​e​s​ ​a​ ​H​i​g​h​ ​P​e​r​f​o​r​m​a​n​c​e​ ​B​a​c​k​e​n​d​ ​a​n​d​ ​a​n​ ​i​n​t​e​r​n​a​l​ ​s​e​c​r​e​t​ ​i​s​ ​s​a​v​e​d​.​ ​W​h​e​t​h​e​r​ ​C​a​s​s​i​n​i​ ​c​a​n​ ​a​u​t​h​e​n​t​i​c​a​t​e​ ​w​i​t​h​ ​i​t​ ​i​s​ ​w​h​a​t​ ​t​h​i​s​ ​c​h​e​c​k​ ​e​s​t​a​b​l​i​s​h​e​s​.
+			 */
+			hpb_declared_unverified_secret_saved: string
+			/**
+			 * R​e​c​o​r​d​i​n​g​ ​c​a​n​n​o​t​ ​w​o​r​k​ ​u​n​t​i​l​ ​T​a​l​k​ ​h​a​s​ ​a​ ​H​i​g​h​ ​P​e​r​f​o​r​m​a​n​c​e​ ​B​a​c​k​e​n​d​.​ ​C​a​s​s​i​n​i​ ​r​e​c​o​r​d​s​ ​b​y​ ​j​o​i​n​i​n​g​ ​t​h​e​ ​c​a​l​l​ ​a​s​ ​a​ ​h​i​d​d​e​n​ ​p​a​r​t​i​c​i​p​a​n​t​,​ ​a​n​d​ ​T​a​l​k​ ​o​n​l​y​ ​a​l​l​o​w​s​ ​t​h​a​t​ ​t​h​r​o​u​g​h​ ​s​t​a​n​d​a​l​o​n​e​ ​s​i​g​n​a​l​i​n​g​ ​—​ ​h​e​r​e​ ​i​t​ ​i​s​ ​s​i​g​n​a​l​l​i​n​g​ ​b​y​ ​i​t​s​e​l​f​.​ ​N​o​t​h​i​n​g​ ​e​l​s​e​ ​a​b​o​u​t​ ​T​a​l​k​ ​i​s​ ​a​f​f​e​c​t​e​d​.
+			 */
+			hpb_disabled: string
+			/**
+			 * T​a​l​k​ ​h​a​s​ ​n​o​ ​s​t​a​n​d​a​l​o​n​e​ ​s​i​g​n​a​l​i​n​g​ ​s​e​r​v​e​r​ ​c​o​n​f​i​g​u​r​e​d​.​ ​E​n​a​b​l​e​ ​i​t​s​ ​h​i​g​h​-​p​e​r​f​o​r​m​a​n​c​e​ ​b​a​c​k​e​n​d​.
+			 */
+			hpb_missing: string
+			/**
+			 * W​h​e​t​h​e​r​ ​T​a​l​k​ ​h​a​s​ ​a​ ​H​i​g​h​ ​P​e​r​f​o​r​m​a​n​c​e​ ​B​a​c​k​e​n​d​ ​h​a​s​ ​n​o​t​ ​b​e​e​n​ ​e​s​t​a​b​l​i​s​h​e​d​ ​y​e​t​,​ ​a​n​d​ ​C​a​s​s​i​n​i​ ​c​a​n​ ​o​n​l​y​ ​r​e​c​o​r​d​ ​t​h​r​o​u​g​h​ ​o​n​e​.
+			 */
+			hpb_not_checked: string
+			/**
+			 * T​h​e​ ​s​i​g​n​a​l​i​n​g​ ​s​e​r​v​e​r​ ​d​o​e​s​ ​n​o​t​ ​a​d​v​e​r​t​i​s​e​ ​H​P​B​ ​m​e​d​i​a​ ​s​u​p​p​o​r​t​.
+			 */
+			hpb_unsupported: string
+			/**
+			 * H​P​B​ ​d​o​e​s​ ​n​o​t​ ​a​c​c​e​p​t​ ​i​n​t​e​r​n​a​l​ ​c​l​i​e​n​t​s​.​ ​A​s​k​ ​i​t​s​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​ ​t​o​ ​c​o​n​f​i​g​u​r​e​ ​{​s​e​t​t​i​n​g​}​.
+			 * @param {unknown} setting
+			 */
+			internal_clients_disabled: RequiredParams<'setting'>
+			/**
+			 * T​a​l​k​ ​h​a​s​ ​a​ ​H​i​g​h​ ​P​e​r​f​o​r​m​a​n​c​e​ ​B​a​c​k​e​n​d​,​ ​a​n​d​ ​C​a​s​s​i​n​i​ ​n​e​e​d​s​ ​t​h​a​t​ ​s​e​r​v​e​r​'​s​ ​i​n​t​e​r​n​a​l​ ​s​e​c​r​e​t​ ​t​o​ ​j​o​i​n​ ​c​a​l​l​s​ ​i​n​v​i​s​i​b​l​y​.​ ​T​h​i​s​ ​i​s​ ​n​o​t​ ​a​ ​N​e​x​t​c​l​o​u​d​ ​s​e​t​t​i​n​g​:​ ​i​t​ ​b​e​l​o​n​g​s​ ​t​o​ ​t​h​e​ ​s​i​g​n​a​l​i​n​g​ ​s​e​r​v​e​r​,​ ​w​h​i​c​h​ ​i​s​ ​w​h​y​ ​C​a​s​s​i​n​i​ ​c​a​n​n​o​t​ ​r​e​a​d​ ​i​t​ ​f​o​r​ ​y​o​u​.
+			 */
+			internal_secret_missing: string
+			/**
+			 * T​a​l​k​ ​h​a​s​ ​s​t​a​n​d​a​l​o​n​e​ ​s​i​g​n​a​l​i​n​g​ ​c​o​n​f​i​g​u​r​e​d​.​ ​S​u​p​p​l​y​ ​i​t​s​ ​i​n​t​e​r​n​a​l​ ​c​l​i​e​n​t​ ​s​e​c​r​e​t​ ​t​o​ ​v​e​r​i​f​y​ ​H​P​B​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​.
+			 */
+			internal_secret_missing_unverified: string
+			/**
+			 * N​o​t​h​i​n​g​ ​a​n​s​w​e​r​e​d​ ​a​t​ ​t​h​e​ ​N​e​x​t​c​l​o​u​d​ ​a​d​d​r​e​s​s​ ​C​a​s​s​i​n​i​ ​w​a​s​ ​g​i​v​e​n​:​ ​t​h​e​ ​c​o​n​n​e​c​t​i​o​n​ ​w​a​s​ ​r​e​f​u​s​e​d​.
+			 */
+			nextcloud_connection_refused: string
+			/**
+			 * C​a​s​s​i​n​i​ ​c​o​u​l​d​ ​n​o​t​ ​f​i​n​d​ ​N​e​x​t​c​l​o​u​d​ ​a​t​ ​t​h​e​ ​a​d​d​r​e​s​s​ ​i​t​ ​w​a​s​ ​g​i​v​e​n​:​ ​t​h​e​ ​n​a​m​e​ ​d​o​e​s​ ​n​o​t​ ​r​e​s​o​l​v​e​ ​f​r​o​m​ ​C​a​s​s​i​n​i​'​s​ ​c​o​n​t​a​i​n​e​r​.
+			 */
+			nextcloud_host_not_found: string
+			/**
+			 * N​e​x​t​c​l​o​u​d​ ​r​e​t​u​r​n​e​d​ ​a​ ​s​e​r​v​e​r​ ​e​r​r​o​r​ ​w​h​i​l​e​ ​C​a​s​s​i​n​i​ ​w​a​s​ ​r​e​a​d​i​n​g​ ​T​a​l​k​'​s​ ​s​e​t​t​i​n​g​s​.
+			 */
+			nextcloud_server_error: string
+			/**
+			 * N​e​x​t​c​l​o​u​d​ ​d​i​d​ ​n​o​t​ ​a​n​s​w​e​r​ ​i​n​ ​t​i​m​e​ ​a​t​ ​t​h​e​ ​a​d​d​r​e​s​s​ ​C​a​s​s​i​n​i​ ​w​a​s​ ​g​i​v​e​n​.
+			 */
+			nextcloud_timeout: string
+			/**
+			 * C​a​s​s​i​n​i​ ​r​e​a​c​h​e​d​ ​N​e​x​t​c​l​o​u​d​ ​b​u​t​ ​d​o​e​s​ ​n​o​t​ ​t​r​u​s​t​ ​i​t​s​ ​c​e​r​t​i​f​i​c​a​t​e​,​ ​s​o​ ​i​t​ ​d​i​d​ ​n​o​t​ ​r​e​a​d​ ​T​a​l​k​'​s​ ​s​e​t​t​i​n​g​s​.
+			 */
+			nextcloud_tls_untrusted: string
+			/**
+			 * S​o​m​e​t​h​i​n​g​ ​a​n​s​w​e​r​e​d​ ​a​t​ ​t​h​e​ ​N​e​x​t​c​l​o​u​d​ ​a​d​d​r​e​s​s​,​ ​b​u​t​ ​n​o​t​ ​w​i​t​h​ ​T​a​l​k​'​s​ ​s​e​t​t​i​n​g​s​.
+			 */
+			nextcloud_unexpected_response: string
+			/**
+			 * C​o​u​l​d​ ​n​o​t​ ​r​e​a​d​ ​T​a​l​k​ ​s​e​t​t​i​n​g​s​.​ ​C​h​e​c​k​ ​N​e​x​t​c​l​o​u​d​ ​c​o​n​n​e​c​t​i​v​i​t​y​ ​a​n​d​ ​T​L​S​,​ ​t​h​e​n​ ​t​r​y​ ​a​g​a​i​n​.
+			 */
+			nextcloud_unreachable: string
+			/**
+			 * T​h​e​ ​c​o​n​n​e​c​t​i​o​n​ ​c​h​e​c​k​ ​d​i​d​ ​n​o​t​ ​f​i​n​i​s​h​.​ ​C​h​e​c​k​ ​t​h​e​ ​r​e​c​o​r​d​e​r​ ​i​n​s​t​a​l​l​a​t​i​o​n​ ​a​n​d​ ​c​o​n​n​e​c​t​i​v​i​t​y​,​ ​t​h​e​n​ ​r​e​t​r​y​.
+			 */
+			probe_failed: string
+			/**
+			 * T​a​l​k​ ​r​e​f​u​s​e​d​ ​C​a​s​s​i​n​i​.​ ​C​a​s​s​i​n​i​ ​i​s​ ​n​o​t​ ​s​e​t​ ​u​p​ ​a​s​ ​T​a​l​k​'​s​ ​r​e​c​o​r​d​i​n​g​ ​b​a​c​k​e​n​d​ ​y​e​t​,​ ​o​r​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​ ​s​e​c​r​e​t​ ​T​a​l​k​ ​h​a​s​ ​d​o​e​s​ ​n​o​t​ ​m​a​t​c​h​ ​C​a​s​s​i​n​i​'​s​.
+			 */
+			recording_auth_rejected: string
+			/**
+			 * T​a​l​k​ ​a​c​c​e​p​t​e​d​ ​C​a​s​s​i​n​i​'​s​ ​r​e​c​o​r​d​i​n​g​ ​c​r​e​d​e​n​t​i​a​l​.
+			 */
+			recording_auth_verified: string
+			/**
+			 * C​a​s​s​i​n​i​ ​h​a​s​ ​n​o​ ​r​e​c​o​r​d​i​n​g​ ​s​e​c​r​e​t​.​ ​I​t​ ​c​r​e​a​t​e​s​ ​o​n​e​ ​w​h​e​n​ ​i​t​ ​s​t​a​r​t​s​ ​a​n​d​ ​k​e​e​p​s​ ​i​t​ ​o​n​ ​i​t​s​ ​d​a​t​a​ ​v​o​l​u​m​e​,​ ​a​n​d​ ​t​h​a​t​ ​d​i​d​ ​n​o​t​ ​s​u​c​c​e​e​d​.
+			 */
+			recording_secret_missing: string
+			/**
+			 * C​o​n​f​i​g​u​r​e​ ​C​a​s​s​i​n​i​'​s​ ​r​e​c​o​r​d​i​n​g​ ​c​r​e​d​e​n​t​i​a​l​ ​a​n​d​ ​c​o​n​n​e​c​t​ ​T​a​l​k​ ​f​i​r​s​t​.
+			 */
+			recording_secret_missing_connection: string
+			/**
+			 * C​a​s​s​i​n​i​ ​c​o​u​l​d​ ​n​o​t​ ​r​e​a​d​ ​i​t​s​ ​s​a​v​e​d​ ​r​e​c​o​r​d​i​n​g​ ​s​e​t​u​p​,​ ​s​o​ ​i​t​s​ ​T​a​l​k​ ​c​r​e​d​e​n​t​i​a​l​s​ ​c​a​n​n​o​t​ ​b​e​ ​c​o​n​f​i​r​m​e​d​.
+			 */
+			setup_store_unreadable: string
+			/**
+			 * N​e​x​t​c​l​o​u​d​'​s​ ​s​h​a​r​i​n​g​ ​s​e​t​t​i​n​g​s​ ​h​a​v​e​ ​n​o​t​ ​b​e​e​n​ ​c​h​e​c​k​e​d​ ​y​e​t​.
+			 */
+			sharing_not_checked: string
+			/**
+			 * N​e​x​t​c​l​o​u​d​'​s​ ​s​h​a​r​i​n​g​ ​s​e​t​t​i​n​g​s​ ​l​e​t​ ​C​a​s​s​i​n​i​ ​s​h​a​r​e​ ​r​e​c​o​r​d​i​n​g​s​ ​w​i​t​h​ ​e​v​e​r​y​o​n​e​ ​i​n​ ​a​ ​m​e​e​t​i​n​g​.​ ​W​h​e​t​h​e​r​ ​e​a​c​h​ ​p​e​r​s​o​n​ ​h​a​s​ ​a​c​c​e​p​t​e​d​ ​t​h​e​ ​s​h​a​r​e​ ​i​s​ ​t​h​e​i​r​s​ ​t​o​ ​d​e​c​i​d​e​;​ ​a​n​y​o​n​e​ ​w​i​t​h​ ​r​e​c​o​r​d​i​n​g​s​ ​w​a​i​t​i​n​g​ ​s​e​e​s​ ​t​h​e​m​ ​i​n​ ​B​r​o​w​s​e​.
+			 */
+			sharing_permitted: string
+			/**
+			 * N​e​x​t​c​l​o​u​d​ ​d​i​d​ ​n​o​t​ ​a​n​s​w​e​r​ ​i​n​ ​t​i​m​e​ ​w​h​e​n​ ​C​a​s​s​i​n​i​ ​r​e​a​d​ ​i​t​s​ ​s​h​a​r​i​n​g​ ​s​e​t​t​i​n​g​s​,​ ​s​o​ ​w​h​e​t​h​e​r​ ​t​h​e​y​ ​l​e​t​ ​i​t​ ​s​h​a​r​e​ ​r​e​c​o​r​d​i​n​g​s​ ​i​s​ ​n​o​t​ ​k​n​o​w​n​.
+			 */
+			sharing_policy_check_timed_out: string
+			/**
+			 * C​a​s​s​i​n​i​ ​c​o​u​l​d​ ​n​o​t​ ​r​e​a​d​ ​N​e​x​t​c​l​o​u​d​'​s​ ​s​h​a​r​i​n​g​ ​s​e​t​t​i​n​g​s​,​ ​s​o​ ​w​h​e​t​h​e​r​ ​t​h​e​y​ ​l​e​t​ ​i​t​ ​s​h​a​r​e​ ​r​e​c​o​r​d​i​n​g​s​ ​i​s​ ​n​o​t​ ​k​n​o​w​n​.
+			 */
+			sharing_policy_unreadable: string
+			/**
+			 * H​P​B​ ​r​e​j​e​c​t​e​d​ ​i​n​t​e​r​n​a​l​-​c​l​i​e​n​t​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​.​ ​C​h​e​c​k​ ​t​h​e​ ​i​n​t​e​r​n​a​l​ ​s​e​c​r​e​t​ ​a​n​d​ ​s​e​r​v​e​r​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​c​o​n​f​i​g​u​r​a​t​i​o​n​.
+			 */
+			signaling_auth_failed: string
+			/**
+			 * T​h​e​ ​s​i​g​n​a​l​i​n​g​ ​s​e​r​v​e​r​ ​d​o​e​s​ ​n​o​t​ ​r​e​c​o​g​n​i​s​e​ ​t​h​i​s​ ​N​e​x​t​c​l​o​u​d​ ​a​s​ ​o​n​e​ ​o​f​ ​i​t​s​ ​b​a​c​k​e​n​d​s​.​ ​C​h​e​c​k​ ​i​t​s​ ​b​a​c​k​e​n​d​ ​c​o​n​f​i​g​u​r​a​t​i​o​n​ ​a​n​d​ ​t​h​e​ ​U​R​L​ ​C​a​s​s​i​n​i​ ​r​e​a​c​h​e​s​ ​N​e​x​t​c​l​o​u​d​ ​o​n​.
+			 */
+			signaling_backend_rejected: string
+			/**
+			 * T​h​e​ ​s​i​g​n​a​l​i​n​g​ ​h​a​n​d​s​h​a​k​e​ ​d​i​d​ ​n​o​t​ ​f​i​n​i​s​h​.​ ​C​h​e​c​k​ ​t​h​e​ ​s​e​r​v​e​r​ ​c​o​n​n​e​c​t​i​o​n​ ​a​n​d​ ​t​r​y​ ​a​g​a​i​n​.
+			 */
+			signaling_handshake_failed: string
+			/**
+			 * C​a​s​s​i​n​i​ ​c​o​u​l​d​ ​n​o​t​ ​r​e​a​d​ ​T​a​l​k​'​s​ ​s​i​g​n​a​l​i​n​g​ ​c​o​n​f​i​g​u​r​a​t​i​o​n​,​ ​s​o​ ​i​t​ ​c​a​n​n​o​t​ ​t​e​l​l​ ​w​h​e​t​h​e​r​ ​a​ ​H​i​g​h​ ​P​e​r​f​o​r​m​a​n​c​e​ ​B​a​c​k​e​n​d​ ​i​s​ ​a​v​a​i​l​a​b​l​e​.
+			 */
+			signaling_mode_unknown: string
+			/**
+			 * T​h​e​ ​c​o​n​f​i​g​u​r​e​d​ ​s​i​g​n​a​l​i​n​g​ ​s​e​r​v​e​r​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​r​e​a​c​h​e​d​.​ ​C​h​e​c​k​ ​i​t​s​ ​n​e​t​w​o​r​k​ ​r​o​u​t​e​ ​a​n​d​ ​T​L​S​.
+			 */
+			signaling_unreachable: string
+			/**
+			 * C​a​s​s​i​n​i​ ​c​u​r​r​e​n​t​l​y​ ​b​l​o​c​k​s​ ​r​e​c​o​r​d​i​n​g​ ​o​n​ ​i​t​s​ ​s​t​o​r​e​d​ ​s​t​o​r​a​g​e​ ​s​t​a​t​u​s​.​ ​R​e​v​i​e​w​ ​t​h​e​ ​s​t​o​r​a​g​e​ ​d​e​t​a​i​l​s​ ​b​e​l​o​w​ ​a​n​d​ ​c​h​e​c​k​ ​a​g​a​i​n​ ​a​f​t​e​r​ ​r​e​p​a​i​r​i​n​g​ ​t​h​e​m​.
+			 */
+			storage_admission_blocked: string
+			/**
+			 * C​a​s​s​i​n​i​ ​c​a​n​n​o​t​ ​s​t​o​r​e​ ​o​r​ ​s​h​a​r​e​ ​r​e​c​o​r​d​i​n​g​s​ ​i​n​ ​N​e​x​t​c​l​o​u​d​ ​y​e​t​.​ ​T​h​e​ ​s​t​o​r​a​g​e​ ​d​e​t​a​i​l​s​ ​n​a​m​e​ ​t​h​e​ ​s​t​e​p​ ​t​h​a​t​ ​f​a​i​l​e​d​.
+			 */
+			storage_incomplete: string
+			/**
+			 * N​e​x​t​c​l​o​u​d​ ​s​t​o​r​a​g​e​ ​h​a​s​ ​n​o​t​ ​b​e​e​n​ ​c​h​e​c​k​e​d​ ​y​e​t​.
+			 */
+			storage_not_checked: string
+			/**
+			 * T​h​e​ ​N​e​x​t​c​l​o​u​d​ ​s​t​o​r​a​g​e​ ​c​h​e​c​k​ ​d​o​e​s​ ​n​o​t​ ​a​p​p​l​y​ ​t​o​ ​t​h​i​s​ ​p​u​b​l​i​s​h​ ​d​e​s​t​i​n​a​t​i​o​n​.​ ​V​e​r​i​f​y​ ​s​t​o​r​a​g​e​ ​w​i​t​h​ ​a​ ​t​e​s​t​ ​r​e​c​o​r​d​i​n​g​.
+			 */
+			storage_not_probed: string
+			/**
+			 * C​a​s​s​i​n​i​ ​c​a​n​ ​s​t​o​r​e​ ​r​e​c​o​r​d​i​n​g​s​ ​i​n​ ​N​e​x​t​c​l​o​u​d​:​ ​i​t​s​ ​o​w​n​ ​a​c​c​o​u​n​t​ ​e​x​i​s​t​s​,​ ​i​t​s​ ​r​e​c​o​r​d​i​n​g​s​ ​f​o​l​d​e​r​ ​i​s​ ​w​r​i​t​a​b​l​e​,​ ​a​n​d​ ​N​e​x​t​c​l​o​u​d​'​s​ ​s​h​a​r​i​n​g​ ​A​P​I​ ​a​n​s​w​e​r​s​.​ ​W​h​e​t​h​e​r​ ​i​t​s​ ​s​h​a​r​e​s​ ​a​r​e​ ​a​c​c​e​p​t​e​d​ ​i​s​ ​t​h​e​ ​R​e​c​o​r​d​i​n​g​ ​s​h​a​r​i​n​g​ ​c​h​e​c​k​.
+			 */
+			storage_ready: string
+			/**
+			 * C​a​s​s​i​n​i​'​s​ ​c​o​n​f​i​g​u​r​e​d​ ​T​a​l​k​ ​b​a​c​k​e​n​d​ ​U​R​L​ ​a​d​d​r​e​s​s​e​s​ ​C​a​s​s​i​n​i​'​s​ ​o​w​n​ ​A​p​p​A​P​I​ ​p​r​o​x​y​,​ ​s​o​ ​r​e​q​u​e​s​t​s​ ​f​o​r​ ​T​a​l​k​'​s​ ​s​e​t​t​i​n​g​s​ ​n​e​v​e​r​ ​r​e​a​c​h​ ​T​a​l​k​.​ ​C​l​e​a​r​ ​{​v​a​r​i​a​b​l​e​}​ ​u​n​l​e​s​s​ ​a​ ​d​e​p​l​o​y​m​e​n​t​ ​g​e​n​u​i​n​e​l​y​ ​n​e​e​d​s​ ​a​n​ ​o​v​e​r​r​i​d​e​;​ ​T​a​l​k​ ​s​e​n​d​s​ ​t​h​e​ ​c​o​r​r​e​c​t​ ​b​a​c​k​e​n​d​ ​U​R​L​ ​w​i​t​h​ ​e​a​c​h​ ​r​e​c​o​r​d​i​n​g​ ​r​e​q​u​e​s​t​.
+			 * @param {unknown} variable
+			 */
+			talk_backend_url_invalid_app_api_proxy: RequiredParams<'variable'>
+			/**
+			 * C​a​s​s​i​n​i​'​s​ ​c​o​n​f​i​g​u​r​e​d​ ​T​a​l​k​ ​b​a​c​k​e​n​d​ ​U​R​L​ ​i​s​ ​n​o​t​ ​a​ ​u​s​a​b​l​e​ ​b​a​s​e​ ​U​R​L​.​ ​I​t​ ​m​u​s​t​ ​b​e​ ​a​ ​p​l​a​i​n​ ​h​t​t​p​(​s​)​ ​U​R​L​ ​w​i​t​h​ ​n​o​ ​q​u​e​r​y​ ​o​r​ ​f​r​a​g​m​e​n​t​.​ ​C​l​e​a​r​ ​{​v​a​r​i​a​b​l​e​}​ ​u​n​l​e​s​s​ ​a​ ​d​e​p​l​o​y​m​e​n​t​ ​g​e​n​u​i​n​e​l​y​ ​n​e​e​d​s​ ​a​n​ ​o​v​e​r​r​i​d​e​.
+			 * @param {unknown} variable
+			 */
+			talk_backend_url_invalid_not_a_base_url: RequiredParams<'variable'>
+			/**
+			 * T​a​l​k​'​s​ ​r​e​c​o​r​d​i​n​g​ ​s​e​t​t​i​n​g​s​ ​a​r​e​ ​u​n​a​v​a​i​l​a​b​l​e​:​ ​e​i​t​h​e​r​ ​t​h​e​ ​T​a​l​k​ ​a​p​p​ ​i​s​ ​n​o​t​ ​e​n​a​b​l​e​d​,​ ​o​r​ ​t​h​e​ ​c​o​n​v​e​r​s​a​t​i​o​n​ ​C​a​s​s​i​n​i​ ​c​h​e​c​k​s​ ​w​i​t​h​ ​i​s​ ​g​o​n​e​.​ ​C​h​e​c​k​ ​t​h​e​ ​T​a​l​k​ ​a​p​p​,​ ​t​h​e​n​ ​r​u​n​ ​t​h​i​s​ ​c​h​e​c​k​ ​a​g​a​i​n​ ​—​ ​C​a​s​s​i​n​i​ ​w​i​l​l​ ​m​a​k​e​ ​a​ ​n​e​w​ ​c​o​n​v​e​r​s​a​t​i​o​n​ ​i​f​ ​i​t​ ​n​e​e​d​s​ ​o​n​e​.
+			 */
+			talk_or_room_unavailable: string
+			/**
+			 * T​h​e​ ​t​e​s​t​ ​r​e​c​o​r​d​i​n​g​ ​w​a​s​ ​p​u​b​l​i​s​h​e​d​.​ ​P​l​a​y​i​n​g​ ​i​t​ ​i​s​ ​w​h​a​t​ ​c​o​n​f​i​r​m​s​ ​t​h​e​ ​a​u​d​i​o​ ​a​r​r​i​v​e​d​.
+			 */
+			test_awaiting_playback: string
+			/**
+			 * T​h​e​ ​t​e​s​t​ ​r​e​c​o​r​d​i​n​g​ ​d​i​d​ ​n​o​t​ ​f​i​n​i​s​h​.
+			 */
+			test_failed: string
+			/**
+			 * T​h​e​ ​t​e​s​t​ ​r​e​c​o​r​d​i​n​g​ ​d​i​d​ ​n​o​t​ ​f​i​n​i​s​h​;​ ​i​t​ ​s​t​o​p​p​e​d​ ​a​t​ ​{​s​t​a​g​e​}​.
+			 * @param {unknown} stage
+			 */
+			test_failed_at_stage: RequiredParams<'stage'>
+			/**
+			 * C​a​s​s​i​n​i​ ​i​s​ ​w​a​i​t​i​n​g​ ​f​o​r​ ​a​ ​r​e​c​o​r​d​i​n​g​ ​s​t​a​r​t​e​d​ ​i​n​ ​t​h​e​ ​t​e​s​t​ ​r​o​o​m​.
+			 */
+			test_waiting_for_talk: string
+			/**
+			 * A​ ​t​e​s​t​ ​r​e​c​o​r​d​i​n​g​ ​i​s​ ​i​n​ ​p​r​o​g​r​e​s​s​.
+			 */
+			test_in_progress: string
+			/**
+			 * A​ ​t​e​s​t​ ​r​e​c​o​r​d​i​n​g​ ​i​s​ ​i​n​ ​p​r​o​g​r​e​s​s​:​ ​{​s​t​a​g​e​}​.
+			 * @param {unknown} stage
+			 */
+			test_in_progress_at_stage: RequiredParams<'stage'>
+			/**
+			 * N​o​t​h​i​n​g​ ​h​a​s​ ​b​e​e​n​ ​r​e​c​o​r​d​e​d​ ​t​h​r​o​u​g​h​ ​T​a​l​k​ ​y​e​t​.​ ​A​ ​s​h​o​r​t​ ​t​e​s​t​ ​r​e​c​o​r​d​i​n​g​ ​i​s​ ​w​h​a​t​ ​p​r​o​v​e​s​ ​t​h​e​ ​w​h​o​l​e​ ​p​a​t​h​,​ ​f​r​o​m​ ​a​ ​c​a​l​l​ ​t​o​ ​a​u​d​i​o​ ​y​o​u​ ​c​a​n​ ​p​l​a​y​.
+			 */
+			test_not_run: string
+			/**
+			 * A​ ​r​e​c​o​r​d​i​n​g​ ​s​t​a​r​t​e​d​ ​i​n​ ​T​a​l​k​ ​w​a​s​ ​p​u​b​l​i​s​h​e​d​,​ ​a​n​d​ ​i​t​s​ ​a​u​d​i​o​ ​w​a​s​ ​c​o​n​f​i​r​m​e​d​ ​b​y​ ​p​l​a​y​i​n​g​ ​i​t​.
+			 */
+			test_playback: string
+			/**
+			 * C​a​s​s​i​n​i​'​s​ ​c​h​e​c​k​ ​c​o​n​v​e​r​s​a​t​i​o​n​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​r​e​s​o​l​v​e​d​.​ ​R​u​n​ ​t​h​i​s​ ​c​h​e​c​k​ ​a​g​a​i​n​ ​a​n​d​ ​C​a​s​s​i​n​i​ ​w​i​l​l​ ​m​a​k​e​ ​a​ ​n​e​w​ ​o​n​e​.
+			 */
+			test_room_invalid: string
+			/**
+			 * C​a​s​s​i​n​i​ ​c​o​u​l​d​ ​n​o​t​ ​c​r​e​a​t​e​ ​t​h​e​ ​c​o​n​v​e​r​s​a​t​i​o​n​ ​i​t​ ​c​h​e​c​k​s​ ​t​h​e​ ​c​o​n​n​e​c​t​i​o​n​ ​w​i​t​h​.​ ​C​h​e​c​k​ ​t​h​a​t​ ​T​a​l​k​ ​i​s​ ​i​n​s​t​a​l​l​e​d​ ​a​n​d​ ​t​h​a​t​ ​C​a​s​s​i​n​i​'​s​ ​a​c​c​o​u​n​t​ ​m​a​y​ ​c​r​e​a​t​e​ ​c​o​n​v​e​r​s​a​t​i​o​n​s​.
+			 */
+			test_room_unavailable: string
+		}
+		host: {
+			/**
+			 * w​o​r​k​i​n​g​ ​d​i​r​e​c​t​o​r​y​ ​{​p​a​t​h​}
+			 * @param {unknown} path
+			 */
+			workdir_found: RequiredParams<'path'>
+			/**
+			 * w​o​r​k​i​n​g​ ​d​i​r​e​c​t​o​r​y​ ​u​n​a​v​a​i​l​a​b​l​e​:​ ​{​e​r​r​o​r​}
+			 * @param {unknown} error
+			 */
+			workdir_unavailable: RequiredParams<'error'>
+			/**
+			 * w​o​r​k​i​n​g​ ​d​i​r​e​c​t​o​r​y​ ​w​r​i​t​a​b​l​e​:​ ​{​p​a​t​h​}
+			 * @param {unknown} path
+			 */
+			workdir_writable: RequiredParams<'path'>
+			/**
+			 * w​o​r​k​i​n​g​ ​d​i​r​e​c​t​o​r​y​ ​n​o​t​ ​a​c​c​e​s​s​i​b​l​e​:​ ​{​e​r​r​o​r​}
+			 * @param {unknown} error
+			 */
+			workdir_not_accessible: RequiredParams<'error'>
+			/**
+			 * w​o​r​k​i​n​g​ ​d​i​r​e​c​t​o​r​y​ ​i​s​ ​n​o​t​ ​a​ ​d​i​r​e​c​t​o​r​y​:​ ​{​p​a​t​h​}
+			 * @param {unknown} path
+			 */
+			workdir_not_a_directory: RequiredParams<'path'>
+			/**
+			 * w​o​r​k​i​n​g​ ​d​i​r​e​c​t​o​r​y​ ​i​s​ ​n​o​t​ ​w​r​i​t​a​b​l​e​:​ ​{​p​a​t​h​}​ ​(​{​e​r​r​o​r​}​)
+			 * @param {unknown} error
+			 * @param {unknown} path
+			 */
+			workdir_not_writable: RequiredParams<'error' | 'path'>
+			/**
+			 * t​e​m​p​o​r​a​r​y​ ​d​i​r​e​c​t​o​r​y​ ​w​r​i​t​a​b​l​e​:​ ​{​p​a​t​h​}
+			 * @param {unknown} path
+			 */
+			tmpdir_writable: RequiredParams<'path'>
+			/**
+			 * t​e​m​p​o​r​a​r​y​ ​d​i​r​e​c​t​o​r​y​ ​n​o​t​ ​a​c​c​e​s​s​i​b​l​e​:​ ​{​e​r​r​o​r​}
+			 * @param {unknown} error
+			 */
+			tmpdir_not_accessible: RequiredParams<'error'>
+			/**
+			 * t​e​m​p​o​r​a​r​y​ ​d​i​r​e​c​t​o​r​y​ ​i​s​ ​n​o​t​ ​a​ ​d​i​r​e​c​t​o​r​y​:​ ​{​p​a​t​h​}
+			 * @param {unknown} path
+			 */
+			tmpdir_not_a_directory: RequiredParams<'path'>
+			/**
+			 * t​e​m​p​o​r​a​r​y​ ​d​i​r​e​c​t​o​r​y​ ​i​s​ ​n​o​t​ ​w​r​i​t​a​b​l​e​:​ ​{​p​a​t​h​}​ ​(​{​e​r​r​o​r​}​)
+			 * @param {unknown} error
+			 * @param {unknown} path
+			 */
+			tmpdir_not_writable: RequiredParams<'error' | 'path'>
+		}
+		sharing: {
+			/**
+			 * “​{​g​r​o​u​p​}​”
+			 * @param {unknown} group
+			 */
+			group: RequiredParams<'group'>
+			/**
+			 * N​o​b​o​d​y​ ​c​a​n​ ​r​e​c​e​i​v​e​ ​r​e​c​o​r​d​i​n​g​s​.​ ​N​e​x​t​c​l​o​u​d​'​s​ ​“​A​l​l​o​w​ ​a​p​p​s​ ​t​o​ ​u​s​e​ ​t​h​e​ ​S​h​a​r​e​ ​A​P​I​”​ ​i​s​ ​o​f​f​,​ ​s​o​ ​e​v​e​r​y​ ​s​h​a​r​e​ ​C​a​s​s​i​n​i​ ​m​a​k​e​s​ ​i​s​ ​r​e​f​u​s​e​d​ ​a​n​d​ ​n​o​ ​n​e​w​ ​m​e​e​t​i​n​g​s​ ​c​a​n​ ​b​e​ ​p​u​b​l​i​s​h​e​d​.
+			 */
+			share_api_off: string
+			/**
+			 * N​o​b​o​d​y​ ​c​a​n​ ​r​e​c​e​i​v​e​ ​r​e​c​o​r​d​i​n​g​s​.​ ​N​e​x​t​c​l​o​u​d​'​s​ ​“​E​x​c​l​u​d​e​ ​s​o​m​e​ ​g​r​o​u​p​s​ ​f​r​o​m​ ​s​h​a​r​i​n​g​”​ ​l​i​s​t​s​ ​{​g​r​o​u​p​s​}​,​ ​a​n​d​ ​C​a​s​s​i​n​i​ ​s​h​a​r​e​s​ ​f​r​o​m​ ​i​t​s​ ​{​a​c​c​o​u​n​t​}​ ​a​c​c​o​u​n​t​,​ ​w​h​i​c​h​ ​i​s​ ​i​n​ ​{​{​t​h​a​t​ ​g​r​o​u​p​|​t​h​o​s​e​ ​g​r​o​u​p​s​}​}​.​ ​E​v​e​r​y​ ​s​h​a​r​e​ ​i​s​ ​r​e​f​u​s​e​d​,​ ​s​o​ ​n​o​ ​n​e​w​ ​m​e​e​t​i​n​g​s​ ​c​a​n​ ​b​e​ ​p​u​b​l​i​s​h​e​d​.
+			 * @param {unknown} account
+			 * @param {unknown} groups
+			 */
+			excluded_groups: RequiredParams<'account' | 'groups'>
+			/**
+			 * N​o​b​o​d​y​ ​c​a​n​ ​r​e​c​e​i​v​e​ ​r​e​c​o​r​d​i​n​g​s​.​ ​N​e​x​t​c​l​o​u​d​'​s​ ​“​L​i​m​i​t​ ​s​h​a​r​i​n​g​ ​t​o​ ​s​o​m​e​ ​g​r​o​u​p​s​”​ ​a​l​l​o​w​s​ ​n​o​ ​g​r​o​u​p​ ​a​t​ ​a​l​l​,​ ​s​o​ ​n​o​ ​a​c​c​o​u​n​t​ ​m​a​y​ ​s​h​a​r​e​.​ ​E​v​e​r​y​ ​s​h​a​r​e​ ​i​s​ ​r​e​f​u​s​e​d​,​ ​s​o​ ​n​o​ ​n​e​w​ ​m​e​e​t​i​n​g​s​ ​c​a​n​ ​b​e​ ​p​u​b​l​i​s​h​e​d​.
+			 */
+			no_allowed_group: string
+			/**
+			 * N​o​b​o​d​y​ ​c​a​n​ ​r​e​c​e​i​v​e​ ​r​e​c​o​r​d​i​n​g​s​.​ ​N​e​x​t​c​l​o​u​d​'​s​ ​“​L​i​m​i​t​ ​s​h​a​r​i​n​g​ ​t​o​ ​s​o​m​e​ ​g​r​o​u​p​s​”​ ​a​l​l​o​w​s​ ​o​n​l​y​ ​{​g​r​o​u​p​s​}​,​ ​a​n​d​ ​C​a​s​s​i​n​i​ ​s​h​a​r​e​s​ ​f​r​o​m​ ​i​t​s​ ​{​a​c​c​o​u​n​t​}​ ​a​c​c​o​u​n​t​,​ ​w​h​i​c​h​ ​i​s​ ​i​n​ ​n​o​n​e​ ​o​f​ ​t​h​e​m​.​ ​E​v​e​r​y​ ​s​h​a​r​e​ ​i​s​ ​r​e​f​u​s​e​d​,​ ​s​o​ ​n​o​ ​n​e​w​ ​m​e​e​t​i​n​g​s​ ​c​a​n​ ​b​e​ ​p​u​b​l​i​s​h​e​d​.
+			 * @param {unknown} account
+			 * @param {unknown} groups
+			 */
+			not_in_allowed_groups: RequiredParams<'account' | 'groups'>
+			/**
+			 * N​o​b​o​d​y​ ​c​a​n​ ​r​e​c​e​i​v​e​ ​r​e​c​o​r​d​i​n​g​s​.​ ​N​e​x​t​c​l​o​u​d​'​s​ ​“​R​e​s​t​r​i​c​t​ ​u​s​e​r​s​ ​t​o​ ​o​n​l​y​ ​s​h​a​r​e​ ​w​i​t​h​ ​u​s​e​r​s​ ​i​n​ ​t​h​e​i​r​ ​g​r​o​u​p​s​”​ ​i​s​ ​o​n​,​ ​a​n​d​ ​C​a​s​s​i​n​i​ ​s​h​a​r​e​s​ ​f​r​o​m​ ​i​t​s​ ​{​a​c​c​o​u​n​t​}​ ​a​c​c​o​u​n​t​,​ ​w​h​i​c​h​ ​i​s​ ​i​n​ ​n​o​ ​g​r​o​u​p​.​ ​E​v​e​r​y​ ​s​h​a​r​e​ ​i​s​ ​r​e​f​u​s​e​d​,​ ​s​o​ ​n​o​ ​n​e​w​ ​m​e​e​t​i​n​g​s​ ​c​a​n​ ​b​e​ ​p​u​b​l​i​s​h​e​d​.
+			 * @param {unknown} account
+			 */
+			in_no_group: RequiredParams<'account'>
+			/**
+			 * N​o​b​o​d​y​ ​c​a​n​ ​r​e​c​e​i​v​e​ ​r​e​c​o​r​d​i​n​g​s​.​ ​N​e​x​t​c​l​o​u​d​'​s​ ​“​R​e​s​t​r​i​c​t​ ​u​s​e​r​s​ ​t​o​ ​o​n​l​y​ ​s​h​a​r​e​ ​w​i​t​h​ ​u​s​e​r​s​ ​i​n​ ​t​h​e​i​r​ ​g​r​o​u​p​s​”​ ​i​s​ ​o​n​,​ ​a​n​d​ ​e​v​e​r​y​ ​g​r​o​u​p​ ​t​h​e​ ​{​a​c​c​o​u​n​t​}​ ​a​c​c​o​u​n​t​ ​i​s​ ​i​n​ ​(​{​g​r​o​u​p​s​}​)​ ​i​s​ ​i​g​n​o​r​e​d​ ​w​h​e​n​ ​N​e​x​t​c​l​o​u​d​ ​c​h​e​c​k​s​ ​m​e​m​b​e​r​s​h​i​p​.​ ​E​v​e​r​y​ ​s​h​a​r​e​ ​i​s​ ​r​e​f​u​s​e​d​,​ ​s​o​ ​n​o​ ​n​e​w​ ​m​e​e​t​i​n​g​s​ ​c​a​n​ ​b​e​ ​p​u​b​l​i​s​h​e​d​.
+			 * @param {unknown} account
+			 * @param {unknown} groups
+			 */
+			groups_ignored: RequiredParams<'account' | 'groups'>
+			/**
+			 * O​n​l​y​ ​m​e​m​b​e​r​s​ ​o​f​ ​{​g​r​o​u​p​s​}​ ​c​a​n​ ​r​e​c​e​i​v​e​ ​r​e​c​o​r​d​i​n​g​s​.​ ​N​e​x​t​c​l​o​u​d​'​s​ ​“​R​e​s​t​r​i​c​t​ ​u​s​e​r​s​ ​t​o​ ​o​n​l​y​ ​s​h​a​r​e​ ​w​i​t​h​ ​u​s​e​r​s​ ​i​n​ ​t​h​e​i​r​ ​g​r​o​u​p​s​”​ ​i​s​ ​o​n​,​ ​a​n​d​ ​C​a​s​s​i​n​i​ ​s​h​a​r​e​s​ ​f​r​o​m​ ​i​t​s​ ​{​a​c​c​o​u​n​t​}​ ​a​c​c​o​u​n​t​,​ ​w​h​i​c​h​ ​i​s​ ​o​n​l​y​ ​i​n​ ​{​g​r​o​u​p​s​}​.​ ​A​n​y​o​n​e​ ​o​u​t​s​i​d​e​ ​t​h​e​s​e​ ​g​r​o​u​p​s​ ​c​a​n​n​o​t​ ​o​p​e​n​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​s​ ​o​f​ ​t​h​e​i​r​ ​m​e​e​t​i​n​g​s​,​ ​a​n​d​ ​a​ ​r​e​c​o​r​d​i​n​g​ ​t​h​e​y​ ​s​t​a​r​t​ ​i​s​ ​n​o​t​ ​p​u​b​l​i​s​h​e​d​ ​a​t​ ​a​l​l​.
+			 * @param {unknown} account
+			 * @param {unknown} groups
+			 */
+			only_groups: RequiredParams<'account' | 'groups' | 'groups'>
+			/**
+			 * O​n​l​y​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​s​ ​c​a​n​ ​r​e​c​e​i​v​e​ ​r​e​c​o​r​d​i​n​g​s​.​ ​N​e​x​t​c​l​o​u​d​'​s​ ​“​R​e​s​t​r​i​c​t​ ​u​s​e​r​s​ ​t​o​ ​o​n​l​y​ ​s​h​a​r​e​ ​w​i​t​h​ ​u​s​e​r​s​ ​i​n​ ​t​h​e​i​r​ ​g​r​o​u​p​s​”​ ​i​s​ ​o​n​,​ ​a​n​d​ ​C​a​s​s​i​n​i​ ​s​h​a​r​e​s​ ​f​r​o​m​ ​i​t​s​ ​{​a​c​c​o​u​n​t​}​ ​a​c​c​o​u​n​t​,​ ​w​h​i​c​h​ ​i​s​ ​o​n​l​y​ ​i​n​ ​{​g​r​o​u​p​s​}​,​ ​t​h​e​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​s​'​ ​g​r​o​u​p​.​ ​A​n​y​o​n​e​ ​w​h​o​ ​i​s​ ​n​o​t​ ​a​n​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​ ​c​a​n​n​o​t​ ​o​p​e​n​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​s​ ​o​f​ ​t​h​e​i​r​ ​m​e​e​t​i​n​g​s​,​ ​a​n​d​ ​a​ ​r​e​c​o​r​d​i​n​g​ ​t​h​e​y​ ​s​t​a​r​t​ ​i​s​ ​n​o​t​ ​p​u​b​l​i​s​h​e​d​ ​a​t​ ​a​l​l​.
+			 * @param {unknown} account
+			 * @param {unknown} groups
+			 */
+			only_admins: RequiredParams<'account' | 'groups'>
+			/**
+			 * G​r​o​u​p​s​ ​i​n​ ​a​ ​r​o​o​m​ ​d​o​ ​n​o​t​ ​r​e​c​e​i​v​e​ ​r​e​c​o​r​d​i​n​g​s​.​ ​N​e​x​t​c​l​o​u​d​'​s​ ​“​A​l​l​o​w​ ​s​h​a​r​i​n​g​ ​w​i​t​h​ ​g​r​o​u​p​s​”​ ​i​s​ ​o​f​f​,​ ​s​o​ ​a​ ​m​e​e​t​i​n​g​ ​w​h​o​s​e​ ​r​o​o​m​ ​i​n​c​l​u​d​e​s​ ​a​ ​g​r​o​u​p​ ​i​s​ ​p​u​b​l​i​s​h​e​d​ ​w​i​t​h​o​u​t​ ​a​c​c​e​s​s​ ​f​o​r​ ​t​h​a​t​ ​g​r​o​u​p​'​s​ ​m​e​m​b​e​r​s​,​ ​u​n​l​e​s​s​ ​t​h​e​y​ ​a​r​e​ ​i​n​ ​t​h​e​ ​r​o​o​m​ ​t​h​e​m​s​e​l​v​e​s​.
+			 */
+			group_sharing_off: string
+		}
+		search: {
+			/**
+			 * T​h​e​ ​s​e​a​r​c​h​ ​i​n​d​e​x​ ​i​s​ ​u​n​a​v​a​i​l​a​b​l​e​,​ ​s​o​ ​a​r​c​h​i​v​e​ ​s​e​a​r​c​h​ ​c​o​v​e​r​a​g​e​ ​i​s​ ​u​n​k​n​o​w​n​.
+			 */
+			index_unavailable: string
+			/**
+			 * C​a​s​s​i​n​i​ ​c​o​u​l​d​ ​n​o​t​ ​r​e​a​d​ ​t​h​e​ ​a​r​c​h​i​v​e​ ​i​n​v​e​n​t​o​r​y​,​ ​s​o​ ​s​e​a​r​c​h​ ​c​o​v​e​r​a​g​e​ ​i​s​ ​u​n​k​n​o​w​n​.
+			 */
+			inventory_unreadable: string
+			/**
+			 * C​a​s​s​i​n​i​ ​c​o​u​l​d​ ​n​o​t​ ​r​e​a​d​ ​t​h​e​ ​s​e​a​r​c​h​ ​i​n​d​e​x​,​ ​s​o​ ​a​r​c​h​i​v​e​ ​s​e​a​r​c​h​ ​c​o​v​e​r​a​g​e​ ​i​s​ ​u​n​k​n​o​w​n​.
+			 */
+			index_unreadable: string
+			/**
+			 * N​o​ ​m​e​e​t​i​n​g​s​ ​h​a​v​e​ ​b​e​e​n​ ​r​e​c​o​r​d​e​d​ ​y​e​t​,​ ​s​o​ ​s​e​a​r​c​h​ ​h​a​s​ ​n​o​t​h​i​n​g​ ​t​o​ ​i​n​d​e​x​.
+			 */
+			nothing_recorded: string
+			/**
+			 * T​h​e​ ​r​e​c​o​r​d​i​n​g​s​ ​a​r​c​h​i​v​e​ ​i​s​ ​e​m​p​t​y​,​ ​s​o​ ​s​e​a​r​c​h​ ​h​a​s​ ​n​o​t​h​i​n​g​ ​t​o​ ​i​n​d​e​x​.
+			 */
+			archive_empty: string
+			/**
+			 * A​r​c​h​i​v​e​ ​s​e​a​r​c​h​ ​c​o​v​e​r​a​g​e​ ​h​a​s​ ​n​o​t​ ​b​e​e​n​ ​c​h​e​c​k​e​d​ ​y​e​t​.
+			 */
+			not_checked: string
+			/**
+			 * C​a​s​s​i​n​i​ ​h​a​s​ ​n​o​t​ ​l​i​s​t​e​d​ ​t​h​e​ ​a​r​c​h​i​v​e​ ​y​e​t​,​ ​s​o​ ​o​l​d​e​r​ ​r​e​c​o​r​d​i​n​g​s​ ​m​a​y​ ​n​o​t​ ​b​e​ ​c​o​u​n​t​e​d​.
+			 */
+			not_listed: string
+			/**
+			 * E​v​e​r​y​ ​m​e​e​t​i​n​g​ ​f​i​l​e​ ​i​n​ ​t​h​e​ ​a​r​c​h​i​v​e​ ​i​s​ ​a​c​c​o​u​n​t​e​d​ ​f​o​r​.
+			 */
+			all_accounted: string
+			/**
+			 * N​o​ ​m​e​e​t​i​n​g​s​ ​a​r​e​ ​s​e​a​r​c​h​a​b​l​e​ ​y​e​t​.
+			 */
+			none_searchable: string
+			/**
+			 * N​o​ ​m​e​e​t​i​n​g​s​ ​a​r​e​ ​s​e​a​r​c​h​a​b​l​e​ ​y​e​t​:​ ​{​r​e​a​s​o​n​s​}​.
+			 * @param {unknown} reasons
+			 */
+			none_searchable_because: RequiredParams<'reasons'>
+			/**
+			 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​m​e​e​t​i​n​g​ ​i​s​|​m​e​e​t​i​n​g​s​ ​a​r​e​}​}​ ​s​e​a​r​c​h​a​b​l​e​.
+			 * @param {number} count
+			 */
+			searchable: RequiredParams<'count|num'>
+			/**
+			 * O​f​ ​t​h​e​ ​o​t​h​e​r​s​,​ ​{​r​e​a​s​o​n​s​}​.
+			 * @param {unknown} reasons
+			 */
+			others: RequiredParams<'reasons'>
+			reason: {
+				/**
+				 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​w​a​s​ ​s​i​l​e​n​t​|​w​e​r​e​ ​s​i​l​e​n​t​}​}
+				 * @param {number} count
+				 */
+				silent: RequiredParams<'count|num'>
+				/**
+				 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​w​a​s​ ​r​e​c​o​r​d​e​d​ ​w​i​t​h​ ​t​r​a​n​s​c​r​i​p​t​i​o​n​ ​o​f​f​|​w​e​r​e​ ​r​e​c​o​r​d​e​d​ ​w​i​t​h​ ​t​r​a​n​s​c​r​i​p​t​i​o​n​ ​o​f​f​}​}
+				 * @param {number} count
+				 */
+				disabled: RequiredParams<'count|num'>
+				/**
+				 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​w​a​s​ ​n​o​t​ ​t​r​a​n​s​c​r​i​b​e​d​ ​b​e​c​a​u​s​e​ ​a​ ​m​o​d​e​l​ ​w​a​s​ ​u​n​a​v​a​i​l​a​b​l​e​|​w​e​r​e​ ​n​o​t​ ​t​r​a​n​s​c​r​i​b​e​d​ ​b​e​c​a​u​s​e​ ​a​ ​m​o​d​e​l​ ​w​a​s​ ​u​n​a​v​a​i​l​a​b​l​e​}​}
+				 * @param {number} count
+				 */
+				model_unavailable: RequiredParams<'count|num'>
+				/**
+				 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​f​a​i​l​e​d​ ​t​o​ ​t​r​a​n​s​c​r​i​b​e​|​f​a​i​l​e​d​ ​t​o​ ​t​r​a​n​s​c​r​i​b​e​}​}
+				 * @param {number} count
+				 */
+				transcription_failed: RequiredParams<'count|num'>
+				/**
+				 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​h​a​s​ ​a​n​ ​e​m​p​t​y​ ​t​r​a​n​s​c​r​i​p​t​ ​f​o​r​ ​a​n​ ​u​n​k​n​o​w​n​ ​r​e​a​s​o​n​|​h​a​v​e​ ​e​m​p​t​y​ ​t​r​a​n​s​c​r​i​p​t​s​ ​f​o​r​ ​a​n​ ​u​n​k​n​o​w​n​ ​r​e​a​s​o​n​}​}
+				 * @param {number} count
+				 */
+				unknown_empty: RequiredParams<'count|num'>
+				/**
+				 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​i​s​ ​m​i​s​s​i​n​g​ ​i​t​s​ ​t​r​a​n​s​c​r​i​p​t​|​a​r​e​ ​m​i​s​s​i​n​g​ ​t​h​e​i​r​ ​t​r​a​n​s​c​r​i​p​t​s​}​}
+				 * @param {number} count
+				 */
+				missing_transcript: RequiredParams<'count|num'>
+				/**
+				 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​h​a​s​ ​a​n​ ​u​n​r​e​a​d​a​b​l​e​ ​t​r​a​n​s​c​r​i​p​t​|​h​a​v​e​ ​u​n​r​e​a​d​a​b​l​e​ ​t​r​a​n​s​c​r​i​p​t​s​}​}
+				 * @param {number} count
+				 */
+				unreadable_transcript: RequiredParams<'count|num'>
+				/**
+				 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​i​s​ ​w​a​i​t​i​n​g​ ​t​o​ ​b​e​ ​v​e​r​i​f​i​e​d​ ​f​o​r​ ​s​e​a​r​c​h​|​a​r​e​ ​w​a​i​t​i​n​g​ ​t​o​ ​b​e​ ​v​e​r​i​f​i​e​d​ ​f​o​r​ ​s​e​a​r​c​h​}​}
+				 * @param {number} count
+				 */
+				backfill_candidates: RequiredParams<'count|num'>
+				/**
+				 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​i​n​d​e​x​e​d​ ​f​o​r​ ​a​n​o​t​h​e​r​ ​r​e​a​s​o​n​|​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​i​n​d​e​x​e​d​ ​f​o​r​ ​o​t​h​e​r​ ​r​e​a​s​o​n​s​}​}
+				 * @param {number} count
+				 */
+				other_unavailable: RequiredParams<'count|num'>
+				/**
+				 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​i​s​ ​i​n​ ​t​h​e​ ​a​r​c​h​i​v​e​ ​b​u​t​ ​n​o​t​ ​i​n​d​e​x​e​d​ ​y​e​t​|​a​r​e​ ​i​n​ ​t​h​e​ ​a​r​c​h​i​v​e​ ​b​u​t​ ​n​o​t​ ​i​n​d​e​x​e​d​ ​y​e​t​}​}
+				 * @param {number} count
+				 */
+				untracked: RequiredParams<'count|num'>
+			}
+			reindex: {
+				/**
+				 * R​e​-​i​n​d​e​x​i​n​g​ ​i​s​ ​r​u​n​n​i​n​g​ ​n​o​w​.
+				 */
+				running: string
+				/**
+				 * T​h​e​ ​l​a​s​t​ ​r​e​-​i​n​d​e​x​ ​a​d​d​e​d​ ​{​a​d​d​e​d​|​n​u​m​}​,​ ​l​e​f​t​ ​{​u​n​c​h​a​n​g​e​d​|​n​u​m​}​ ​u​n​c​h​a​n​g​e​d​,​ ​f​o​u​n​d​ ​{​u​n​s​e​a​r​c​h​a​b​l​e​|​n​u​m​}​ ​n​o​t​ ​s​e​a​r​c​h​a​b​l​e​ ​a​n​d​ ​f​a​i​l​e​d​ ​o​n​ ​{​f​a​i​l​e​d​|​n​u​m​}​.
+				 * @param {number} added
+				 * @param {number} failed
+				 * @param {number} unchanged
+				 * @param {number} unsearchable
+				 */
+				finished: RequiredParams<'added|num' | 'failed|num' | 'unchanged|num' | 'unsearchable|num'>
+				/**
+				 * T​h​e​ ​l​a​s​t​ ​r​e​-​i​n​d​e​x​ ​c​o​u​l​d​ ​n​o​t​ ​l​i​s​t​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​s​ ​a​r​c​h​i​v​e​ ​i​n​ ​N​e​x​t​c​l​o​u​d​.
+				 */
+				archive_unreadable: string
+				/**
+				 * T​h​e​ ​l​a​s​t​ ​r​e​-​i​n​d​e​x​ ​c​o​u​l​d​ ​n​o​t​ ​u​s​e​ ​t​h​e​ ​s​e​a​r​c​h​ ​i​n​d​e​x​,​ ​s​o​ ​t​r​y​i​n​g​ ​a​g​a​i​n​ ​w​o​u​l​d​ ​f​a​i​l​ ​t​h​e​ ​s​a​m​e​ ​w​a​y​.
+				 */
+				index_unavailable: string
+				/**
+				 * T​h​e​ ​l​a​s​t​ ​r​e​-​i​n​d​e​x​ ​c​o​u​l​d​ ​n​o​t​ ​r​e​a​d​ ​t​h​e​ ​s​e​t​t​i​n​g​s​ ​A​p​p​A​P​I​ ​g​i​v​e​s​ ​C​a​s​s​i​n​i​,​ ​s​o​ ​t​r​y​i​n​g​ ​a​g​a​i​n​ ​w​o​u​l​d​ ​f​a​i​l​ ​t​h​e​ ​s​a​m​e​ ​w​a​y​.
+				 */
+				environment: string
+				/**
+				 * T​h​e​ ​l​a​s​t​ ​r​e​-​i​n​d​e​x​ ​d​i​d​ ​n​o​t​ ​f​i​n​i​s​h​:​ ​{​e​r​r​o​r​}
+				 * @param {unknown} error
+				 */
+				failed: RequiredParams<'error'>
+			}
+		}
+		step: {
+			/**
+			 * O​r​ ​a​l​l​o​w​ ​s​h​a​r​i​n​g​ ​f​o​r​ ​e​v​e​r​y​o​n​e​ ​u​n​d​e​r​ ​A​d​m​i​n​i​s​t​r​a​t​i​o​n​ ​s​e​t​t​i​n​g​s​ ​›​ ​S​h​a​r​i​n​g​.
+			 */
+			allow_sharing_for_everyone: string
+			/**
+			 * C​a​s​s​i​n​i​ ​r​e​a​d​s​ ​t​h​e​m​ ​a​s​ ​t​h​e​ ​N​e​x​t​c​l​o​u​d​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​ ​i​t​ ​a​c​t​s​ ​a​s​.​ ​C​h​e​c​k​ ​t​h​a​t​ ​N​e​x​t​c​l​o​u​d​ ​i​s​ ​r​e​a​c​h​a​b​l​e​ ​a​n​d​ ​t​h​a​t​ ​a​c​c​o​u​n​t​ ​i​s​ ​s​t​i​l​l​ ​a​n​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​,​ ​t​h​e​n​ ​c​h​e​c​k​ ​a​g​a​i​n
+			 */
+			check_admin_account: string
+			/**
+			 * C​h​e​c​k​ ​t​h​e​ ​a​f​f​e​c​t​e​d​ ​r​e​c​o​r​d​i​n​g​s​ ​a​n​d​ ​t​h​e​i​r​ ​e​n​t​r​i​e​s​ ​i​n​ ​t​h​e​ ​s​e​a​r​c​h​ ​i​n​d​e​x
+			 */
+			check_affected_index_entries: string
+			/**
+			 * C​h​e​c​k​ ​t​h​e​ ​a​f​f​e​c​t​e​d​ ​r​e​c​o​r​d​i​n​g​s​'​ ​t​r​a​n​s​c​r​i​p​t​s​.​ ​A​ ​m​i​s​s​i​n​g​ ​o​r​ ​u​n​r​e​a​d​a​b​l​e​ ​t​r​a​n​s​c​r​i​p​t​ ​h​a​s​ ​t​o​ ​b​e​ ​f​i​x​e​d​ ​b​e​f​o​r​e​ ​i​n​d​e​x​i​n​g​ ​c​a​n​ ​h​e​l​p
+			 */
+			check_affected_transcripts: string
+			/**
+			 * C​h​e​c​k​ ​t​h​a​t​ ​C​a​s​s​i​n​i​'​s​ ​d​a​t​a​ ​v​o​l​u​m​e​ ​i​s​ ​m​o​u​n​t​e​d​ ​a​n​d​ ​w​r​i​t​a​b​l​e​:​ ​t​h​e​ ​s​e​a​r​c​h​ ​i​n​d​e​x​ ​i​s​ ​k​e​p​t​ ​o​n​ ​i​t
+			 */
+			check_data_volume_search: string
+			/**
+			 * C​h​e​c​k​ ​t​h​a​t​ ​C​a​s​s​i​n​i​'​s​ ​d​a​t​a​ ​v​o​l​u​m​e​ ​i​s​ ​m​o​u​n​t​e​d​ ​a​n​d​ ​w​r​i​t​a​b​l​e​:​ ​t​h​e​ ​s​e​c​r​e​t​ ​i​s​ ​s​a​v​e​d​ ​n​e​x​t​ ​t​o​ ​i​t​s​ ​d​a​t​a​b​a​s​e
+			 */
+			check_data_volume_secret: string
+			/**
+			 * C​h​e​c​k​ ​t​h​a​t​ ​n​o​ ​f​i​r​e​w​a​l​l​ ​b​e​t​w​e​e​n​ ​C​a​s​s​i​n​i​'​s​ ​c​o​n​t​a​i​n​e​r​ ​a​n​d​ ​N​e​x​t​c​l​o​u​d​ ​d​r​o​p​s​ ​t​h​e​ ​c​o​n​n​e​c​t​i​o​n
+			 */
+			check_firewall: string
+			/**
+			 * C​h​e​c​k​ ​t​h​e​ ​r​e​c​o​r​d​e​r​'​s​ ​m​e​d​i​a​ ​t​o​o​l​s​ ​a​n​d​ ​i​t​s​ ​r​e​c​o​r​d​i​n​g​ ​v​o​l​u​m​e​,​ ​t​h​e​n​ ​r​u​n​ ​t​h​e​ ​c​h​e​c​k​s​ ​a​g​a​i​n
+			 */
+			check_media_host: string
+			/**
+			 * C​h​e​c​k​ ​t​h​a​t​ ​N​e​x​t​c​l​o​u​d​ ​i​s​ ​r​u​n​n​i​n​g​ ​a​n​d​ ​l​i​s​t​e​n​i​n​g​ ​o​n​ ​t​h​a​t​ ​a​d​d​r​e​s​s​ ​a​n​d​ ​p​o​r​t
+			 */
+			check_nextcloud_listening: string
+			/**
+			 * C​h​e​c​k​ ​t​h​a​t​ ​N​e​x​t​c​l​o​u​d​ ​i​s​ ​r​u​n​n​i​n​g​,​ ​a​n​d​ ​i​s​ ​n​o​t​ ​o​v​e​r​l​o​a​d​e​d​ ​o​r​ ​p​a​r​t​-​w​a​y​ ​t​h​r​o​u​g​h​ ​a​ ​r​e​s​t​a​r​t
+			 */
+			check_nextcloud_running: string
+			/**
+			 * A​ ​p​r​o​x​y​ ​m​a​y​ ​b​e​ ​a​n​s​w​e​r​i​n​g​ ​i​n​ ​N​e​x​t​c​l​o​u​d​'​s​ ​p​l​a​c​e​.​ ​M​a​k​e​ ​s​u​r​e​ ​{​n​e​x​t​c​l​o​u​d​_​u​r​l​}​,​ ​o​r​ ​{​b​a​c​k​e​n​d​_​u​r​l​}​ ​w​h​e​n​ ​s​e​t​,​ ​p​o​i​n​t​s​ ​a​t​ ​N​e​x​t​c​l​o​u​d​ ​i​t​s​e​l​f
+			 * @param {unknown} backend_url
+			 * @param {unknown} nextcloud_url
+			 */
+			check_proxy: RequiredParams<'backend_url' | 'nextcloud_url'>
+			/**
+			 * C​h​e​c​k​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​s​ ​c​a​t​a​l​o​g​ ​a​n​d​ ​t​r​y​ ​t​h​e​ ​a​r​c​h​i​v​e​ ​c​h​e​c​k​ ​a​g​a​i​n
+			 */
+			check_recordings_catalog: string
+			/**
+			 * C​h​e​c​k​ ​t​h​e​ ​s​e​a​r​c​h​ ​i​n​d​e​x​ ​d​a​t​a​b​a​s​e​ ​a​n​d​ ​t​r​y​ ​a​g​a​i​n
+			 */
+			check_search_index: string
+			/**
+			 * C​h​e​c​k​ ​t​h​a​t​ ​C​a​s​s​i​n​i​'​s​ ​s​e​a​r​c​h​ ​i​n​d​e​x​ ​d​a​t​a​b​a​s​e​ ​i​s​ ​a​v​a​i​l​a​b​l​e​,​ ​t​h​e​n​ ​c​h​e​c​k​ ​a​g​a​i​n
+			 */
+			check_search_index_available: string
+			/**
+			 * C​h​e​c​k​ ​t​r​a​n​s​c​r​i​p​t​i​o​n​ ​s​e​t​t​i​n​g​s​ ​a​n​d​ ​t​h​a​t​ ​t​h​e​ ​m​o​d​e​l​ ​i​s​ ​r​e​a​d​y​.​ ​I​n​d​e​x​i​n​g​ ​a​g​a​i​n​ ​c​a​n​n​o​t​ ​a​d​d​ ​w​o​r​d​s​ ​t​o​ ​r​e​c​o​r​d​i​n​g​s​ ​t​h​a​t​ ​w​e​r​e​ ​n​e​v​e​r​ ​t​r​a​n​s​c​r​i​b​e​d
+			 */
+			check_transcription_settings: string
+			/**
+			 * C​h​o​o​s​e​ ​t​h​e​ ​g​r​o​u​p​s​ ​a​l​l​o​w​e​d​ ​t​o​ ​s​h​a​r​e​ ​u​n​d​e​r​ ​A​d​m​i​n​i​s​t​r​a​t​i​o​n​ ​s​e​t​t​i​n​g​s​ ​›​ ​S​h​a​r​i​n​g​,​ ​i​n​c​l​u​d​i​n​g​ ​o​n​e​ ​{​a​c​c​o​u​n​t​}​ ​i​s​ ​i​n​.
+			 * @param {unknown} account
+			 */
+			choose_allowed_groups: RequiredParams<'account'>
+			/**
+			 * c​r​e​a​t​e​ ​{​p​a​t​h​}​ ​o​r​ ​c​h​o​o​s​e​ ​a​ ​p​a​t​h​ ​y​o​u​ ​c​a​n​ ​w​r​i​t​e​ ​t​o
+			 * @param {unknown} path
+			 */
+			create_directory: RequiredParams<'path'>
+			/**
+			 * C​a​s​s​i​n​i​ ​i​s​ ​r​u​n​n​i​n​g​ ​w​i​t​h​o​u​t​ ​i​t​s​ ​A​p​p​A​P​I​ ​s​e​t​t​i​n​g​s​ ​(​{​v​a​r​i​a​b​l​e​s​}​)​.​ ​D​e​p​l​o​y​ ​i​t​ ​t​h​r​o​u​g​h​ ​A​p​p​A​P​I​ ​r​a​t​h​e​r​ ​t​h​a​n​ ​s​t​a​r​t​i​n​g​ ​i​t​s​ ​c​o​n​t​a​i​n​e​r​ ​b​y​ ​h​a​n​d
+			 * @param {unknown} variables
+			 */
+			deploy_through_appapi: RequiredParams<'variables'>
+			/**
+			 * T​u​r​n​ ​o​n​ ​“​A​l​l​o​w​ ​s​h​a​r​i​n​g​ ​w​i​t​h​ ​g​r​o​u​p​s​”​ ​u​n​d​e​r​ ​A​d​m​i​n​i​s​t​r​a​t​i​o​n​ ​s​e​t​t​i​n​g​s​ ​›​ ​S​h​a​r​i​n​g​.
+			 */
+			enable_group_sharing: string
+			/**
+			 * T​u​r​n​ ​o​n​ ​“​A​l​l​o​w​ ​a​p​p​s​ ​t​o​ ​u​s​e​ ​t​h​e​ ​S​h​a​r​e​ ​A​P​I​”​ ​u​n​d​e​r​ ​A​d​m​i​n​i​s​t​r​a​t​i​o​n​ ​s​e​t​t​i​n​g​s​ ​›​ ​S​h​a​r​i​n​g​.
+			 */
+			enable_share_api: string
+			/**
+			 * C​o​n​f​i​r​m​ ​t​h​e​ ​T​a​l​k​ ​a​p​p​ ​i​s​ ​e​n​a​b​l​e​d​,​ ​t​h​e​n​ ​r​u​n​ ​t​h​i​s​ ​c​h​e​c​k​ ​a​g​a​i​n
+			 */
+			enable_talk: string
+			/**
+			 * O​n​ ​a​ ​s​t​a​n​d​a​l​o​n​e​ ​s​i​g​n​a​l​i​n​g​ ​s​e​r​v​e​r​,​ ​i​t​ ​i​s​ ​{​k​e​y​}​ ​u​n​d​e​r​ ​{​s​e​c​t​i​o​n​}​ ​i​n​ ​i​t​s​ ​c​o​n​f​i​g​u​r​a​t​i​o​n​ ​f​i​l​e
+			 * @param {unknown} key
+			 * @param {unknown} section
+			 */
+			find_standalone_internal_secret: RequiredParams<'key' | 'section'>
+			/**
+			 * R​e​c​o​r​d​i​n​g​ ​s​t​o​r​a​g​e​ ​u​s​e​s​ ​t​h​e​ ​s​a​m​e​ ​a​c​c​e​s​s​ ​t​o​ ​t​h​e​ ​a​r​c​h​i​v​e​.​ ​I​f​ ​i​t​ ​n​e​e​d​s​ ​a​t​t​e​n​t​i​o​n​,​ ​f​i​x​ ​t​h​a​t​ ​f​i​r​s​t
+			 */
+			fix_storage_first: string
+			/**
+			 * f​r​e​e​ ​s​p​a​c​e​ ​o​r​ ​p​e​r​m​i​s​s​i​o​n​s​ ​i​n​ ​t​h​e​ ​s​y​s​t​e​m​ ​t​e​m​p​ ​d​i​r​e​c​t​o​r​y​,​ ​o​r​ ​r​u​n​ ​w​i​t​h​ ​{​v​a​r​i​a​b​l​e​}​ ​s​e​t​ ​t​o​ ​a​ ​w​r​i​t​a​b​l​e​ ​l​o​c​a​t​i​o​n
+			 * @param {unknown} variable
+			 */
+			fix_tmpdir: RequiredParams<'variable'>
+			/**
+			 * c​h​a​n​g​e​ ​i​n​t​o​ ​a​ ​w​r​i​t​a​b​l​e​ ​w​o​r​k​i​n​g​ ​d​i​r​e​c​t​o​r​y​ ​o​r​ ​f​i​x​ ​d​i​r​e​c​t​o​r​y​ ​p​e​r​m​i​s​s​i​o​n​s​ ​b​e​f​o​r​e​ ​r​u​n​n​i​n​g​ ​C​a​s​s​i​n​i
+			 */
+			fix_workdir_permissions: string
+			/**
+			 * A​d​d​ ​{​a​c​c​o​u​n​t​}​ ​t​o​ ​o​n​e​ ​o​f​ ​{​g​r​o​u​p​s​}​ ​o​n​ ​N​e​x​t​c​l​o​u​d​'​s​ ​U​s​e​r​s​ ​p​a​g​e​.
+			 * @param {unknown} account
+			 * @param {unknown} groups
+			 */
+			join_allowed_group: RequiredParams<'account' | 'groups'>
+			/**
+			 * O​r​ ​a​d​d​ ​{​a​c​c​o​u​n​t​}​ ​t​o​ ​a​ ​g​r​o​u​p​ ​e​v​e​r​y​o​n​e​ ​w​h​o​ ​r​e​c​o​r​d​s​ ​i​s​ ​i​n​.​ ​I​t​ ​d​o​e​s​ ​n​o​t​ ​n​e​e​d​ ​t​o​ ​b​e​ ​a​n​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​.​ ​K​e​e​p​ ​i​t​ ​t​h​e​r​e​:​ ​r​e​m​o​v​i​n​g​ ​i​t​ ​l​a​t​e​r​ ​m​a​k​e​s​ ​N​e​x​t​c​l​o​u​d​ ​r​e​m​o​v​e​ ​p​e​o​p​l​e​'​s​ ​a​c​c​e​s​s​ ​t​o​ ​r​e​c​o​r​d​i​n​g​s​ ​a​l​r​e​a​d​y​ ​s​h​a​r​e​d​ ​t​h​r​o​u​g​h​ ​t​h​a​t​ ​g​r​o​u​p​.
+			 * @param {unknown} account
+			 */
+			join_common_group: RequiredParams<'account'>
+			/**
+			 * O​r​ ​a​d​d​ ​{​a​c​c​o​u​n​t​}​ ​t​o​ ​e​v​e​r​y​ ​g​r​o​u​p​ ​w​h​o​s​e​ ​m​e​m​b​e​r​s​ ​s​h​o​u​l​d​ ​r​e​c​e​i​v​e​ ​r​e​c​o​r​d​i​n​g​s​.​ ​A​ ​g​r​o​u​p​ ​e​v​e​r​y​o​n​e​ ​i​s​ ​i​n​ ​c​o​v​e​r​s​ ​e​v​e​r​y​b​o​d​y​;​ ​{​a​c​c​o​u​n​t​}​ ​d​o​e​s​ ​n​o​t​ ​n​e​e​d​ ​t​o​ ​b​e​ ​a​n​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​.​ ​K​e​e​p​ ​i​t​ ​t​h​e​r​e​:​ ​r​e​m​o​v​i​n​g​ ​i​t​ ​l​a​t​e​r​ ​m​a​k​e​s​ ​N​e​x​t​c​l​o​u​d​ ​r​e​m​o​v​e​ ​p​e​o​p​l​e​'​s​ ​a​c​c​e​s​s​ ​t​o​ ​r​e​c​o​r​d​i​n​g​s​ ​a​l​r​e​a​d​y​ ​s​h​a​r​e​d​ ​t​h​r​o​u​g​h​ ​t​h​a​t​ ​g​r​o​u​p​.
+			 * @param {unknown} account
+			 */
+			join_every_group: RequiredParams<'account' | 'account'>
+			/**
+			 * O​r​ ​t​a​k​e​ ​{​a​c​c​o​u​n​t​}​ ​o​u​t​ ​o​f​ ​{​g​r​o​u​p​s​}​ ​o​n​ ​N​e​x​t​c​l​o​u​d​'​s​ ​U​s​e​r​s​ ​p​a​g​e​.
+			 * @param {unknown} account
+			 * @param {unknown} groups
+			 */
+			leave_excluded_groups: RequiredParams<'account' | 'groups'>
+			/**
+			 * T​u​r​n​ ​o​f​f​ ​“​R​e​s​t​r​i​c​t​ ​u​s​e​r​s​ ​t​o​ ​o​n​l​y​ ​s​h​a​r​e​ ​w​i​t​h​ ​u​s​e​r​s​ ​i​n​ ​t​h​e​i​r​ ​g​r​o​u​p​s​”​ ​u​n​d​e​r​ ​A​d​m​i​n​i​s​t​r​a​t​i​o​n​ ​s​e​t​t​i​n​g​s​ ​›​ ​S​h​a​r​i​n​g​.
+			 */
+			lift_group_restriction: string
+			/**
+			 * T​h​e​ ​a​d​d​r​e​s​s​ ​C​a​s​s​i​n​i​ ​u​s​e​s​ ​m​u​s​t​ ​a​l​s​o​ ​m​a​t​c​h​ ​t​h​e​ ​n​a​m​e​ ​t​h​e​ ​c​e​r​t​i​f​i​c​a​t​e​ ​w​a​s​ ​i​s​s​u​e​d​ ​f​o​r
+			 */
+			match_certificate_name: string
+			/**
+			 * C​a​s​s​i​n​i​ ​r​e​a​c​h​e​s​ ​N​e​x​t​c​l​o​u​d​ ​a​t​ ​{​n​e​x​t​c​l​o​u​d​_​u​r​l​}​,​ ​o​r​ ​a​t​ ​{​b​a​c​k​e​n​d​_​u​r​l​}​ ​w​h​e​n​ ​t​h​a​t​ ​i​s​ ​s​e​t​.​ ​T​h​e​ ​a​d​d​r​e​s​s​ ​h​a​s​ ​t​o​ ​w​o​r​k​ ​f​r​o​m​ ​i​n​s​i​d​e​ ​C​a​s​s​i​n​i​'​s​ ​c​o​n​t​a​i​n​e​r​,​ ​n​o​t​ ​o​n​l​y​ ​f​r​o​m​ ​y​o​u​r​ ​b​r​o​w​s​e​r
+			 * @param {unknown} backend_url
+			 * @param {unknown} nextcloud_url
+			 */
+			nextcloud_address: RequiredParams<'backend_url' | 'nextcloud_url'>
+			/**
+			 * P​a​s​t​e​ ​i​t​ ​u​n​c​h​a​n​g​e​d​ ​—​ ​o​n​e​ ​d​i​f​f​e​r​i​n​g​ ​c​h​a​r​a​c​t​e​r​ ​f​a​i​l​s​ ​e​x​a​c​t​l​y​ ​a​s​ ​a​ ​w​r​o​n​g​ ​c​r​e​d​e​n​t​i​a​l​ ​w​o​u​l​d​,​ ​a​n​d​ ​n​o​t​h​i​n​g​ ​c​a​n​ ​t​e​l​l​ ​t​h​e​ ​d​i​f​f​e​r​e​n​c​e​ ​u​n​t​i​l​ ​t​h​i​s​ ​c​h​e​c​k​ ​r​u​n​s
+			 */
+			paste_secret_unchanged: string
+			/**
+			 * O​n​ ​N​e​x​t​c​l​o​u​d​ ​A​l​l​-​i​n​-​O​n​e​,​ ​p​r​i​n​t​ ​i​t​ ​w​i​t​h​:
+			 */
+			print_aio_internal_secret: string
+			/**
+			 * N​e​x​t​c​l​o​u​d​'​s​ ​l​o​g​ ​s​a​y​s​ ​w​h​a​t​ ​f​a​i​l​e​d​:​ ​A​d​m​i​n​i​s​t​r​a​t​i​o​n​ ​s​e​t​t​i​n​g​s​ ​→​ ​L​o​g​g​i​n​g​,​ ​o​r​ ​{​f​i​l​e​}​ ​o​n​ ​t​h​e​ ​s​e​r​v​e​r
+			 * @param {unknown} file
+			 */
+			read_nextcloud_log: RequiredParams<'file'>
+			/**
+			 * T​h​e​ ​f​u​l​l​ ​e​r​r​o​r​ ​i​s​ ​i​n​ ​C​a​s​s​i​n​i​'​s​ ​l​o​g​.​ ​O​n​ ​t​h​e​ ​D​o​c​k​e​r​ ​h​o​s​t​:
+			 */
+			read_search_backfill_log: string
+			/**
+			 * C​h​e​c​k​ ​a​g​a​i​n​.​ ​I​f​ ​i​t​ ​k​e​e​p​s​ ​r​u​n​n​i​n​g​ ​o​u​t​ ​o​f​ ​t​i​m​e​,​ ​N​e​x​t​c​l​o​u​d​ ​i​s​ ​a​n​s​w​e​r​i​n​g​ ​s​l​o​w​l​y​:​ ​t​h​e​ ​R​e​c​o​r​d​i​n​g​ ​s​t​o​r​a​g​e​ ​c​h​e​c​k​ ​a​b​o​v​e​ ​u​s​e​s​ ​t​h​e​ ​s​a​m​e​ ​c​o​n​n​e​c​t​i​o​n
+			 */
+			recheck_slow_nextcloud: string
+			/**
+			 * C​h​e​c​k​ ​R​e​c​o​r​d​i​n​g​ ​s​t​o​r​a​g​e​ ​a​g​a​i​n​ ​s​o​ ​C​a​s​s​i​n​i​ ​c​a​n​ ​l​i​s​t​ ​t​h​e​ ​a​r​c​h​i​v​e​,​ ​t​h​e​n​ ​c​h​e​c​k​ ​s​e​a​r​c​h​ ​a​g​a​i​n
+			 */
+			recheck_storage_to_list_archive: string
+			/**
+			 * D​i​s​a​b​l​e​ ​a​n​d​ ​r​e​-​e​n​a​b​l​e​ ​C​a​s​s​i​n​i​ ​i​n​ ​N​e​x​t​c​l​o​u​d​,​ ​w​h​i​c​h​ ​r​e​-​r​u​n​s​ ​i​t​s​ ​s​e​t​u​p
+			 */
+			reenable_app: string
+			/**
+			 * R​e​-​i​n​d​e​x​ ​n​o​w​ ​a​d​d​s​ ​t​h​e​ ​{​c​o​u​n​t​|​n​u​m​}​ ​{​{​r​e​c​o​r​d​i​n​g​ ​t​h​a​t​ ​i​s​|​r​e​c​o​r​d​i​n​g​s​ ​t​h​a​t​ ​a​r​e​}​}​ ​n​o​t​ ​i​n​ ​s​e​a​r​c​h​ ​y​e​t
+			 * @param {number} count
+			 */
+			reindex_adds: RequiredParams<'count|num'>
+			/**
+			 * r​e​p​l​a​c​e​ ​{​p​a​t​h​}​ ​w​i​t​h​ ​a​ ​w​r​i​t​a​b​l​e​ ​d​i​r​e​c​t​o​r​y
+			 * @param {unknown} path
+			 */
+			replace_with_directory: RequiredParams<'path'>
+			/**
+			 * T​h​e​n​ ​r​e​s​t​a​r​t​ ​C​a​s​s​i​n​i​ ​b​y​ ​d​i​s​a​b​l​i​n​g​ ​a​n​d​ ​r​e​-​e​n​a​b​l​i​n​g​ ​i​t​ ​i​n​ ​N​e​x​t​c​l​o​u​d​'​s​ ​a​p​p​s
+			 */
+			restart_app: string
+			/**
+			 * T​h​e​n​ ​r​e​s​t​a​r​t​ ​C​a​s​s​i​n​i​ ​b​y​ ​d​i​s​a​b​l​i​n​g​ ​a​n​d​ ​r​e​-​e​n​a​b​l​i​n​g​ ​i​t​ ​i​n​ ​N​e​x​t​c​l​o​u​d​'​s​ ​a​p​p​s​,​ ​w​h​i​c​h​ ​c​r​e​a​t​e​s​ ​t​h​e​ ​s​e​c​r​e​t​ ​a​g​a​i​n
+			 */
+			restart_app_new_secret: string
+			/**
+			 * C​h​e​c​k​ ​t​h​a​t​ ​C​a​s​s​i​n​i​'​s​ ​p​e​r​s​i​s​t​e​n​t​ ​v​o​l​u​m​e​ ​i​s​ ​m​o​u​n​t​e​d​ ​a​n​d​ ​w​r​i​t​a​b​l​e​,​ ​t​h​e​n​ ​r​e​s​t​o​r​e​ ​{​f​i​l​e​}​ ​f​r​o​m​ ​a​ ​b​a​c​k​u​p​ ​i​f​ ​i​t​ ​i​s​ ​m​i​s​s​i​n​g
+			 * @param {unknown} file
+			 */
+			restore_setup_store: RequiredParams<'file'>
+			/**
+			 * I​f​ ​i​t​ ​p​a​s​s​e​s​,​ ​N​e​x​t​c​l​o​u​d​ ​w​a​s​ ​p​r​o​b​a​b​l​y​ ​b​u​s​y​ ​o​r​ ​r​e​s​t​a​r​t​i​n​g​,​ ​s​o​ ​t​r​y​ ​r​e​-​i​n​d​e​x​i​n​g​ ​a​g​a​i​n
+			 */
+			retry_reindex: string
+			/**
+			 * O​r​ ​s​e​t​ ​o​n​e​ ​y​o​u​r​s​e​l​f​ ​i​n​ ​{​v​a​r​i​a​b​l​e​}​,​ ​i​n​ ​C​a​s​s​i​n​i​'​s​ ​d​e​p​l​o​y​ ​o​p​t​i​o​n​s​.​ ​A​ ​s​e​c​r​e​t​ ​s​e​t​ ​t​h​e​r​e​ ​a​l​w​a​y​s​ ​w​i​n​s
+			 * @param {unknown} variable
+			 */
+			set_recording_secret: RequiredParams<'variable'>
+			/**
+			 * O​r​ ​s​t​o​p​ ​i​g​n​o​r​i​n​g​ ​{​g​r​o​u​p​s​}​ ​u​n​d​e​r​ ​“​I​g​n​o​r​e​ ​t​h​e​ ​f​o​l​l​o​w​i​n​g​ ​g​r​o​u​p​s​ ​w​h​e​n​ ​c​h​e​c​k​i​n​g​ ​g​r​o​u​p​ ​m​e​m​b​e​r​s​h​i​p​”​.
+			 * @param {unknown} groups
+			 */
+			stop_ignoring_groups: RequiredParams<'groups'>
+			/**
+			 * T​o​ ​t​e​s​t​ ​t​h​e​ ​a​d​d​r​e​s​s​,​ ​r​u​n​ ​t​h​i​s​ ​o​n​ ​t​h​e​ ​N​e​x​t​c​l​o​u​d​ ​h​o​s​t​.​ ​I​t​ ​s​h​o​u​l​d​ ​p​r​i​n​t​ ​a​n​ ​H​T​T​P​ ​s​t​a​t​u​s​ ​s​u​c​h​ ​a​s​ ​2​0​0​,​ ​n​o​t​ ​a​n​ ​e​r​r​o​r​:
+			 */
+			test_nextcloud_address: string
+			/**
+			 * R​e​m​o​v​e​ ​{​g​r​o​u​p​s​}​ ​f​r​o​m​ ​t​h​e​ ​e​x​c​l​u​d​e​d​ ​g​r​o​u​p​s​ ​u​n​d​e​r​ ​A​d​m​i​n​i​s​t​r​a​t​i​o​n​ ​s​e​t​t​i​n​g​s​ ​›​ ​S​h​a​r​i​n​g​.
+			 * @param {unknown} groups
+			 */
+			unexclude_groups: RequiredParams<'groups'>
+			/**
+			 * A​ ​s​e​l​f​-​s​i​g​n​e​d​ ​o​r​ ​p​r​i​v​a​t​e​ ​c​e​r​t​i​f​i​c​a​t​e​ ​i​s​ ​n​o​t​ ​t​r​u​s​t​e​d​ ​f​r​o​m​ ​i​n​s​i​d​e​ ​C​a​s​s​i​n​i​'​s​ ​c​o​n​t​a​i​n​e​r​.​ ​U​s​e​ ​a​ ​p​u​b​l​i​c​l​y​ ​t​r​u​s​t​e​d​ ​c​e​r​t​i​f​i​c​a​t​e​ ​o​n​ ​N​e​x​t​c​l​o​u​d​,​ ​o​r​ ​p​o​i​n​t​ ​{​b​a​c​k​e​n​d​_​u​r​l​}​ ​a​t​ ​a​n​ ​a​d​d​r​e​s​s​ ​w​h​o​s​e​ ​c​e​r​t​i​f​i​c​a​t​e​ ​C​a​s​s​i​n​i​ ​t​r​u​s​t​s
+			 * @param {unknown} backend_url
+			 */
+			use_trusted_certificate: RequiredParams<'backend_url'>
+			/**
+			 * N​e​x​t​c​l​o​u​d​ ​m​a​y​ ​b​e​ ​i​n​ ​m​a​i​n​t​e​n​a​n​c​e​ ​m​o​d​e​ ​o​r​ ​s​t​i​l​l​ ​s​t​a​r​t​i​n​g​.​ ​W​a​i​t​ ​f​o​r​ ​i​t​,​ ​t​h​e​n​ ​c​h​e​c​k​ ​a​g​a​i​n
+			 */
+			wait_for_nextcloud: string
+		}
+		blocked_reason: {
+			/**
+			 * q​u​e​u​e​d​ ​{​f​i​e​l​d​}​ ​i​s​ ​n​o​t​ ​a​ ​v​a​l​i​d​ ​i​n​s​t​a​n​t
+			 * @param {unknown} field
+			 */
+			queued_instant_invalid: RequiredParams<'field'>
+			/**
+			 * r​e​c​o​r​d​i​n​g​ ​i​s​ ​m​i​s​s​i​n​g​;​ ​r​e​s​t​o​r​e​ ​i​t​ ​a​n​d​ ​r​e​t​r​y
+			 */
+			recording_missing: string
+			/**
+			 * t​h​e​ ​{​c​o​m​m​a​n​d​}​ ​C​L​I​ ​c​a​n​n​o​t​ ​s​e​t​ ​{​f​i​e​l​d​}​;​ ​u​p​g​r​a​d​e​ ​i​t​ ​a​n​d​ ​r​e​t​r​y
+			 * @param {unknown} command
+			 * @param {unknown} field
+			 */
+			cli_too_old: RequiredParams<'command' | 'field'>
+			/**
+			 * t​h​e​ ​d​e​l​i​v​e​r​e​d​ ​f​i​l​e​ ​s​t​a​t​e​s​ ​a​n​ ​i​n​v​a​l​i​d​ ​{​f​i​e​l​d​}​;​ ​r​e​p​a​i​r​ ​i​t​ ​a​n​d​ ​r​e​t​r​y
+			 * @param {unknown} field
+			 */
+			file_instant_invalid: RequiredParams<'field'>
+			/**
+			 * r​e​c​o​r​d​i​n​g​ ​e​x​c​e​e​d​s​ ​t​h​e​ ​s​t​a​g​i​n​g​ ​l​i​m​i​t
+			 */
+			recording_too_large: string
+			/**
+			 * N​e​x​t​c​l​o​u​d​ ​c​h​a​n​g​e​d​ ​t​h​e​ ​f​i​l​e​ ​i​d​ ​f​r​o​m​ ​{​f​r​o​m​}​ ​t​o​ ​{​t​o​}​;​ ​e​x​i​s​t​i​n​g​ ​s​h​a​r​e​s​ ​m​u​s​t​ ​b​e​ ​r​e​p​a​i​r​e​d
+			 * @param {unknown} from
+			 * @param {unknown} to
+			 */
+			file_id_changed: RequiredParams<'from' | 'to'>
+		}
+		error: {
+			/**
+			 * t​h​i​s​ ​d​e​p​l​o​y​m​e​n​t​ ​h​a​s​ ​n​o​ ​d​e​l​i​v​e​r​e​d​ ​f​i​l​e​s​ ​C​a​s​s​i​n​i​ ​c​a​n​ ​r​e​w​r​i​t​e
+			 */
+			migration_not_applicable: string
+			/**
+			 * C​a​s​s​i​n​i​ ​i​s​ ​s​t​i​l​l​ ​c​o​u​n​t​i​n​g​ ​t​h​e​ ​p​a​s​t​ ​r​e​c​o​r​d​i​n​g​s​ ​t​h​a​t​ ​n​e​e​d​ ​t​h​i​s​;​ ​t​r​y​ ​a​g​a​i​n​ ​o​n​c​e​ ​i​t​ ​h​a​s​ ​f​i​n​i​s​h​e​d
+			 */
+			migration_still_counting: string
+			/**
+			 * S​e​a​r​c​h​ ​r​e​-​i​n​d​e​x​i​n​g​ ​i​s​ ​a​v​a​i​l​a​b​l​e​ ​o​n​l​y​ ​f​o​r​ ​N​e​x​t​c​l​o​u​d​ ​r​e​c​o​r​d​i​n​g​ ​a​r​c​h​i​v​e​s​.
+			 */
+			reindex_unavailable: string
+			/**
+			 * T​h​e​ ​i​n​t​e​r​n​a​l​ ​s​e​c​r​e​t​ ​i​s​ ​m​a​n​a​g​e​d​ ​b​y​ ​d​e​p​l​o​y​m​e​n​t​ ​c​o​n​f​i​g​u​r​a​t​i​o​n​.
+			 */
+			secret_managed_by_deployment: string
+			/**
+			 * C​o​u​l​d​ ​n​o​t​ ​s​a​v​e​ ​r​e​c​o​r​d​i​n​g​ ​s​e​t​u​p​ ​o​n​ ​t​h​e​ ​p​e​r​s​i​s​t​e​n​t​ ​v​o​l​u​m​e​.
+			 */
+			setup_save_failed: string
+			/**
+			 * R​e​s​t​o​r​e​ ​t​h​e​ ​s​a​v​e​d​ ​r​e​c​o​r​d​i​n​g​ ​s​e​t​u​p​ ​b​e​f​o​r​e​ ​m​a​k​i​n​g​ ​c​h​a​n​g​e​s​.
+			 */
+			setup_store_needs_restore: string
+			/**
+			 * T​h​e​ ​s​e​l​e​c​t​e​d​ ​T​a​l​k​ ​t​e​s​t​ ​r​e​c​o​r​d​i​n​g​ ​h​a​s​ ​n​o​t​ ​f​i​n​i​s​h​e​d​ ​p​u​b​l​i​s​h​i​n​g​.
+			 */
+			test_not_published: string
+			/**
+			 * C​a​s​s​i​n​i​ ​c​o​u​l​d​ ​n​o​t​ ​c​r​e​a​t​e​ ​a​ ​t​e​s​t​ ​r​o​o​m​ ​i​n​ ​T​a​l​k​.​ ​C​h​e​c​k​ ​t​h​a​t​ ​T​a​l​k​ ​i​s​ ​i​n​s​t​a​l​l​e​d​ ​a​n​d​ ​r​e​a​c​h​a​b​l​e​,​ ​t​h​e​n​ ​t​r​y​ ​a​g​a​i​n​.
+			 */
+			test_room_create_failed: string
+			/**
+			 * U​s​e​ ​a​ ​T​a​l​k​ ​r​o​o​m​ ​U​R​L​ ​w​i​t​h​o​u​t​ ​q​u​e​r​y​ ​p​a​r​a​m​e​t​e​r​s​.​ ​C​o​n​f​i​g​u​r​e​ ​{​v​a​r​i​a​b​l​e​}​ ​o​r​ ​t​h​e​ ​T​a​l​k​ ​b​a​c​k​e​n​d​ ​U​R​L​ ​o​n​ ​t​h​e​ ​s​e​r​v​e​r​ ​f​i​r​s​t​.
+			 * @param {unknown} variable
+			 */
+			test_room_url_invalid: RequiredParams<'variable'>
+		}
+	}
 	settings: {
 		pipeline: {
 			/**
@@ -10690,6 +11470,706 @@ export type TranslationFunctions = {
 				 * Book a call
 				 */
 				setup_button: () => LocalizedString
+			}
+		}
+		doctor_checks: {
+			message: {
+				/**
+				 * Not checked: this depends on {blocker}, which has not been checked yet. Run all checks first.
+				 */
+				check_blocked_unchecked: (arg: { blocker: unknown }) => LocalizedString
+				/**
+				 * Not checked: this depends on {blocker}, which needs attention first.
+				 */
+				check_blocked_needs_attention: (arg: { blocker: unknown }) => LocalizedString
+				/**
+				 * The Talk connection has not been checked yet.
+				 */
+				connection_not_checked: () => LocalizedString
+				/**
+				 * Cassini could not check disk space and ffmpeg on the recording volume.
+				 */
+				host_checks_unavailable: () => LocalizedString
+				/**
+				 * Not checked yet.
+				 */
+				host_not_checked: () => LocalizedString
+				/**
+				 * The signaling server accepted Cassini and advertises media support. A test recording verifies the actual call path.
+				 */
+				hpb_authenticated: () => LocalizedString
+				/**
+				 * Talk names a High Performance Backend. Whether Cassini can authenticate to it is what the Talk connection check below establishes.
+				 */
+				hpb_declared_unverified: () => LocalizedString
+				/**
+				 * Talk names a High Performance Backend, and the internal secret comes from Cassini's deployment configuration. Whether that secret is the right one is what this check establishes.
+				 */
+				hpb_declared_unverified_secret_from_env: () => LocalizedString
+				/**
+				 * Talk names a High Performance Backend and an internal secret is saved. Whether Cassini can authenticate with it is what this check establishes.
+				 */
+				hpb_declared_unverified_secret_saved: () => LocalizedString
+				/**
+				 * Recording cannot work until Talk has a High Performance Backend. Cassini records by joining the call as a hidden participant, and Talk only allows that through standalone signaling — here it is signalling by itself. Nothing else about Talk is affected.
+				 */
+				hpb_disabled: () => LocalizedString
+				/**
+				 * Talk has no standalone signaling server configured. Enable its high-performance backend.
+				 */
+				hpb_missing: () => LocalizedString
+				/**
+				 * Whether Talk has a High Performance Backend has not been established yet, and Cassini can only record through one.
+				 */
+				hpb_not_checked: () => LocalizedString
+				/**
+				 * The signaling server does not advertise HPB media support.
+				 */
+				hpb_unsupported: () => LocalizedString
+				/**
+				 * HPB does not accept internal clients. Ask its administrator to configure {setting}.
+				 */
+				internal_clients_disabled: (arg: { setting: unknown }) => LocalizedString
+				/**
+				 * Talk has a High Performance Backend, and Cassini needs that server's internal secret to join calls invisibly. This is not a Nextcloud setting: it belongs to the signaling server, which is why Cassini cannot read it for you.
+				 */
+				internal_secret_missing: () => LocalizedString
+				/**
+				 * Talk has standalone signaling configured. Supply its internal client secret to verify HPB authentication.
+				 */
+				internal_secret_missing_unverified: () => LocalizedString
+				/**
+				 * Nothing answered at the Nextcloud address Cassini was given: the connection was refused.
+				 */
+				nextcloud_connection_refused: () => LocalizedString
+				/**
+				 * Cassini could not find Nextcloud at the address it was given: the name does not resolve from Cassini's container.
+				 */
+				nextcloud_host_not_found: () => LocalizedString
+				/**
+				 * Nextcloud returned a server error while Cassini was reading Talk's settings.
+				 */
+				nextcloud_server_error: () => LocalizedString
+				/**
+				 * Nextcloud did not answer in time at the address Cassini was given.
+				 */
+				nextcloud_timeout: () => LocalizedString
+				/**
+				 * Cassini reached Nextcloud but does not trust its certificate, so it did not read Talk's settings.
+				 */
+				nextcloud_tls_untrusted: () => LocalizedString
+				/**
+				 * Something answered at the Nextcloud address, but not with Talk's settings.
+				 */
+				nextcloud_unexpected_response: () => LocalizedString
+				/**
+				 * Could not read Talk settings. Check Nextcloud connectivity and TLS, then try again.
+				 */
+				nextcloud_unreachable: () => LocalizedString
+				/**
+				 * The connection check did not finish. Check the recorder installation and connectivity, then retry.
+				 */
+				probe_failed: () => LocalizedString
+				/**
+				 * Talk refused Cassini. Cassini is not set up as Talk's recording backend yet, or the recording secret Talk has does not match Cassini's.
+				 */
+				recording_auth_rejected: () => LocalizedString
+				/**
+				 * Talk accepted Cassini's recording credential.
+				 */
+				recording_auth_verified: () => LocalizedString
+				/**
+				 * Cassini has no recording secret. It creates one when it starts and keeps it on its data volume, and that did not succeed.
+				 */
+				recording_secret_missing: () => LocalizedString
+				/**
+				 * Configure Cassini's recording credential and connect Talk first.
+				 */
+				recording_secret_missing_connection: () => LocalizedString
+				/**
+				 * Cassini could not read its saved recording setup, so its Talk credentials cannot be confirmed.
+				 */
+				setup_store_unreadable: () => LocalizedString
+				/**
+				 * Nextcloud's sharing settings have not been checked yet.
+				 */
+				sharing_not_checked: () => LocalizedString
+				/**
+				 * Nextcloud's sharing settings let Cassini share recordings with everyone in a meeting. Whether each person has accepted the share is theirs to decide; anyone with recordings waiting sees them in Browse.
+				 */
+				sharing_permitted: () => LocalizedString
+				/**
+				 * Nextcloud did not answer in time when Cassini read its sharing settings, so whether they let it share recordings is not known.
+				 */
+				sharing_policy_check_timed_out: () => LocalizedString
+				/**
+				 * Cassini could not read Nextcloud's sharing settings, so whether they let it share recordings is not known.
+				 */
+				sharing_policy_unreadable: () => LocalizedString
+				/**
+				 * HPB rejected internal-client authentication. Check the internal secret and server authentication configuration.
+				 */
+				signaling_auth_failed: () => LocalizedString
+				/**
+				 * The signaling server does not recognise this Nextcloud as one of its backends. Check its backend configuration and the URL Cassini reaches Nextcloud on.
+				 */
+				signaling_backend_rejected: () => LocalizedString
+				/**
+				 * The signaling handshake did not finish. Check the server connection and try again.
+				 */
+				signaling_handshake_failed: () => LocalizedString
+				/**
+				 * Cassini could not read Talk's signaling configuration, so it cannot tell whether a High Performance Backend is available.
+				 */
+				signaling_mode_unknown: () => LocalizedString
+				/**
+				 * The configured signaling server could not be reached. Check its network route and TLS.
+				 */
+				signaling_unreachable: () => LocalizedString
+				/**
+				 * Cassini currently blocks recording on its stored storage status. Review the storage details below and check again after repairing them.
+				 */
+				storage_admission_blocked: () => LocalizedString
+				/**
+				 * Cassini cannot store or share recordings in Nextcloud yet. The storage details name the step that failed.
+				 */
+				storage_incomplete: () => LocalizedString
+				/**
+				 * Nextcloud storage has not been checked yet.
+				 */
+				storage_not_checked: () => LocalizedString
+				/**
+				 * The Nextcloud storage check does not apply to this publish destination. Verify storage with a test recording.
+				 */
+				storage_not_probed: () => LocalizedString
+				/**
+				 * Cassini can store recordings in Nextcloud: its own account exists, its recordings folder is writable, and Nextcloud's sharing API answers. Whether its shares are accepted is the Recording sharing check.
+				 */
+				storage_ready: () => LocalizedString
+				/**
+				 * Cassini's configured Talk backend URL addresses Cassini's own AppAPI proxy, so requests for Talk's settings never reach Talk. Clear {variable} unless a deployment genuinely needs an override; Talk sends the correct backend URL with each recording request.
+				 */
+				talk_backend_url_invalid_app_api_proxy: (arg: { variable: unknown }) => LocalizedString
+				/**
+				 * Cassini's configured Talk backend URL is not a usable base URL. It must be a plain http(s) URL with no query or fragment. Clear {variable} unless a deployment genuinely needs an override.
+				 */
+				talk_backend_url_invalid_not_a_base_url: (arg: { variable: unknown }) => LocalizedString
+				/**
+				 * Talk's recording settings are unavailable: either the Talk app is not enabled, or the conversation Cassini checks with is gone. Check the Talk app, then run this check again — Cassini will make a new conversation if it needs one.
+				 */
+				talk_or_room_unavailable: () => LocalizedString
+				/**
+				 * The test recording was published. Playing it is what confirms the audio arrived.
+				 */
+				test_awaiting_playback: () => LocalizedString
+				/**
+				 * The test recording did not finish.
+				 */
+				test_failed: () => LocalizedString
+				/**
+				 * The test recording did not finish; it stopped at {stage}.
+				 */
+				test_failed_at_stage: (arg: { stage: unknown }) => LocalizedString
+				/**
+				 * Cassini is waiting for a recording started in the test room.
+				 */
+				test_waiting_for_talk: () => LocalizedString
+				/**
+				 * A test recording is in progress.
+				 */
+				test_in_progress: () => LocalizedString
+				/**
+				 * A test recording is in progress: {stage}.
+				 */
+				test_in_progress_at_stage: (arg: { stage: unknown }) => LocalizedString
+				/**
+				 * Nothing has been recorded through Talk yet. A short test recording is what proves the whole path, from a call to audio you can play.
+				 */
+				test_not_run: () => LocalizedString
+				/**
+				 * A recording started in Talk was published, and its audio was confirmed by playing it.
+				 */
+				test_playback: () => LocalizedString
+				/**
+				 * Cassini's check conversation could not be resolved. Run this check again and Cassini will make a new one.
+				 */
+				test_room_invalid: () => LocalizedString
+				/**
+				 * Cassini could not create the conversation it checks the connection with. Check that Talk is installed and that Cassini's account may create conversations.
+				 */
+				test_room_unavailable: () => LocalizedString
+			}
+			host: {
+				/**
+				 * working directory {path}
+				 */
+				workdir_found: (arg: { path: unknown }) => LocalizedString
+				/**
+				 * working directory unavailable: {error}
+				 */
+				workdir_unavailable: (arg: { error: unknown }) => LocalizedString
+				/**
+				 * working directory writable: {path}
+				 */
+				workdir_writable: (arg: { path: unknown }) => LocalizedString
+				/**
+				 * working directory not accessible: {error}
+				 */
+				workdir_not_accessible: (arg: { error: unknown }) => LocalizedString
+				/**
+				 * working directory is not a directory: {path}
+				 */
+				workdir_not_a_directory: (arg: { path: unknown }) => LocalizedString
+				/**
+				 * working directory is not writable: {path} ({error})
+				 */
+				workdir_not_writable: (arg: { error: unknown, path: unknown }) => LocalizedString
+				/**
+				 * temporary directory writable: {path}
+				 */
+				tmpdir_writable: (arg: { path: unknown }) => LocalizedString
+				/**
+				 * temporary directory not accessible: {error}
+				 */
+				tmpdir_not_accessible: (arg: { error: unknown }) => LocalizedString
+				/**
+				 * temporary directory is not a directory: {path}
+				 */
+				tmpdir_not_a_directory: (arg: { path: unknown }) => LocalizedString
+				/**
+				 * temporary directory is not writable: {path} ({error})
+				 */
+				tmpdir_not_writable: (arg: { error: unknown, path: unknown }) => LocalizedString
+			}
+			sharing: {
+				/**
+				 * “{group}”
+				 */
+				group: (arg: { group: unknown }) => LocalizedString
+				/**
+				 * Nobody can receive recordings. Nextcloud's “Allow apps to use the Share API” is off, so every share Cassini makes is refused and no new meetings can be published.
+				 */
+				share_api_off: () => LocalizedString
+				/**
+				 * Nobody can receive recordings. Nextcloud's “Exclude some groups from sharing” lists {groups}, and Cassini shares from its {account} account, which is in {{that group|those groups}}. Every share is refused, so no new meetings can be published.
+				 */
+				excluded_groups: (arg: { account: unknown, count: number | string | boolean, groups: unknown }) => LocalizedString
+				/**
+				 * Nobody can receive recordings. Nextcloud's “Limit sharing to some groups” allows no group at all, so no account may share. Every share is refused, so no new meetings can be published.
+				 */
+				no_allowed_group: () => LocalizedString
+				/**
+				 * Nobody can receive recordings. Nextcloud's “Limit sharing to some groups” allows only {groups}, and Cassini shares from its {account} account, which is in none of them. Every share is refused, so no new meetings can be published.
+				 */
+				not_in_allowed_groups: (arg: { account: unknown, groups: unknown }) => LocalizedString
+				/**
+				 * Nobody can receive recordings. Nextcloud's “Restrict users to only share with users in their groups” is on, and Cassini shares from its {account} account, which is in no group. Every share is refused, so no new meetings can be published.
+				 */
+				in_no_group: (arg: { account: unknown }) => LocalizedString
+				/**
+				 * Nobody can receive recordings. Nextcloud's “Restrict users to only share with users in their groups” is on, and every group the {account} account is in ({groups}) is ignored when Nextcloud checks membership. Every share is refused, so no new meetings can be published.
+				 */
+				groups_ignored: (arg: { account: unknown, groups: unknown }) => LocalizedString
+				/**
+				 * Only members of {groups} can receive recordings. Nextcloud's “Restrict users to only share with users in their groups” is on, and Cassini shares from its {account} account, which is only in {groups}. Anyone outside these groups cannot open the recordings of their meetings, and a recording they start is not published at all.
+				 */
+				only_groups: (arg: { account: unknown, groups: unknown }) => LocalizedString
+				/**
+				 * Only administrators can receive recordings. Nextcloud's “Restrict users to only share with users in their groups” is on, and Cassini shares from its {account} account, which is only in {groups}, the administrators' group. Anyone who is not an administrator cannot open the recordings of their meetings, and a recording they start is not published at all.
+				 */
+				only_admins: (arg: { account: unknown, groups: unknown }) => LocalizedString
+				/**
+				 * Groups in a room do not receive recordings. Nextcloud's “Allow sharing with groups” is off, so a meeting whose room includes a group is published without access for that group's members, unless they are in the room themselves.
+				 */
+				group_sharing_off: () => LocalizedString
+			}
+			search: {
+				/**
+				 * The search index is unavailable, so archive search coverage is unknown.
+				 */
+				index_unavailable: () => LocalizedString
+				/**
+				 * Cassini could not read the archive inventory, so search coverage is unknown.
+				 */
+				inventory_unreadable: () => LocalizedString
+				/**
+				 * Cassini could not read the search index, so archive search coverage is unknown.
+				 */
+				index_unreadable: () => LocalizedString
+				/**
+				 * No meetings have been recorded yet, so search has nothing to index.
+				 */
+				nothing_recorded: () => LocalizedString
+				/**
+				 * The recordings archive is empty, so search has nothing to index.
+				 */
+				archive_empty: () => LocalizedString
+				/**
+				 * Archive search coverage has not been checked yet.
+				 */
+				not_checked: () => LocalizedString
+				/**
+				 * Cassini has not listed the archive yet, so older recordings may not be counted.
+				 */
+				not_listed: () => LocalizedString
+				/**
+				 * Every meeting file in the archive is accounted for.
+				 */
+				all_accounted: () => LocalizedString
+				/**
+				 * No meetings are searchable yet.
+				 */
+				none_searchable: () => LocalizedString
+				/**
+				 * No meetings are searchable yet: {reasons}.
+				 */
+				none_searchable_because: (arg: { reasons: unknown }) => LocalizedString
+				/**
+				 * {count|num} {{meeting is|meetings are}} searchable.
+				 */
+				searchable: (arg: { count: number }) => LocalizedString
+				/**
+				 * Of the others, {reasons}.
+				 */
+				others: (arg: { reasons: unknown }) => LocalizedString
+				reason: {
+					/**
+					 * {count|num} {{was silent|were silent}}
+					 */
+					silent: (arg: { count: number }) => LocalizedString
+					/**
+					 * {count|num} {{was recorded with transcription off|were recorded with transcription off}}
+					 */
+					disabled: (arg: { count: number }) => LocalizedString
+					/**
+					 * {count|num} {{was not transcribed because a model was unavailable|were not transcribed because a model was unavailable}}
+					 */
+					model_unavailable: (arg: { count: number }) => LocalizedString
+					/**
+					 * {count|num} {{failed to transcribe|failed to transcribe}}
+					 */
+					transcription_failed: (arg: { count: number }) => LocalizedString
+					/**
+					 * {count|num} {{has an empty transcript for an unknown reason|have empty transcripts for an unknown reason}}
+					 */
+					unknown_empty: (arg: { count: number }) => LocalizedString
+					/**
+					 * {count|num} {{is missing its transcript|are missing their transcripts}}
+					 */
+					missing_transcript: (arg: { count: number }) => LocalizedString
+					/**
+					 * {count|num} {{has an unreadable transcript|have unreadable transcripts}}
+					 */
+					unreadable_transcript: (arg: { count: number }) => LocalizedString
+					/**
+					 * {count|num} {{is waiting to be verified for search|are waiting to be verified for search}}
+					 */
+					backfill_candidates: (arg: { count: number }) => LocalizedString
+					/**
+					 * {count|num} {{could not be indexed for another reason|could not be indexed for other reasons}}
+					 */
+					other_unavailable: (arg: { count: number }) => LocalizedString
+					/**
+					 * {count|num} {{is in the archive but not indexed yet|are in the archive but not indexed yet}}
+					 */
+					untracked: (arg: { count: number }) => LocalizedString
+				}
+				reindex: {
+					/**
+					 * Re-indexing is running now.
+					 */
+					running: () => LocalizedString
+					/**
+					 * The last re-index added {added|num}, left {unchanged|num} unchanged, found {unsearchable|num} not searchable and failed on {failed|num}.
+					 */
+					finished: (arg: { added: number, failed: number, unchanged: number, unsearchable: number }) => LocalizedString
+					/**
+					 * The last re-index could not list the recordings archive in Nextcloud.
+					 */
+					archive_unreadable: () => LocalizedString
+					/**
+					 * The last re-index could not use the search index, so trying again would fail the same way.
+					 */
+					index_unavailable: () => LocalizedString
+					/**
+					 * The last re-index could not read the settings AppAPI gives Cassini, so trying again would fail the same way.
+					 */
+					environment: () => LocalizedString
+					/**
+					 * The last re-index did not finish: {error}
+					 */
+					failed: (arg: { error: unknown }) => LocalizedString
+				}
+			}
+			step: {
+				/**
+				 * Or allow sharing for everyone under Administration settings › Sharing.
+				 */
+				allow_sharing_for_everyone: () => LocalizedString
+				/**
+				 * Cassini reads them as the Nextcloud administrator it acts as. Check that Nextcloud is reachable and that account is still an administrator, then check again
+				 */
+				check_admin_account: () => LocalizedString
+				/**
+				 * Check the affected recordings and their entries in the search index
+				 */
+				check_affected_index_entries: () => LocalizedString
+				/**
+				 * Check the affected recordings' transcripts. A missing or unreadable transcript has to be fixed before indexing can help
+				 */
+				check_affected_transcripts: () => LocalizedString
+				/**
+				 * Check that Cassini's data volume is mounted and writable: the search index is kept on it
+				 */
+				check_data_volume_search: () => LocalizedString
+				/**
+				 * Check that Cassini's data volume is mounted and writable: the secret is saved next to its database
+				 */
+				check_data_volume_secret: () => LocalizedString
+				/**
+				 * Check that no firewall between Cassini's container and Nextcloud drops the connection
+				 */
+				check_firewall: () => LocalizedString
+				/**
+				 * Check the recorder's media tools and its recording volume, then run the checks again
+				 */
+				check_media_host: () => LocalizedString
+				/**
+				 * Check that Nextcloud is running and listening on that address and port
+				 */
+				check_nextcloud_listening: () => LocalizedString
+				/**
+				 * Check that Nextcloud is running, and is not overloaded or part-way through a restart
+				 */
+				check_nextcloud_running: () => LocalizedString
+				/**
+				 * A proxy may be answering in Nextcloud's place. Make sure {nextcloud_url}, or {backend_url} when set, points at Nextcloud itself
+				 */
+				check_proxy: (arg: { backend_url: unknown, nextcloud_url: unknown }) => LocalizedString
+				/**
+				 * Check the recordings catalog and try the archive check again
+				 */
+				check_recordings_catalog: () => LocalizedString
+				/**
+				 * Check the search index database and try again
+				 */
+				check_search_index: () => LocalizedString
+				/**
+				 * Check that Cassini's search index database is available, then check again
+				 */
+				check_search_index_available: () => LocalizedString
+				/**
+				 * Check transcription settings and that the model is ready. Indexing again cannot add words to recordings that were never transcribed
+				 */
+				check_transcription_settings: () => LocalizedString
+				/**
+				 * Choose the groups allowed to share under Administration settings › Sharing, including one {account} is in.
+				 */
+				choose_allowed_groups: (arg: { account: unknown }) => LocalizedString
+				/**
+				 * create {path} or choose a path you can write to
+				 */
+				create_directory: (arg: { path: unknown }) => LocalizedString
+				/**
+				 * Cassini is running without its AppAPI settings ({variables}). Deploy it through AppAPI rather than starting its container by hand
+				 */
+				deploy_through_appapi: (arg: { variables: unknown }) => LocalizedString
+				/**
+				 * Turn on “Allow sharing with groups” under Administration settings › Sharing.
+				 */
+				enable_group_sharing: () => LocalizedString
+				/**
+				 * Turn on “Allow apps to use the Share API” under Administration settings › Sharing.
+				 */
+				enable_share_api: () => LocalizedString
+				/**
+				 * Confirm the Talk app is enabled, then run this check again
+				 */
+				enable_talk: () => LocalizedString
+				/**
+				 * On a standalone signaling server, it is {key} under {section} in its configuration file
+				 */
+				find_standalone_internal_secret: (arg: { key: unknown, section: unknown }) => LocalizedString
+				/**
+				 * Recording storage uses the same access to the archive. If it needs attention, fix that first
+				 */
+				fix_storage_first: () => LocalizedString
+				/**
+				 * free space or permissions in the system temp directory, or run with {variable} set to a writable location
+				 */
+				fix_tmpdir: (arg: { variable: unknown }) => LocalizedString
+				/**
+				 * change into a writable working directory or fix directory permissions before running Cassini
+				 */
+				fix_workdir_permissions: () => LocalizedString
+				/**
+				 * Add {account} to one of {groups} on Nextcloud's Users page.
+				 */
+				join_allowed_group: (arg: { account: unknown, groups: unknown }) => LocalizedString
+				/**
+				 * Or add {account} to a group everyone who records is in. It does not need to be an administrator. Keep it there: removing it later makes Nextcloud remove people's access to recordings already shared through that group.
+				 */
+				join_common_group: (arg: { account: unknown }) => LocalizedString
+				/**
+				 * Or add {account} to every group whose members should receive recordings. A group everyone is in covers everybody; {account} does not need to be an administrator. Keep it there: removing it later makes Nextcloud remove people's access to recordings already shared through that group.
+				 */
+				join_every_group: (arg: { account: unknown }) => LocalizedString
+				/**
+				 * Or take {account} out of {groups} on Nextcloud's Users page.
+				 */
+				leave_excluded_groups: (arg: { account: unknown, groups: unknown }) => LocalizedString
+				/**
+				 * Turn off “Restrict users to only share with users in their groups” under Administration settings › Sharing.
+				 */
+				lift_group_restriction: () => LocalizedString
+				/**
+				 * The address Cassini uses must also match the name the certificate was issued for
+				 */
+				match_certificate_name: () => LocalizedString
+				/**
+				 * Cassini reaches Nextcloud at {nextcloud_url}, or at {backend_url} when that is set. The address has to work from inside Cassini's container, not only from your browser
+				 */
+				nextcloud_address: (arg: { backend_url: unknown, nextcloud_url: unknown }) => LocalizedString
+				/**
+				 * Paste it unchanged — one differing character fails exactly as a wrong credential would, and nothing can tell the difference until this check runs
+				 */
+				paste_secret_unchanged: () => LocalizedString
+				/**
+				 * On Nextcloud All-in-One, print it with:
+				 */
+				print_aio_internal_secret: () => LocalizedString
+				/**
+				 * Nextcloud's log says what failed: Administration settings → Logging, or {file} on the server
+				 */
+				read_nextcloud_log: (arg: { file: unknown }) => LocalizedString
+				/**
+				 * The full error is in Cassini's log. On the Docker host:
+				 */
+				read_search_backfill_log: () => LocalizedString
+				/**
+				 * Check again. If it keeps running out of time, Nextcloud is answering slowly: the Recording storage check above uses the same connection
+				 */
+				recheck_slow_nextcloud: () => LocalizedString
+				/**
+				 * Check Recording storage again so Cassini can list the archive, then check search again
+				 */
+				recheck_storage_to_list_archive: () => LocalizedString
+				/**
+				 * Disable and re-enable Cassini in Nextcloud, which re-runs its setup
+				 */
+				reenable_app: () => LocalizedString
+				/**
+				 * Re-index now adds the {count|num} {{recording that is|recordings that are}} not in search yet
+				 */
+				reindex_adds: (arg: { count: number }) => LocalizedString
+				/**
+				 * replace {path} with a writable directory
+				 */
+				replace_with_directory: (arg: { path: unknown }) => LocalizedString
+				/**
+				 * Then restart Cassini by disabling and re-enabling it in Nextcloud's apps
+				 */
+				restart_app: () => LocalizedString
+				/**
+				 * Then restart Cassini by disabling and re-enabling it in Nextcloud's apps, which creates the secret again
+				 */
+				restart_app_new_secret: () => LocalizedString
+				/**
+				 * Check that Cassini's persistent volume is mounted and writable, then restore {file} from a backup if it is missing
+				 */
+				restore_setup_store: (arg: { file: unknown }) => LocalizedString
+				/**
+				 * If it passes, Nextcloud was probably busy or restarting, so try re-indexing again
+				 */
+				retry_reindex: () => LocalizedString
+				/**
+				 * Or set one yourself in {variable}, in Cassini's deploy options. A secret set there always wins
+				 */
+				set_recording_secret: (arg: { variable: unknown }) => LocalizedString
+				/**
+				 * Or stop ignoring {groups} under “Ignore the following groups when checking group membership”.
+				 */
+				stop_ignoring_groups: (arg: { groups: unknown }) => LocalizedString
+				/**
+				 * To test the address, run this on the Nextcloud host. It should print an HTTP status such as 200, not an error:
+				 */
+				test_nextcloud_address: () => LocalizedString
+				/**
+				 * Remove {groups} from the excluded groups under Administration settings › Sharing.
+				 */
+				unexclude_groups: (arg: { groups: unknown }) => LocalizedString
+				/**
+				 * A self-signed or private certificate is not trusted from inside Cassini's container. Use a publicly trusted certificate on Nextcloud, or point {backend_url} at an address whose certificate Cassini trusts
+				 */
+				use_trusted_certificate: (arg: { backend_url: unknown }) => LocalizedString
+				/**
+				 * Nextcloud may be in maintenance mode or still starting. Wait for it, then check again
+				 */
+				wait_for_nextcloud: () => LocalizedString
+			}
+			blocked_reason: {
+				/**
+				 * queued {field} is not a valid instant
+				 */
+				queued_instant_invalid: (arg: { field: unknown }) => LocalizedString
+				/**
+				 * recording is missing; restore it and retry
+				 */
+				recording_missing: () => LocalizedString
+				/**
+				 * the {command} CLI cannot set {field}; upgrade it and retry
+				 */
+				cli_too_old: (arg: { command: unknown, field: unknown }) => LocalizedString
+				/**
+				 * the delivered file states an invalid {field}; repair it and retry
+				 */
+				file_instant_invalid: (arg: { field: unknown }) => LocalizedString
+				/**
+				 * recording exceeds the staging limit
+				 */
+				recording_too_large: () => LocalizedString
+				/**
+				 * Nextcloud changed the file id from {from} to {to}; existing shares must be repaired
+				 */
+				file_id_changed: (arg: { from: unknown, to: unknown }) => LocalizedString
+			}
+			error: {
+				/**
+				 * this deployment has no delivered files Cassini can rewrite
+				 */
+				migration_not_applicable: () => LocalizedString
+				/**
+				 * Cassini is still counting the past recordings that need this; try again once it has finished
+				 */
+				migration_still_counting: () => LocalizedString
+				/**
+				 * Search re-indexing is available only for Nextcloud recording archives.
+				 */
+				reindex_unavailable: () => LocalizedString
+				/**
+				 * The internal secret is managed by deployment configuration.
+				 */
+				secret_managed_by_deployment: () => LocalizedString
+				/**
+				 * Could not save recording setup on the persistent volume.
+				 */
+				setup_save_failed: () => LocalizedString
+				/**
+				 * Restore the saved recording setup before making changes.
+				 */
+				setup_store_needs_restore: () => LocalizedString
+				/**
+				 * The selected Talk test recording has not finished publishing.
+				 */
+				test_not_published: () => LocalizedString
+				/**
+				 * Cassini could not create a test room in Talk. Check that Talk is installed and reachable, then try again.
+				 */
+				test_room_create_failed: () => LocalizedString
+				/**
+				 * Use a Talk room URL without query parameters. Configure {variable} or the Talk backend URL on the server first.
+				 */
+				test_room_url_invalid: (arg: { variable: unknown }) => LocalizedString
 			}
 		}
 		settings: {
