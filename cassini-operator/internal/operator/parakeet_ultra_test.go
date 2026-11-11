@@ -53,14 +53,17 @@ func TestParakeetUltraTreatment(t *testing.T) {
 			t.Fatalf("%s does not check the runtime", m)
 		}
 	}
-	if !modelSupportsCUDA(modelParakeetUltraFp32) || modelSupportsCUDA(modelParakeetUltraInt8) || modelSupportsCUDA(modelParakeetUltraInt8V1) || modelSupportsCUDA(modelParakeet110M) || modelSupportsCUDA(modelParakeetV3Int8) {
+	if !modelSupportsCUDA(modelParakeetUltraFp32) || modelSupportsCUDA(modelParakeetUltraInt8) || modelSupportsCUDA(modelParakeetUltraInt8V1) || modelSupportsCUDA(modelParakeet110M) || modelSupportsCUDA(modelParakeet110MV1) || modelSupportsCUDA(modelParakeetV3Int8) {
 		t.Fatal("only fp32 runs on CUDA")
 	}
 	if !modelNeedsRuntimeMarkers(modelParakeetUltraInt8V1) || modelDownloadMB(modelParakeetUltraInt8V1) != 0 {
 		t.Fatal("retired Ultra int8 v1 must require the TDT joiner marker and have no download")
 	}
-	if modelNeedsRuntimeMarkers(modelParakeet110M) {
-		t.Fatal("the 110M model needs runtime markers")
+	if modelNeedsRuntimeMarkers(modelParakeet110M) || modelDownloadMB(modelParakeet110M) <= 0 {
+		t.Fatal("the 110M v2 model must have a download size and need no runtime markers")
+	}
+	if modelNeedsRuntimeMarkers(modelParakeet110MV1) || modelDownloadMB(modelParakeet110MV1) != 0 {
+		t.Fatal("retired 110M v1 must need no runtime markers and have no download")
 	}
 	cases := []struct {
 		model, version string
@@ -83,6 +86,8 @@ func TestParakeetUltraTreatment(t *testing.T) {
 		{modelParakeet110M, stock201Runtime, true},
 		{modelParakeet110M, cassini8Runtime, false},
 		{modelParakeet110M, "sherpa=1.13.7", false},
+		{modelParakeet110MV1, stock201Runtime, true},
+		{modelParakeet110MV1, cassini8Runtime, false},
 		{modelParakeetV3Int8, stock201Runtime, true},
 		{modelParakeetV3Fp32, cassini8Runtime, false},
 		{"not-a-model", cassiniRuntime, false},
@@ -122,12 +127,13 @@ func TestPutSettingsRefusesAnotherTiersModelOnCUDA(t *testing.T) {
 	}
 }
 
-// retiredInventory is a `cassini models list` answer of this version: Ultra
-// replaces Ultra int8 v1 and v3 at each precision, and no retired id is listed.
+// retiredInventory is a `cassini models list` answer of this version: 110M v2
+// replaces 110M v1, Ultra replaces Ultra int8 v1 and v3 at each precision, and
+// no retired id is listed.
 func retiredInventory(t *testing.T, rt *Runtime, ultraInstalled bool) {
 	t.Helper()
 	models := []modelInfo{
-		{ID: modelParakeet110M, Revision: strings.Repeat("a", 64), Device: deviceCPU, Kind: "speech"},
+		{ID: modelParakeet110M, Revision: strings.Repeat("a", 64), Device: deviceCPU, Kind: "speech", Replaces: []string{modelParakeet110MV1}},
 		{ID: modelParakeetUltraInt8, Revision: strings.Repeat("b", 64), Device: deviceCPU, Kind: "speech", Installed: ultraInstalled, Replaces: []string{modelParakeetUltraInt8V1, "parakeet-tdt-0.6b-v3-int8"}},
 		{ID: modelParakeetUltraFp32, Revision: strings.Repeat("c", 64), Device: deviceCPU, Kind: "speech", Installed: ultraInstalled, Replaces: []string{"parakeet-tdt-0.6b-v3"}},
 	}
@@ -137,10 +143,10 @@ func retiredInventory(t *testing.T, rt *Runtime, ultraInstalled bool) {
 	}
 }
 
-// An install upgraded from a version that shipped Ultra int8 v1 or Parakeet v3
-// moves to the Ultra model its tier now uses on its device, persists that, and
-// queues the download through the ordinary install job (download, then runtime
-// check).
+// An install upgraded from a version that shipped 110M int8 v1, Ultra int8 v1,
+// or Parakeet v3 moves to the model its tier now uses on its device, persists
+// that, and queues the download through the ordinary install job (download,
+// then runtime check).
 func TestRetiredPinMovesToReplacementAndDownloads(t *testing.T) {
 	cases := []struct {
 		name            string
@@ -149,6 +155,7 @@ func TestRetiredPinMovesToReplacementAndDownloads(t *testing.T) {
 		want            string
 		revision        string
 	}{
+		{"110M int8 v1 on the CPU fast tier", modelParakeet110MV1, sttQualityFast, false, modelParakeet110M, strings.Repeat("a", 64)},
 		{"Ultra int8 v1 on the CPU", modelParakeetUltraInt8V1, sttQualityBalanced, false, modelParakeetUltraInt8, strings.Repeat("b", 64)},
 		{"v3 int8 on the CPU", "parakeet-tdt-0.6b-v3-int8", sttQualityBalanced, false, modelParakeetUltraInt8, strings.Repeat("b", 64)},
 		{"v3 fp32 on CUDA", "parakeet-tdt-0.6b-v3", sttQualityBalanced, true, modelParakeetUltraFp32, strings.Repeat("c", 64)},

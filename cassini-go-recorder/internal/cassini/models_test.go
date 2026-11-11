@@ -113,7 +113,7 @@ func TestModelsListShowsTheDiarizerAsItsOwnKind(t *testing.T) {
 	if d.Kind != modelstore.KindDiarization || d.DownloadBytes != 64915668 || d.InstalledBytes != 103967426 || d.Device != "cpu" || d.Installed || d.Ready || d.RuntimeSupported == nil || !*d.RuntimeSupported {
 		t.Fatalf("diarizer row = %+v", d)
 	}
-	if p := views["parakeet-tdt-ctc-110m-en-int8"]; p.Kind != modelstore.KindSpeech || p.RuntimeSupported != nil || p.Device != "cuda" {
+	if p := views["parakeet-tdt-ctc-110m-en-int8-v2"]; p.Kind != modelstore.KindSpeech || p.RuntimeSupported != nil || p.Device != "cuda" {
 		t.Fatalf("speech row = %+v", p)
 	}
 

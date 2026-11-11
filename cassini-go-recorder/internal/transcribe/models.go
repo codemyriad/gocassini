@@ -19,9 +19,17 @@ import (
 type ModelID string
 
 const (
-	// ModelParakeet110M is the NeMo Parakeet TDT CTC 110M int8 model.
-	// Kept for reference; superseded by 0.6B.
-	ModelParakeet110M ModelID = "parakeet-tdt-ctc-110m-en-int8"
+	// ModelParakeet110M is Cassini's conv-fp32 dynamic int8 quantization (v2,
+	// D-926) of the sherpa-onnx fp32 export of NVIDIA's Parakeet TDT-CTC 110M:
+	// the fast English CPU tier, keeping its 22 depthwise and subsampling
+	// convolutions in fp32.
+	ModelParakeet110M ModelID = "parakeet-tdt-ctc-110m-en-int8-v2"
+
+	// ModelParakeet110MV1 is the initial sherpa-onnx int8 bundle of Parakeet
+	// TDT-CTC 110M, which v2 replaced (D-926). Retired: a stand-in only, loaded
+	// from the files an upgraded install still has while v2 is not ready
+	// (see modelSpec.Retired).
+	ModelParakeet110MV1 ModelID = "parakeet-tdt-ctc-110m-en-int8"
 
 	// ModelParakeetUltra is Moondream's Parakeet Ultra in fp32: parakeet-tdt-
 	// 0.6b-v3 post-trained by Moondream (same architecture, tokenizer and
@@ -118,14 +126,21 @@ var parakeetUltraRuntimeMarkers = []string{parakeetTDTJoinerRuntimeMarker}
 
 var knownModels = map[ModelID]modelSpec{
 	ModelParakeet110M: {
-		URL: "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/" +
-			"sherpa-onnx-nemo-parakeet_tdt_ctc_110m-en-36000-int8.tar.bz2",
 		ModelFile:     "model.int8.onnx",
 		TokensFile:    "tokens.txt",
 		ModelType:     "nemo_ctc",
 		SampleRate:    16000,
 		FeatureDim:    80,
 		ProbeMemoryMB: 1536,
+	},
+	ModelParakeet110MV1: {
+		ModelFile:     "model.int8.onnx",
+		TokensFile:    "tokens.txt",
+		ModelType:     "nemo_ctc",
+		SampleRate:    16000,
+		FeatureDim:    80,
+		ProbeMemoryMB: 1536,
+		Retired:       true,
 	},
 	// Same files and treatment as the v1 and v3 int8 bundles it replaces,
 	// published without bpe.vocab: on Ultra int8 v1 greedy search omitted less

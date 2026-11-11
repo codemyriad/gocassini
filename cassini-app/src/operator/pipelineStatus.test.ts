@@ -77,7 +77,7 @@ describe("helpers", () => {
   it("names the model a tier runs", () => {
     expect(speechModelFor("balanced", "cpu")).toBe("parakeet-ultra-0.6b-int8-v2");
     expect(speechModelFor("best", "cpu")).toBe("parakeet-ultra-0.6b");
-    expect(speechModelFor("fast", "cpu")).toBe("parakeet-tdt-ctc-110m-en-int8");
+    expect(speechModelFor("fast", "cpu")).toBe("parakeet-tdt-ctc-110m-en-int8-v2");
     for (const quality of ["fast", "balanced", "best"]) {
       expect(speechModelFor(quality, "cuda")).toBe("parakeet-ultra-0.6b");
     }
@@ -103,6 +103,8 @@ describe("helpers", () => {
     const status = pipelineStatus({ ...team, quality: "best", activeModel: "parakeet-ultra-0.6b-int8-v2" });
     expect(status.transcribe.state).toBe("On · Balanced · CPU");
     expect(pipelineStatus({ ...team, quality: "best", activeModel: "parakeet-ultra-0.6b-int8" }).transcribe.state).toBe("On · Balanced · CPU");
+    expect(pipelineStatus({ ...team, quality: "best", activeModel: "parakeet-tdt-ctc-110m-en-int8-v2" }).transcribe.state).toBe("On · Fast · CPU");
+    expect(pipelineStatus({ ...team, quality: "best", activeModel: "parakeet-tdt-ctc-110m-en-int8" }).transcribe.state).toBe("On · Fast · CPU");
   });
 
   it("warns when transcription is on but its model is not installed", () => {

@@ -18,16 +18,19 @@ import (
 )
 
 const (
-	ultraInt8V1Revision = "18cb623004dd6c15999b93cb70b14d8a1f6e8f3a2a97ff733f104bfc3494f6a9"
-	ultraInt8V2Revision = "50c15b94ea9cb1c2f8dbcdcbc0f15b450169154deeb206923cb5388f60892366"
-	v3Int8Revision      = "5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf"
-	v3Fp32Revision      = "9125e6a7beb392821f19a3633b80bb2847599580e34ed42a4128732978ad759c"
+	parakeet110MV1Revision = "17f945007b52ccd8b7200ffc7c5652e9e8e961dfdf479cefcabd06cf5703630b"
+	parakeet110MV2Revision = "ebf4a16c933237d36d39710ec482c7823d0b6cddc62bd791911b07cf06284e85"
+	ultraInt8V1Revision    = "18cb623004dd6c15999b93cb70b14d8a1f6e8f3a2a97ff733f104bfc3494f6a9"
+	ultraInt8V2Revision    = "50c15b94ea9cb1c2f8dbcdcbc0f15b450169154deeb206923cb5388f60892366"
+	v3Int8Revision         = "5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf"
+	v3Fp32Revision         = "9125e6a7beb392821f19a3633b80bb2847599580e34ed42a4128732978ad759c"
 )
 
-// Parakeet Ultra int8 v1 and Parakeet v3 are kept only to stand in for the
-// shipped Ultra model that replaced them: they run as the last version that
-// shipped them ran them, they are never selected or downloaded, and a
-// configuration that names one still moves to its replacement.
+// Retired speech models (Parakeet 110M int8 v1, Parakeet Ultra int8 v1, and
+// Parakeet v3) are kept only to stand in for the shipped model that replaced
+// them: they run as the last version that shipped them ran them, they are
+// never selected or downloaded, and a configuration that names one still moves
+// to its replacement.
 func TestRetiredModelSpecs(t *testing.T) {
 	for _, id := range []ModelID{ModelParakeetUltraInt8V1, ModelParakeetV3Int8, ModelParakeetV3} {
 		spec := knownModels[id]
@@ -37,6 +40,18 @@ func TestRetiredModelSpecs(t *testing.T) {
 		if !usesParakeetBoundaryPolicy(id) || CheckNativeRuntime(id, cassiniRuntimeVersion) != nil || CheckNativeRuntime(id, legacyCassiniRuntimeVersion) == nil {
 			t.Fatalf("%s does not run on the Cassini 2.0.1 runtime", id)
 		}
+	}
+	spec110 := knownModels[ModelParakeet110MV1]
+	if !spec110.Retired || spec110.URL != "" || spec110.ModelType != "nemo_ctc" || spec110.SampleRate != 16000 || spec110.FeatureDim != 80 {
+		t.Fatalf("%s spec %+v", ModelParakeet110MV1, spec110)
+	}
+	if usesParakeetBoundaryPolicy(ModelParakeet110MV1) || CheckNativeRuntime(ModelParakeet110MV1, cassiniRuntimeVersion) != nil || CheckNativeRuntime(ModelParakeet110MV1, legacyCassiniRuntimeVersion) == nil {
+		t.Fatalf("%s does not run on the Cassini 2.0.1 runtime with CTC window policy", ModelParakeet110MV1)
+	}
+	if !reflect.DeepEqual(RequiredModelFileNames(ModelParakeet110MV1), []string{"model.int8.onnx", "tokens.txt"}) {
+		t.Fatalf("110M v1 files %v", RequiredModelFileNames(ModelParakeet110MV1))
+	}
+	for _, id := range []ModelID{ModelParakeet110MV1, ModelParakeetUltraInt8V1, ModelParakeetV3Int8, ModelParakeetV3} {
 		if _, err := EnsureModel(t.TempDir(), id, io.Discard); err == nil || !strings.Contains(err.Error(), "has no archive download") {
 			t.Fatalf("EnsureModel(%s) = %v, want no download", id, err)
 		}
@@ -44,9 +59,9 @@ func TestRetiredModelSpecs(t *testing.T) {
 			t.Fatalf("ReplacementModelID(%s) = %s %v", id, got, retired)
 		}
 	}
-	// v3 carries NVIDIA's tdt url so any 2.0.1 runtime loads it; Ultra int8 v1
-	// carries the plain Moondream url so it requires the TDT joiner marker.
-	for _, id := range []ModelID{ModelParakeetV3Int8, ModelParakeetV3} {
+	// v3 and 110M v1 carry NVIDIA metadata so any 2.0.1 runtime loads them; Ultra
+	// int8 v1 carries the plain Moondream url so it requires the TDT joiner marker.
+	for _, id := range []ModelID{ModelParakeet110MV1, ModelParakeetV3Int8, ModelParakeetV3} {
 		if len(knownModels[id].RuntimeMarkers) != 0 || CheckNativeRuntime(id, stockRuntimeVersion) != nil {
 			t.Fatalf("%s markers %v", id, knownModels[id].RuntimeMarkers)
 		}
@@ -65,10 +80,10 @@ func TestRetiredModelSpecs(t *testing.T) {
 			t.Fatalf("%s must decode greedily without bpe.vocab", id)
 		}
 	}
-	if !SupportsCUDA(ModelParakeetV3) || SupportsCUDA(ModelParakeetV3Int8) || SupportsCUDA(ModelParakeetUltraInt8V1) {
+	if !SupportsCUDA(ModelParakeetV3) || SupportsCUDA(ModelParakeetV3Int8) || SupportsCUDA(ModelParakeetUltraInt8V1) || SupportsCUDA(ModelParakeet110MV1) {
 		t.Fatal("only v3 fp32 runs on CUDA")
 	}
-	for id, want := range map[ModelID]int{ModelParakeetUltraInt8V1: 2816, ModelParakeetV3Int8: 2816, ModelParakeetV3: 4608} {
+	for id, want := range map[ModelID]int{ModelParakeet110MV1: 1536, ModelParakeetUltraInt8V1: 2816, ModelParakeetV3Int8: 2816, ModelParakeetV3: 4608} {
 		if got := probeMemoryFloor(id, "cpu"); got != want {
 			t.Fatalf("probeMemoryFloor(%s) = %d, want %d", id, got, want)
 		}
@@ -85,14 +100,20 @@ func TestRetiredModelSpecs(t *testing.T) {
 			t.Fatalf("a %s pin resolves to %s", retired, got)
 		}
 	}
+	if got := ResolveModelID("parakeet-tdt-ctc-110m-en-int8", "fast", "cpu"); got != ModelParakeet110M {
+		t.Fatalf("a parakeet-tdt-ctc-110m-en-int8 pin resolves to %s", got)
+	}
 	// Only the pair the catalogue relates may stand in.
 	for _, c := range []struct {
 		retired, model ModelID
 		want           bool
 	}{
+		{ModelParakeet110MV1, ModelParakeet110M, true},
 		{ModelParakeetUltraInt8V1, ModelParakeetUltraInt8, true},
 		{ModelParakeetV3Int8, ModelParakeetUltraInt8, true},
 		{ModelParakeetV3, ModelParakeetUltra, true},
+		{ModelParakeet110MV1, ModelParakeetUltraInt8, false},
+		{ModelParakeetUltraInt8V1, ModelParakeet110M, false},
 		{ModelParakeetUltraInt8V1, ModelParakeetUltra, false},
 		{ModelParakeetV3Int8, ModelParakeetUltra, false},
 		{ModelParakeetV3, ModelParakeetUltraInt8, false},
@@ -142,6 +163,18 @@ func TestDefaultBuildConfigStandIn(t *testing.T) {
 		}
 	})
 
+	t.Run("110M int8 v1 stands in for v2", func(t *testing.T) {
+		t.Setenv("CASSINI_STT_MODEL", "parakeet-tdt-ctc-110m-en-int8")
+		t.Setenv("CASSINI_STT_REVISION", parakeet110MV1Revision)
+		t.Setenv(envSTTStandInFor, "parakeet-tdt-ctc-110m-en-int8-v2")
+		t.Setenv(envSTTStandInDetail, "replaces retired parakeet-tdt-ctc-110m-en-int8; being installed (downloading, 40%)")
+		cfg := DefaultBuildConfig()
+		want := &portable.TranscriptionStandIn{For: "parakeet-tdt-ctc-110m-en-int8-v2", Reason: "installing", Detail: "replaces retired parakeet-tdt-ctc-110m-en-int8; being installed (downloading, 40%)"}
+		if cfg.ModelID != ModelParakeet110MV1 || cfg.ModelRevision != parakeet110MV1Revision || cfg.ReplacedModelID != "" || !reflect.DeepEqual(cfg.StandIn, want) {
+			t.Fatalf("stand-in config %s %s replaced=%q %+v", cfg.ModelID, cfg.ModelRevision, cfg.ReplacedModelID, cfg.StandIn)
+		}
+	})
+
 	for name, standInFor := range map[string]string{"mismatched precision": "parakeet-ultra-0.6b", "no request": ""} {
 		t.Run(name, func(t *testing.T) {
 			t.Setenv(envSTTStandInFor, standInFor)
@@ -162,15 +195,16 @@ func TestDefaultBuildConfigStandIn(t *testing.T) {
 }
 
 // standInBuildFor runs a build with the operator's stand-in environment for
-// retiredModel@revision, a fake backend and the model resolution replaced by
-// load, and returns its manifest, log and the models it resolved.
-func standInBuildFor(t *testing.T, retiredModel ModelID, revision string, load func(ModelID, string) (ModelPaths, error)) (portable.Processing, string, []string) {
+// retiredModel@revision standing in for targetModel, a fake backend and the
+// model resolution replaced by load, and returns its manifest, log and the
+// models it resolved.
+func standInBuildFor(t *testing.T, retiredModel ModelID, revision string, targetModel ModelID, load func(ModelID, string) (ModelPaths, error)) (portable.Processing, string, []string) {
 	t.Helper()
 	requireFFMediaTools(t)
 	t.Setenv("CASSINI_ATTRIBUTION_DISABLED", "1")
 	t.Setenv("CASSINI_STT_MODEL", string(retiredModel))
 	t.Setenv("CASSINI_STT_REVISION", revision)
-	t.Setenv(envSTTStandInFor, "parakeet-ultra-0.6b-int8-v2")
+	t.Setenv(envSTTStandInFor, string(targetModel))
 	t.Setenv(envSTTStandInReason, portable.StandInReasonInstalling)
 	t.Setenv(envSTTStandInDetail, "being installed (downloading, 40%)")
 	registerFixedBackend(t, "fake-stand-in", fixedTimedWords(12))
@@ -211,33 +245,35 @@ func standInBuildFor(t *testing.T, retiredModel ModelID, revision string, load f
 
 func standInBuild(t *testing.T, load func(ModelID, string) (ModelPaths, error)) (portable.Processing, string, []string) {
 	t.Helper()
-	return standInBuildFor(t, ModelParakeetV3Int8, v3Int8Revision, load)
+	return standInBuildFor(t, ModelParakeetV3Int8, v3Int8Revision, ModelParakeetUltraInt8, load)
 }
 
-// A build standing in with a retired model (Ultra int8 v1 or v3 int8) for
-// Ultra int8 v2 transcribes with the stand-in, and the transcript records
-// which model stood in for which, and why.
+// A build standing in with a retired model (110M int8 v1, Ultra int8 v1, or v3
+// int8) for its replacement transcribes with the stand-in, and the transcript
+// records which model stood in for which, and why.
 func TestStandInBuildRecordsWhy(t *testing.T) {
 	for _, c := range []struct {
 		model    ModelID
 		revision string
+		target   ModelID
 	}{
-		{ModelParakeetUltraInt8V1, ultraInt8V1Revision},
-		{ModelParakeetV3Int8, v3Int8Revision},
+		{ModelParakeet110MV1, parakeet110MV1Revision, ModelParakeet110M},
+		{ModelParakeetUltraInt8V1, ultraInt8V1Revision, ModelParakeetUltraInt8},
+		{ModelParakeetV3Int8, v3Int8Revision, ModelParakeetUltraInt8},
 	} {
 		t.Run(string(c.model), func(t *testing.T) {
-			processing, log, resolved := standInBuildFor(t, c.model, c.revision, func(ModelID, string) (ModelPaths, error) {
+			processing, log, resolved := standInBuildFor(t, c.model, c.revision, c.target, func(ModelID, string) (ModelPaths, error) {
 				return ModelPaths{ModelType: "stub", SampleRate: 16000}, nil
 			})
 			if !reflect.DeepEqual(resolved, []string{string(c.model) + "@" + c.revision}) {
 				t.Fatalf("resolved %v", resolved)
 			}
 			want := portable.TranscriptionStatus{Status: "completed", Model: string(c.model), Revision: c.revision,
-				StandIn: &portable.TranscriptionStandIn{For: "parakeet-ultra-0.6b-int8-v2", Reason: "installing", Detail: "being installed (downloading, 40%)"}}
+				StandIn: &portable.TranscriptionStandIn{For: string(c.target), Reason: "installing", Detail: "being installed (downloading, 40%)"}}
 			if !reflect.DeepEqual(processing.Transcription, want) {
 				t.Fatalf("transcription %+v standIn %+v", processing.Transcription, processing.Transcription.StandIn)
 			}
-			if !strings.Contains(log, "STT model "+string(c.model)+" stands in for parakeet-ultra-0.6b-int8-v2, which is not ready (being installed (downloading, 40%))") {
+			if !strings.Contains(log, "STT model "+string(c.model)+" stands in for "+string(c.target)+", which is not ready (being installed (downloading, 40%))") {
 				t.Fatalf("log does not say why:\n%s", log)
 			}
 		})
@@ -268,30 +304,33 @@ func TestStandInWhoseFilesAreGoneUsesItsReplacement(t *testing.T) {
 		t.Fatal("an empty store has a ready model")
 	}
 	for _, c := range []struct {
-		model    ModelID
-		revision string
+		model     ModelID
+		revision  string
+		target    ModelID
+		targetRev string
 	}{
-		{ModelParakeetUltraInt8V1, ultraInt8V1Revision},
-		{ModelParakeetV3Int8, v3Int8Revision},
+		{ModelParakeet110MV1, parakeet110MV1Revision, ModelParakeet110M, parakeet110MV2Revision},
+		{ModelParakeetUltraInt8V1, ultraInt8V1Revision, ModelParakeetUltraInt8, ultraInt8V2Revision},
+		{ModelParakeetV3Int8, v3Int8Revision, ModelParakeetUltraInt8, ultraInt8V2Revision},
 	} {
 		t.Run(string(c.model), func(t *testing.T) {
 			if _, err := InstalledModel(t.TempDir(), c.model, c.revision, io.Discard); !errors.Is(err, fs.ErrNotExist) {
 				t.Fatalf("removed %s: %v", c.model, err)
 			}
-			stubModelReady(t, ModelParakeetUltraInt8)
-			processing, log, resolved := standInBuildFor(t, c.model, c.revision, func(id ModelID, _ string) (ModelPaths, error) {
+			stubModelReady(t, c.target)
+			processing, log, resolved := standInBuildFor(t, c.model, c.revision, c.target, func(id ModelID, _ string) (ModelPaths, error) {
 				if id == c.model {
 					return ModelPaths{}, fmt.Errorf("model is not installed/verified: %w", fs.ErrNotExist)
 				}
 				return ModelPaths{ModelType: "stub", SampleRate: 16000}, nil
 			})
-			if !reflect.DeepEqual(resolved, []string{string(c.model) + "@" + c.revision, "parakeet-ultra-0.6b-int8-v2@" + ultraInt8V2Revision}) {
+			if !reflect.DeepEqual(resolved, []string{string(c.model) + "@" + c.revision, string(c.target) + "@" + c.targetRev}) {
 				t.Fatalf("resolved %v", resolved)
 			}
-			if got := processing.Transcription; got.Status != "completed" || got.Model != "parakeet-ultra-0.6b-int8-v2" || got.Revision != ultraInt8V2Revision || got.StandIn != nil {
+			if got := processing.Transcription; got.Status != "completed" || got.Model != string(c.target) || got.Revision != c.targetRev || got.StandIn != nil {
 				t.Fatalf("transcription %+v", got)
 			}
-			if !strings.Contains(log, "retired "+string(c.model)+" is gone") || !strings.Contains(log, "using parakeet-ultra-0.6b-int8-v2, which replaced it") {
+			if !strings.Contains(log, "retired "+string(c.model)+" is gone") || !strings.Contains(log, "using "+string(c.target)+", which replaced it") {
 				t.Fatalf("log:\n%s", log)
 			}
 		})

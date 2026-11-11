@@ -1,20 +1,20 @@
 {
   "schema_version": 2,
-  "published_at": "2026-11-10",
+  "published_at": "2026-11-11",
   "base_url": "https://dist.gocassini.com",
   "models": [
     {
-      "id": "parakeet-tdt-ctc-110m-en-int8",
+      "id": "parakeet-tdt-ctc-110m-en-int8-v2",
       "kind": "speech",
-      "name": "Parakeet TDT-CTC 110M \u2014 int8",
-      "description": "Fast, English speech recognition",
+      "name": "Parakeet TDT-CTC 110M \u2014 int8 v2",
+      "description": "Fast, English speech recognition, quantized weights; depthwise and subsampling convolutions kept in fp32",
       "license": "CC-BY-4.0",
-      "source_url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet_tdt_ctc_110m-en-36000-int8.tar.bz2",
-      "source_sha256": "17f945007b52ccd8b7200ffc7c5652e9e8e961dfdf479cefcabd06cf5703630b",
+      "source_url": "https://huggingface.co/nvidia/parakeet-tdt_ctc-110m",
+      "source_sha256": "ebf4a16c933237d36d39710ec482c7823d0b6cddc62bd791911b07cf06284e85",
       "files": [
         {
           "path": "model.int8.onnx",
-          "artifact": "models/files/967c3eb817e4160dc45154f7577a4911695488897908278e913ca964c86c221f/model.int8.onnx.zst",
+          "artifact": "models/files/f297087a4f5c5f3001a5f72631ea7e818307127bcbfcd4f07a02bc47895b2ed4/model.int8.onnx.zst",
           "required": true
         },
         {
@@ -23,7 +23,10 @@
           "required": true
         }
       ],
-      "vad_revision": "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6"
+      "vad_revision": "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6",
+      "replaces": [
+        "parakeet-tdt-ctc-110m-en-int8"
+      ]
     },
     {
       "id": "parakeet-ultra-0.6b-int8-v2",
@@ -157,6 +160,28 @@
   ],
   "retired_models": [
     {
+      "id": "parakeet-tdt-ctc-110m-en-int8",
+      "kind": "speech",
+      "name": "Parakeet TDT-CTC 110M \u2014 int8",
+      "description": "Fast, English speech recognition",
+      "license": "CC-BY-4.0",
+      "source_url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet_tdt_ctc_110m-en-36000-int8.tar.bz2",
+      "source_sha256": "17f945007b52ccd8b7200ffc7c5652e9e8e961dfdf479cefcabd06cf5703630b",
+      "files": [
+        {
+          "path": "model.int8.onnx",
+          "artifact": "models/files/967c3eb817e4160dc45154f7577a4911695488897908278e913ca964c86c221f/model.int8.onnx.zst",
+          "required": true
+        },
+        {
+          "path": "tokens.txt",
+          "artifact": "models/files/a52c3786ee211dcc27a4afe4b89bcf8e3804c492c003697f11b563bad223bc2c/tokens.txt.zst",
+          "required": true
+        }
+      ],
+      "vad_revision": "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6"
+    },
+    {
       "id": "parakeet-ultra-0.6b-int8",
       "kind": "speech",
       "name": "Parakeet Ultra 0.6B \u2014 int8",
@@ -264,6 +289,24 @@
     }
   ],
   "artifacts": [
+    {
+      "id": "f297087a4f5c5f3001a5f72631ea7e818307127bcbfcd4f07a02bc47895b2ed4",
+      "key": "models/files/f297087a4f5c5f3001a5f72631ea7e818307127bcbfcd4f07a02bc47895b2ed4/model.int8.onnx.zst",
+      "filename": "model.int8.onnx.zst",
+      "name": "model.int8.onnx",
+      "description": "Seekable Zstandard model file",
+      "url": "https://dist.gocassini.com/models/files/f297087a4f5c5f3001a5f72631ea7e818307127bcbfcd4f07a02bc47895b2ed4/model.int8.onnx.zst",
+      "size": 100496549,
+      "sha256": "f297087a4f5c5f3001a5f72631ea7e818307127bcbfcd4f07a02bc47895b2ed4",
+      "uncompressed_size": 132265632,
+      "uncompressed_sha256": "09121fe581347452d0d567bbbdd1d256594800fa4c2ce244744263e42890ae45",
+      "frame_size": 262144,
+      "frame_count": 505,
+      "seek_table_size": 4057,
+      "compression_level": 6,
+      "encoding": "zstd-seekable",
+      "format_version": "0.1.0"
+    },
     {
       "id": "967c3eb817e4160dc45154f7577a4911695488897908278e913ca964c86c221f",
       "key": "models/files/967c3eb817e4160dc45154f7577a4911695488897908278e913ca964c86c221f/model.int8.onnx.zst",

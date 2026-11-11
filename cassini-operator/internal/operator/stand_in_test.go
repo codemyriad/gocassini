@@ -71,7 +71,7 @@ func standInRuntime(t *testing.T, ultraInstalled, ultraReady, v3Installed, v3Rea
 func writeStandInInventory(t *testing.T, rt *Runtime, device string, ultraInstalled, ultraReady, v3Installed, v3Ready bool) {
 	t.Helper()
 	models := []modelInfo{
-		{ID: modelParakeet110M, Revision: strings.Repeat("a", 64), Device: device, Kind: "speech", Installed: true, Ready: true},
+		{ID: modelParakeet110M, Revision: strings.Repeat("a", 64), Device: device, Kind: "speech", Installed: true, Ready: true, Replaces: []string{modelParakeet110MV1}},
 		{ID: modelParakeetUltraInt8, Revision: ultraInt8Rev, Device: device, Kind: "speech", Installed: ultraInstalled, Ready: ultraReady, Replaces: []string{modelParakeetUltraInt8V1, v3Int8}},
 		{ID: modelParakeetUltraFp32, Revision: ultraFp32Rev, Device: device, Kind: "speech", Installed: ultraInstalled, Ready: ultraReady, Replaces: []string{modelParakeetV3Fp32}},
 	}
@@ -380,7 +380,7 @@ func TestBuildTranscribesWithV3WhileUltraDownloads(t *testing.T) {
 }
 
 // A fresh install has no v3 files: a build waits, or keeps the audio, exactly
-// as before. So does the fast tier, whose model replaces nothing, and an
+// as before. So does the fast tier when 110M v1 is not installed, and an
 // install whose Ultra is ready runs Ultra.
 func TestNoStandInWithoutRetiredFiles(t *testing.T) {
 	rt := standInRuntime(t, false, false, false, false)
@@ -535,16 +535,16 @@ func TestStandInOnCUDAIsFp32Only(t *testing.T) {
 // A CPU stand-in build is charged its own measured peak.
 func TestMinFreeMemForRetiredModels(t *testing.T) {
 	limits := resourceLimits{cpuMemHeadroomMB: 1024, minFreeMemMB: 6144}
-	for model, want := range map[string]int{modelParakeetUltraInt8V1: 3072, v3Int8: 3072, modelParakeetV3Fp32: 4608} {
+	for model, want := range map[string]int{modelParakeet110MV1: 1536, modelParakeetUltraInt8V1: 3072, v3Int8: 3072, modelParakeetV3Fp32: 4608} {
 		if got := limits.minFreeMemForBuild(deviceCPU, model); got != want {
 			t.Errorf("%s: %d MiB, want %d", model, got, want)
 		}
 	}
-	if !modelSupportsCUDA(modelParakeetV3Fp32) || modelSupportsCUDA(v3Int8) || modelSupportsCUDA(modelParakeetUltraInt8V1) {
+	if !modelSupportsCUDA(modelParakeetV3Fp32) || modelSupportsCUDA(v3Int8) || modelSupportsCUDA(modelParakeetUltraInt8V1) || modelSupportsCUDA(modelParakeet110MV1) {
 		t.Fatal("only v3 fp32 runs on CUDA")
 	}
-	if modelNeedsRuntimeMarkers(v3Int8) || modelNeedsRuntimeMarkers(modelParakeetV3Fp32) || modelDownloadMB(v3Int8) != 0 {
-		t.Fatal("v3 needs a runtime marker, or has a download")
+	if modelNeedsRuntimeMarkers(modelParakeet110MV1) || modelNeedsRuntimeMarkers(v3Int8) || modelNeedsRuntimeMarkers(modelParakeetV3Fp32) || modelDownloadMB(modelParakeet110MV1) != 0 || modelDownloadMB(v3Int8) != 0 {
+		t.Fatal("110M v1 or v3 needs a runtime marker, or has a download")
 	}
 	if !modelNeedsRuntimeMarkers(modelParakeetUltraInt8V1) || modelDownloadMB(modelParakeetUltraInt8V1) != 0 {
 		t.Fatal("retired Ultra int8 v1 must require runtime markers and have no download")
@@ -555,10 +555,44 @@ func TestMinFreeMemForRetiredModels(t *testing.T) {
 // its stand-in, which would have to wait as well.
 func TestStandInNeedsNoLessMemory(t *testing.T) {
 	limits := resourceLimits{cpuMemHeadroomMB: 1024, minFreeMemMB: 6144}
-	for retired, replacement := range map[string]string{modelParakeetUltraInt8V1: modelParakeetUltraInt8, v3Int8: modelParakeetUltraInt8, modelParakeetV3Fp32: modelParakeetUltraFp32} {
+	for retired, replacement := range map[string]string{modelParakeet110MV1: modelParakeet110M, modelParakeetUltraInt8V1: modelParakeetUltraInt8, v3Int8: modelParakeetUltraInt8, modelParakeetV3Fp32: modelParakeetUltraFp32} {
 		if r, u := limits.minFreeMemForBuild(deviceCPU, retired), limits.minFreeMemForBuild(deviceCPU, replacement); r < u {
 			t.Errorf("%s needs %d MiB, less than the %d MiB of %s", retired, r, u, replacement)
 		}
+	}
+}
+
+// An install upgraded from 110M int8 v1 on the Fast tier stands in with v1
+// while v2 downloads.
+func TestStandIn110MV1ForFastTier(t *testing.T) {
+	const (
+		v1Rev = "17f945007b52ccd8b7200ffc7c5652e9e8e961dfdf479cefcabd06cf5703630b"
+		v2Rev = "ebf4a16c933237d36d39710ec482c7823d0b6cddc62bd791911b07cf06284e85"
+	)
+	rt := standInRuntime(t, false, false, false, false)
+	models := []modelInfo{
+		{ID: modelParakeet110M, Revision: v2Rev, Device: deviceCPU, Kind: "speech", Replaces: []string{modelParakeet110MV1}},
+		{ID: modelParakeet110MV1, Revision: v1Rev, Device: deviceCPU, Kind: "speech", Installed: true, Ready: true, ReplacedBy: modelParakeet110M},
+	}
+	b, _ := json.Marshal(models)
+	if err := os.WriteFile(filepath.Join(rt.cfg.ModelCacheRoot, "inventory.json"), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rt.invalidateModelInventory()
+
+	j, err := rt.enqueueModel(rt.ctx, modelInfo{ID: modelParakeet110M, Revision: v2Rev}, deviceCPU)
+	if err != nil {
+		t.Fatal(err)
+	}
+	j.State, j.Progress = "downloading", modelProgress{Version: 1, Phase: "downloading", Completed: 1, Total: 2}
+	if err := rt.updateModelJob(j); err != nil {
+		t.Fatal(err)
+	}
+
+	fast := STTSettings{TranscriptionEnabled: true, ActiveModel: modelParakeet110M, ActiveRevision: v2Rev, Quality: sttQualityFast, DeviceOverride: deviceCPU, Source: sttSourceUser}
+	device, admitted, err := rt.admitTranscription(rt.ctx, fast, resourceLimitsFromEnv(), false)
+	if err != nil || device != deviceCPU || admitted.ActiveModel != modelParakeet110MV1 || admitted.ActiveRevision != v1Rev || admitted.StandInFor != modelParakeet110M {
+		t.Fatalf("admission: %s %+v %v", device, admitted, err)
 	}
 }
 

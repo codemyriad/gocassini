@@ -58,6 +58,7 @@ const QUALITY_LABELS: Record<SettingsQuality, () => string> = {
 // The tier a speech model belongs to. Builds use the saved model, not the
 // quality setting, so the strip names what actually transcribes.
 const MODEL_TIERS: Record<string, SettingsQuality> = {
+  "parakeet-tdt-ctc-110m-en-int8-v2": "fast",
   "parakeet-tdt-ctc-110m-en-int8": "fast",
   "parakeet-ultra-0.6b-int8-v2": "balanced",
   "parakeet-ultra-0.6b-int8": "balanced",
@@ -70,7 +71,7 @@ const MODEL_TIERS: Record<string, SettingsQuality> = {
 export function speechModelFor(quality: string, device: string): string {
   if (device === "cuda") return "parakeet-ultra-0.6b";
   if (quality === "best") return "parakeet-ultra-0.6b";
-  return quality === "fast" ? "parakeet-tdt-ctc-110m-en-int8" : "parakeet-ultra-0.6b-int8-v2";
+  return quality === "fast" ? "parakeet-tdt-ctc-110m-en-int8-v2" : "parakeet-ultra-0.6b-int8-v2";
 }
 
 const FINISHED_JOB_STATES = ["ready", "failed", "cancelled"];

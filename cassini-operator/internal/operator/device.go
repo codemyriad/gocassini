@@ -30,8 +30,13 @@ const (
 	// Ultra, which v2 replaced (D-924). Retired: an install that still has its
 	// files transcribes with it while v2 is not ready.
 	modelParakeetUltraInt8V1 = "parakeet-ultra-0.6b-int8"
-	// modelParakeet110M is the small CTC model: fastest on CPU, least accurate.
-	modelParakeet110M = "parakeet-tdt-ctc-110m-en-int8"
+	// modelParakeet110M is Cassini's conv-fp32 int8 quantization (v2, D-926) of
+	// the small English CTC model: fastest on CPU, least accurate.
+	modelParakeet110M = "parakeet-tdt-ctc-110m-en-int8-v2"
+	// modelParakeet110MV1 is the initial sherpa-onnx int8 bundle of Parakeet
+	// TDT-CTC 110M, which v2 replaced (D-926). Retired: an install that still has
+	// its files transcribes with it while v2 is not ready.
+	modelParakeet110MV1 = "parakeet-tdt-ctc-110m-en-int8"
 	// modelParakeetV3Int8 and modelParakeetV3Fp32 are NVIDIA's Parakeet v3,
 	// which Ultra replaced at the same precision. Retired: an install that
 	// still has their files transcribes with them while Ultra is not ready.
@@ -84,14 +89,16 @@ const parakeetTDTJoinerMarker = ".parakeet-tdt-joiner-v1"
 var minRuntimeBase = [3]int{2, 0, 1}
 
 var speechModelSpecs = map[string]speechModelSpec{
-	modelParakeet110M: {buildPeakMB: 512, downloadMB: 100},
+	modelParakeet110M: {buildPeakMB: 512, downloadMB: 101},
 	// Both Ultra precisions load only where the joiner-size TDT detection is.
 	modelParakeetUltraInt8: {runtimeMarkers: []string{parakeetTDTJoinerMarker}, buildPeakMB: 2048, downloadMB: 465},
 	modelParakeetUltraFp32: {cuda: true, runtimeMarkers: []string{parakeetTDTJoinerMarker}, buildPeakMB: 3584, downloadMB: 1485},
-	// Retired Ultra int8 v1 and v3 models are never selected or downloaded; a
-	// build runs one only as a stand-in for the Ultra model replacing it
-	// (admitStandIn). Ultra int8 v1 keeps the plain Moondream url so it still
-	// needs the joiner marker; v3's tdt url loads on any 2.0.1 runtime.
+	// Retired speech models (110M int8 v1, Ultra int8 v1, and v3) are never
+	// selected or downloaded; a build runs one only as a stand-in for the shipped
+	// model replacing it (admitStandIn). Ultra int8 v1 keeps the plain Moondream
+	// url so it still needs the joiner marker; 110M v1 and v3 carry NVIDIA
+	// metadata and load on any 2.0.1 runtime.
+	modelParakeet110MV1:      {buildPeakMB: 512},
 	modelParakeetUltraInt8V1: {runtimeMarkers: []string{parakeetTDTJoinerMarker}, buildPeakMB: 2048},
 	modelParakeetV3Int8:      {buildPeakMB: 2048},
 	modelParakeetV3Fp32:      {cuda: true, buildPeakMB: 3584},
@@ -205,6 +212,16 @@ func modelForQuality(quality, device string) string {
 //	parakeet-tdt-ctc-110m-en-int8   320 MiB   0.10x realtime
 //	parakeet-tdt-0.6b-v3-int8      1740 MiB   0.09x realtime
 //	parakeet-tdt-0.6b-v3 (fp32)    3446 MiB   1.41x realtime
+//
+// `parakeet-tdt-ctc-110m-en-int8-v2` (2026-11-11, D-926) keeps its 22 depthwise
+// and `/pre_encode/` subsampling convolutions in fp32 (+0.6 MiB unpacked, 126.1
+// vs 125.6 MiB, and 2.04x faster CPU decoding on the 106.5-minute FLEURS
+// `en_us` test split). In the 6-thread Python `sherpa-onnx` FLEURS benchmark
+// harness — which carries Python + dataset overhead on top of the recognizer,
+// so its absolute RSS is above a Go `cassini build`'s 320 MiB — `v2` peaked at
+// 630.4 MiB vs `v1`'s 630.8 MiB, confirming no additional resident memory over
+// `v1`. Both `v2` and retired `parakeet-tdt-ctc-110m-en-int8` therefore keep
+// the 512 charge rounded up from the 320 MiB whole-build figure above.
 //
 // Parakeet Ultra replaced v3 in 2026-10. Over 19 real `cassini build` runs
 // (6 threads) `parakeet-ultra-0.6b-int8` (v1) peaked at 1,893 MiB decoding

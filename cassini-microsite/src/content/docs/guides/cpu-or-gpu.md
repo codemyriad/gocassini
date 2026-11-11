@@ -56,15 +56,18 @@ model.
 Since October 2026 the 0.6B model is
 [Parakeet Ultra](https://huggingface.co/moondream/parakeet-ultra): Moondream's
 post-training of NVIDIA's Parakeet 0.6B v3, with the same architecture and
-languages. It replaced v3 on every tier, and in November 2026 the CPU
-**Balanced** tier moved to `parakeet-ultra-0.6b-int8-v2`, a re-quantized encoder
-that keeps depthwise and subsampling convolutions in fp32. Ultra matched or beat
-v3 on all eleven public test sets we ran, and on recorded meetings it dropped
-far fewer passages; on a CPU its int8 build was also more accurate than v3's on
-our own meetings, at slightly less CPU time. An install that used an earlier
-model (v3, or the initial `parakeet-ultra-0.6b-int8` build on a CPU) moves to
-the current Ultra model for its tier when it is upgraded (about 465 MB on a CPU,
-1.5 GB on a GPU), and recordings made meanwhile are transcribed with the
+languages. It replaced v3 on every tier, and in November 2026 both CPU int8
+tiers moved to re-quantized `-v2` models (`parakeet-ultra-0.6b-int8-v2` on
+**Balanced** and `parakeet-tdt-ctc-110m-en-int8-v2` on **Fast**) that keep
+depthwise and subsampling convolutions in fp32 — improving accuracy on both and
+roughly doubling CPU transcription speed on the 110M **Fast** model. Ultra
+matched or beat v3 on all eleven public test sets we ran, and on recorded
+meetings it dropped far fewer passages; on a CPU its int8 build was also more
+accurate than v3's on our own meetings, at slightly less CPU time. An install
+that used an earlier model (v3, or the initial `parakeet-ultra-0.6b-int8` or
+`parakeet-tdt-ctc-110m-en-int8` builds on a CPU) moves to the current model for
+its tier when it is upgraded (about 101 MB for Fast or 465 MB for Balanced on a
+CPU, 1.5 GB on a GPU), and recordings made meanwhile are transcribed with the
 previous model, whose files stay until the new one has passed its check; a host
 without them waits for the download. Such a transcript says which model stood in
 for the new one. Meetings already transcribed keep their existing transcripts.

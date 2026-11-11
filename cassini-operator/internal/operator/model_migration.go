@@ -91,9 +91,9 @@ func (rt *Runtime) ensureModelInstall(ctx context.Context, m modelInfo, device s
 }
 
 // migrateRetiredSpeechModel moves settings pinned to a speech model the
-// catalogue has retired (Parakeet Ultra int8 v1 or Parakeet v3, replaced by the
-// current Parakeet Ultra models) to the model their quality tier uses on their
-// device, and queues it through the ordinary install job: the download, then
+// catalogue has retired (Parakeet 110M int8 v1, Parakeet Ultra int8 v1, or
+// Parakeet v3) to the model their quality tier uses on their device, and queues
+// it through the ordinary install job: the download, then
 // the runtime check. Settings shows the job's progress. Meanwhile builds
 // transcribe with the replaced model's files while they are still installed,
 // and otherwise wait for the new model rather than publish without a

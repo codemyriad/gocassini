@@ -1,8 +1,7 @@
 #!/bin/sh
 # Download and unpack the sherpa-onnx model bundles an image ships with.
-# The 110M model comes from its sherpa-onnx release archive. Parakeet Ultra
-# (fp32 and int8) has no upstream archive: it comes file by file from the
-# seekable Zstandard objects on dist.gocassini.com, pinned in
+# Every model comes file by file from the seekable Zstandard objects on
+# dist.gocassini.com, pinned in
 # cassini-go-recorder/internal/modelstore/catalogue.json.
 #
 #   fetch-models.sh <out-dir> <model-id>...
@@ -36,9 +35,7 @@ esac
 
 model_url() {
   case "$1" in
-    parakeet-tdt-ctc-110m-en-int8)
-      echo "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet_tdt_ctc_110m-en-36000-int8.tar.bz2" ;;
-    parakeet-ultra-0.6b|parakeet-ultra-0.6b-int8-v2)
+    parakeet-tdt-ctc-110m-en-int8-v2|parakeet-ultra-0.6b|parakeet-ultra-0.6b-int8-v2)
       echo "https://dist.gocassini.com/manifest.json" ;;
     *) return 1 ;;
   esac
@@ -51,6 +48,10 @@ dist_base="https://dist.gocassini.com"
 # digests are checked. Keep in step with catalogue.json.
 dist_artifacts() {
   case "$1" in
+    parakeet-tdt-ctc-110m-en-int8-v2)
+      echo "model.int8.onnx models/files/f297087a4f5c5f3001a5f72631ea7e818307127bcbfcd4f07a02bc47895b2ed4/model.int8.onnx.zst 09121fe581347452d0d567bbbdd1d256594800fa4c2ce244744263e42890ae45"
+      echo "tokens.txt models/files/a52c3786ee211dcc27a4afe4b89bcf8e3804c492c003697f11b563bad223bc2c/tokens.txt.zst 450e56bd2f036fe5b6aa821865838cc5aa9d8b0106134ce9a9ba0664abe6cd10"
+      ;;
     parakeet-ultra-0.6b)
       echo "encoder.onnx models/files/798e8acbe511295581a102819634a1d0025ba0e937d0ada29b7d2e5e9f0b7dba/encoder.onnx.zst 198042e45120cb9e03aac09bc5e47efb0024092866c0128973a13078a5f61ce2"
       echo "encoder.weights models/files/8509e45b901c712d2f627e1c4137d397833300e32474f96a0ce03eff938452f1/encoder.weights.zst 1209bc92c87a2f596767ae080aec04702d94a2a41eaba4cee5a89f69a9c22c12"
@@ -91,8 +92,8 @@ fetch_dist() {
 
 model_files() {
   case "$1" in
-    parakeet-tdt-ctc-110m-en-int8) echo "model.int8.onnx tokens.txt" ;;
-    parakeet-ultra-0.6b-int8-v2)   echo "encoder.int8.onnx decoder.int8.onnx joiner.int8.onnx tokens.txt" ;;
+    parakeet-tdt-ctc-110m-en-int8-v2) echo "model.int8.onnx tokens.txt" ;;
+    parakeet-ultra-0.6b-int8-v2)      echo "encoder.int8.onnx decoder.int8.onnx joiner.int8.onnx tokens.txt" ;;
     # encoder.weights is external-data for encoder.onnx: sherpa cannot load the
     # encoder without it, so it is required, not a sidecar to copy if present.
     # A missing one must fail this build rather than bake a model that only
@@ -104,9 +105,9 @@ model_files() {
 
 model_title() {
   case "$1" in
-    parakeet-tdt-ctc-110m-en-int8) echo "NeMo Parakeet TDT CTC 110M en int8 (sherpa-onnx repack)" ;;
-    parakeet-ultra-0.6b)           echo "Moondream Parakeet Ultra 0.6B fp32 (Cassini ONNX export)" ;;
-    parakeet-ultra-0.6b-int8-v2)   echo "Moondream Parakeet Ultra 0.6B int8 v2 (Cassini ONNX export, dynamic int8 quantization with fp32 convolutions)" ;;
+    parakeet-tdt-ctc-110m-en-int8-v2) echo "NeMo Parakeet TDT CTC 110M en int8 v2 (sherpa-onnx fp32 export, Cassini dynamic int8 quantization with fp32 convolutions)" ;;
+    parakeet-ultra-0.6b)              echo "Moondream Parakeet Ultra 0.6B fp32 (Cassini ONNX export)" ;;
+    parakeet-ultra-0.6b-int8-v2)      echo "Moondream Parakeet Ultra 0.6B int8 v2 (Cassini ONNX export, dynamic int8 quantization with fp32 convolutions)" ;;
     *) return 1 ;;
   esac
 }
@@ -132,47 +133,15 @@ for id in "$@"; do
   model_dir="$out_dir/models/$id"
   mkdir -p "$model_dir"
 
-  if dist_artifacts "$id" >/dev/null; then
-    fetch_dist "$id" "$model_dir"
-    for f in $files; do
-      test -f "$model_dir/$f" || { echo "missing $f for $id" >&2; exit 1; }
-    done
-    printf '%s\n' \
-      "$title" \
-      "Source: $url (seekable Zstandard files, decompressed)" \
-      "$(model_license "$id")" \
-      "Bundled in: ghcr.io/codemyriad/gocassini" \
-      > "$model_dir/NOTICE"
-    ls -la "$model_dir/"
-    continue
-  fi
-
-  mkdir -p /tmp/extract
-  echo "fetching $id from $url"
-  curl -fSL "$url" -o /tmp/model.tar.bz2
-  tar -xjf /tmp/model.tar.bz2 -C /tmp/extract
-  # Archive top-level is normally "sherpa-onnx-*" (upstream repacks). Don't
-  # rely on the name.
-  src_dir=$(find /tmp/extract -mindepth 1 -maxdepth 1 -type d | head -n1)
-  test -n "$src_dir" || { echo "no extracted dir under /tmp/extract:" >&2; ls /tmp/extract >&2; exit 1; }
-
+  fetch_dist "$id" "$model_dir"
   for f in $files; do
-    test -f "$src_dir/$f" || { echo "missing $f in $id archive" >&2; ls "$src_dir" >&2; exit 1; }
-    cp "$src_dir/$f" "$model_dir/"
+    test -f "$model_dir/$f" || { echo "missing $f for $id" >&2; exit 1; }
   done
-  # Optional extra: the BPE vocab some tokenizers ship. Anything a model cannot
-  # load without belongs in model_files above instead.
-  if [ -f "$src_dir/bpe.vocab" ]; then
-    cp "$src_dir/bpe.vocab" "$model_dir/"
-  fi
-
   printf '%s\n' \
     "$title" \
-    "Source: $url" \
+    "Source: $url (seekable Zstandard files, decompressed)" \
     "$(model_license "$id")" \
     "Bundled in: ghcr.io/codemyriad/gocassini" \
     > "$model_dir/NOTICE"
-
-  rm -rf /tmp/model.tar.bz2 /tmp/extract
   ls -la "$model_dir/"
 done

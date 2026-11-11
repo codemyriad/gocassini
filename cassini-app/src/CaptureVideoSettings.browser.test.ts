@@ -12,7 +12,7 @@ let quality: string;
 let failSave: boolean;
 let writes: Record<string, unknown>[];
 let activeModel: string;
-const fastModel = { id: "parakeet-tdt-ctc-110m-en-int8", name: "Parakeet fast", description: "", revision: "r1",
+const fastModel = { id: "parakeet-tdt-ctc-110m-en-int8-v2", name: "Parakeet fast", description: "", revision: "r1",
   download_bytes: 1, installed_bytes: 1, installed: true, ready: true, device: "cpu" };
 
 beforeEach(() => {
