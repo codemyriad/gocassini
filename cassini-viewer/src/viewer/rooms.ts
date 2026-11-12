@@ -26,11 +26,17 @@ export const noRoomLabel = () => get(LL).viewer.browse.rooms.no_room();
 export const UNDATED_MONTH_KEY = "";
 export const undatedMonthLabel = () => get(LL).viewer.browse.rooms.undated();
 
+export type RecordingAudience = "room" | "attendees";
+export type RoomAudience = RecordingAudience | "mixed" | "";
+
 export interface RoomBucket {
   roomId?: string;
   key: string;
   name: string;
   count: number;
+  // The audience(s) carried by this bucket's meetings. "" when no entry has
+  // one (legacy archives); "mixed" when a room holds both modes.
+  audience: RoomAudience;
   // false only for the NO_ROOM_KEY bucket, so the rail can present it as the
   // absence of a room rather than as a room called "No room".
   hasRoom: boolean;
@@ -75,6 +81,27 @@ export function hasRoom(meeting: MeetingCatalogEntry): boolean {
   return (meeting.roomName ?? meeting.roomId ?? "") !== "";
 }
 
+function mergeAudience(current: RoomAudience, next: RecordingAudience): RoomAudience {
+  if (current === "") return next;
+  if (current === next) return current;
+  return "mixed";
+}
+
+// audienceForRooms is the rail's one label: uniform across every room, or a
+// mixed archive. Empty when no entry carries an audience (legacy catalogs), so
+// the shell can fall back to its older deployment-level signal.
+export function audienceForRooms(rooms: readonly RoomBucket[]): RoomAudience {
+  let result: RoomAudience = "";
+  for (const room of rooms) {
+    if (result === "") {
+      result = room.audience;
+    } else if (room.audience && room.audience !== result) {
+      return "mixed";
+    }
+  }
+  return result;
+}
+
 // buildRoomBuckets derives the rail's room list from the catalog itself. There
 // is no separate room registry in the catalog format — a room exists, as far as
 // the viewer is concerned, because a meeting says it does.
@@ -92,6 +119,7 @@ export function buildRoomBuckets(
     const existing = buckets.get(key);
     if (existing) {
       existing.count += 1;
+      existing.audience = mergeAudience(existing.audience, meeting.audience ?? "room");
       continue;
     }
     buckets.set(key, {
@@ -103,6 +131,10 @@ export function buildRoomBuckets(
       // own rows — stay grouped under it by id.
       name: key === NO_ROOM_KEY ? noRoomLabel() : roomLabelOf(meeting),
       count: 1,
+      // A catalog entry without the field predates audiences. Treat it as the
+      // historical room audience, so one attendee-mode recording cannot make an
+      // old archive read as attendee-only (#472 review).
+      audience: meeting.audience ?? "room",
       hasRoom: key !== NO_ROOM_KEY,
     });
   }

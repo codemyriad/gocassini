@@ -125,10 +125,14 @@ func siteRelativeAsset(raw string) (string, bool) {
 // an earlier publish did resolve.
 type catalogEntryOverlay struct {
 	RoomName string
+	// Audience is the named mode frozen on the job at recording start ("room"
+	// or "attendees"). The viewer labels the archive from this per-meeting
+	// value, not from whatever setting happens to be current when it loads.
+	Audience string
 }
 
 func (o catalogEntryOverlay) empty() bool {
-	return strings.TrimSpace(o.RoomName) == ""
+	return strings.TrimSpace(o.RoomName) == "" && strings.TrimSpace(o.Audience) == ""
 }
 
 // catalogCarriedFields are the entry fields that survive a republish by being
@@ -144,7 +148,7 @@ func (o catalogEntryOverlay) empty() bool {
 // Deliberately a carry-forward and not a merge of everything: an entry field
 // the exporter DID emit always wins, so a corrected title or a re-derived room
 // id lands rather than being pinned by whatever was published first.
-var catalogCarriedFields = []string{"roomName", "roomId"}
+var catalogCarriedFields = []string{"roomName", "roomId", "audience"}
 
 // upsertSiteCatalog merges incoming entries into existing: an entry whose id is
 // already present is replaced in place (so a republished meeting updates rather
@@ -233,6 +237,10 @@ func applyCatalogEntryOverlay(entry json.RawMessage, previous json.RawMessage, o
 	changed := false
 	if name := strings.TrimSpace(overlay.RoomName); name != "" && catalogStringField(fields, "roomName") != name {
 		fields["roomName"] = name
+		changed = true
+	}
+	if audience := strings.TrimSpace(overlay.Audience); audience != "" && catalogStringField(fields, "audience") != audience {
+		fields["audience"] = audience
 		changed = true
 	}
 

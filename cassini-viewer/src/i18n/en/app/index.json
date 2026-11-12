@@ -211,6 +211,11 @@
       "summaries_action_title": "Add a provider to write summaries"
     },
     "step_outcomes": {
+      "audience_notice": {
+        "no_capture": "No attendee list was captured; only the starter received this recording.",
+        "no_local": "No local attendees were captured; only the starter received this recording.",
+        "unknown": "This recording's audience mode was not recognised; only the starter received this recording."
+      },
       "transcription": {
         "disabled": "Published without a transcript: transcription is turned off",
         "model_unavailable": "Published without a transcript: no speech model could run",
@@ -252,6 +257,7 @@
         "starter_refused": "Not published: Nextcloud refused to share it with the person who started the recording.",
         "starter_refused_named": "Not published: Nextcloud refused to share it with {starter}, who started the recording.",
         "starter_refused_hint_rerun": "Fix the setting Doctor › Recording sharing names, then Rerun. Rerun publishes it and shares it with the whole room.",
+        "starter_refused_hint_rerun_attendees": "Fix the setting Doctor › Recording sharing names, then Rerun. Rerun publishes it and shares it with the call's attendees.",
         "starter_refused_hint_no_rerun": "Fix the setting Doctor › Recording sharing names so later recordings publish. This run cannot be rerun.",
         "held_back": "Published. Held back by Nextcloud's share limit: {recipients}. Re-share in 10 minutes, or raise the limit (Doctor › Recording sharing).",
         "partial_of": "Published, but not shared with {count:number|num} of {audience:number|num} {{audience:recipient|recipients}}",
@@ -260,7 +266,9 @@
         "partial_hint": "Nextcloud refused them because of a sharing setting. Doctor › Recording sharing names it and the fix.",
         "also_held_back": "Nextcloud's share limit also held back {count:number|num} {{recipient|recipients}}.",
         "reshare_button": "Re-share with the room",
-        "reshare_note": "Adds whoever is missing, including anyone removed by hand. People who accept shares by hand will find it waiting in Browse."
+        "reshare_button_attendees": "Re-share with call attendees",
+        "reshare_note": "Adds whoever is missing, including anyone removed by hand. People who accept shares by hand will find it waiting in Browse.",
+        "reshare_note_attendees": "Adds whoever was in the call and is missing, including anyone removed by hand. People who accept shares by hand will find it waiting in Browse."
       }
     },
     "run_stages": {
@@ -707,6 +715,7 @@
         "speech_model": "Speech model",
         "summary_model": "Summary model",
         "capture": "Capture",
+        "shared_with": "Shared with",
         "stopped_because": "Stopped because",
         "conversation": "Conversation",
         "recording": "Recording",
@@ -1191,6 +1200,16 @@
     },
     "direct_share": {
       "heading": "Who can see recordings",
+      "audience_choose": "Choose who receives each recording, along with its transcript and summary.",
+      "audience_group_label": "Share recordings with",
+      "audience_room_label": "Everyone in the Talk room",
+      "audience_room_description": "Every member of the room, including people who were not on the call.",
+      "audience_attendees_label": "Only people who were in the call",
+      "audience_attendees_description": "People with a Nextcloud account who joined the call while it was being recorded. Useful for a standing channel.",
+      "audience_effects_heading": "With this setting",
+      "audience_late_joiners": "People who join late or leave early are included.",
+      "audience_chat_skipped": "No message is posted in the Talk room's chat, because the whole room would see the recording's title and link.",
+      "audience_applies": "Applies to recordings that start after you save. Recordings in progress or already published keep the audience they had.",
       "checking": "Checking recordings setup…",
       "needs_account": "Cassini needs its recordings account before it can publish.",
       "needs_attention": "Recordings setup needs attention.",

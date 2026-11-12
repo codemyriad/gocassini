@@ -211,6 +211,11 @@
       "summaries_action_title": "Adicione um fornecedor para escrever resumos"
     },
     "step_outcomes": {
+      "audience_notice": {
+        "no_capture": "",
+        "no_local": "",
+        "unknown": ""
+      },
       "transcription": {
         "disabled": "Publicada sem transcrição: a transcrição está desativada",
         "model_unavailable": "Publicada sem transcrição: nenhum modelo de voz conseguiu ser executado",
@@ -252,6 +257,7 @@
         "starter_refused": "Não publicada: o Nextcloud recusou partilhá-la com a pessoa que iniciou a gravação.",
         "starter_refused_named": "Não publicada: o Nextcloud recusou partilhá-la com {starter}, que iniciou a gravação.",
         "starter_refused_hint_rerun": "Corrija a definição indicada em Diagnóstico › Partilha das gravações e depois execute novamente. Executar novamente publica-a e partilha-a com toda a sala.",
+        "starter_refused_hint_rerun_attendees": "",
         "starter_refused_hint_no_rerun": "Corrija a definição indicada em Diagnóstico › Partilha das gravações para que as próximas gravações sejam publicadas. Esta execução não pode ser repetida.",
         "held_back": "Publicada. Retidos pelo limite de partilha do Nextcloud: {recipients}. Partilhe novamente daqui a 10 minutos ou aumente o limite (Diagnóstico › Partilha das gravações).",
         "partial_of": "Publicada, mas não partilhada com {count:number|num} de {audience:number|num} {{audience:|destinatário|||destinatários|destinatários}}",
@@ -260,7 +266,9 @@
         "partial_hint": "O Nextcloud recusou-os devido a uma definição de partilha. Diagnóstico › Partilha das gravações indica-a e explica a correção.",
         "also_held_back": "O limite de partilha do Nextcloud também reteve {count:number|num} {{|destinatário|||destinatários|destinatários}}.",
         "reshare_button": "Partilhar novamente com a sala",
-        "reshare_note": "Adiciona quem estiver em falta, incluindo quem tenha sido removido manualmente. Quem aceita partilhas manualmente vai encontrá-la à espera em Navegar."
+        "reshare_button_attendees": "",
+        "reshare_note": "Adiciona quem estiver em falta, incluindo quem tenha sido removido manualmente. Quem aceita partilhas manualmente vai encontrá-la à espera em Navegar.",
+        "reshare_note_attendees": ""
       }
     },
     "run_stages": {
@@ -707,6 +715,7 @@
         "speech_model": "Modelo de voz",
         "summary_model": "Modelo de resumo",
         "capture": "Captura",
+        "shared_with": "",
         "stopped_because": "Parada porque",
         "conversation": "Conversa",
         "recording": "Gravação",
@@ -1191,6 +1200,16 @@
     },
     "direct_share": {
       "heading": "Quem pode ver as gravações",
+      "audience_choose": "",
+      "audience_group_label": "",
+      "audience_room_label": "",
+      "audience_room_description": "",
+      "audience_attendees_label": "",
+      "audience_attendees_description": "",
+      "audience_effects_heading": "",
+      "audience_late_joiners": "",
+      "audience_chat_skipped": "",
+      "audience_applies": "",
       "checking": "A verificar a configuração das gravações…",
       "needs_account": "O Cassini precisa da sua conta de gravações antes de poder publicar.",
       "needs_attention": "A configuração das gravações requer atenção.",

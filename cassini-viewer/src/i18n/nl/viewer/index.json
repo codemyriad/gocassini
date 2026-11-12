@@ -140,6 +140,8 @@
       "nav_label": "Ruimtes",
       "rooms_heading": "Ruimtes",
       "audience_participants": "Gedeeld met deelnemers",
+      "audience_attendees": "",
+      "audience_mixed": "",
       "all_meetings": "Alle vergaderingen",
       "rename_room_named": "Naam van ruimte {name} wijzigen",
       "rename_room": "Naam van ruimte wijzigen",

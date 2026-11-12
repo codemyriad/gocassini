@@ -100,6 +100,13 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 	// instead of being frozen into an artifact that cannot be rewritten cheaply.
 	// Refreshing it from Talk is a separate thing nothing does yet.
 	_, roomName := rt.talkRoomForJob(task.JobID)
+	publishJob, publishJobErr := rt.store.GetJob(rt.ctx, task.JobID)
+	audience := shareAudienceAttendees
+	if publishJobErr == nil {
+		audience = normalizeSavedAudience(publishJob.AudienceMode)
+	} else {
+		rt.logger.Printf("publish audience read failed id=%s: %v", task.JobID, publishJobErr)
+	}
 	deliveryCtx := context.WithValue(rt.ctx, supportDeliveryKey{}, supportDeliveryContext{job: task.JobID, attempt: task.AttemptNumber})
 	rt.supportJournal.record(supportEvent{Event: "delivery_started", Job: task.JobID, Attempt: task.AttemptNumber})
 	location, err := rt.sink().Deliver(deliveryCtx, publishDelivery{
@@ -109,6 +116,7 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 		PublishedAtUTC:  finishedAt,
 		AssetDigests:    sealedAssetDigests(task),
 		RoomName:        roomName,
+		Audience:        audience,
 	})
 	if err != nil {
 		rt.logger.Printf("publish deliver failed id=%s attempt=%d sink=%s attempt_site=%s: %v", task.JobID, task.AttemptNumber, rt.sink().Name(), attemptArtifactSitePath, err)
@@ -122,7 +130,17 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 	rt.supportJournal.record(supportEvent{Event: "delivery_succeeded", Job: task.JobID, Attempt: task.AttemptNumber})
 	var notification *talkNotification
 	var notificationClient *talkNotificationClient
-	if sink, ok := rt.sink().(interface {
+	// Attendee mode skips the room chat post: the whole room would see the
+	// recording's title and link, which is exactly the audience it is meant to
+	// exclude (#472 review). The stopped callback and the file shares still run.
+	job, jobErr := rt.store.GetJob(rt.ctx, task.JobID)
+	if jobErr != nil {
+		// Fail closed: without a readable mode we cannot know the audience is
+		// the room, so leave the room chat alone (#472 review).
+		rt.logger.Printf("Talk notification skipped: audience read failed id=%s: %v", task.JobID, jobErr)
+	} else if normalizeSavedAudience(job.AudienceMode) == shareAudienceAttendees {
+		rt.logger.Printf("Talk notification skipped in attendee mode id=%s", task.JobID)
+	} else if sink, ok := rt.sink().(interface {
 		talkNotificationClient() *talkNotificationClient
 	}); ok {
 		notificationClient = sink.talkNotificationClient()

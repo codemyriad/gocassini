@@ -27,6 +27,8 @@
     "audience": {
       "intro": "Archivos de Nextcloud controla quién puede leer cada grabación.",
       "point_participants": "Cada grabación se comparte con todos los participantes de la sala de Talk, tanto si estuvieron en la llamada como si no.",
+      "point_attendees": "",
+      "point_mixed": "",
       "point_guests": "Los invitados sin cuenta de Nextcloud no pueden abrirla.",
       "point_public_links": "Cassini nunca crea un enlace público. En las salas públicas, los participantes pueden volver a compartir el archivo si este Nextcloud lo permite."
     },

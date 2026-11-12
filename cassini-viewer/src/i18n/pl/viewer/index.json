@@ -140,6 +140,8 @@
       "nav_label": "Pokoje",
       "rooms_heading": "Pokoje",
       "audience_participants": "Udostępnione uczestnikom",
+      "audience_attendees": "",
+      "audience_mixed": "",
       "all_meetings": "Wszystkie spotkania",
       "rename_room_named": "Zmień nazwę pokoju {name}",
       "rename_room": "Zmień nazwę pokoju",

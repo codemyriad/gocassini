@@ -140,6 +140,8 @@
       "nav_label": "Salas",
       "rooms_heading": "Salas",
       "audience_participants": "Partilhada com os participantes",
+      "audience_attendees": "",
+      "audience_mixed": "",
       "all_meetings": "Todas as reuniões",
       "rename_room_named": "Mudar o nome da sala {name}",
       "rename_room": "Mudar o nome da sala",

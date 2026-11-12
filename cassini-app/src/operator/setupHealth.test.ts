@@ -3,13 +3,20 @@ import { describe, expect, it } from "vitest";
 import { LL } from "cassini-viewer/i18n";
 import { buildSetupNotice, readRecordingsAccess, readSetupHealth, readSharing, recordingAudience } from "./setupHealth";
 
-const health = { ok: true, state: "provisioned", mode: "direct_shares", cause: "", features: null, sharing: null };
+const health = { ok: true, state: "provisioned", mode: "direct_shares", audience: "participants", cause: "", features: null, sharing: null };
 
 describe("direct share setup status", () => {
   it("shows the participant audience only for a known direct-share response", () => {
     expect(recordingAudience(health)).toBe("participants");
     expect(recordingAudience(null)).toBe("");
-    expect(recordingAudience({ ...health, mode: "" })).toBe("");
+    expect(recordingAudience({ ...health, mode: "", audience: "" })).toBe("");
+  });
+  it("shows the attendee audience when the operator reports it", () => {
+    expect(recordingAudience({ ...health, audience: "attendees" })).toBe("attendees");
+    // An older operator has no audience field; the direct-share mode is the
+    // room-participants default.
+    expect(recordingAudience({ ...health, audience: "" })).toBe("participants");
+    expect(recordingAudience({ ...health, audience: "unknown" })).toBe("participants");
   });
   it("keeps the user-facing verdict separate from admin details", () => {
     expect(readSetupHealth(health)).toEqual(health);

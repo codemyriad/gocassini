@@ -169,21 +169,37 @@ export function reshareOutcome(refusedIds: string[], deferredCount = 0): string 
 // refused is listed, because otherwise the meeting simply does not appear for
 // them and nobody can tell why. Doctor names the setting; the run names the
 // people.
-export function shareNotice(sharing: JobShareOutcome | null | undefined, rerunAvailable = true, reshareAvailable = true): OutcomeNotice | null {
+export function shareNotice(
+  sharing: JobShareOutcome | null | undefined,
+  rerunAvailable = true,
+  reshareAvailable = true,
+  audienceMode: "room" | "attendees" = "room",
+): OutcomeNotice | null {
   if (!sharing) return null;
   const skipped = sharing.skipped ?? [];
   const t = copy().share;
+  const attendees = audienceMode === "attendees";
   if (sharing.status === "starter_refused") {
     const starter = skipped[0]?.id ?? "";
     return {
       tone: "error",
       title: starter ? t.starter_refused_named({ starter }) : t.starter_refused(),
       detail: skipped.length > 0 ? describeRefused(refusedEntry(skipped[0])) : undefined,
-      hint: rerunAvailable ? t.starter_refused_hint_rerun() : t.starter_refused_hint_no_rerun(),
+      hint: rerunAvailable
+        ? attendees
+          ? t.starter_refused_hint_rerun_attendees()
+          : t.starter_refused_hint_rerun()
+        : t.starter_refused_hint_no_rerun(),
     };
   }
   const reshareAction = (): OutcomeNotice["action"] =>
-    reshareAvailable ? { kind: "reshare", label: t.reshare_button(), note: t.reshare_note() } : undefined;
+    reshareAvailable
+      ? {
+          kind: "reshare",
+          label: attendees ? t.reshare_button_attendees() : t.reshare_button(),
+          note: attendees ? t.reshare_note_attendees() : t.reshare_note(),
+        }
+      : undefined;
   // Who Nextcloud's share limit held back: not refused, but not shared with
   // either until the administrator re-shares once the limit allows.
   const deferred = sharing.deferred ?? [];

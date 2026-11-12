@@ -12,7 +12,8 @@ import (
 
 // Capture the Talk audience while a recording is active. Room membership can
 // change later, so publication shares the recording with the users, groups and
-// Teams recorded at start and stop. The .opus lists speakers, which omits
+// Teams recorded at start and stop, plus the local accounts the recorder saw
+// during the call (#479). The .opus lists speakers, which omits
 // silent participants and room-level grants.
 
 // roomAudienceTimeout bounds one capture. Generous relative to the work because
@@ -26,6 +27,14 @@ const roomAudienceTimeout = 60 * time.Second
 const (
 	roomAudiencePhaseStart = "start"
 	roomAudiencePhaseStop  = "stop"
+)
+
+// Audience notice codes stored on a job. The app words these in the reader's
+// language; English is only the operator's fallback surface (#472 review).
+const (
+	jobAudienceNoticeNoCapture = "no_attendee_list"
+	jobAudienceNoticeNoLocal   = "no_local_attendees"
+	jobAudienceNoticeUnknown   = "unknown_audience_mode"
 )
 
 // storedAudiencePrincipal is the on-disk shape of one grantable principal.
@@ -182,6 +191,18 @@ SELECT room_audience, room_audience_at FROM jobs WHERE id = ?`, id).Scan(&audien
 	return decoded, true, nil
 }
 
+// SetJobAudienceNotice records a run-level warning about the audience. An
+// empty notice clears it. Best-effort at the call sites: a warning is never
+// allowed to fail a successful publication or re-share.
+func (s *Store) SetJobAudienceNotice(ctx context.Context, id, notice string) error {
+	if _, err := s.db.ExecContext(ctx, `
+UPDATE jobs SET audience_notice = ?, updated_at = ? WHERE id = ?`,
+		nullableString(notice), nowUTCString(), id); err != nil {
+		return fmt.Errorf("set job audience notice: %w", err)
+	}
+	return nil
+}
+
 // captureRoomAudience resolves who had access to the room and records it.
 //
 // Best-effort and entirely off the critical path: it runs in its own goroutine
@@ -191,12 +212,30 @@ SELECT room_audience, room_audience_at FROM jobs WHERE id = ?`, id).Scan(&audien
 // nothing repairs it: that recording can never be narrowed from the panel, and
 // will sit there as a row explaining why.
 //
-// It reuses resolveRecordingAudience rather than calling the fetcher directly,
-// so a capture escalates through the same two tiers a publish does: the
-// recording's starter first, then the recordings owner. The tiers matter more
-// here than there, because at stop time the starter may already have left.
+// It reuses resolveRecordingAudienceWith rather than calling the fetcher
+// directly, so a capture escalates through the same two tiers a publish does:
+// the recording's starter first, then the recordings owner. The tiers matter
+// more here than there, because at stop time the starter may already have left.
+//
+// The roster is the room's participants (the default) or, when the operator's
+// "Share recordings with" setting is "only people in the call", just the
+// participants Talk reports with the in-call bit set. The second is what keeps
+// a standing channel's non-attendees out of a meeting's shares.
 func (rt *Runtime) captureRoomAudience(jobID, owner, roomToken, phase string) {
-	if rt.fetchTalkParticipants == nil {
+	// The mode is the one saved on the job at recording start, not the current
+	// setting: switching settings mid-recording must not add the whole room to
+	// this recording's roster (#472 review).
+	job, err := rt.store.GetJob(context.Background(), jobID)
+	if err != nil {
+		rt.logger.Printf("room audience capture skipped id=%s phase=%s: read job: %v", jobID, phase, err)
+		return
+	}
+	attendeesOnly := normalizeSavedAudience(job.AudienceMode) == shareAudienceAttendees
+	fetch := rt.fetchTalkParticipants
+	if attendeesOnly {
+		fetch = rt.fetchTalkAttendees
+	}
+	if fetch == nil {
 		return
 	}
 	owner = strings.TrimSpace(owner)
@@ -207,7 +246,7 @@ func (rt *Runtime) captureRoomAudience(jobID, owner, roomToken, phase string) {
 	ctx, cancel := context.WithTimeout(rt.ctx, roomAudienceTimeout)
 	defer cancel()
 
-	mappings, source, err := rt.resolveRecordingAudience(ctx, jobID, owner, roomToken)
+	mappings, source, err := rt.resolveRecordingAudienceWith(ctx, jobID, owner, roomToken, fetch)
 	if err != nil {
 		rt.logger.Printf("room audience capture failed id=%s phase=%s room=%s: %v (this recording cannot be narrowed later)", jobID, phase, roomToken, err)
 		return
@@ -216,5 +255,5 @@ func (rt *Runtime) captureRoomAudience(jobID, owner, roomToken, phase string) {
 		rt.logger.Printf("room audience persist failed id=%s phase=%s: %v", jobID, phase, err)
 		return
 	}
-	rt.logger.Printf("room audience captured id=%s phase=%s principals=%d source=%s", jobID, phase, len(mappings), source)
+	rt.logger.Printf("room audience captured id=%s phase=%s principals=%d source=%s audience=%s", jobID, phase, len(mappings), source, normalizeSavedAudience(job.AudienceMode))
 }

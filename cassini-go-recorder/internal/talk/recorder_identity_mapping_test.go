@@ -230,7 +230,7 @@ func TestResolveRemoteSessionIDAndForgetParticipantIdentity(t *testing.T) {
 	r.sessionMu.Lock()
 	r.mapRemoteSessionLocked(remoteSessionID, roomSessionID, participantID)
 	r.sessionMu.Unlock()
-	r.rememberParticipantIdentity(remoteSessionID, "Alice", participantID)
+	r.rememberParticipantIdentity(remoteSessionID, "Alice", participantID, "guests", false)
 
 	// 1. Direct match by remote signaling session ID
 	if got := r.resolveRemoteSessionID(remoteSessionID, "", ""); got != remoteSessionID {

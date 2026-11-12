@@ -144,10 +144,13 @@ type Recorder struct {
 	segmentsDir     string
 	startedAt       time.Time
 
-	sessionMu           sync.Mutex
-	sessionsByRemote    map[string]*sessionCapture
-	sessionOrder        []*sessionCapture
-	identityByRemote    map[string]participantIdentity
+	sessionMu        sync.Mutex
+	sessionsByRemote map[string]*sessionCapture
+	sessionOrder     []*sessionCapture
+	identityByRemote map[string]participantIdentity
+	// seenParticipants is monotonic: every local account seen in the call,
+	// including people who joined and left before the stop capture (#479).
+	seenParticipants    map[string]participantIdentity
 	remoteByRoomSession map[string]string
 
 	mu          sync.Mutex
@@ -196,6 +199,10 @@ type sessionCapture struct {
 type participantIdentity struct {
 	DisplayName   string
 	ParticipantID string
+	// ActorType is Talk's actor type ("users", "guests", "federated"). Only
+	// local users can receive a Nextcloud share; the recorder writes those
+	// accounts into the run bundle for #479.
+	ActorType string
 }
 
 type localICESignal struct {
@@ -273,10 +280,12 @@ func Run(ctx context.Context, cfg config.Config) error {
 		inCallEver:          make(map[string]struct{}),
 		sessionsByRemote:    make(map[string]*sessionCapture),
 		identityByRemote:    make(map[string]participantIdentity),
+		seenParticipants:    make(map[string]participantIdentity),
 		remoteByRoomSession: make(map[string]string),
 		startedAt:           time.Now().UTC(),
 		subscriberUpdates:   make(chan struct{}, 1),
 	}
+	defer r.writeSeenParticipants()
 	return r.run(ctx)
 }
 
@@ -1440,7 +1449,7 @@ func (r *Recorder) handleRoomEvent(roomEvent map[string]any) error {
 				r.sessionMu.Lock()
 				r.mapRemoteSessionLocked(remoteSessionID, roomSessionID, participantID)
 				r.sessionMu.Unlock()
-				r.rememberParticipantIdentity(remoteSessionID, displayName, participantID)
+				r.rememberParticipantIdentity(remoteSessionID, displayName, participantID, "", false)
 			}
 		case "leave":
 			r.removeParticipantSessions(asSlice(roomEvent["leave"]))
@@ -1506,10 +1515,10 @@ func (r *Recorder) handleParticipantsEvent(update map[string]any) error {
 			// The entry omits inCall: it describes room presence, not
 			// call membership. Neither create nor remove a subscriber,
 			// but remember the participant's identity (e.g. guest display name).
-			r.rememberParticipantIdentity(remoteSessionID, identity.DisplayName, identity.ParticipantID)
+			r.rememberParticipantIdentity(remoteSessionID, identity.DisplayName, identity.ParticipantID, identity.ActorType, false)
 			continue
 		case callStateInCall:
-			r.rememberParticipantIdentity(remoteSessionID, identity.DisplayName, identity.ParticipantID)
+			r.rememberParticipantIdentity(remoteSessionID, identity.DisplayName, identity.ParticipantID, identity.ActorType, true)
 			if err := r.ensureInCallSubscriber(remoteSessionID); err != nil {
 				return err
 			}
@@ -1588,7 +1597,7 @@ func (r *Recorder) handleNickChanged(fromSession string, payload any) {
 	if known := strings.TrimSpace(current.DisplayName); known != "" && !isPlaceholderParticipantName(known, remoteSessionID, current.ParticipantID) {
 		return
 	}
-	r.rememberParticipantIdentity(remoteSessionID, name, "")
+	r.rememberParticipantIdentity(remoteSessionID, name, "", "", false)
 }
 
 // ensureSubscriber returns an existing peer or registers a new peer and issues
@@ -1718,7 +1727,7 @@ func (r *Recorder) syncRemoteParticipants(active map[string]participantIdentity)
 	}
 
 	for remoteSessionID, identity := range active {
-		r.rememberParticipantIdentity(remoteSessionID, identity.DisplayName, identity.ParticipantID)
+		r.rememberParticipantIdentity(remoteSessionID, identity.DisplayName, identity.ParticipantID, identity.ActorType, true)
 		if err := r.ensureInCallSubscriber(remoteSessionID); err != nil {
 			return err
 		}
@@ -1771,7 +1780,7 @@ func stopAndDrainTimer(timer *time.Timer) {
 	}
 }
 
-func (r *Recorder) rememberParticipantIdentity(remoteSessionID, displayName, participantID string) {
+func (r *Recorder) rememberParticipantIdentity(remoteSessionID, displayName, participantID, actorType string, inCall bool) {
 	if remoteSessionID == "" {
 		return
 	}
@@ -1788,9 +1797,23 @@ func (r *Recorder) rememberParticipantIdentity(remoteSessionID, displayName, par
 	if participantID == "" {
 		participantID = current.ParticipantID
 	}
+	if actorType == "" {
+		actorType = current.ActorType
+	}
 	r.identityByRemote[remoteSessionID] = participantIdentity{
 		DisplayName:   displayName,
 		ParticipantID: participantID,
+		ActorType:     actorType,
+	}
+	// Keep a monotonic account list for #479. Only a local user can receive a
+	// Nextcloud share; guests and federated participants are skipped. Only an
+	// in-call identity counts: room presence is not attendance.
+	if inCall && actorType == "users" && participantID != "" {
+		r.seenParticipants[participantID] = participantIdentity{
+			DisplayName:   displayName,
+			ParticipantID: participantID,
+			ActorType:     actorType,
+		}
 	}
 
 	if session := r.sessionsByRemote[remoteSessionID]; session != nil {
@@ -1998,6 +2021,12 @@ func parseParticipantUpdate(user map[string]any) (string, string, participantIde
 			"participantId",
 			"participantID",
 			"uid",
+		),
+		ActorType: firstNonEmpty(
+			scopes,
+			"actorType",
+			"actor_type",
+			"actortype",
 		),
 	}
 

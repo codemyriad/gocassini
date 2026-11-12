@@ -21,6 +21,7 @@
   import { resolveCatalogSelection } from "./viewer/catalogSelection";
   import { buildViewerHash, readViewerHash, viewerUrlWithHash } from "./viewer/hashRouting";
   import {
+    audienceForRooms,
     buildRoomBuckets,
     filterMeetingsByRoom,
     type RoomBucket,
@@ -116,7 +117,7 @@
   // fact comes from the deployment's operator, which this layer cannot reach
   // and a standalone export does not have. "" is "nobody said", and the chip
   // renders nothing.
-  export let audience: "" | "participants" = "";
+  export let audience: "" | "participants" | "attendees" = "";
 
   // Whether the shell fills the list's `list-empty` slot (D-885): see the prop
   // of the same name on MeetingList. Forwarded, not decided, like the slot.
@@ -1308,6 +1309,9 @@
   }
 
   $: roomBuckets = buildRoomBuckets(catalogMeetings);
+  // The viewer label follows the recordings' saved modes, not the current
+  // operator setting; fall back to the deployment signal for legacy catalogs.
+  $: catalogAudience = audienceForRooms(roomBuckets);
   // A room the catalog no longer describes (its last meeting was removed, or a
   // refresh re-tagged it) must not leave the list narrowed to nothing with no
   // chip that explains why.
@@ -1646,7 +1650,7 @@
       tagsLoading={canTag && !vocabularyTags && !tagsFailed}
       selectedTagIds={activeTagIds}
       {tagMatch}
-      {audience}
+      audience={catalogAudience === "room" ? "participants" : catalogAudience || audience}
       on:toggleTag={(event) => toggleTagFilter(event.detail)}
       on:tagMatch={(event) => (tagMatch = event.detail)}
       on:manageTags={() => (tagManagerOpen = true)}

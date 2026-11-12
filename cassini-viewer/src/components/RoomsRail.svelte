@@ -118,7 +118,7 @@
   $: if (!roomsLoading) remember(ROOMS_KEY, rooms.length);
   $: if (tagRows) remember(TAGS_KEY, tagRows.length);
 
-  export let audience: "" | "participants" = "";
+  export let audience: "" | "participants" | "attendees" | "mixed" = "";
   $: text = $LL.viewer.browse.rooms_rail;
   $: AUDIENCE = {
     participants: {
@@ -127,7 +127,23 @@
       // pipeline (cassini-app DirectShareAccessPanel.svelte): common.audience.
       points: [$LL.common.audience.point_participants(), $LL.common.audience.point_guests(), $LL.common.audience.point_public_links()],
     },
-  };
+    attendees: {
+      label: text.audience_attendees(),
+      points: [
+        $LL.common.audience.point_attendees(),
+        $LL.common.audience.point_guests(),
+        $LL.common.audience.point_public_links(),
+      ],
+    },
+    mixed: {
+      label: text.audience_mixed(),
+      points: [
+        $LL.common.audience.point_mixed(),
+        $LL.common.audience.point_guests(),
+        $LL.common.audience.point_public_links(),
+      ],
+    },
+  } as const;
   $: AUDIENCE_LEAD = $LL.common.audience.intro();
   let audienceEl: HTMLElement;
   let audienceOpen = false;

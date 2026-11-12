@@ -140,6 +140,8 @@
       "nav_label": "Unterhaltungen",
       "rooms_heading": "Unterhaltungen",
       "audience_participants": "Mit Teilnehmern geteilt",
+      "audience_attendees": "",
+      "audience_mixed": "",
       "all_meetings": "Alle Besprechungen",
       "rename_room_named": "Unterhaltung {name} umbenennen",
       "rename_room": "Unterhaltung umbenennen",

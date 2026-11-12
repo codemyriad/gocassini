@@ -2,6 +2,12 @@
 
 After the first successful publication of a Talk recording, Cassini posts
 a named viewer link in its originating room and in **Shared items → Other**.
+
+In **Only people who were in the call** audience mode the room chat post is
+skipped: the whole room would see the recording's title and link, which is the
+audience that mode excludes. The stopped callback and the direct file shares
+still run.
+
 For example: `Meeting recording available: Weekly planning · 13 Oct · 32 min · Speakers: Alex, Chris, Ivan +1`.
 The author is the moderator who started recording (`start.owner`), with that person's name and
 avatar. Posting uses the existing AppAPI credentials; no bot, account, app

@@ -268,6 +268,21 @@ const settings = {
   // Operator › Publish pipeline: the "Who can see recordings" card.
   direct_share: {
     heading: "Who can see recordings",
+    audience_choose: "Choose who receives each recording, along with its transcript and summary.",
+    // Screen-reader name for the audience radio group.
+    audience_group_label: "Share recordings with",
+    audience_room_label: "Everyone in the Talk room",
+    audience_room_description: "Every member of the room, including people who were not on the call.",
+    audience_attendees_label: "Only people who were in the call",
+    audience_attendees_description:
+      "People with a Nextcloud account who joined the call while it was being recorded. Useful for a standing channel.",
+    // Heading above the list of what the selected choice does.
+    audience_effects_heading: "With this setting",
+    audience_late_joiners: "People who join late or leave early are included.",
+    audience_chat_skipped:
+      "No message is posted in the Talk room's chat, because the whole room would see the recording's title and link.",
+    audience_applies:
+      "Applies to recordings that start after you save. Recordings in progress or already published keep the audience they had.",
     checking: "Checking recordings setup…",
     needs_account: "Cassini needs its recordings account before it can publish.",
     needs_attention: "Recordings setup needs attention.",

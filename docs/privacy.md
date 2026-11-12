@@ -119,15 +119,23 @@ artifacts:
 - **Logs** — per-attempt operator logs (`record.log`, `build.log`, `seal.log`,
   `publish.log`), and for a speaker edit its `speakers/` directory (the edits
   document and the speaker turns it applied).
-- **Room audience** — for each Talk recording, the accounts, groups and teams
-  that had access to the conversation while it was being recorded, captured when
-  the recording starts and again when it stops. It is what lets Cassini later
-  explicitly narrow an already-published recording from Operator settings to its
-  captured audience rather than whoever is in the room today. This stored roster
-  is frozen; initial participant-mode publication separately resolves the room’s
-  audience at publish time. Guests, email invitees and federated participants are not recorded: they have no local
-  account to grant, so there is nothing to keep. It lives on the job row, which
-  outlives the recording itself — job history is kept after artifacts are pruned.
+- **Recording audience** — for each Talk recording, either the accounts, groups
+  and teams that had access to the conversation while it was being recorded
+  (the default), or — when the administrator sets **Share recordings with: Only
+  people who were in the call** — only the local accounts Talk reports in the
+  call. Either roster is captured when the recording starts and again when it
+  stops; in attendee mode the recorder also writes every local account it saw in
+  the call into the run bundle, and the operator merges that list before
+  publishing. This is what lets Cassini later explicitly narrow an
+  already-published recording from Operator settings to its captured audience
+  rather than whoever is in the room today. The saved roster grows while the call runs and is fixed once the recording is
+  published; if
+  attendee mode has no captured roster at all, publication shares only with the
+  person who started the recording and records a warning instead of looking the
+  room up again. Guests, email invitees and federated participants are not
+  recorded: they have no local account to grant, so there is nothing to keep.
+  It lives on the job row, which outlives the recording itself — job history is
+  kept after artifacts are pruned.
 - **Operator database** — job and attempt history, the room audience above,
   insight-run records including any typed question, and speaker edits (the
   names people typed, who saved them, a snapshot per saved revision, and the

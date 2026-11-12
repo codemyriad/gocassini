@@ -749,6 +749,63 @@ func TestPutSettingsAcceptsSearchAliases(t *testing.T) {
 	}
 }
 
+// TestPutSettingsAcceptsShareAudience covers the named audience choice through
+// the same route the admin panel uses: it persists, reports back, and an
+// unrelated update does not silently reset it.
+func TestPutSettingsAcceptsShareAudience(t *testing.T) {
+	rt := newSettingsTestRuntime(t)
+
+	rec := httptest.NewRecorder()
+	rt.handlePutSettings(rec, httptest.NewRequest(http.MethodPut, "/settings",
+		strings.NewReader(`{"quality":"balanced","share_audience":"attendees"}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200 (body=%s)", rec.Code, rec.Body.String())
+	}
+
+	saved, err := LoadOrInitSettings(rt.settingsPath)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if saved.ShareAudience != shareAudienceAttendees {
+		t.Fatalf("share_audience = %q, want attendees", saved.ShareAudience)
+	}
+
+	// An omitted field preserves the choice, the same rule as the other
+	// options; a client too old to know the field must not switch it off.
+	rec = httptest.NewRecorder()
+	rt.handlePutSettings(rec, httptest.NewRequest(http.MethodPut, "/settings",
+		strings.NewReader(`{"quality":"fast"}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unrelated update code = %d, want 200", rec.Code)
+	}
+	saved, err = LoadOrInitSettings(rt.settingsPath)
+	if err != nil {
+		t.Fatalf("load after unrelated update: %v", err)
+	}
+	if saved.ShareAudience != shareAudienceAttendees {
+		t.Fatal("an update that omitted share_audience reset it")
+	}
+
+	// And it can be switched back to the default.
+	rec = httptest.NewRecorder()
+	rt.handlePutSettings(rec, httptest.NewRequest(http.MethodPut, "/settings",
+		strings.NewReader(`{"share_audience":"room"}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("switch-room code = %d, want 200", rec.Code)
+	}
+	if rt.currentSettings().ShareAudience != shareAudienceRoom {
+		t.Fatalf("share_audience = %q, want room", rt.currentSettings().ShareAudience)
+	}
+
+	// An unknown named audience is refused, rather than silently coerced.
+	rec = httptest.NewRecorder()
+	rt.handlePutSettings(rec, httptest.NewRequest(http.MethodPut, "/settings",
+		strings.NewReader(`{"share_audience":"everyone"}`)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid audience code = %d, want 400", rec.Code)
+	}
+}
+
 // A client that does not know about aliases must not erase them by omitting
 // the field.
 func TestPutSettingsWithoutAliasesKeepsThem(t *testing.T) {
@@ -863,20 +920,29 @@ func TestMeetingFormatSettingsPersistAndValidate(t *testing.T) {
 	}
 }
 
+func TestSavedAudienceFailsClosed(t *testing.T) {
+	if got := normalizeSavedAudience(""); got != shareAudienceRoom {
+		t.Fatalf("empty saved mode = %q, want room", got)
+	}
+	if got := normalizeSavedAudience("a-mode-from-the-future"); got != shareAudienceAttendees {
+		t.Fatalf("unrecognised saved mode = %q, want attendees (narrower)", got)
+	}
+}
+
 func TestMeetingFormatSurvivesHardwareRefresh(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
-	if err := Save(path, STTSettings{Source: "auto", Quality: "balanced", HardwareFingerprint: "old-host", MeetingFormat: "json"}); err != nil {
+	if err := Save(path, STTSettings{Source: "auto", Quality: "balanced", HardwareFingerprint: "old-host", MeetingFormat: "json", ShareAudience: "attendees"}); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err := LoadOrInitSettings(path)
-	if err != nil || loaded.MeetingFormat != "json" {
-		t.Fatalf("hardware refresh changed publication: %+v %v", loaded, err)
+	if err != nil || loaded.MeetingFormat != "json" || loaded.ShareAudience != shareAudienceAttendees {
+		t.Fatalf("hardware refresh changed publication or audience: %+v %v", loaded, err)
 	}
 	if err := os.WriteFile(path, []byte(`{"quality":"balanced","source":"user"}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err = LoadOrInitSettings(path)
-	if err != nil || loaded.MeetingFormat != "opus" {
+	if err != nil || loaded.MeetingFormat != "opus" || loaded.ShareAudience != shareAudienceRoom {
 		t.Fatalf("legacy settings: %+v %v", loaded, err)
 	}
 }

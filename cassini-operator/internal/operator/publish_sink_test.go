@@ -3,6 +3,7 @@ package operator
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
 	"os"
@@ -244,6 +245,35 @@ func deliverToLocalSink(t *testing.T, siteRoot, attemptSite, jobID string) (stri
 		AttemptNumber:   1,
 		PublishedAtUTC:  "2026-06-12T00:00:00Z",
 	})
+}
+
+func TestLocalSinkCarriesTheSavedAudienceIntoTheCatalog(t *testing.T) {
+	siteRoot := filepath.Join(t.TempDir(), "site")
+	attempt := writeAttemptSite(t, filepath.Join(t.TempDir(), "attempt"), "meeting-a")
+	sink := &localPublishSink{siteRoot: siteRoot, logger: log.New(ioDiscard{}, "", 0)}
+	if _, err := sink.Deliver(context.Background(), publishDelivery{
+		AttemptSitePath: attempt,
+		JobID:           "meeting-a",
+		AttemptNumber:   1,
+		PublishedAtUTC:  "2026-06-12T00:00:00Z",
+		Audience:        "attendees",
+	}); err != nil {
+		t.Fatalf("Deliver() error = %v", err)
+	}
+	catalog, ok, err := loadSiteCatalog(siteRoot)
+	if err != nil || !ok {
+		t.Fatalf("loadSiteCatalog() ok = %v err = %v", ok, err)
+	}
+	if len(catalog.Meetings) != 1 {
+		t.Fatalf("meetings = %d, want 1", len(catalog.Meetings))
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(catalog.Meetings[0], &fields); err != nil {
+		t.Fatal(err)
+	}
+	if fields["audience"] != "attendees" {
+		t.Fatalf("audience = %v, want attendees; catalog=%s", fields["audience"], catalog.Meetings[0])
+	}
 }
 
 func readCatalogIDs(t *testing.T, siteRoot string) []string {

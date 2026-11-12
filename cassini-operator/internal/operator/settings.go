@@ -24,13 +24,20 @@ type STTSettings struct {
 	RetainVideo     bool   `json:"retain_video"`
 	SourceRetention string `json:"source_retention"`
 	// MeetingFormat controls publication, independently of transcription and local capture retention.
-	MeetingFormat        string   `json:"meeting_format"`
-	TranscriptionEnabled bool     `json:"transcription_enabled"`
-	ActiveModel          string   `json:"active_model,omitempty"`
-	ActiveRevision       string   `json:"active_revision,omitempty"`
-	Quality              string   `json:"quality"`
-	DeviceOverride       string   `json:"device_override,omitempty"`
-	TranscriptionTerms   []string `json:"transcription_terms,omitempty"`
+	MeetingFormat        string `json:"meeting_format"`
+	TranscriptionEnabled bool   `json:"transcription_enabled"`
+	// ShareAudience selects the recording share audience as a named choice:
+	// "room" (the default) shares with everyone in the Talk room, "attendees"
+	// shares only with the people Talk reports in the call while it is being
+	// recorded. A string rather than a boolean so another audience can be added
+	// without a migration. The chosen mode is frozen on the job at recording
+	// start, so a later settings change cannot alter an in-progress recording.
+	ShareAudience      string   `json:"share_audience"`
+	ActiveModel        string   `json:"active_model,omitempty"`
+	ActiveRevision     string   `json:"active_revision,omitempty"`
+	Quality            string   `json:"quality"`
+	DeviceOverride     string   `json:"device_override,omitempty"`
+	TranscriptionTerms []string `json:"transcription_terms,omitempty"`
 	// SearchAliases are the spellings the speech recogniser produces for names
 	// an operator cares about, so a search for the name finds them (D-623).
 	//
@@ -66,6 +73,9 @@ const (
 
 	sttSourceAuto = "auto"
 	sttSourceUser = "user"
+
+	shareAudienceRoom      = "room"
+	shareAudienceAttendees = "attendees"
 
 	envSTTQuality           = "CASSINI_STT_QUALITY"
 	envSTTNumThreads        = "CASSINI_STT_NUM_THREADS"
@@ -259,12 +269,39 @@ func normalizeQuality(s string) string {
 	}
 }
 
+// normalizeShareAudience returns the persisted named audience mode, defaulting
+// an omitted value to the historical room audience. Any other value is refused
+// rather than silently coerced: the mode decides who can read a recording.
+func normalizeShareAudience(value string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", shareAudienceRoom:
+		return shareAudienceRoom, nil
+	case shareAudienceAttendees:
+		return shareAudienceAttendees, nil
+	default:
+		return "", fmt.Errorf("share_audience must be room or attendees (got %q)", value)
+	}
+}
+
+// normalizeSavedAudience is the fail-closed reader for a mode saved on a job
+// (or carried in a catalog). An omitted value is the historical room audience;
+// an unrecognised one is treated as attendees, so a future mode this build does
+// not know cannot widen a recording to the whole room (#480).
+func normalizeSavedAudience(value string) string {
+	mode, err := normalizeShareAudience(value)
+	if err != nil {
+		return shareAudienceAttendees
+	}
+	return mode
+}
+
 // detectSettings builds a fresh auto default from the live host hardware.
 func detectSettings() STTSettings {
 	gpu := detectGPU()
 	cores := runtime.NumCPU()
 	return STTSettings{
 		MeetingFormat:       "opus",
+		ShareAudience:       shareAudienceRoom,
 		Quality:             defaultQualityForHardware(cudaCapableHost()),
 		Source:              sttSourceAuto,
 		HardwareFingerprint: hardwareFingerprint(gpu, cores),
@@ -311,6 +348,11 @@ func LoadOrInitSettingsWithMigrationReporter(path string, report SettingsMigrati
 	if s.MeetingFormat != "opus" && s.MeetingFormat != "json" {
 		return STTSettings{}, fmt.Errorf("invalid meeting_format %q", s.MeetingFormat)
 	}
+	audience, err := normalizeShareAudience(s.ShareAudience)
+	if err != nil {
+		return STTSettings{}, fmt.Errorf("parse settings %s: %w", path, err)
+	}
+	s.ShareAudience = audience
 	if err := normalizeSourceRetention(&s); err != nil {
 		return STTSettings{}, err
 	}
@@ -357,6 +399,7 @@ func LoadOrInitSettingsWithMigrationReporter(path string, report SettingsMigrati
 			s = detectSettings()
 			s.TranscriptionEnabled, s.ActiveModel, s.ActiveRevision = previous.TranscriptionEnabled, previous.ActiveModel, previous.ActiveRevision
 			s.MeetingFormat = previous.MeetingFormat
+			s.ShareAudience = previous.ShareAudience
 			s.SourceRetention = previous.SourceRetention
 			s.SearchAliases = previous.SearchAliases
 			s.RetainVideo = previous.RetainVideo
@@ -428,6 +471,11 @@ func Save(path string, s STTSettings) error {
 	if s.MeetingFormat != "opus" && s.MeetingFormat != "json" {
 		return fmt.Errorf("meeting_format must be opus or json")
 	}
+	audience, err := normalizeShareAudience(s.ShareAudience)
+	if err != nil {
+		return err
+	}
+	s.ShareAudience = audience
 	if strings.TrimSpace(path) == "" {
 		return fmt.Errorf("settings path must not be empty")
 	}
@@ -650,15 +698,19 @@ type settingsResponse struct {
 // settingsUpdate is the PUT body. Pointers distinguish "field omitted" from
 // "field set to empty". Omitted quality preserves the automatic/user policy source.
 type settingsUpdate struct {
-	SourceRetention      *string   `json:"source_retention"`
-	RetainVideo          *bool     `json:"retain_video"`
-	MeetingFormat        *string   `json:"meeting_format"`
-	TranscriptionEnabled *bool     `json:"transcription_enabled"`
-	ActiveModel          *string   `json:"active_model"`
-	ActiveRevision       *string   `json:"active_revision"`
-	Quality              *string   `json:"quality,omitempty"`
-	DeviceOverride       *string   `json:"device_override"`
-	TranscriptionTerms   *[]string `json:"transcription_terms"`
+	SourceRetention      *string `json:"source_retention"`
+	RetainVideo          *bool   `json:"retain_video"`
+	MeetingFormat        *string `json:"meeting_format"`
+	TranscriptionEnabled *bool   `json:"transcription_enabled"`
+	// ShareAudience is a pointer for the same reason as the fields above: nil
+	// means "leave the audience alone", so a client that does not know about
+	// the option cannot switch it off by omitting it.
+	ShareAudience      *string   `json:"share_audience"`
+	ActiveModel        *string   `json:"active_model"`
+	ActiveRevision     *string   `json:"active_revision"`
+	Quality            *string   `json:"quality,omitempty"`
+	DeviceOverride     *string   `json:"device_override"`
+	TranscriptionTerms *[]string `json:"transcription_terms"`
 	// SearchAliases is a pointer for the same reason as the fields above: nil
 	// means "leave it alone", so a client that does not know about aliases
 	// cannot erase them by omitting the field.
@@ -676,6 +728,9 @@ func (rt *Runtime) currentSettings() STTSettings {
 	}
 	if s.MeetingFormat == "" {
 		s.MeetingFormat = "opus"
+	}
+	if s.ShareAudience == "" {
+		s.ShareAudience = shareAudienceRoom
 	}
 	return s
 }
@@ -792,6 +847,14 @@ func (rt *Runtime) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.TranscriptionEnabled != nil {
 		updated.TranscriptionEnabled = *in.TranscriptionEnabled
+	}
+	if in.ShareAudience != nil {
+		audience, err := normalizeShareAudience(*in.ShareAudience)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		updated.ShareAudience = audience
 	}
 	if in.ActiveModel != nil {
 		updated.ActiveModel = *in.ActiveModel
