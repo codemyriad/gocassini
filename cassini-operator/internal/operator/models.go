@@ -34,8 +34,8 @@ type modelInfo struct {
 	// RuntimeSupported is set for diarizers: whether the runtime can run one.
 	RuntimeSupported *bool `json:"runtime_supported,omitempty"`
 	// Replaces lists retired model ids this model supersedes (Parakeet Ultra
-	// replaces Parakeet v3). Settings pinned to one of them move to the model
-	// their tier now uses; see migrateRetiredSpeechModel.
+	// int8 v1 and Parakeet v3). Settings pinned to one of them move to the
+	// model their tier now uses; see migrateRetiredSpeechModel.
 	Replaces []string `json:"replaces,omitempty"`
 	// ReplacedBy marks a retired model whose files are still installed: the
 	// model that replaced it, which a build may let it stand in for until that
@@ -231,7 +231,7 @@ func (rt *Runtime) modelsHandler(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			if !m.Ready && (!m.Installed || rt.modelCheckHasFailed(m, device)) {
-				if candidates := rt.standInCandidates(inventory, m, device, ""); len(candidates) > 0 {
+				if candidates := rt.standInCandidates(inventory, m, device); len(candidates) > 0 {
 					m.StandIn = candidates[0].ID
 				}
 			}

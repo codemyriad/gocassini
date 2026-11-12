@@ -801,7 +801,7 @@ func TestPutSettingsRejectsUnboundedAliases(t *testing.T) {
 func TestPutSettingsChecksTheModelOnlyWhenTheSelectionChanges(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
-	rt.cfg.CassiniBin = fakeModelCassini(t, `[{"id":"parakeet-ultra-0.6b-int8","revision":"r1","installed":true,"ready":false,"device":"cpu"}]`)
+	rt.cfg.CassiniBin = fakeModelCassini(t, `[{"id":"parakeet-ultra-0.6b-int8-v2","revision":"r1","installed":true,"ready":false,"device":"cpu"}]`)
 	rt.cfg.ModelCacheRoot = t.TempDir()
 	rt.setSettings(STTSettings{
 		TranscriptionEnabled: true, ActiveModel: modelParakeetUltraInt8, ActiveRevision: "r1",

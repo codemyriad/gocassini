@@ -45,7 +45,7 @@ func TestFetchModelsScriptMatchesCatalogue(t *testing.T) {
 		}
 		seen[id] = true
 	}
-	for _, id := range []string{"parakeet-ultra-0.6b", "parakeet-ultra-0.6b-int8"} {
+	for _, id := range []string{"parakeet-ultra-0.6b", "parakeet-ultra-0.6b-int8-v2"} {
 		if !seen[id] {
 			t.Fatalf("fetch-models.sh does not list %s", id)
 		}

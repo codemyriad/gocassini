@@ -58,7 +58,7 @@ CASSINI_CACHE_ROOT="$HOME/.cache/cassini" \
 For the CUDA native package, add `--backend cuda` before `--test` and set
 `CASSINI_ASR_REGRESSION_DEVICE=cuda`. Tests use the FP32 model on either device
 unless `CASSINI_ASR_REGRESSION_MODEL` names another cached one, such as
-`parakeet-ultra-0.6b-int8`; CI runs FP32 only.
+`parakeet-ultra-0.6b-int8-v2`; CI runs FP32 only.
 
 CI caches the model weights and production CPU native library. It verifies
 all inference model files against `models.sha256`, including the external

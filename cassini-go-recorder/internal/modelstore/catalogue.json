@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "published_at": "2026-10-14",
+  "published_at": "2026-11-10",
   "base_url": "https://dist.gocassini.com",
   "models": [
     {
@@ -26,17 +26,17 @@
       "vad_revision": "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6"
     },
     {
-      "id": "parakeet-ultra-0.6b-int8",
+      "id": "parakeet-ultra-0.6b-int8-v2",
       "kind": "speech",
-      "name": "Parakeet Ultra 0.6B \u2014 int8",
-      "description": "Multilingual speech recognition, Parakeet v3 post-trained by Moondream, quantized weights",
+      "name": "Parakeet Ultra 0.6B \u2014 int8 v2",
+      "description": "Multilingual speech recognition, Parakeet v3 post-trained by Moondream, quantized weights; depthwise and subsampling convolutions kept in fp32",
       "license": "CC-BY-4.0",
       "source_url": "https://huggingface.co/moondream/parakeet-ultra",
-      "source_sha256": "18cb623004dd6c15999b93cb70b14d8a1f6e8f3a2a97ff733f104bfc3494f6a9",
+      "source_sha256": "50c15b94ea9cb1c2f8dbcdcbc0f15b450169154deeb206923cb5388f60892366",
       "files": [
         {
           "path": "encoder.int8.onnx",
-          "artifact": "models/files/caf7a38f2ad3224c1863564fb6e975a11aa3ae6ad1e7ad0bee5c4f5e018babb4/encoder.int8.onnx.zst",
+          "artifact": "models/files/44060ee9be2ac23ace05d6ea1271dd4cdbb353ac4d822f36c51ce733142d31a0/encoder.int8.onnx.zst",
           "required": true
         },
         {
@@ -57,6 +57,7 @@
       ],
       "vad_revision": "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6",
       "replaces": [
+        "parakeet-ultra-0.6b-int8",
         "parakeet-tdt-0.6b-v3-int8"
       ]
     },
@@ -155,6 +156,38 @@
     }
   ],
   "retired_models": [
+    {
+      "id": "parakeet-ultra-0.6b-int8",
+      "kind": "speech",
+      "name": "Parakeet Ultra 0.6B \u2014 int8",
+      "description": "Multilingual speech recognition, Parakeet v3 post-trained by Moondream, quantized weights",
+      "license": "CC-BY-4.0",
+      "source_url": "https://huggingface.co/moondream/parakeet-ultra",
+      "source_sha256": "18cb623004dd6c15999b93cb70b14d8a1f6e8f3a2a97ff733f104bfc3494f6a9",
+      "files": [
+        {
+          "path": "encoder.int8.onnx",
+          "artifact": "models/files/caf7a38f2ad3224c1863564fb6e975a11aa3ae6ad1e7ad0bee5c4f5e018babb4/encoder.int8.onnx.zst",
+          "required": true
+        },
+        {
+          "path": "decoder.int8.onnx",
+          "artifact": "models/files/69e2e91d01225bc552f8b0113630562fc52622cb2a3c61ef4445ee779f06b295/decoder.int8.onnx.zst",
+          "required": true
+        },
+        {
+          "path": "joiner.int8.onnx",
+          "artifact": "models/files/639fda62a71242a8d7cefb6647f2094eb8ac783925ce91cbd047a0de6988f396/joiner.int8.onnx.zst",
+          "required": true
+        },
+        {
+          "path": "tokens.txt",
+          "artifact": "models/files/5b3811f0c23fefc86835981f0a23ecfb817999df272ad744c597e5b669ea1b4a/tokens.txt.zst",
+          "required": true
+        }
+      ],
+      "vad_revision": "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6"
+    },
     {
       "id": "parakeet-tdt-0.6b-v3-int8",
       "kind": "speech",
@@ -425,6 +458,24 @@
       "frame_size": 262144,
       "frame_count": 1518,
       "seek_table_size": 12161,
+      "compression_level": 6,
+      "encoding": "zstd-seekable",
+      "format_version": "0.1.0"
+    },
+    {
+      "id": "44060ee9be2ac23ace05d6ea1271dd4cdbb353ac4d822f36c51ce733142d31a0",
+      "key": "models/files/44060ee9be2ac23ace05d6ea1271dd4cdbb353ac4d822f36c51ce733142d31a0/encoder.int8.onnx.zst",
+      "filename": "encoder.int8.onnx.zst",
+      "name": "encoder.int8.onnx",
+      "description": "Seekable Zstandard model file",
+      "url": "https://dist.gocassini.com/models/files/44060ee9be2ac23ace05d6ea1271dd4cdbb353ac4d822f36c51ce733142d31a0/encoder.int8.onnx.zst",
+      "size": 452843967,
+      "sha256": "44060ee9be2ac23ace05d6ea1271dd4cdbb353ac4d822f36c51ce733142d31a0",
+      "uncompressed_size": 653313528,
+      "uncompressed_sha256": "f9a8af14deb2e5237eebb9dfb25126180614feaf835a03f307e4077eab247015",
+      "frame_size": 262144,
+      "frame_count": 2493,
+      "seek_table_size": 19961,
       "compression_level": 6,
       "encoding": "zstd-seekable",
       "format_version": "0.1.0"
