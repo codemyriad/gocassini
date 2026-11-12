@@ -51,8 +51,9 @@ concurrency:
 
 jobs:
   # Decides whether a pull request needs the suites at all (D-906): not when
-  # every changed path is docs, or a workflow or file the suites never use
-  # (classify-image-relevance.sh --ci-suite). Every other event runs them.
+  # every changed path is docs, or a workflow or file the suites never use, or
+  # a version-only info.xml bump (classify-image-relevance.sh --ci-suite).
+  # Every other event runs them.
   changes:
     name: Classify changes
     runs-on: ubuntu-latest
@@ -77,15 +78,17 @@ jobs:
           suite=true
           if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
             # Same diff as the recorder classifier in contracts. A failed
-            # diff fails this job, and with it `CI passed`.
+            # diff fails this job, and with it `CI passed`. The SHAs let a
+            # release sync's version-only info.xml bump skip the suites
+            # (D-915); the image workflow still validates the manifest.
             changed="$(git diff --no-renames --name-only "$BASE_SHA" "$HEAD_SHA")"
-            suite="$(printf '%s\n' "$changed" | ./scripts/classify-image-relevance.sh --ci-suite)"
+            suite="$(printf '%s\n' "$changed" | ./scripts/classify-image-relevance.sh --ci-suite --base "$BASE_SHA" --head "$HEAD_SHA")"
           fi
           echo "suite=$suite" >> "$GITHUB_OUTPUT"
           if [[ "$suite" == true ]]; then
             echo "Running the test suites." >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "Only docs or files the suites never use changed: skipping the suites." >> "$GITHUB_STEP_SUMMARY"
+            echo "Only docs, files the suites never use or the app version changed: skipping the suites." >> "$GITHUB_STEP_SUMMARY"
           fi
 
   contracts:

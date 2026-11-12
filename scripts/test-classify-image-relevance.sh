@@ -96,6 +96,41 @@ expect_suite true  "scripts/classify-image-relevance.sh"
 expect_suite true  $'README.md\ncassini-operator/main.go'
 "$CLASSIFIER" --bogus </dev/null >/dev/null 2>&1 && fail "an unknown option must fail"
 
+# A release sync's version-only info.xml bump (D-915), against a scratch repo
+# holding the real manifest.
+repo="$(mktemp -d)"
+trap 'rm -rf "$repo"' EXIT
+git -C "$repo" init -q
+git -C "$repo" config user.email ci@example.invalid
+git -C "$repo" config user.name ci
+mkdir "$repo/appinfo"
+cp "$ROOT/appinfo/info.xml" "$repo/appinfo/info.xml"
+commit() { git -C "$repo" commit -qam "$1" --allow-empty && git -C "$repo" rev-parse HEAD; }
+git -C "$repo" add appinfo/info.xml
+base="$(commit base)"
+sed -i -E 's#<version>[^<]*</version>#<version>9.9.0-alpha.0</version>#; s#<image-tag>[^<]*</image-tag>#<image-tag>9.9.0-alpha.0</image-tag>#' "$repo/appinfo/info.xml"
+bump="$(commit bump)"
+grep -q '<image-tag>9.9.0-alpha.0</image-tag>' "$repo/appinfo/info.xml" || fail "fixture bump did not apply"
+sed -i '0,/<\/routes>/s#</routes>#<route><url>x</url></route></routes>#' "$repo/appinfo/info.xml"
+bump_and_route="$(commit route)"
+git -C "$repo" diff --quiet "$bump" "$bump_and_route" && fail "fixture route change did not apply"
+
+expect_sync() {
+  local want="$1" input="$2" got
+  shift 2
+  got="$(cd "$repo" && printf '%s' "$input" | "$CLASSIFIER" "$@")"
+  [[ "$got" == "$want" ]] \
+    || fail "classifier $* returned '$got', wanted '$want' for input <<${input}>>"
+}
+sync=$'appinfo/info.xml\nCHANGELOG.md\nchangelog.d/x.md'
+expect_sync false "$sync" --base "$base" --head "$bump"
+expect_sync false "$sync" --ci-suite --base "$base" --head "$bump"
+expect_sync true  "$sync" --base "$base" --head "$bump_and_route"
+expect_sync true  "$sync" --ci-suite --base "$base" --head "$bump_and_route"
+expect_sync true  "$sync"                                    # no SHAs: fail closed
+expect_sync true  "$sync" --base "$base" --head 0000000000000000000000000000000000000000
+expect_sync true  $'appinfo/info.xml\nDockerfile' --base "$base" --head "$bump"
+
 echo "PASS: classifier behavioral fixtures"
 
 # ---- (2) drift assertion vs ci.yml paths-ignore ------------------------------

@@ -68,6 +68,7 @@ jobs:
             if ! changed="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"; then
               echo "::warning::git diff failed; classifying change as relevant (fail-closed)"
               echo "relevant=true" | tee -a "$GITHUB_OUTPUT"
+              echo "manifest=true" | tee -a "$GITHUB_OUTPUT"
               exit 0
             fi
             # Deny-list classifier (D-505): relevant unless EVERY changed path is
@@ -79,9 +80,16 @@ jobs:
             # default, wasting runner minutes at worst instead of greening a
             # required check on an unbuilt product. Two-dot diff is deliberate --
             # it over-reports, biasing toward relevant=true (the fail-safe side).
-            relevant="$(printf '%s\n' "$changed" | "$GITHUB_WORKSPACE/scripts/classify-image-relevance.sh")"
+            # The SHAs let it skip a version-only info.xml bump, as in a
+            # release sync to main (D-915); the manifest checks below still run.
+            relevant="$(printf '%s\n' "$changed" | "$GITHUB_WORKSPACE/scripts/classify-image-relevance.sh" --base "$BASE_SHA" --head "$HEAD_SHA")"
+            if grep -qx 'appinfo/info.xml' <<<"$changed"; then
+              manifest=true
+            fi
           fi
           echo "relevant=$relevant" | tee -a "$GITHUB_OUTPUT"
+          # Validate the manifest whenever the image is built or it changed.
+          echo "manifest=${manifest:-$relevant}" | tee -a "$GITHUB_OUTPUT"
 
       - name: Select required Nextcloud baselines
         id: compatibility
@@ -102,13 +110,13 @@ jobs:
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
       - name: Install xmllint
-        if: steps.changes.outputs.relevant == 'true'
+        if: steps.changes.outputs.manifest == 'true'
         run: sudo ./scripts/ci-apt-update.sh && sudo apt-get install -y --no-install-recommends libxml2-utils
       - name: Wellformed XML check
-        if: steps.changes.outputs.relevant == 'true'
+        if: steps.changes.outputs.manifest == 'true'
         run: xmllint --noout appinfo/info.xml
       - name: Required-fields sanity check
-        if: steps.changes.outputs.relevant == 'true'
+        if: steps.changes.outputs.manifest == 'true'
         run: |
           set -euo pipefail
           # The two Talk secret declarations are markers, not decoration: AppAPI
@@ -138,7 +146,7 @@ jobs:
         if: steps.changes.outputs.relevant == 'true'
         run: python3 scripts/nextcloud_compatibility.py validate
       - name: Version pin consistency check
-        if: steps.changes.outputs.relevant == 'true'
+        if: steps.changes.outputs.manifest == 'true'
         id: version
         run: |
           set -euo pipefail

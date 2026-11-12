@@ -10,6 +10,11 @@
 # With `--ci-suite` it answers the same question for ci.yml's test suites,
 # using NOT_SUITE_GLOBS instead of NOT_IMAGE_GLOBS (D-906).
 #
+# With `--base SHA --head SHA` it also skips appinfo/info.xml when the change
+# only sets <version> and <image-tag>, as a release sync to main does (D-915).
+# The caller still validates the manifest. Without both SHAs, or when either
+# side can't be read, info.xml counts as relevant.
+#
 # This is a DENY-list, deliberately mirroring .github/workflows/ci.yml's
 # `paths-ignore`. The gate it feeds is a REQUIRED status check, so the cost
 # asymmetry is the whole point (D-505): an unmatched path here costs ~30 wasted
@@ -101,9 +106,29 @@ classify_path_skips_suite() {
   classify_path_is_docs "$1" || classify_path_matches "$1" "${NOT_SUITE_GLOBS[@]}"
 }
 
+# classify_info_xml_bump_only BASE HEAD -> 0 (true) when appinfo/info.xml
+# differs between BASE and HEAD only in its <version> and <image-tag> lines.
+# Fails closed: an unreadable side returns 1, i.e. relevant.
+classify_info_xml_bump_only() {
+  local base="$1" head="$2" before after
+  [[ -n "$base" && -n "$head" ]] || return 1
+  before="$(git show "$base:appinfo/info.xml" 2>/dev/null)" || return 1
+  after="$(git show "$head:appinfo/info.xml" 2>/dev/null)" || return 1
+  [[ "$(classify_blank_version "$before")" == "$(classify_blank_version "$after")" ]]
+}
+
+# classify_blank_version TEXT prints TEXT with the value of every <version>
+# and <image-tag> element that sits alone on its line blanked out.
+classify_blank_version() {
+  printf '%s\n' "$1" | sed -E \
+    -e 's#^([[:space:]]*<version>)[^<]*(</version>[[:space:]]*)$#\1\2#' \
+    -e 's#^([[:space:]]*<image-tag>)[^<]*(</image-tag>[[:space:]]*)$#\1\2#'
+}
+
 # classify_stream [SKIPS] reads changed paths on stdin and prints the verdict:
 # false when SKIPS (default classify_path_skips_image) holds for every path;
 # true at the first path it doesn't.
+# Set CLASSIFY_BASE and CLASSIFY_HEAD to skip a version-only info.xml bump.
 classify_stream() {
   local skips="${1:-classify_path_skips_image}" relevant=false path
   # `|| [[ -n "$path" ]]` processes a final line with no trailing newline too:
@@ -118,6 +143,10 @@ classify_stream() {
     # EVERY docs-only PR -- this guard is load-bearing, not decorative (see
     # test-classify-image-relevance.sh).
     [[ -n "$path" ]] || continue
+    if [[ "$path" == appinfo/info.xml ]] \
+      && classify_info_xml_bump_only "${CLASSIFY_BASE:-}" "${CLASSIFY_HEAD:-}"; then
+      continue
+    fi
     if ! "$skips" "$path"; then
       relevant=true
       break
@@ -130,9 +159,18 @@ classify_stream() {
 # DENY_GLOBS and calls the functions) do nothing.
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   set -euo pipefail
-  case "${1:-}" in
-    '') classify_stream classify_path_skips_image ;;
-    --ci-suite) classify_stream classify_path_skips_suite ;;
-    *) echo "usage: $0 [--ci-suite] < changed-paths" >&2; exit 2 ;;
-  esac
+  skips=classify_path_skips_image
+  CLASSIFY_BASE='' CLASSIFY_HEAD=''
+  while (( $# )); do
+    case "$1" in
+      --ci-suite) skips=classify_path_skips_suite; shift ;;
+      --base) CLASSIFY_BASE="${2:-}"; shift 2 || exit 2 ;;
+      --head) CLASSIFY_HEAD="${2:-}"; shift 2 || exit 2 ;;
+      *)
+        echo "usage: $0 [--ci-suite] [--base SHA --head SHA] < changed-paths" >&2
+        exit 2
+        ;;
+    esac
+  done
+  classify_stream "$skips"
 fi
