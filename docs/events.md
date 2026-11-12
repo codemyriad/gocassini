@@ -19,7 +19,7 @@ JSON names:
 | Field | Required | Meaning |
 |---|---|---|
 | `event_webhook_url` | To enable events | Absolute `http` or `https` receiver URL. Empty disables delivery. |
-| `event_webhook_secret` | With the URL | HMAC-SHA256 secret used to sign every request. |
+| `event_webhook_secret` | With the URL | HMAC-SHA256 secret used to sign every request. Write-only: responses never return it and report `event_webhook_secret_set` instead. A `PUT` that omits it keeps the stored secret. |
 | `event_webhook_events` | No | Array allow-list, e.g. `["summary.completed", "recording.failed"]`. Empty delivers the whole catalog. Unknown names are rejected. |
 | `event_webhook_timeout` | No | Go duration per request, e.g. `10s`. Default `10s`; at most one minute. |
 
@@ -28,7 +28,15 @@ or edit `settings.json` while the operator is stopped. The startup log names
 only the receiver's scheme and host, never its path or query string, so a token
 embedded in the URL is not logged.
 
-A URL without a secret is refused and logged: every event must be verifiable.
+A URL without a secret is refused: every event must be verifiable. `PUT
+/settings` answers `400` for any invalid webhook value. Invalid values found in
+`settings.json` at startup turn delivery off and are logged; every other
+setting in the file still applies, and the next settings save removes them.
+
+Events are bound to the receiver they were queued for. Changing or clearing
+`event_webhook_url` closes whatever is still undelivered for the old receiver
+(`last_error` = `receiver changed`); nothing queued for one URL is ever sent to
+another. Changing only the secret, allow-list or timeout keeps the queue.
 
 ## Event catalog
 
@@ -37,11 +45,11 @@ A URL without a secret is refused and logged: every event must be verifiable.
 | `recording.started` | Talk's recording request was accepted and the recorder started. | `started_at` |
 | `recording.stopped` | The recording stopped and the capture was safely stored. | `stopped_at`, `stop_reason` |
 | `build.completed` | Transcription/build completed and the meeting was handed to seal. | `meeting_title` |
-| `summary.completed` | A summary was written, including a normal build's summary and a speaker-edit rewrite. | `summary_markdown`, `summary_model` |
-| `summary.failed` | A summary step failed on a build or summarize attempt. Yielding for a recording or resource pressure is not a failure. | `phase`, `error`, `summary_reason` |
+| `summary.completed` | A summary was written: a normal build's summary, one written or regenerated on request, or a speaker-edit rewrite. A speaker edit that keeps the existing summary emits nothing. | `summary_markdown`, `summary_model` |
+| `summary.failed` | A summary could not be written: the summary step of a build failed, or an attempt that only writes a summary failed at any stage. The recording itself is unaffected. Yielding for a recording or resource pressure is not a failure. | `phase`, `error`, `summary_reason` (a build's summary step only), `interrupted` |
 | `recording.published` | The `.opus` was delivered and the job succeeded. | `published_location` |
-| `recording.failed` | Recording, build, seal or publish reached a terminal failure. | `phase`, `error` |
-| `shares.completed` | Publication finished and a share outcome is recorded; emitted again when a later Re-share reconciles deferred or partial shares. | `sharing`, `reconciled` (later reconciliations only) |
+| `recording.failed` | Recording, build, seal or publish of a recording reached a terminal failure, or an operator restart interrupted it. | `phase`, `error`, `interrupted` (restarts only) |
+| `shares.completed` | Publication finished and a share outcome is recorded; emitted again when a later Re-share changes that outcome. | `sharing`, `reconciled` (re-shares only) |
 
 `shares.completed` includes the same outcome the Operator shows:
 
@@ -58,6 +66,12 @@ A URL without a secret is refused and logged: every event must be verifiable.
 `publish`. A deferred build (temporary RAM/VRAM pressure) is not a failure and
 does not emit `recording.failed`.
 
+`summary.failed` carries `phase` equal to `summary`, or to `seal` or `publish`
+when an attempt that only writes a summary got that far. Such an attempt, and a
+speaker-edit attempt, work on a copy of a meeting that is already published, so
+neither ever emits `recording.failed`; a failed speaker-edit attempt emits
+nothing.
+
 Secondary features — speaker edits, annotations/tags, insights, imports and
 model installs — are not in this catalog yet. The transport and payload shape
 are designed so the catalog can grow without breaking receivers.
@@ -70,19 +84,19 @@ Every POST has the same envelope:
 {
   "id": "evt_01K2...",
   "type": "summary.completed",
-  "at": "2026-11-11T14:03:21Z",
+  "at": "2026-11-11T14:03:21.000000000Z",
   "cassini_version": "0.4.0-alpha.2",
   "data": {
     "job_id": "01K2...",
     "attempt_number": 1,
-    "stage": "done",
-    "state": "succeeded",
+    "stage": "seal",
+    "state": "queued",
     "title": "Weekly operations sync",
     "room_name": "Weekly operations sync",
-    "started_at": "2026-11-11T13:00:00Z",
+    "started_at": "2026-11-11T13:00:02.000000000Z",
     "duration_seconds": 1874,
-    "record_started_at": "2026-11-11T13:00:02Z",
-    "record_finished_at": "2026-11-11T13:31:16Z",
+    "record_started_at": "2026-11-11T13:00:02.000000000Z",
+    "record_finished_at": "2026-11-11T13:31:16.000000000Z",
     "summary_model": "unsloth/Qwen3.8",
     "summary_markdown": "# Summary\n\n..."
   }
@@ -92,6 +106,14 @@ Every POST has the same envelope:
 Common `data` fields where known: `job_id`, `attempt_number`, `stage`,
 `state`, `title`, `room_name`, `started_at`, `duration_seconds`,
 `record_started_at`, `record_finished_at`.
+
+`stage` and `state` are the job's at the moment the event was written, so they
+differ by event: `summary.completed` and `build.completed` from a build say
+`seal`/`queued`, `recording.published` says `done`/`succeeded`, and a failure
+says `failed` or `interrupted`. To learn where something failed, read `phase`,
+not `stage`. `title` is the
+published meeting's title, and before publication the title the meeting will
+be published with. Every time is UTC, RFC 3339, with nanoseconds.
 
 The summary body is the `summary.md` attachment that already ships inside the
 portable meeting. No audio or transcript text is sent. The full summary can be
@@ -143,9 +165,11 @@ receiver should deduplicate by `X-Cassini-Delivery`.
 - `2xx` marks delivered.
 - `4xx` (except `408`, `409`, `425` and `429`) is permanent and stops
   retrying.
-- `5xx`, timeouts, `408`, `409`, `425` and `429` retry with exponential
-  backoff. The window is twelve attempts, with the backoff capped at five
-  minutes.
+- Redirects are not followed. A `3xx` is a failed attempt: point
+  `event_webhook_url` at the final address.
+- `3xx`, `5xx`, timeouts, connection errors, `408`, `409`, `425` and `429`
+  retry with exponential backoff, at most five minutes apart, until the event
+  is 24 hours old. After that it is marked failed.
 - Delivery is **at-least-once**: a crash between the POST and the database
   update redelivers the same delivery id.
 - Delivery is best-effort relative to the recording: a failed webhook never
