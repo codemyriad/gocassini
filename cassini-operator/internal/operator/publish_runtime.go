@@ -84,7 +84,7 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 			rt.logger.Printf("publish fail update failed id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, updateErr)
 			return
 		}
-		rt.emitEvent(context.Background(), eventRecordingFailed, task.JobID, task.AttemptNumber, map[string]any{"phase": "publish", "error": detail})
+		rt.emitAttemptFailure(task.JobID, task.AttemptNumber, "publish", detail, nil)
 		return
 	}
 	// The destination is the sink's business, not the publish worker's. A sink
@@ -120,7 +120,7 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 			rt.logger.Printf("publish deliver failure update failed id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, updateErr)
 			return
 		}
-		rt.emitEvent(context.Background(), eventRecordingFailed, task.JobID, task.AttemptNumber, map[string]any{"phase": "publish", "error": err.Error()})
+		rt.emitAttemptFailure(task.JobID, task.AttemptNumber, "publish", err.Error(), nil)
 		return
 	}
 	rt.supportJournal.record(supportEvent{Event: "delivery_succeeded", Job: task.JobID, Attempt: task.AttemptNumber})
@@ -142,11 +142,11 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 		rt.logger.Printf("publish success update failed id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, err)
 		return
 	}
-	rt.emitEvent(rt.ctx, eventRecordingPublished, task.JobID, task.AttemptNumber, map[string]any{"published_location": location})
+	rt.emitEvent(eventRecordingPublished, task.JobID, task.AttemptNumber, map[string]any{"published_location": location})
 	if job, err := rt.store.GetJob(context.Background(), task.JobID); err == nil {
 		sharing := rt.jobSharing(context.Background(), &job)
 		if sharing != nil {
-			rt.emitEvent(rt.ctx, eventSharesCompleted, task.JobID, task.AttemptNumber, map[string]any{
+			rt.emitEvent(eventSharesCompleted, task.JobID, task.AttemptNumber, map[string]any{
 				"sharing": sharing,
 			})
 		}

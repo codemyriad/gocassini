@@ -21,6 +21,19 @@ type recordingProcessingPolicy struct {
 	Transcription *STTSettings `json:"transcription,omitempty"`
 }
 
+// frozenProcessingPolicy is the capture policy a job keeps from admission.
+// The transcription settings go in without the webhook receiver and its
+// secret: this copy is stored in the job's request_json, which the job API
+// returns.
+func frozenProcessingPolicy(settings STTSettings) *recordingProcessingPolicy {
+	policy := &recordingProcessingPolicy{MeetingFormat: settings.MeetingFormat, SourceRetention: settings.SourceRetention}
+	if settings.SourceRetention == sourceDeleteAfterProcessing {
+		frozen := settings.withoutEventWebhook()
+		policy.Transcription = &frozen
+	}
+	return policy
+}
+
 func normalizeSourceRetention(s *STTSettings) error {
 	if s.SourceRetention == "" {
 		s.SourceRetention = sourceStoragePolicy

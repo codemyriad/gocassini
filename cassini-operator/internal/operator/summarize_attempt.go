@@ -247,8 +247,8 @@ func (s *Store) queueSummarizeAttemptLocked(ctx context.Context, jobID, queuedAt
 // executeSummarizeCLI builds a summarize attempt's meeting: a fresh copy of
 // the job's published meeting with a summary written into it. Nothing else in
 // the copy changes, so the seal packs the same audio and every mark stays.
-func (rt *Runtime) executeSummarizeCLI(ctx context.Context, task buildTask) (meetingPath string, err error) {
-	meetingPath = attemptMeetingPath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber)
+func (rt *Runtime) executeSummarizeCLI(ctx context.Context, task buildTask) (string, error) {
+	meetingPath := attemptMeetingPath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber)
 	if err := os.RemoveAll(meetingPath); err != nil {
 		return meetingPath, fmt.Errorf("clear summarize meeting dir: %w", err)
 	}
@@ -289,8 +289,7 @@ func (rt *Runtime) executeSummarizeCLI(ctx context.Context, task buildTask) (mee
 	if err := json.Unmarshal(out, &reports); err != nil || len(reports) != 1 {
 		return meetingPath, fmt.Errorf("parse summarize report: %v (%q)", err, firstLine(string(out)))
 	}
-	report := reports[0]
-	if report.Status != "summarized" {
+	if report := reports[0]; report.Status != "summarized" {
 		why := report.Error
 		if why == "" {
 			why = report.Reason

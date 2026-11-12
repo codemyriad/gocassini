@@ -1,8 +1,10 @@
 package operator
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -160,6 +162,7 @@ func (s *directSharesPublishSink) reshare(ctx context.Context, jobID string) (*j
 	if err != nil {
 		return nil, err
 	}
+	before, _ := s.rt.store.JobShareOutcome(ctx, jobID)
 	if err := s.rt.store.RecordJobShareOutcome(ctx, jobID, shareOutcomeStatus(skipped), skipped); err != nil {
 		return nil, err
 	}
@@ -167,17 +170,20 @@ func (s *directSharesPublishSink) reshare(ctx context.Context, jobID string) (*j
 	if err != nil {
 		return nil, err
 	}
-	attemptNumber := 0
-	if job, jobErr := s.rt.store.GetJob(ctx, jobID); jobErr == nil {
-		attemptNumber = job.CurrentAttemptNumber
+	// The shares.completed sent at publication may have said deferred or
+	// partial. A re-share that changes who has the meeting is news to a
+	// receiver; one that changes nothing is not. The payload is the one
+	// publication sends, audience count included.
+	if !sameShareOutcome(before, outcome) {
+		if job, jobErr := s.rt.store.GetJob(ctx, jobID); jobErr == nil {
+			if sharing := s.rt.jobSharing(ctx, &job); sharing != nil {
+				s.rt.emitEvent(eventSharesCompleted, jobID, job.CurrentAttemptNumber, map[string]any{
+					"sharing":    sharing,
+					"reconciled": true,
+				})
+			}
+		}
 	}
-	// The initial shares.completed may have been deferred or partial. A later
-	// reconciliation that reaches those recipients is a new completion, so tell
-	// receivers about it (#472 review).
-	s.rt.emitEvent(context.Background(), eventSharesCompleted, jobID, attemptNumber, map[string]any{
-		"sharing":    outcome,
-		"reconciled": true,
-	})
 	return outcome, nil
 }
 
@@ -195,4 +201,16 @@ func (s *directSharesPublishSink) deliveredMeetingPath(ctx context.Context, jobI
 		}
 	}
 	return "", fmt.Errorf("the published meeting %s is not in Cassini's recordings folder", jobID)
+}
+
+// sameShareOutcome reports whether two share outcomes say the same thing to a
+// reader: the same status and the same people left out. When each was
+// recorded is not part of it.
+func sameShareOutcome(a, b *jobShareOutcome) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	left, _ := json.Marshal(jobShareOutcome{Status: a.Status, Skipped: a.Skipped, Deferred: a.Deferred})
+	right, _ := json.Marshal(jobShareOutcome{Status: b.Status, Skipped: b.Skipped, Deferred: b.Deferred})
+	return bytes.Equal(left, right)
 }

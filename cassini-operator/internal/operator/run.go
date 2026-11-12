@@ -172,9 +172,13 @@ type Runtime struct {
 	eventWebhook       *eventWebhook
 	eventWebhookMu     sync.Mutex
 	eventWebhookCancel context.CancelFunc
-	recordMu           sync.Mutex
-	recordJobs         map[string]*recordProcessState
-	recordWG           sync.WaitGroup
+	// eventWebhookKey is the webhook settings the worker was last built from,
+	// and eventWebhookConfigured whether it was built at all.
+	eventWebhookKey        string
+	eventWebhookConfigured bool
+	recordMu               sync.Mutex
+	recordJobs             map[string]*recordProcessState
+	recordWG               sync.WaitGroup
 	// buildExecutionMu is the final admission gate around the whole build. The
 	// configured worker count may exceed one, but CUDA recognizers and the RAM/
 	// VRAM headroom probe are not safely reservable between concurrent workers.
@@ -427,11 +431,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 				if phase == "" {
 					phase = "job"
 				}
-				runtime.emitEvent(context.Background(), eventRecordingFailed, job.ID, job.CurrentAttemptNumber, map[string]any{
-					"phase":       phase,
-					"error":       "operator restarted before the stage finished",
-					"interrupted": true,
-				})
+				runtime.emitAttemptFailure(job.ID, job.CurrentAttemptNumber, phase, "operator restarted before the stage finished", map[string]any{"interrupted": true})
 			}
 		}
 	}
@@ -1437,7 +1437,7 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 		return
 	}
 	rt.logger.Printf("record started id=%s", job.ID)
-	rt.emitEvent(rt.ctx, eventRecordingStarted, job.ID, job.CurrentAttemptNumber, map[string]any{"started_at": startedAt})
+	rt.emitEvent(eventRecordingStarted, job.ID, job.CurrentAttemptNumber, map[string]any{"started_at": startedAt})
 
 	result, err := rt.recordJobFn(rt.ctx, job, req)
 	releaseSlot()
@@ -1461,7 +1461,7 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 			rt.logger.Printf("record fail update failed id=%s: %v", job.ID, updateErr)
 			return
 		}
-		rt.emitEvent(context.Background(), eventRecordingFailed, job.ID, job.CurrentAttemptNumber, map[string]any{"phase": "record", "error": failureText})
+		rt.emitEvent(eventRecordingFailed, job.ID, job.CurrentAttemptNumber, map[string]any{"phase": "record", "error": failureText})
 		return
 	}
 	canonicalRunPath, promoteErr := promoteRunBundle(rt.cfg.WorkRoot, result.ArtifactRunPath, job.ID)
@@ -1471,7 +1471,7 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 			rt.logger.Printf("record promote failure update failed id=%s: %v", job.ID, failErr)
 			return
 		}
-		rt.emitEvent(context.Background(), eventRecordingFailed, job.ID, job.CurrentAttemptNumber, map[string]any{"phase": "record", "error": promoteErr.Error()})
+		rt.emitEvent(eventRecordingFailed, job.ID, job.CurrentAttemptNumber, map[string]any{"phase": "record", "error": promoteErr.Error()})
 		return
 	}
 	if updateErr := rt.store.UpdateRecordOutcome(context.Background(), job.ID, result, canonicalRunPath, finishedAt); updateErr != nil {
@@ -1480,10 +1480,10 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 			rt.logger.Printf("record outcome failure update failed id=%s: %v", job.ID, failErr)
 			return
 		}
-		rt.emitEvent(context.Background(), eventRecordingFailed, job.ID, job.CurrentAttemptNumber, map[string]any{"phase": "record", "error": updateErr.Error()})
+		rt.emitEvent(eventRecordingFailed, job.ID, job.CurrentAttemptNumber, map[string]any{"phase": "record", "error": updateErr.Error()})
 		return
 	}
-	rt.emitEvent(rt.ctx, eventRecordingStopped, job.ID, job.CurrentAttemptNumber, map[string]any{"stopped_at": finishedAt, "stop_reason": strings.TrimSpace(result.StopReason)})
+	rt.emitEvent(eventRecordingStopped, job.ID, job.CurrentAttemptNumber, map[string]any{"stopped_at": finishedAt, "stop_reason": strings.TrimSpace(result.StopReason)})
 	rt.removeSuccessfulCaptureDuplicate(job.ID, job.CurrentAttemptNumber)
 	// Tell spreed the recording stopped. Status only — the meeting itself
 	// goes to Nextcloud as the published .opus, never through Talk's
@@ -1504,7 +1504,7 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 			rt.logger.Printf("build queue failure update failed id=%s: %v", job.ID, updateErr)
 			return
 		}
-		rt.emitEvent(context.Background(), eventRecordingFailed, job.ID, job.CurrentAttemptNumber, map[string]any{"phase": "build", "error": err.Error()})
+		rt.emitEvent(eventRecordingFailed, job.ID, job.CurrentAttemptNumber, map[string]any{"phase": "build", "error": err.Error()})
 		return
 	}
 	rt.logger.Printf("record succeeded id=%s attempt_run=%s canonical_run=%s build_queued_at=%s stop_reason=%s", job.ID, result.ArtifactRunPath, canonicalRunPath, finishedAt, strings.TrimSpace(result.StopReason))
@@ -1538,10 +1538,7 @@ func (rt *Runtime) prepareRecordJob(ctx context.Context, provider, requestBody s
 		rt.releaseRecordSlot()
 		return createJobResponse{}, nil, fmt.Errorf("%w: %v", errRecordingSetup, err)
 	}
-	req.ProcessingPolicy = &recordingProcessingPolicy{MeetingFormat: settings.MeetingFormat, SourceRetention: settings.SourceRetention}
-	if settings.SourceRetention == sourceDeleteAfterProcessing {
-		req.ProcessingPolicy.Transcription = &settings
-	}
+	req.ProcessingPolicy = frozenProcessingPolicy(settings)
 	req.RetainVideo = settings.RetainVideo
 	req.CaptureMode = "audio-only"
 	if req.RetainVideo {

@@ -252,3 +252,44 @@ func TestReshareAnnouncesTheNewOutcome(t *testing.T) {
 		t.Fatal("no event after a re-share")
 	}
 }
+
+// A receiver hears of a re-share that changed who has the meeting, with the
+// payload publication sends, and not of one that changed nothing.
+func TestReshareEmitsSharesCompletedOnlyWhenTheOutcomeChanged(t *testing.T) {
+	f := newDirectPublishFixture(t, []sharePrincipal{{Type: "user", ID: "bob"}, {Type: "group", ID: "marketing"}}, "bob", "marketing")
+	if err := f.deliver(); err != nil {
+		t.Fatal(err)
+	}
+	f.markJobSucceeded(t)
+	attachEventWebhookForTest(t, f.rt, eventSharesCompleted)
+
+	// Still refused: the outcome is what it was.
+	if rec, _ := f.reshare(t); rec.Code != http.StatusOK {
+		t.Fatalf("reshare = %d %s", rec.Code, rec.Body.String())
+	}
+	if types := eventOutboxTypes(t, f.rt.store); len(types) != 0 {
+		t.Fatalf("events after a re-share that changed nothing = %v", types)
+	}
+
+	f.setRefused()
+	if rec, _ := f.reshare(t); rec.Code != http.StatusOK {
+		t.Fatalf("reshare = %d %s", rec.Code, rec.Body.String())
+	}
+	var raw string
+	if err := f.rt.store.db.QueryRow(`SELECT payload FROM event_outbox`).Scan(&raw); err != nil {
+		t.Fatalf("no shares.completed after the re-share reached them: %v", err)
+	}
+	var payload struct {
+		Data struct {
+			AttemptNumber int             `json:"attempt_number"`
+			Reconciled    bool            `json:"reconciled"`
+			Sharing       jobShareOutcome `json:"sharing"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if !payload.Data.Reconciled || payload.Data.Sharing.Status != shareOutcomeComplete || payload.Data.Sharing.AudienceCount != 3 || payload.Data.AttemptNumber == 0 {
+		t.Fatalf("payload = %s, want the complete outcome, its audience count and the job's attempt", raw)
+	}
+}

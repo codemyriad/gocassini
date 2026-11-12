@@ -184,3 +184,122 @@ func contextError(text string) error { return &eventTestError{text: text} }
 type eventTestError struct{ text string }
 
 func (e *eventTestError) Error() string { return e.text }
+
+func setAttemptKindForEventTest(t *testing.T, rt *Runtime, jobID, kind string) {
+	t.Helper()
+	if _, err := rt.store.db.Exec(`UPDATE job_attempts SET trigger_kind = ? WHERE job_id = ? AND attempt_number = 1`, kind, jobID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Past the build stage a summarize or speaker-edit attempt still works on a
+// copy of a meeting that is already published. Its failure at seal, at
+// publish or across a restart is never a lost recording.
+func TestAttemptFailureEventFollowsWhatTheAttemptWasFor(t *testing.T) {
+	for _, tc := range []struct {
+		kind string
+		want []string
+	}{
+		{kind: triggerKindSummarize, want: []string{eventSummaryFailed}},
+		{kind: triggerKindRefine, want: nil},
+		{kind: triggerKindRerun, want: []string{eventRecordingFailed}},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			rt, cleanup := newBareSealRuntime(t)
+			defer cleanup()
+			job, _ := seedBuildForEventTest(t, rt, "attempt-kind")
+			setAttemptKindForEventTest(t, rt, job.ID, tc.kind)
+			attachEventWebhookForTest(t, rt, eventSummaryFailed+","+eventRecordingFailed)
+
+			rt.failSeal(sealTask{JobID: job.ID, AttemptNumber: 1}, "", contextError("ffmpeg exited 1"), nowUTCString())
+			rt.emitAttemptFailure(job.ID, 1, "publish", "upload refused", nil)
+			// What the startup sweep sends for a job a restart interrupted.
+			rt.emitAttemptFailure(job.ID, 1, "build", "operator restarted before the stage finished", map[string]any{"interrupted": true})
+
+			types := eventOutboxTypes(t, rt.store)
+			var want []string
+			for range 3 {
+				want = append(want, tc.want...)
+			}
+			if strings.Join(types, ",") != strings.Join(want, ",") {
+				t.Fatalf("events = %v, want %v", types, want)
+			}
+		})
+	}
+}
+
+// A speaker-edit attempt copies the published meeting, summary included. The
+// copy's record of that summary is not a new one unless the edit rewrote it.
+func TestSpeakerEditThatKeepsTheSummaryEmitsNoSummaryEvent(t *testing.T) {
+	for name, rewrote := range map[string]bool{"kept": false, "rewritten": true} {
+		t.Run(name, func(t *testing.T) {
+			rt, cleanup := newBareSealRuntime(t)
+			defer cleanup()
+			job, run := seedBuildForEventTest(t, rt, "refine-summary")
+			setAttemptKindForEventTest(t, rt, job.ID, triggerKindRefine)
+			attachEventWebhookForTest(t, rt, eventSummaryCompleted)
+			rt.buildJobFn = func(_ context.Context, task buildTask) (string, error) {
+				meetingPath := attemptMeetingPath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber)
+				writeCompletedMeetingForEventTest(t, meetingPath)
+				if rewrote {
+					if err := rt.store.SetAttemptSummaryTimes(context.Background(), task.JobID, task.AttemptNumber, nowUTCString(), nowUTCString()); err != nil {
+						return "", err
+					}
+				}
+				return meetingPath, nil
+			}
+			rt.runBuildJob(buildTask{JobID: job.ID, AttemptNumber: 1, ArtifactRunPath: run}, 1)
+
+			if got := containsEvent(eventOutboxTypes(t, rt.store), eventSummaryCompleted); got != rewrote {
+				t.Fatalf("summary.completed emitted = %v, want %v", got, rewrote)
+			}
+		})
+	}
+}
+
+// The metadata index learns a meeting's title at publication. The events of
+// its first build are emitted before that and must name the meeting anyway,
+// with the stage the job is in once the build has been handed on.
+func TestFirstBuildEventsCarryTheTitleAndCurrentStage(t *testing.T) {
+	rt, cleanup := newBareSealRuntime(t)
+	defer cleanup()
+	job, run := seedBuildForEventTest(t, rt, "first-build")
+	binding, _ := json.Marshal(talkJobBinding{BackendURL: "https://cloud.example", RoomToken: "tok", RoomName: "Weekly operations sync"})
+	if _, err := rt.store.db.Exec(`UPDATE jobs SET talk_binding = ? WHERE id = ?`, string(binding), job.ID); err != nil {
+		t.Fatal(err)
+	}
+	attachEventWebhookForTest(t, rt, eventSummaryCompleted+","+eventBuildCompleted)
+	rt.buildJobFn = func(_ context.Context, task buildTask) (string, error) {
+		meetingPath := attemptMeetingPath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber)
+		writeCompletedMeetingForEventTest(t, meetingPath)
+		return meetingPath, nil
+	}
+	rt.runBuildJob(buildTask{JobID: job.ID, AttemptNumber: 1, ArtifactRunPath: run}, 1)
+
+	rows, err := rt.store.db.Query(`SELECT type, payload FROM event_outbox`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	seen := 0
+	for rows.Next() {
+		var eventType, raw string
+		if err := rows.Scan(&eventType, &raw); err != nil {
+			t.Fatal(err)
+		}
+		var payload outboundEventPayload
+		if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+			t.Fatal(err)
+		}
+		seen++
+		if payload.Data["title"] != "Weekly operations sync" {
+			t.Errorf("%s title = %v, want the room's name before publication", eventType, payload.Data["title"])
+		}
+		if payload.Data["stage"] != "seal" || payload.Data["state"] != "queued" {
+			t.Errorf("%s stage/state = %v/%v, want seal/queued", eventType, payload.Data["stage"], payload.Data["state"])
+		}
+	}
+	if seen != 2 {
+		t.Fatalf("events = %d, want summary.completed and build.completed", seen)
+	}
+}

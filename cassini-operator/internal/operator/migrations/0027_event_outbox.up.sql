@@ -12,6 +12,9 @@ CREATE TABLE event_outbox (
   created_at      TEXT NOT NULL,
   attempts        INTEGER NOT NULL DEFAULT 0,
   next_attempt_at TEXT NOT NULL,
+  -- Which receiver the event was queued for (a digest of its URL): an event
+  -- is never sent to a receiver configured after it was written.
+  receiver        TEXT NOT NULL DEFAULT '',
   delivered_at    TEXT,
   failed_at       TEXT,
   last_error      TEXT

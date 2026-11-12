@@ -97,7 +97,7 @@ func (rt *Runtime) runSealJob(task sealTask) {
 			rt.logger.Printf("publish queue failure update failed id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, updateErr)
 			return
 		}
-		rt.emitEvent(context.Background(), eventRecordingFailed, task.JobID, task.AttemptNumber, map[string]any{"phase": "publish", "error": err.Error()})
+		rt.emitAttemptFailure(task.JobID, task.AttemptNumber, "publish", err.Error(), nil)
 		return
 	}
 	rt.logger.Printf("seal succeeded id=%s attempt=%d opus=%s sha256=%s canonical_opus=%s publish_queued_at=%s", task.JobID, task.AttemptNumber, attemptOpus, digest, canonicalOpus, finishedAt)
@@ -111,7 +111,7 @@ func (rt *Runtime) failSeal(task sealTask, attemptOpus string, cause error, fini
 	if err := rt.store.MarkSealFailed(context.Background(), task.JobID, attemptOpus, cause.Error(), finishedAt); err != nil {
 		rt.logger.Printf("seal fail update failed id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, err)
 	}
-	rt.emitEvent(rt.ctx, eventRecordingFailed, task.JobID, task.AttemptNumber, map[string]any{"phase": "seal", "error": cause.Error()})
+	rt.emitAttemptFailure(task.JobID, task.AttemptNumber, "seal", cause.Error(), nil)
 }
 
 // enqueueSealJobNonBlocking durably marks the job seal/queued and hands it to

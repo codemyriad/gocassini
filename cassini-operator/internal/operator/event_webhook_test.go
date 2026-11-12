@@ -44,6 +44,9 @@ func newTestEventWebhook(t *testing.T, store *Store, url, secret string, events 
 		EventWebhookEvents:  strings.Split(events, ","),
 		EventWebhookTimeout: "10s",
 	}
+	if err := normalizeEventWebhookSettings(&settings); err != nil {
+		t.Fatalf("normalizeEventWebhookSettings() error = %v", err)
+	}
 	hook, err := newEventWebhook(store, log.New(io.Discard, "", 0), settings, func(key string) string {
 		if key == "APP_VERSION" {
 			return "test"
@@ -253,7 +256,7 @@ func TestEventWebhookSettingsValidationAndRedactedLog(t *testing.T) {
 		EventWebhookTimeout: "10s",
 		EventWebhookEvents:  []string{"bogus.event"},
 	}
-	if _, err := newEventWebhook(store, log.New(&logs, "", 0), settings, func(string) string { return "test" }); err == nil {
+	if err := normalizeEventWebhookSettings(&settings); err == nil {
 		t.Fatal("unknown event name was accepted")
 	}
 
@@ -270,28 +273,148 @@ func TestEventWebhookSettingsValidationAndRedactedLog(t *testing.T) {
 }
 
 // A shutdown cancels rt.ctx. The outbox insert must still happen, because that
-// is the write that lets the event survive the restart (#472 review).
-func TestEmitEventSurvivesACanceledContext(t *testing.T) {
+// is the write that lets the event survive the restart.
+func TestEmitEventSurvivesShutdown(t *testing.T) {
 	store := newTestEventStore(t)
 	insertJob(t, store.db, "job-canceled", nowUTCString())
-	hook, err := newEventWebhook(store, log.New(io.Discard, "", 0), STTSettings{
-		EventWebhookURL:     "https://hooks.example/events",
-		EventWebhookSecret:  "secret",
-		EventWebhookTimeout: "10s",
-	}, func(string) string { return "test" })
-	if err != nil {
-		t.Fatal(err)
-	}
-	rt := &Runtime{store: store, logger: log.New(io.Discard, "", 0), eventWebhook: hook, ctx: context.Background()}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	rt.emitEvent(ctx, eventRecordingStarted, "job-canceled", 1, nil)
+	rt := &Runtime{store: store, logger: log.New(io.Discard, "", 0), ctx: ctx}
+	rt.eventWebhook = newTestEventWebhook(t, store, "https://hooks.example/events", "secret", "")
+	rt.emitEvent(eventRecordingStarted, "job-canceled", 1, nil)
 
 	var count int
 	if err := store.db.QueryRow(`SELECT COUNT(*) FROM event_outbox`).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
 	if count != 1 {
-		t.Fatalf("outbox rows = %d, want the event inserted despite the canceled caller context", count)
+		t.Fatalf("outbox rows = %d, want the event inserted although the operator is stopping", count)
+	}
+}
+
+func outboxRow(t *testing.T, store *Store) (attempts int, delivered, failed, lastError string) {
+	t.Helper()
+	if err := store.db.QueryRow(`SELECT attempts, COALESCE(delivered_at, ''), COALESCE(failed_at, ''), COALESCE(last_error, '') FROM event_outbox`).
+		Scan(&attempts, &delivered, &failed, &lastError); err != nil {
+		t.Fatal(err)
+	}
+	return attempts, delivered, failed, lastError
+}
+
+// Go follows a redirect by re-issuing the POST as a GET without its body. The
+// page it lands on answering 200 must not count as a delivery.
+func TestEventWebhookDoesNotFollowRedirects(t *testing.T) {
+	store := newTestEventStore(t)
+	var landed atomic.Int32
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		landed.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer target.Close()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL, http.StatusFound)
+	}))
+	defer server.Close()
+
+	hook := newTestEventWebhook(t, store, server.URL, "secret", "")
+	if err := hook.enqueue(context.Background(), eventRecordingStarted, map[string]any{"job_id": "job-1"}); err != nil {
+		t.Fatal(err)
+	}
+	hook.deliverDue(context.Background())
+
+	attempts, delivered, failed, lastError := outboxRow(t, store)
+	if delivered != "" || landed.Load() != 0 {
+		t.Fatalf("delivered=%q, requests that followed the redirect=%d; want neither", delivered, landed.Load())
+	}
+	if attempts != 1 || failed != "" || !strings.Contains(lastError, "302") {
+		t.Fatalf("attempts=%d failed=%q last_error=%q, want one retryable failure naming the 302", attempts, failed, lastError)
+	}
+}
+
+// Retries are bounded by the event's age, not by a count: a receiver that is
+// down for an upgrade gets its events once it is back.
+func TestEventWebhookRetriesUntilTheEventIsADayOld(t *testing.T) {
+	store := newTestEventStore(t)
+	hook := newTestEventWebhook(t, store, "https://hooks.example/events", "secret", "")
+	receiver := eventReceiverID(hook.cfg.URL)
+	ctx := context.Background()
+	fresh := nowUTCString()
+	if err := store.insertEvent(ctx, "evt_fresh", eventRecordingStarted, `{}`, fresh, receiver); err != nil {
+		t.Fatal(err)
+	}
+	// Far more attempts than the old ceiling, and still inside the window.
+	hook.reschedule(outboxEvent{ID: "evt_fresh", Attempts: 200, CreatedAt: fresh}, "receiver returned HTTP 502")
+	attempts, _, failed, _ := outboxRow(t, store)
+	if failed != "" || attempts != 201 {
+		t.Fatalf("attempts=%d failed=%q, want the fresh event rescheduled", attempts, failed)
+	}
+	var next string
+	if err := store.db.QueryRow(`SELECT next_attempt_at FROM event_outbox`).Scan(&next); err != nil {
+		t.Fatal(err)
+	}
+	if at, err := time.Parse(sortableUTCLayout, next); err != nil || time.Until(at) > eventWebhookRetryCap+time.Second {
+		t.Fatalf("next attempt at %q (%v), want at most the five-minute cap away", next, err)
+	}
+
+	old := formatUTCString(time.Now().Add(-eventWebhookRetryWindow - time.Minute))
+	hook.reschedule(outboxEvent{ID: "evt_fresh", Attempts: 3, CreatedAt: old}, "receiver returned HTTP 502")
+	if _, _, failed, lastError := outboxRow(t, store); failed == "" || !strings.Contains(lastError, "gave up") {
+		t.Fatalf("failed=%q last_error=%q, want a day-old event closed", failed, lastError)
+	}
+}
+
+// A queued payload carries titles and summaries. It goes to the receiver it
+// was queued for or to nobody: not to one configured later.
+func TestEventsQueuedForAnotherReceiverAreNeverSent(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	configure := func(url string) {
+		s := STTSettings{EventWebhookURL: url, EventWebhookSecret: "secret"}
+		if err := normalizeEventWebhookSettings(&s); err != nil {
+			t.Fatal(err)
+		}
+		rt.configureEventWebhook(s)
+	}
+	pending := func() (count int) {
+		if err := rt.store.db.QueryRow(`SELECT COUNT(*) FROM event_outbox WHERE delivered_at IS NULL AND failed_at IS NULL`).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		return count
+	}
+	queue := func(id, url string) {
+		// As if the receiver was down: queued, not yet due.
+		later := formatUTCString(time.Now().Add(time.Hour))
+		if _, err := rt.store.db.Exec(`INSERT INTO event_outbox (id, type, payload, created_at, attempts, next_attempt_at, receiver) VALUES (?, ?, '{}', ?, 1, ?, ?)`,
+			id, eventRecordingStarted, nowUTCString(), later, eventReceiverID(url)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const first, second = "http://127.0.0.1:9/first", "http://127.0.0.1:9/second"
+
+	configure(first)
+	queue("evt_one", first)
+	configure(first)
+	if pending() != 1 {
+		t.Fatal("an unchanged receiver lost its queued event")
+	}
+	configure(second)
+	if pending() != 0 {
+		t.Fatal("an event queued for the first receiver is still pending for the second")
+	}
+	if _, _, _, lastError := outboxRow(t, rt.store); lastError != eventFailureReceiverChanged {
+		t.Fatalf("last_error = %q, want %q", lastError, eventFailureReceiverChanged)
+	}
+
+	queue("evt_two", second)
+	configure("")
+	if pending() != 0 {
+		t.Fatal("turning delivery off left an event waiting for whichever receiver comes next")
+	}
+
+	// A row that somehow outlives the change is still not offered to a worker
+	// for another receiver.
+	queue("evt_three", first)
+	if _, ok, err := rt.store.nextDueEvent(context.Background(), formatUTCString(time.Now().Add(2*time.Hour)), eventReceiverID(second)); err != nil || ok {
+		t.Fatalf("nextDueEvent() for another receiver ok=%v err=%v, want none", ok, err)
 	}
 }

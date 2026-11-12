@@ -52,9 +52,14 @@ var eventCatalog = []string{
 
 const (
 	eventWebhookDefaultTimeout = 10 * time.Second
-	eventWebhookMaxAttempts    = 12
-	eventWebhookRetryCap       = 5 * time.Minute
-	eventWebhookDrainBatch     = 10
+	// An undelivered event is retried, at most five minutes apart, until it
+	// is a day old: long enough for a receiver's upgrade or a bad night, short
+	// enough that a receiver does not wake up to last week's meetings.
+	eventWebhookRetryWindow = 24 * time.Hour
+	eventWebhookRetryCap    = 5 * time.Minute
+	eventWebhookDrainBatch  = 10
+
+	eventFailureReceiverChanged = "receiver changed"
 )
 
 type eventWebhookConfig struct {
@@ -63,8 +68,10 @@ type eventWebhookConfig struct {
 	Events  map[string]bool
 	Timeout time.Duration
 	Version string
-	// baseRetryDelay is a test seam: production uses one second.
+	// baseRetryDelay and retryWindow are test seams: production uses one
+	// second and eventWebhookRetryWindow.
 	baseRetryDelay time.Duration
+	retryWindow    time.Duration
 }
 
 type eventWebhook struct {
@@ -86,10 +93,38 @@ type outboundEventPayload struct {
 }
 
 type outboxEvent struct {
-	ID       string
-	Type     string
-	Payload  string
-	Attempts int
+	ID        string
+	Type      string
+	Payload   string
+	Attempts  int
+	CreatedAt string
+}
+
+// eventReceiverID names the receiver an event was queued for without storing
+// its URL, which may carry a token, a second time. An event is only ever sent
+// to the receiver it was queued for.
+func eventReceiverID(rawURL string) string {
+	if rawURL == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(rawURL))
+	return hex.EncodeToString(sum[:8])
+}
+
+// eventWebhookSettingsKey changes exactly when the delivery worker has to be
+// replaced: any of the four persisted values, or why they were refused.
+func eventWebhookSettingsKey(s STTSettings) string {
+	return strings.Join([]string{
+		s.EventWebhookURL, s.EventWebhookSecret, strings.Join(s.EventWebhookEvents, ","), s.EventWebhookTimeout, s.eventWebhookInvalid,
+	}, "\x00")
+}
+
+// withoutEventWebhook is the settings without the receiver and its secret,
+// for every copy that leaves the settings file: a job's frozen policy must not
+// carry them into request_json.
+func (s STTSettings) withoutEventWebhook() STTSettings {
+	s.EventWebhookURL, s.EventWebhookSecret, s.EventWebhookEvents, s.EventWebhookTimeout = "", "", nil, ""
+	return s
 }
 
 // normalizeEventWebhookSettings trims and validates the persisted webhook
@@ -157,33 +192,43 @@ func redactEventWebhookURL(raw string) string {
 	return parsed.Scheme + "://" + parsed.Host
 }
 
+// newEventWebhook builds the delivery worker from settings that
+// normalizeEventWebhookSettings has accepted. An empty URL means no worker.
 func newEventWebhook(store *Store, logger *log.Logger, settings STTSettings, lookupEnv func(string) string) (*eventWebhook, error) {
-	rawURL := strings.TrimSpace(settings.EventWebhookURL)
+	rawURL := settings.EventWebhookURL
 	if rawURL == "" {
 		return nil, nil
 	}
-	if err := normalizeEventWebhookSettings(&settings); err != nil {
-		return nil, err
+	timeout := eventWebhookDefaultTimeout
+	if settings.EventWebhookTimeout != "" {
+		parsed, err := time.ParseDuration(settings.EventWebhookTimeout)
+		if err != nil {
+			return nil, fmt.Errorf("event_webhook_timeout: %w", err)
+		}
+		timeout = parsed
 	}
 	events := map[string]bool{}
-	if len(settings.EventWebhookEvents) == 0 {
-		for _, name := range eventCatalog {
-			events[name] = true
-		}
-	} else {
-		for _, name := range settings.EventWebhookEvents {
-			events[name] = true
-		}
+	names := settings.EventWebhookEvents
+	if len(names) == 0 {
+		names = eventCatalog
 	}
-	timeout, err := time.ParseDuration(settings.EventWebhookTimeout)
-	if err != nil {
-		return nil, err
+	for _, name := range names {
+		events[name] = true
 	}
 	logger.Printf("event webhooks enabled receiver=%s events=%d timeout=%s", redactEventWebhookURL(rawURL), len(events), timeout)
 	return &eventWebhook{
-		store:  store,
-		cfg:    eventWebhookConfig{URL: rawURL, Secret: settings.EventWebhookSecret, Events: events, Timeout: timeout, Version: strings.TrimSpace(lookupEnv("APP_VERSION")), baseRetryDelay: time.Second},
-		client: &http.Client{Timeout: timeout},
+		store: store,
+		cfg: eventWebhookConfig{
+			URL: rawURL, Secret: settings.EventWebhookSecret, Events: events, Timeout: timeout,
+			Version: strings.TrimSpace(lookupEnv("APP_VERSION")), baseRetryDelay: time.Second, retryWindow: eventWebhookRetryWindow,
+		},
+		// A redirect is not followed: Go would re-issue the signed POST as a
+		// GET without its body, and the page it lands on answering 200 would
+		// mark an event delivered that no receiver saw.
+		client: &http.Client{
+			Timeout:       timeout,
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		},
 		logger: logger,
 		kick:   make(chan struct{}, 1),
 	}, nil
@@ -237,7 +282,7 @@ func (e *eventWebhook) enqueue(ctx context.Context, eventType string, data map[s
 	if err != nil {
 		return fmt.Errorf("marshal event %s: %w", eventType, err)
 	}
-	if err := e.store.insertEvent(ctx, payload.ID, eventType, string(raw), at); err != nil {
+	if err := e.store.insertEvent(ctx, payload.ID, eventType, string(raw), at, eventReceiverID(e.cfg.URL)); err != nil {
 		return err
 	}
 	select {
@@ -249,7 +294,7 @@ func (e *eventWebhook) enqueue(ctx context.Context, eventType string, data map[s
 
 func (e *eventWebhook) deliverDue(ctx context.Context) {
 	for i := 0; i < eventWebhookDrainBatch; i++ {
-		event, ok, err := e.store.nextDueEvent(ctx, nowUTCString())
+		event, ok, err := e.store.nextDueEvent(ctx, nowUTCString(), eventReceiverID(e.cfg.URL))
 		if err != nil {
 			e.logger.Printf("event webhook outbox read failed: %v", err)
 			return
@@ -283,6 +328,11 @@ func (e *eventWebhook) deliver(ctx context.Context, event outboxEvent) {
 
 	resp, err := e.client.Do(req)
 	if err != nil {
+		if ctx.Err() != nil {
+			// This worker is being replaced or the operator is stopping: the
+			// receiver did not fail, so the event keeps its place in the queue.
+			return
+		}
 		e.reschedule(event, fmt.Sprintf("request: %v", err))
 		return
 	}
@@ -295,6 +345,8 @@ func (e *eventWebhook) deliver(ctx context.Context, event outboxEvent) {
 		return
 	}
 
+	// Everything that is not a 2xx is a failure, a redirect included. Only a
+	// 4xx that says "this request is wrong" is final.
 	detail := fmt.Sprintf("receiver returned HTTP %d", resp.StatusCode)
 	permanent := resp.StatusCode >= 400 && resp.StatusCode <= 499 &&
 		resp.StatusCode != http.StatusRequestTimeout &&
@@ -310,8 +362,12 @@ func (e *eventWebhook) deliver(ctx context.Context, event outboxEvent) {
 
 func (e *eventWebhook) reschedule(event outboxEvent, detail string) {
 	attempts := event.Attempts + 1
-	if attempts >= eventWebhookMaxAttempts {
-		e.markFailed(event.ID, fmt.Sprintf("%s after %d attempts", detail, attempts))
+	window := e.cfg.retryWindow
+	if window <= 0 {
+		window = eventWebhookRetryWindow
+	}
+	if created, err := time.Parse(sortableUTCLayout, event.CreatedAt); err == nil && time.Since(created) >= window {
+		e.markFailed(event.ID, fmt.Sprintf("%s; gave up after %s and %d attempts", detail, window, attempts))
 		return
 	}
 	delay := e.cfg.baseRetryDelay
@@ -337,24 +393,24 @@ func (e *eventWebhook) markFailed(id, detail string) {
 	}
 }
 
-func (s *Store) insertEvent(ctx context.Context, id, eventType, payload, at string) error {
+func (s *Store) insertEvent(ctx context.Context, id, eventType, payload, at, receiver string) error {
 	_, err := s.db.ExecContext(ctx, `
-INSERT INTO event_outbox (id, type, payload, created_at, attempts, next_attempt_at)
-VALUES (?, ?, ?, ?, 0, ?)`, id, eventType, payload, at, at)
+INSERT INTO event_outbox (id, type, payload, created_at, attempts, next_attempt_at, receiver)
+VALUES (?, ?, ?, ?, 0, ?, ?)`, id, eventType, payload, at, at, receiver)
 	if err != nil {
 		return fmt.Errorf("insert event outbox: %w", err)
 	}
 	return nil
 }
 
-func (s *Store) nextDueEvent(ctx context.Context, at string) (outboxEvent, bool, error) {
+func (s *Store) nextDueEvent(ctx context.Context, at, receiver string) (outboxEvent, bool, error) {
 	var event outboxEvent
 	err := s.db.QueryRowContext(ctx, `
-SELECT id, type, payload, attempts
+SELECT id, type, payload, attempts, created_at
 FROM event_outbox
-WHERE delivered_at IS NULL AND failed_at IS NULL AND next_attempt_at <= ?
+WHERE delivered_at IS NULL AND failed_at IS NULL AND next_attempt_at <= ? AND receiver = ?
 ORDER BY next_attempt_at ASC, created_at ASC
-LIMIT 1`, at).Scan(&event.ID, &event.Type, &event.Payload, &event.Attempts)
+LIMIT 1`, at, receiver).Scan(&event.ID, &event.Type, &event.Payload, &event.Attempts, &event.CreatedAt)
 	if err == sql.ErrNoRows {
 		return outboxEvent{}, false, nil
 	}
@@ -380,6 +436,21 @@ func (s *Store) markEventFailed(ctx context.Context, id, at, detail string) erro
 	return nil
 }
 
+// failPendingEventsForOtherReceivers closes every undelivered event that was
+// queued for a receiver other than the one now configured (none, when
+// delivery is off). A payload carries meeting titles and summaries; it goes to
+// the receiver it was written for or to nobody.
+func (s *Store) failPendingEventsForOtherReceivers(ctx context.Context, receiver, at string) (int64, error) {
+	result, err := s.db.ExecContext(ctx, `
+UPDATE event_outbox SET failed_at = ?, last_error = ?
+WHERE delivered_at IS NULL AND failed_at IS NULL AND receiver <> ?`, at, eventFailureReceiverChanged, receiver)
+	if err != nil {
+		return 0, fmt.Errorf("fail events for other receivers: %w", err)
+	}
+	count, _ := result.RowsAffected()
+	return count, nil
+}
+
 func (s *Store) rescheduleEvent(ctx context.Context, id string, attempts int, nextAt, detail string) error {
 	_, err := s.db.ExecContext(ctx, `
 UPDATE event_outbox SET attempts = ?, next_attempt_at = ?, last_error = ? WHERE id = ?`, attempts, nextAt, detail, id)
@@ -391,23 +462,51 @@ UPDATE event_outbox SET attempts = ?, next_attempt_at = ?, last_error = ? WHERE 
 
 // emitEvent assembles the common job facts, adds the event-specific fields and
 // queues the webhook. It is deliberately fire-and-forget: every caller is on a
-// recording path where a webhook receiver must never become a dependency.
-func (rt *Runtime) emitEvent(ctx context.Context, eventType, jobID string, attemptNumber int, extra map[string]any) {
+// recording path where a webhook receiver must never become a dependency. It
+// takes no context: the outbox insert is what makes an event survive a
+// restart, so a caller that is shutting down must not be able to cancel it.
+func (rt *Runtime) emitEvent(eventType, jobID string, attemptNumber int, extra map[string]any) {
 	rt.eventWebhookMu.Lock()
 	hook := rt.eventWebhook
 	rt.eventWebhookMu.Unlock()
 	if hook == nil || !hook.enabled(eventType) {
 		return
 	}
-	// The payload is built from the job's persisted state; a canceled caller
-	// context (shutdown) must not prevent the outbox insert, because that write
-	// is what makes the event survive the restart (#472 review).
 	data := rt.eventBaseData(context.Background(), jobID, attemptNumber)
 	for key, value := range extra {
 		data[key] = value
 	}
 	if err := hook.enqueue(context.Background(), eventType, data); err != nil {
 		rt.logger.Printf("event %s enqueue failed job=%s: %v", eventType, jobID, err)
+	}
+}
+
+// emitAttemptFailure reports that one attempt reached a terminal failure at
+// phase. What that means to a receiver depends on what the attempt was for. A
+// summarize attempt works on a copy of a meeting that is already published,
+// so its failure at any stage is a summary that was not written, never a lost
+// recording. A speaker-edit attempt likewise leaves the published meeting as
+// it was, and the catalog has no event for it. Every other attempt is the
+// recording itself.
+func (rt *Runtime) emitAttemptFailure(jobID string, attemptNumber int, phase, detail string, extra map[string]any) {
+	data := map[string]any{"phase": phase, "error": detail}
+	for key, value := range extra {
+		data[key] = value
+	}
+	kind := ""
+	if attempt, err := rt.store.GetJobAttempt(context.Background(), jobID, attemptNumber); err == nil {
+		kind = attempt.TriggerKind
+	}
+	switch kind {
+	case triggerKindSummarize:
+		if phase == "build" {
+			// A summarize attempt's build stage is the summary step.
+			data["phase"] = "summary"
+		}
+		rt.emitEvent(eventSummaryFailed, jobID, attemptNumber, data)
+	case triggerKindRefine:
+	default:
+		rt.emitEvent(eventRecordingFailed, jobID, attemptNumber, data)
 	}
 }
 
@@ -429,15 +528,23 @@ func (rt *Runtime) eventBaseData(ctx context.Context, jobID string, attemptNumbe
 			data["record_finished_at"] = *job.RecordFinishedAt
 		}
 	}
-	if _, roomName := rt.talkRoomForJob(jobID); strings.TrimSpace(roomName) != "" {
+	_, roomName := rt.talkRoomForJob(jobID)
+	if strings.TrimSpace(roomName) != "" {
 		data["room_name"] = roomName
 	}
 	facts := rt.meetingFactsFor(ctx, jobID)
-	if facts.Title != "" {
-		data["title"] = facts.Title
+	title := facts.Title
+	if title == "" {
+		// The metadata index learns a meeting's title when it is published.
+		// Until then the title is the one the build stamps into the bundle.
+		title = strings.TrimSpace(rt.defaultMeetingTitle(jobID, roomName))
+	}
+	if title != "" {
+		data["title"] = title
 	}
 	if !facts.StartedAt.IsZero() {
-		data["started_at"] = facts.StartedAt.UTC().Format(time.RFC3339)
+		// The store's own layout, as every other time in the payload.
+		data["started_at"] = formatUTCString(facts.StartedAt)
 	}
 	if facts.Duration > 0 {
 		data["duration_seconds"] = int(facts.Duration.Seconds())
@@ -445,20 +552,31 @@ func (rt *Runtime) eventBaseData(ctx context.Context, jobID string, attemptNumbe
 	return data
 }
 
-// configureEventWebhook replaces the delivery worker after a settings change.
-// The outbox is shared, so events already queued for the old receiver remain
-// queued and are delivered by the new configuration once it starts.
+// configureEventWebhook makes the delivery worker match settings. It is called
+// on every settings read and write, so it does nothing unless the webhook
+// values changed: replacing the worker cancels a delivery in flight.
 func (rt *Runtime) configureEventWebhook(settings STTSettings) {
+	key := eventWebhookSettingsKey(settings)
+	rt.eventWebhookMu.Lock()
+	if rt.eventWebhookConfigured && rt.eventWebhookKey == key {
+		rt.eventWebhookMu.Unlock()
+		return
+	}
 	hook, err := newEventWebhook(rt.store, rt.logger, settings, os.Getenv)
-	if err != nil {
+	switch {
+	case err != nil:
 		rt.logger.Printf("event webhooks disabled: %v", err)
 		hook = nil
+	case settings.eventWebhookInvalid != "":
+		rt.logger.Printf("event webhooks disabled: settings.json was not accepted: %s", settings.eventWebhookInvalid)
 	}
-	rt.eventWebhookMu.Lock()
 	cancel := rt.eventWebhookCancel
 	rt.eventWebhook = hook
 	rt.eventWebhookCancel = nil
+	rt.eventWebhookKey, rt.eventWebhookConfigured = key, true
+	receiver := ""
 	if hook != nil {
+		receiver = eventReceiverID(hook.cfg.URL)
 		base := rt.ctx
 		if base == nil {
 			base = context.Background()
@@ -470,5 +588,13 @@ func (rt *Runtime) configureEventWebhook(settings STTSettings) {
 	rt.eventWebhookMu.Unlock()
 	if cancel != nil {
 		cancel()
+	}
+	if rt.store == nil {
+		return
+	}
+	if dropped, err := rt.store.failPendingEventsForOtherReceivers(context.Background(), receiver, nowUTCString()); err != nil {
+		rt.logger.Printf("event webhook outbox cleanup failed: %v", err)
+	} else if dropped > 0 {
+		rt.logger.Printf("event webhooks: %d undelivered events closed, the receiver changed", dropped)
 	}
 }

@@ -53,10 +53,14 @@ type STTSettings struct {
 	EventWebhookSecret  string   `json:"event_webhook_secret,omitempty"`
 	EventWebhookEvents  []string `json:"event_webhook_events,omitempty"`
 	EventWebhookTimeout string   `json:"event_webhook_timeout,omitempty"`
-	Source              string   `json:"source"` // "auto" | "user"
-	HardwareFingerprint string   `json:"hardware_fingerprint"`
-	DetectedGPU         bool     `json:"detected_gpu"`
-	Cores               int      `json:"cores"`
+	// eventWebhookInvalid is why the webhook values in settings.json were not
+	// accepted, when they were not. The four fields above are then empty and
+	// delivery is off; everything else in the file still applies.
+	eventWebhookInvalid string
+	Source              string `json:"source"` // "auto" | "user"
+	HardwareFingerprint string `json:"hardware_fingerprint"`
+	DetectedGPU         bool   `json:"detected_gpu"`
+	Cores               int    `json:"cores"`
 
 	// StandInFor, StandInReason and StandInDetail are set by build admission
 	// alone, for one build: ActiveModel is then a retired model standing in
@@ -321,7 +325,12 @@ func LoadOrInitSettingsWithMigrationReporter(path string, report SettingsMigrati
 		return STTSettings{}, fmt.Errorf("invalid meeting_format %q", s.MeetingFormat)
 	}
 	if err := normalizeEventWebhookSettings(&s); err != nil {
-		return STTSettings{}, fmt.Errorf("parse settings %s event webhook: %w", path, err)
+		// A mistake in the webhook values turns the webhook off. It must not
+		// fail the load: the caller would fall back to detected defaults and
+		// lose the model, retention and format the admin chose.
+		s = s.withoutEventWebhook()
+		s.EventWebhookTimeout = eventWebhookDefaultTimeout.String()
+		s.eventWebhookInvalid = err.Error()
 	}
 	if err := normalizeSourceRetention(&s); err != nil {
 		return STTSettings{}, err
@@ -376,6 +385,7 @@ func LoadOrInitSettingsWithMigrationReporter(path string, report SettingsMigrati
 			s.EventWebhookSecret = previous.EventWebhookSecret
 			s.EventWebhookEvents = previous.EventWebhookEvents
 			s.EventWebhookTimeout = previous.EventWebhookTimeout
+			s.eventWebhookInvalid = previous.eventWebhookInvalid
 			// Vocabulary is independent of the hardware-derived quality tier.
 			// Preserve it when re-fingerprinting an auto policy.
 			s.TranscriptionTerms = terms
@@ -663,7 +673,17 @@ func (s STTSettings) modelForDevice(device string) string {
 
 type settingsResponse struct {
 	STTSettings
-	Effective effectiveSTT `json:"effective"`
+	// The signing secret is write-only: a response says whether one is stored
+	// and never what it is.
+	EventWebhookSecretSet bool         `json:"event_webhook_secret_set"`
+	Effective             effectiveSTT `json:"effective"`
+}
+
+func (rt *Runtime) settingsResponseFor(s STTSettings) settingsResponse {
+	effective := rt.effectiveFor(s)
+	secretSet := s.EventWebhookSecret != ""
+	s.EventWebhookSecret = ""
+	return settingsResponse{STTSettings: s, EventWebhookSecretSet: secretSet, Effective: effective}
 }
 
 // settingsUpdate is the PUT body. Pointers distinguish "field omitted" from
@@ -762,7 +782,7 @@ func (rt *Runtime) handleGetSettings(w http.ResponseWriter) {
 		rt.configureEventWebhook(s)
 	}
 	rt.settingsWriteMu.Unlock()
-	writeJSON(w, http.StatusOK, settingsResponse{STTSettings: s, Effective: rt.effectiveFor(s)})
+	writeJSON(w, http.StatusOK, rt.settingsResponseFor(s))
 }
 
 // transcriptionSelectionChanged reports whether next turns transcription on, or
@@ -858,6 +878,8 @@ func (rt *Runtime) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	if in.EventWebhookURL != nil {
 		updated.EventWebhookURL = *in.EventWebhookURL
 	}
+	// An omitted secret keeps the stored one: responses never carry it, so a
+	// client that sends back what it read must not erase it.
 	if in.EventWebhookSecret != nil {
 		updated.EventWebhookSecret = *in.EventWebhookSecret
 	}
@@ -915,5 +937,5 @@ func (rt *Runtime) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	rt.setSettings(updated)
 	rt.configureEventWebhook(updated)
-	writeJSON(w, http.StatusOK, settingsResponse{STTSettings: updated, Effective: rt.effectiveFor(updated)})
+	writeJSON(w, http.StatusOK, rt.settingsResponseFor(updated))
 }

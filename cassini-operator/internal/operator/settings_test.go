@@ -958,3 +958,111 @@ func TestPutSettingsRejectsInvalidEventWebhook(t *testing.T) {
 		}
 	}
 }
+
+// GET /settings runs on every Operator page load. It must not replace the
+// delivery worker, which would cancel a delivery in flight.
+func TestReadingSettingsDoesNotRestartTheEventWebhook(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	put := func(body string) {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		rt.handlePutSettings(rec, httptest.NewRequest(http.MethodPut, "/settings", strings.NewReader(body)))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("PUT settings code = %d body=%s", rec.Code, rec.Body.String())
+		}
+	}
+	worker := func() *eventWebhook {
+		rt.eventWebhookMu.Lock()
+		defer rt.eventWebhookMu.Unlock()
+		return rt.eventWebhook
+	}
+	put(`{"event_webhook_url":"https://hooks.example/events","event_webhook_secret":"one"}`)
+	first := worker()
+	if first == nil {
+		t.Fatal("webhook was not configured")
+	}
+	for i := 0; i < 3; i++ {
+		rt.handleGetSettings(httptest.NewRecorder())
+	}
+	put(`{"retain_video":false}`)
+	if worker() != first {
+		t.Fatal("reading settings, or saving an unrelated one, replaced the delivery worker")
+	}
+	put(`{"event_webhook_secret":"two"}`)
+	if worker() == first {
+		t.Fatal("a new secret did not replace the delivery worker")
+	}
+}
+
+// One mistake in the webhook values turns the webhook off. It must not cost
+// the admin every other setting in the file.
+func TestInvalidEventWebhookInSettingsFileKeepsEverythingElse(t *testing.T) {
+	for name, webhook := range map[string]string{
+		"missing secret":  `"event_webhook_url":"https://hooks.example/events"`,
+		"unknown event":   `"event_webhook_url":"https://hooks.example/events","event_webhook_secret":"s","event_webhook_events":["summary.complete"]`,
+		"invalid timeout": `"event_webhook_url":"https://hooks.example/events","event_webhook_secret":"s","event_webhook_timeout":"2m"`,
+	} {
+		path := filepath.Join(t.TempDir(), "settings.json")
+		raw := `{"meeting_format":"json","retain_video":true,"source":"user","quality":"balanced","search_aliases":[["Eisbuk","ice book"]],` + webhook + `}`
+		if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		loaded, err := LoadOrInitSettings(path)
+		if err != nil {
+			t.Fatalf("%s: LoadOrInitSettings() error = %v, want the rest of the file loaded", name, err)
+		}
+		if loaded.MeetingFormat != "json" || !loaded.RetainVideo || len(loaded.SearchAliases) != 1 {
+			t.Errorf("%s: loaded = %+v, want the other settings kept", name, loaded)
+		}
+		if loaded.EventWebhookURL != "" || loaded.EventWebhookSecret != "" || loaded.eventWebhookInvalid == "" {
+			t.Errorf("%s: webhook = %q invalid=%q, want delivery off and the reason kept", name, loaded.EventWebhookURL, loaded.eventWebhookInvalid)
+		}
+		var logs strings.Builder
+		rt := &Runtime{store: newTestEventStore(t), logger: log.New(&logs, "", 0)}
+		rt.configureEventWebhook(loaded)
+		rt.configureEventWebhook(loaded)
+		if rt.eventWebhook != nil || strings.Count(logs.String(), "event webhooks disabled") != 1 {
+			t.Errorf("%s: worker=%v log=%q, want no worker and the reason logged once", name, rt.eventWebhook, logs.String())
+		}
+	}
+}
+
+// The signing secret is write-only, and neither it nor the receiver URL is
+// copied into a job.
+func TestEventWebhookSecretIsNeverReturned(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	request := func(method, body string) string {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		rt.settingsHandler(rec, httptest.NewRequest(method, "/settings", strings.NewReader(body)))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s settings code = %d body=%s", method, rec.Code, rec.Body.String())
+		}
+		return rec.Body.String()
+	}
+	for _, body := range []string{
+		request(http.MethodPut, `{"event_webhook_url":"https://hooks.example/events?token=t","event_webhook_secret":"signing-secret"}`),
+		request(http.MethodGet, ""),
+	} {
+		if strings.Contains(body, "signing-secret") || !strings.Contains(body, `"event_webhook_secret_set":true`) {
+			t.Fatalf("settings response = %s, want the secret withheld and reported as set", body)
+		}
+	}
+	// A client that saves what it read back sends no secret; the stored one stays.
+	request(http.MethodPut, `{"event_webhook_events":["summary.completed"]}`)
+	if got := rt.currentSettings().EventWebhookSecret; got != "signing-secret" {
+		t.Fatalf("stored secret after a save without one = %q", got)
+	}
+
+	settings := rt.currentSettings()
+	settings.SourceRetention = sourceDeleteAfterProcessing
+	raw, err := json.Marshal(TriggerRequest{ProcessingPolicy: frozenProcessingPolicy(settings)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "signing-secret") || strings.Contains(string(raw), "hooks.example") || strings.Contains(string(raw), "event_webhook") {
+		t.Fatalf("a job's frozen policy carries the webhook: %s", raw)
+	}
+}

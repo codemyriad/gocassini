@@ -711,7 +711,7 @@ func TestMigrateDownDropsEventOutbox(t *testing.T) {
 	}
 	defer store.Close()
 	ctx := context.Background()
-	if err := store.insertEvent(ctx, "evt_before_rollback", eventSummaryCompleted, `{"type":"summary.completed"}`, nowUTCString()); err != nil {
+	if err := store.insertEvent(ctx, "evt_before_rollback", eventSummaryCompleted, `{"type":"summary.completed"}`, nowUTCString(), ""); err != nil {
 		t.Fatalf("insertEvent() error = %v", err)
 	}
 
@@ -724,13 +724,13 @@ func TestMigrateDownDropsEventOutbox(t *testing.T) {
 	if err := store.ensureSchema(); err != nil {
 		t.Fatalf("ensureSchema() error = %v", err)
 	}
-	if _, ok, err := store.nextDueEvent(ctx, nowUTCString()); err != nil || ok {
+	if _, ok, err := store.nextDueEvent(ctx, nowUTCString(), ""); err != nil || ok {
 		t.Fatalf("nextDueEvent() after re-upgrade ok=%v, err=%v; want an empty, working outbox", ok, err)
 	}
-	if err := store.insertEvent(ctx, "evt_after_upgrade", eventRecordingStarted, `{"type":"recording.started"}`, nowUTCString()); err != nil {
+	if err := store.insertEvent(ctx, "evt_after_upgrade", eventRecordingStarted, `{"type":"recording.started"}`, nowUTCString(), ""); err != nil {
 		t.Fatalf("insertEvent() after re-upgrade error = %v", err)
 	}
-	if event, ok, err := store.nextDueEvent(ctx, nowUTCString()); err != nil || !ok || event.ID != "evt_after_upgrade" {
+	if event, ok, err := store.nextDueEvent(ctx, nowUTCString(), ""); err != nil || !ok || event.ID != "evt_after_upgrade" {
 		t.Fatalf("nextDueEvent() after re-upgrade = %+v, %v, %v", event, ok, err)
 	}
 }
