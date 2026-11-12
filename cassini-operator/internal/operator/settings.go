@@ -44,11 +44,19 @@ type STTSettings struct {
 	// recogniser so it gets the name RIGHT next time (D-726), while these find
 	// the recordings where it already got it wrong. An operator needs both, and
 	// only ever learns the variants by reading a transcript.
-	SearchAliases       [][]string `json:"search_aliases,omitempty"`
-	Source              string     `json:"source"` // "auto" | "user"
-	HardwareFingerprint string     `json:"hardware_fingerprint"`
-	DetectedGPU         bool       `json:"detected_gpu"`
-	Cores               int        `json:"cores"`
+	SearchAliases [][]string `json:"search_aliases,omitempty"`
+	// Lifecycle event webhooks. These live in settings.json, not the ExApp's
+	// creation-time deploy environment, so enabling, rotating the secret or
+	// changing the allow-list does not require recreating the ExApp. Empty URL
+	// disables delivery.
+	EventWebhookURL     string   `json:"event_webhook_url,omitempty"`
+	EventWebhookSecret  string   `json:"event_webhook_secret,omitempty"`
+	EventWebhookEvents  []string `json:"event_webhook_events,omitempty"`
+	EventWebhookTimeout string   `json:"event_webhook_timeout,omitempty"`
+	Source              string   `json:"source"` // "auto" | "user"
+	HardwareFingerprint string   `json:"hardware_fingerprint"`
+	DetectedGPU         bool     `json:"detected_gpu"`
+	Cores               int      `json:"cores"`
 
 	// StandInFor, StandInReason and StandInDetail are set by build admission
 	// alone, for one build: ActiveModel is then a retired model standing in
@@ -265,6 +273,7 @@ func detectSettings() STTSettings {
 	cores := runtime.NumCPU()
 	return STTSettings{
 		MeetingFormat:       "opus",
+		EventWebhookTimeout: eventWebhookDefaultTimeout.String(),
 		Quality:             defaultQualityForHardware(cudaCapableHost()),
 		Source:              sttSourceAuto,
 		HardwareFingerprint: hardwareFingerprint(gpu, cores),
@@ -310,6 +319,9 @@ func LoadOrInitSettingsWithMigrationReporter(path string, report SettingsMigrati
 	}
 	if s.MeetingFormat != "opus" && s.MeetingFormat != "json" {
 		return STTSettings{}, fmt.Errorf("invalid meeting_format %q", s.MeetingFormat)
+	}
+	if err := normalizeEventWebhookSettings(&s); err != nil {
+		return STTSettings{}, fmt.Errorf("parse settings %s event webhook: %w", path, err)
 	}
 	if err := normalizeSourceRetention(&s); err != nil {
 		return STTSettings{}, err
@@ -360,6 +372,10 @@ func LoadOrInitSettingsWithMigrationReporter(path string, report SettingsMigrati
 			s.SourceRetention = previous.SourceRetention
 			s.SearchAliases = previous.SearchAliases
 			s.RetainVideo = previous.RetainVideo
+			s.EventWebhookURL = previous.EventWebhookURL
+			s.EventWebhookSecret = previous.EventWebhookSecret
+			s.EventWebhookEvents = previous.EventWebhookEvents
+			s.EventWebhookTimeout = previous.EventWebhookTimeout
 			// Vocabulary is independent of the hardware-derived quality tier.
 			// Preserve it when re-fingerprinting an auto policy.
 			s.TranscriptionTerms = terms
@@ -428,6 +444,9 @@ func Save(path string, s STTSettings) error {
 	if s.MeetingFormat != "opus" && s.MeetingFormat != "json" {
 		return fmt.Errorf("meeting_format must be opus or json")
 	}
+	if err := normalizeEventWebhookSettings(&s); err != nil {
+		return err
+	}
 	if strings.TrimSpace(path) == "" {
 		return fmt.Errorf("settings path must not be empty")
 	}
@@ -458,7 +477,7 @@ func Save(path string, s STTSettings) error {
 	}
 	data = append(data, '\n')
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return fmt.Errorf("write settings temp: %w", err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
@@ -663,6 +682,12 @@ type settingsUpdate struct {
 	// means "leave it alone", so a client that does not know about aliases
 	// cannot erase them by omitting the field.
 	SearchAliases *[][]string `json:"search_aliases"`
+	// EventWebhook* pointers follow the same omitted-preserves rule. The timeout
+	// is a Go duration string ("10s"), matching the former deploy variable.
+	EventWebhookURL     *string   `json:"event_webhook_url"`
+	EventWebhookSecret  *string   `json:"event_webhook_secret"`
+	EventWebhookEvents  *[]string `json:"event_webhook_events"`
+	EventWebhookTimeout *string   `json:"event_webhook_timeout"`
 }
 
 // currentSettings returns a copy of the in-memory STT policy, safe for
@@ -676,6 +701,9 @@ func (rt *Runtime) currentSettings() STTSettings {
 	}
 	if s.MeetingFormat == "" {
 		s.MeetingFormat = "opus"
+	}
+	if strings.TrimSpace(s.EventWebhookTimeout) == "" {
+		s.EventWebhookTimeout = eventWebhookDefaultTimeout.String()
 	}
 	return s
 }
@@ -731,6 +759,7 @@ func (rt *Runtime) handleGetSettings(w http.ResponseWriter) {
 		s = rt.currentSettings()
 	} else {
 		rt.setSettings(s)
+		rt.configureEventWebhook(s)
 	}
 	rt.settingsWriteMu.Unlock()
 	writeJSON(w, http.StatusOK, settingsResponse{STTSettings: s, Effective: rt.effectiveFor(s)})
@@ -826,7 +855,23 @@ func (rt *Runtime) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		updated.TranscriptionTerms = terms
 	}
+	if in.EventWebhookURL != nil {
+		updated.EventWebhookURL = *in.EventWebhookURL
+	}
+	if in.EventWebhookSecret != nil {
+		updated.EventWebhookSecret = *in.EventWebhookSecret
+	}
+	if in.EventWebhookEvents != nil {
+		updated.EventWebhookEvents = append([]string(nil), (*in.EventWebhookEvents)...)
+	}
+	if in.EventWebhookTimeout != nil {
+		updated.EventWebhookTimeout = *in.EventWebhookTimeout
+	}
 
+	if err := normalizeEventWebhookSettings(&updated); err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if err := normalizeSourceRetention(&updated); err != nil {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
@@ -869,5 +914,6 @@ func (rt *Runtime) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rt.setSettings(updated)
+	rt.configureEventWebhook(updated)
 	writeJSON(w, http.StatusOK, settingsResponse{STTSettings: updated, Effective: rt.effectiveFor(updated)})
 }

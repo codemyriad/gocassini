@@ -90,7 +90,10 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 		// group has exited before buildJobFn returns.
 		if cleanErr := os.RemoveAll(attemptMeetingPath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber)); cleanErr != nil {
 			rt.logger.Printf("build priority cleanup failed id=%s: %v", task.JobID, cleanErr)
-			_ = rt.store.MarkBuildFailed(context.Background(), task.JobID, "", cleanErr.Error(), finishedAt)
+			if updateErr := rt.store.MarkBuildFailed(context.Background(), task.JobID, "", cleanErr.Error(), finishedAt); updateErr != nil {
+				rt.logger.Printf("build priority cleanup failure update failed id=%s: %v", task.JobID, updateErr)
+			}
+			rt.emitBuildTerminalFailure(task, cleanErr.Error())
 			return
 		}
 		retry := time.Now().UTC()
@@ -132,7 +135,9 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 				if deletesSourceMedia(job) {
 					if err := rt.store.MarkBuildFailed(context.Background(), task.JobID, builtMeetingPath, unavailable.Error(), finishedAt); err != nil {
 						rt.logger.Printf("terminal build failure: %v", err)
+						return
 					}
+					rt.emitBuildTerminalFailure(task, unavailable.Error())
 					return
 				}
 				blocked, blockErr := rt.store.MarkBuildBlocked(
@@ -151,6 +156,7 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 					reason = fmt.Sprintf("retry ceiling reached after %d deferrals", task.DeferralCount)
 				}
 				rt.logger.Printf("build blocked id=%s attempt=%d worker=%d (%s): %v", task.JobID, task.AttemptNumber, workerIndex, reason, unavailable)
+				rt.emitBuildTerminalFailure(task, unavailable.Error())
 				return
 			}
 			delay := exponentialBuildRetryDelay(rt.buildResourceRetryDelay, nextDeferral)
@@ -172,12 +178,20 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 			rt.scheduleDeferredBuild(task, retryNotBefore)
 			return
 		}
+		if buildCtx.Err() != nil {
+			// Shutdown or a cancellation that was not a resource answer: the
+			// attempt is requeued/interrupted, not failed. Emitting a failure
+			// here would be a lie (#472 review).
+			rt.logger.Printf("build interrupted id=%s attempt=%d worker=%d: %v", task.JobID, task.AttemptNumber, workerIndex, context.Cause(buildCtx))
+			return
+		}
 		detail := rt.extractBuildFailureDetail(builtMeetingPath, err)
 		rt.logger.Printf("build failed id=%s attempt=%d worker=%d: %s", task.JobID, task.AttemptNumber, workerIndex, detail)
-		rt.emitEvent(rt.ctx, eventRecordingFailed, task.JobID, task.AttemptNumber, map[string]any{"phase": "build", "error": detail})
 		if updateErr := rt.store.MarkBuildFailed(context.Background(), task.JobID, builtMeetingPath, detail, finishedAt); updateErr != nil {
 			rt.logger.Printf("build fail update failed id=%s attempt=%d worker=%d: %v", task.JobID, task.AttemptNumber, workerIndex, updateErr)
+			return
 		}
+		rt.emitBuildTerminalFailure(task, detail)
 		return
 	}
 	// Stamp the Talk room into the ATTEMPT bundle, before it is promoted. The
@@ -205,8 +219,11 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 	// logged: a missing record costs the Operator a chip, never the meeting.
 	if outcomes, err := readBundleStepOutcomes(builtMeetingPath); err != nil {
 		rt.logger.Printf("step outcomes unreadable id=%s attempt=%d meeting=%s: %v", task.JobID, task.AttemptNumber, builtMeetingPath, err)
-	} else if err := rt.store.RecordAttemptStepOutcomes(context.Background(), task.JobID, task.AttemptNumber, outcomes); err != nil {
-		rt.logger.Printf("step outcomes update failed id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, err)
+	} else {
+		if err := rt.store.RecordAttemptStepOutcomes(context.Background(), task.JobID, task.AttemptNumber, outcomes); err != nil {
+			rt.logger.Printf("step outcomes update failed id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, err)
+		}
+		rt.emitSummaryOutcomes(task, builtMeetingPath, outcomes)
 	}
 	// Current output denotes the last successful publication, never a build.
 	canonicalMeetingPath := builtMeetingPath
@@ -221,11 +238,52 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 		rt.logger.Printf("seal queue update failed id=%s attempt=%d worker=%d: %v", task.JobID, task.AttemptNumber, workerIndex, err)
 		if updateErr := rt.store.MarkSealFailed(context.Background(), task.JobID, "", err.Error(), finishedAt); updateErr != nil {
 			rt.logger.Printf("seal queue failure update failed id=%s attempt=%d worker=%d: %v", task.JobID, task.AttemptNumber, workerIndex, updateErr)
+			return
 		}
+		rt.emitEvent(context.Background(), eventRecordingFailed, task.JobID, task.AttemptNumber, map[string]any{"phase": "seal", "error": err.Error()})
 		return
 	}
 	rt.emitEvent(rt.ctx, eventBuildCompleted, task.JobID, task.AttemptNumber, map[string]any{"meeting_title": meetingTitle})
 	rt.logger.Printf("build succeeded id=%s attempt=%d worker=%d attempt_meeting=%s canonical_meeting=%s seal_queued_at=%s", task.JobID, task.AttemptNumber, workerIndex, builtMeetingPath, canonicalMeetingPath, finishedAt)
+}
+
+// emitBuildTerminalFailure reports a build-stage failure as a summary failure
+// for a summarize attempt (the recording itself is fine) and as a recording
+// failure for every other attempt.
+func (rt *Runtime) emitBuildTerminalFailure(task buildTask, detail string) {
+	kind := ""
+	if attempt, err := rt.store.GetJobAttempt(context.Background(), task.JobID, task.AttemptNumber); err == nil {
+		kind = attempt.TriggerKind
+	}
+	if kind == triggerKindSummarize {
+		rt.emitEvent(context.Background(), eventSummaryFailed, task.JobID, task.AttemptNumber, map[string]any{"phase": "summary", "error": detail})
+		return
+	}
+	rt.emitEvent(context.Background(), eventRecordingFailed, task.JobID, task.AttemptNumber, map[string]any{"phase": "build", "error": detail})
+}
+
+// emitSummaryOutcomes emits the catalog event that matches the build's
+// summary step. It is called on the build success path, where the bundle's
+// step outcomes are the source of truth; a normal build's summary is written
+// inside `cassini build`, so the summarize CLI is not the only emitter.
+func (rt *Runtime) emitSummaryOutcomes(task buildTask, meetingPath string, outcomes stepOutcomes) {
+	switch outcomes.SummaryStatus {
+	case "completed":
+		markdown := ""
+		if raw, err := os.ReadFile(filepath.Join(meetingPath, "summary.md")); err == nil {
+			markdown = string(raw)
+		}
+		rt.emitEvent(context.Background(), eventSummaryCompleted, task.JobID, task.AttemptNumber, map[string]any{
+			"summary_markdown": markdown,
+			"summary_model":    outcomes.SummaryModel,
+		})
+	case "failed":
+		rt.emitEvent(context.Background(), eventSummaryFailed, task.JobID, task.AttemptNumber, map[string]any{
+			"phase":          "summary",
+			"error":          outcomes.SummaryReason,
+			"summary_reason": outcomes.SummaryReason,
+		})
+	}
 }
 
 func exponentialBuildRetryDelay(base time.Duration, deferralCount int) time.Duration {

@@ -163,7 +163,22 @@ func (s *directSharesPublishSink) reshare(ctx context.Context, jobID string) (*j
 	if err := s.rt.store.RecordJobShareOutcome(ctx, jobID, shareOutcomeStatus(skipped), skipped); err != nil {
 		return nil, err
 	}
-	return s.rt.store.JobShareOutcome(ctx, jobID)
+	outcome, err := s.rt.store.JobShareOutcome(ctx, jobID)
+	if err != nil {
+		return nil, err
+	}
+	attemptNumber := 0
+	if job, jobErr := s.rt.store.GetJob(ctx, jobID); jobErr == nil {
+		attemptNumber = job.CurrentAttemptNumber
+	}
+	// The initial shares.completed may have been deferred or partial. A later
+	// reconciliation that reaches those recipients is a new completion, so tell
+	// receivers about it (#472 review).
+	s.rt.emitEvent(context.Background(), eventSharesCompleted, jobID, attemptNumber, map[string]any{
+		"sharing":    outcome,
+		"reconciled": true,
+	})
+	return outcome, nil
 }
 
 // deliveredMeetingPath is where publication put the job's meeting: an audio

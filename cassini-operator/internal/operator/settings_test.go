@@ -880,3 +880,81 @@ func TestMeetingFormatSurvivesHardwareRefresh(t *testing.T) {
 		t.Fatalf("legacy settings: %+v %v", loaded, err)
 	}
 }
+
+func TestEventWebhookSettingsRoundTripAndValidation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	saved := STTSettings{
+		MeetingFormat:       "opus",
+		Source:              "user",
+		EventWebhookURL:     "https://hooks.example/events?token=secret",
+		EventWebhookSecret:  "signing-secret",
+		EventWebhookEvents:  []string{"summary.completed", "recording.failed"},
+		EventWebhookTimeout: "5s",
+	}
+	if err := Save(path, saved); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadOrInitSettings(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.EventWebhookURL != saved.EventWebhookURL || loaded.EventWebhookSecret != saved.EventWebhookSecret ||
+		loaded.EventWebhookTimeout != saved.EventWebhookTimeout ||
+		len(loaded.EventWebhookEvents) != 2 || loaded.EventWebhookEvents[0] != "recording.failed" {
+		t.Fatalf("loaded webhook settings = %+v, want the saved values (events sorted)", loaded)
+	}
+
+	for name, settings := range map[string]STTSettings{
+		"invalid URL":     {EventWebhookURL: "not a URL", EventWebhookSecret: "secret", EventWebhookTimeout: "10s"},
+		"missing secret":  {EventWebhookURL: "https://hooks.example/events", EventWebhookTimeout: "10s"},
+		"unknown event":   {EventWebhookURL: "https://hooks.example/events", EventWebhookSecret: "secret", EventWebhookTimeout: "10s", EventWebhookEvents: []string{"bogus.event"}},
+		"invalid timeout": {EventWebhookURL: "https://hooks.example/events", EventWebhookSecret: "secret", EventWebhookTimeout: "soon"},
+	} {
+		if err := Save(path, settings); err == nil {
+			t.Errorf("%s: Save() accepted invalid webhook settings", name)
+		}
+	}
+}
+
+func TestEventWebhookSettingsCanBeChangedWithoutRedeploy(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+
+	put := func(body string) {
+		rec := httptest.NewRecorder()
+		rt.handlePutSettings(rec, httptest.NewRequest(http.MethodPut, "/settings", strings.NewReader(body)))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("PUT settings code = %d body=%s", rec.Code, rec.Body.String())
+		}
+	}
+	put(`{"event_webhook_url":"https://hooks.example/events","event_webhook_secret":"one","event_webhook_events":["summary.completed"],"event_webhook_timeout":"10s"}`)
+	rt.eventWebhookMu.Lock()
+	enabled := rt.eventWebhook != nil && rt.eventWebhook.enabled(eventSummaryCompleted)
+	rt.eventWebhookMu.Unlock()
+	if !enabled {
+		t.Fatal("webhook was not configured from the saved settings")
+	}
+
+	put(`{"event_webhook_url":"","event_webhook_secret":""}`)
+	rt.eventWebhookMu.Lock()
+	disabled := rt.eventWebhook == nil
+	rt.eventWebhookMu.Unlock()
+	if !disabled {
+		t.Fatal("clearing the URL did not stop the webhook")
+	}
+}
+
+func TestPutSettingsRejectsInvalidEventWebhook(t *testing.T) {
+	rt := newSettingsTestRuntime(t)
+	for name, body := range map[string]string{
+		"unknown event":   `{"event_webhook_url":"https://hooks.example/events","event_webhook_secret":"s","event_webhook_events":["typo.event"]}`,
+		"missing secret":  `{"event_webhook_url":"https://hooks.example/events"}`,
+		"invalid timeout": `{"event_webhook_url":"https://hooks.example/events","event_webhook_secret":"s","event_webhook_timeout":"soon"}`,
+	} {
+		rec := httptest.NewRecorder()
+		rt.handlePutSettings(rec, httptest.NewRequest(http.MethodPut, "/settings", strings.NewReader(body)))
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: code = %d, want 400 (body=%s)", name, rec.Code, rec.Body.String())
+		}
+	}
+}

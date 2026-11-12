@@ -12,6 +12,9 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
+	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -49,7 +52,7 @@ var eventCatalog = []string{
 
 const (
 	eventWebhookDefaultTimeout = 10 * time.Second
-	eventWebhookMaxAttempts    = 10
+	eventWebhookMaxAttempts    = 12
 	eventWebhookRetryCap       = 5 * time.Minute
 	eventWebhookDrainBatch     = 10
 )
@@ -89,44 +92,105 @@ type outboxEvent struct {
 	Attempts int
 }
 
-func newEventWebhook(store *Store, logger *log.Logger, lookupEnv func(string) string) *eventWebhook {
-	rawURL := strings.TrimSpace(lookupEnv("CASSINI_EVENT_WEBHOOK_URL"))
-	if rawURL == "" {
+// normalizeEventWebhookSettings trims and validates the persisted webhook
+// policy. An empty URL disables delivery without requiring a secret. Unknown
+// event names are rejected rather than silently delivered or ignored, and the
+// timeout is the same bounded Go duration the deploy variable used to accept.
+func normalizeEventWebhookSettings(s *STTSettings) error {
+	s.EventWebhookURL = strings.TrimSpace(s.EventWebhookURL)
+	s.EventWebhookSecret = strings.TrimSpace(s.EventWebhookSecret)
+	timeout := strings.TrimSpace(s.EventWebhookTimeout)
+	if timeout == "" {
+		timeout = eventWebhookDefaultTimeout.String()
+	}
+	parsed, err := time.ParseDuration(timeout)
+	if err != nil || parsed <= 0 || parsed > time.Minute {
+		return fmt.Errorf("event_webhook_timeout must be a duration between 1ns and 1m (got %q)", timeout)
+	}
+	s.EventWebhookTimeout = timeout
+
+	if len(s.EventWebhookEvents) == 0 {
+		s.EventWebhookEvents = nil
+	} else {
+		known := make(map[string]bool, len(eventCatalog))
+		for _, name := range eventCatalog {
+			known[name] = true
+		}
+		seen := make(map[string]bool, len(s.EventWebhookEvents))
+		events := make([]string, 0, len(s.EventWebhookEvents))
+		for _, name := range s.EventWebhookEvents {
+			name = strings.TrimSpace(name)
+			if name == "" {
+				continue
+			}
+			if !known[name] {
+				return fmt.Errorf("unknown event_webhook event %q", name)
+			}
+			if seen[name] {
+				continue
+			}
+			seen[name] = true
+			events = append(events, name)
+		}
+		sort.Strings(events)
+		s.EventWebhookEvents = events
+	}
+
+	if s.EventWebhookURL == "" {
 		return nil
 	}
-	secret := lookupEnv("CASSINI_EVENT_WEBHOOK_SECRET")
-	if strings.TrimSpace(secret) == "" {
-		logger.Printf("event webhooks disabled: CASSINI_EVENT_WEBHOOK_URL is set but CASSINI_EVENT_WEBHOOK_SECRET is empty")
-		return nil
+	parsedURL, err := url.ParseRequestURI(s.EventWebhookURL)
+	if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") || parsedURL.Host == "" {
+		return fmt.Errorf("event_webhook_url must be an absolute http or https URL")
+	}
+	if s.EventWebhookSecret == "" {
+		return fmt.Errorf("event_webhook_secret is required when event_webhook_url is set")
+	}
+	return nil
+}
+
+func redactEventWebhookURL(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Host == "" {
+		return "(invalid URL)"
+	}
+	return parsed.Scheme + "://" + parsed.Host
+}
+
+func newEventWebhook(store *Store, logger *log.Logger, settings STTSettings, lookupEnv func(string) string) (*eventWebhook, error) {
+	rawURL := strings.TrimSpace(settings.EventWebhookURL)
+	if rawURL == "" {
+		return nil, nil
+	}
+	if err := normalizeEventWebhookSettings(&settings); err != nil {
+		return nil, err
 	}
 	events := map[string]bool{}
-	if raw := strings.TrimSpace(lookupEnv("CASSINI_EVENT_WEBHOOK_EVENTS")); raw != "" {
-		for _, name := range strings.Split(raw, ",") {
-			if name = strings.TrimSpace(name); name != "" {
-				events[name] = true
-			}
-		}
-	} else {
+	if len(settings.EventWebhookEvents) == 0 {
 		for _, name := range eventCatalog {
 			events[name] = true
 		}
-	}
-	timeout := eventWebhookDefaultTimeout
-	if raw := strings.TrimSpace(lookupEnv("CASSINI_EVENT_WEBHOOK_TIMEOUT")); raw != "" {
-		if parsed, err := time.ParseDuration(raw); err == nil && parsed > 0 && parsed <= time.Minute {
-			timeout = parsed
-		} else {
-			logger.Printf("event webhooks: invalid CASSINI_EVENT_WEBHOOK_TIMEOUT %q; using %s", raw, timeout)
+	} else {
+		for _, name := range settings.EventWebhookEvents {
+			events[name] = true
 		}
 	}
-	logger.Printf("event webhooks enabled receiver=%s events=%d timeout=%s", rawURL, len(events), timeout)
+	timeout, err := time.ParseDuration(settings.EventWebhookTimeout)
+	if err != nil {
+		return nil, err
+	}
+	logger.Printf("event webhooks enabled receiver=%s events=%d timeout=%s", redactEventWebhookURL(rawURL), len(events), timeout)
 	return &eventWebhook{
 		store:  store,
-		cfg:    eventWebhookConfig{URL: rawURL, Secret: strings.TrimSpace(secret), Events: events, Timeout: timeout, Version: strings.TrimSpace(lookupEnv("APP_VERSION")), baseRetryDelay: time.Second},
+		cfg:    eventWebhookConfig{URL: rawURL, Secret: settings.EventWebhookSecret, Events: events, Timeout: timeout, Version: strings.TrimSpace(lookupEnv("APP_VERSION")), baseRetryDelay: time.Second},
 		client: &http.Client{Timeout: timeout},
 		logger: logger,
 		kick:   make(chan struct{}, 1),
-	}
+	}, nil
+}
+
+func (e *eventWebhook) enabled(eventType string) bool {
+	return e != nil && e.cfg.Events[eventType]
 }
 
 func (e *eventWebhook) start(ctx context.Context, wg *sync.WaitGroup) {
@@ -232,7 +296,11 @@ func (e *eventWebhook) deliver(ctx context.Context, event outboxEvent) {
 	}
 
 	detail := fmt.Sprintf("receiver returned HTTP %d", resp.StatusCode)
-	permanent := resp.StatusCode >= 400 && resp.StatusCode <= 499 && resp.StatusCode != http.StatusRequestTimeout && resp.StatusCode != http.StatusTooManyRequests
+	permanent := resp.StatusCode >= 400 && resp.StatusCode <= 499 &&
+		resp.StatusCode != http.StatusRequestTimeout &&
+		resp.StatusCode != http.StatusConflict &&
+		resp.StatusCode != http.StatusTooEarly &&
+		resp.StatusCode != http.StatusTooManyRequests
 	if permanent {
 		e.markFailed(event.ID, detail)
 		return
@@ -325,14 +393,20 @@ UPDATE event_outbox SET attempts = ?, next_attempt_at = ?, last_error = ? WHERE 
 // queues the webhook. It is deliberately fire-and-forget: every caller is on a
 // recording path where a webhook receiver must never become a dependency.
 func (rt *Runtime) emitEvent(ctx context.Context, eventType, jobID string, attemptNumber int, extra map[string]any) {
-	if rt.eventWebhook == nil {
+	rt.eventWebhookMu.Lock()
+	hook := rt.eventWebhook
+	rt.eventWebhookMu.Unlock()
+	if hook == nil || !hook.enabled(eventType) {
 		return
 	}
-	data := rt.eventBaseData(ctx, jobID, attemptNumber)
+	// The payload is built from the job's persisted state; a canceled caller
+	// context (shutdown) must not prevent the outbox insert, because that write
+	// is what makes the event survive the restart (#472 review).
+	data := rt.eventBaseData(context.Background(), jobID, attemptNumber)
 	for key, value := range extra {
 		data[key] = value
 	}
-	if err := rt.eventWebhook.enqueue(ctx, eventType, data); err != nil {
+	if err := hook.enqueue(context.Background(), eventType, data); err != nil {
 		rt.logger.Printf("event %s enqueue failed job=%s: %v", eventType, jobID, err)
 	}
 }
@@ -371,9 +445,30 @@ func (rt *Runtime) eventBaseData(ctx context.Context, jobID string, attemptNumbe
 	return data
 }
 
-func (rt *Runtime) startEventWebhook() {
-	if rt.eventWebhook == nil {
-		return
+// configureEventWebhook replaces the delivery worker after a settings change.
+// The outbox is shared, so events already queued for the old receiver remain
+// queued and are delivered by the new configuration once it starts.
+func (rt *Runtime) configureEventWebhook(settings STTSettings) {
+	hook, err := newEventWebhook(rt.store, rt.logger, settings, os.Getenv)
+	if err != nil {
+		rt.logger.Printf("event webhooks disabled: %v", err)
+		hook = nil
 	}
-	rt.eventWebhook.start(rt.ctx, &rt.workerWG)
+	rt.eventWebhookMu.Lock()
+	cancel := rt.eventWebhookCancel
+	rt.eventWebhook = hook
+	rt.eventWebhookCancel = nil
+	if hook != nil {
+		base := rt.ctx
+		if base == nil {
+			base = context.Background()
+		}
+		ctx, nextCancel := context.WithCancel(base)
+		rt.eventWebhookCancel = nextCancel
+		hook.start(ctx, &rt.workerWG)
+	}
+	rt.eventWebhookMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 }

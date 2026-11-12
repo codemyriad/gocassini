@@ -249,12 +249,6 @@ func (s *Store) queueSummarizeAttemptLocked(ctx context.Context, jobID, queuedAt
 // the copy changes, so the seal packs the same audio and every mark stays.
 func (rt *Runtime) executeSummarizeCLI(ctx context.Context, task buildTask) (meetingPath string, err error) {
 	meetingPath = attemptMeetingPath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber)
-	defer func() {
-		if err == nil {
-			return
-		}
-		rt.emitEvent(rt.ctx, eventSummaryFailed, task.JobID, task.AttemptNumber, map[string]any{"phase": "summary", "error": err.Error()})
-	}()
 	if err := os.RemoveAll(meetingPath); err != nil {
 		return meetingPath, fmt.Errorf("clear summarize meeting dir: %w", err)
 	}
@@ -303,15 +297,6 @@ func (rt *Runtime) executeSummarizeCLI(ctx context.Context, task buildTask) (mee
 		}
 		return meetingPath, fmt.Errorf("no summary written: %s", why)
 	}
-	summaryMarkdown := ""
-	if data, readErr := os.ReadFile(filepath.Join(meetingPath, "summary.md")); readErr == nil {
-		summaryMarkdown = string(data)
-	}
-	rt.emitEvent(rt.ctx, eventSummaryCompleted, task.JobID, task.AttemptNumber, map[string]any{
-		"summary_markdown": summaryMarkdown,
-		"summary_model":    report.Model,
-		"summary_words":    report.Words,
-	})
 	return meetingPath, nil
 }
 

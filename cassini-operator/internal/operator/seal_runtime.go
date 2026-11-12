@@ -93,10 +93,11 @@ func (rt *Runtime) runSealJob(task sealTask) {
 
 	if err := rt.enqueuePublishAfterSeal(task, canonicalOpus, attemptOpus, digest, finishedAt); err != nil {
 		rt.logger.Printf("publish queue update failed id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, err)
-		rt.emitEvent(rt.ctx, eventRecordingFailed, task.JobID, task.AttemptNumber, map[string]any{"phase": "publish", "error": err.Error()})
 		if updateErr := rt.store.MarkPublishFailed(context.Background(), task.JobID, "", "", err.Error(), finishedAt); updateErr != nil {
 			rt.logger.Printf("publish queue failure update failed id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, updateErr)
+			return
 		}
+		rt.emitEvent(context.Background(), eventRecordingFailed, task.JobID, task.AttemptNumber, map[string]any{"phase": "publish", "error": err.Error()})
 		return
 	}
 	rt.logger.Printf("seal succeeded id=%s attempt=%d opus=%s sha256=%s canonical_opus=%s publish_queued_at=%s", task.JobID, task.AttemptNumber, attemptOpus, digest, canonicalOpus, finishedAt)

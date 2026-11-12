@@ -6,23 +6,27 @@ summary to a channel, notify an incident tool, update a wiki, or start a
 downstream process without polling the operator or parsing the `.opus`
 portable meeting.
 
-Events are opt-in and configured at deploy time with environment variables.
-There is no UI setting yet.
+Events are opt-in and configured in the operator's persisted settings
+(`settings.json`), not in AppAPI's creation-time deploy environment. Enabling
+events, rotating the secret or changing the allow-list therefore does not
+require recreating the ExApp.
 
 ## Configuration
 
-| Variable | Required | Meaning |
-|---|---|---|
-| `CASSINI_EVENT_WEBHOOK_URL` | To enable events | Receiver URL. Empty disables delivery. |
-| `CASSINI_EVENT_WEBHOOK_SECRET` | With the URL | HMAC-SHA256 secret used to sign every request. |
-| `CASSINI_EVENT_WEBHOOK_EVENTS` | No | Comma-separated allow-list, e.g. `summary.completed,recording.failed`. Empty delivers the whole catalog. |
-| `CASSINI_EVENT_WEBHOOK_TIMEOUT` | No | Per-request timeout, e.g. `10s`. Default `10s`; at most one minute. |
+The four values are part of `PUT /settings` (and `GET /settings`), under these
+JSON names:
 
-These are declared in `appinfo/info.xml`, so AppAPI passes them when they are
-supplied through `--env` or the External Apps admin UI. Because AppAPI deploy
-env is creation-time configuration, adding or changing them means recreating
-the ExApp with its persistent volume preserved; see
-[Updating deploy options](./exapp-install.md#updating-deploy-options-after-install).
+| Field | Required | Meaning |
+|---|---|---|
+| `event_webhook_url` | To enable events | Absolute `http` or `https` receiver URL. Empty disables delivery. |
+| `event_webhook_secret` | With the URL | HMAC-SHA256 secret used to sign every request. |
+| `event_webhook_events` | No | Array allow-list, e.g. `["summary.completed", "recording.failed"]`. Empty delivers the whole catalog. Unknown names are rejected. |
+| `event_webhook_timeout` | No | Go duration per request, e.g. `10s`. Default `10s`; at most one minute. |
+
+There is no dedicated webhook card in the Operator UI yet; use the settings API
+or edit `settings.json` while the operator is stopped. The startup log names
+only the receiver's scheme and host, never its path or query string, so a token
+embedded in the URL is not logged.
 
 A URL without a secret is refused and logged: every event must be verifiable.
 
@@ -33,11 +37,11 @@ A URL without a secret is refused and logged: every event must be verifiable.
 | `recording.started` | Talk's recording request was accepted and the recorder started. | `started_at` |
 | `recording.stopped` | The recording stopped and the capture was safely stored. | `stopped_at`, `stop_reason` |
 | `build.completed` | Transcription/build completed and the meeting was handed to seal. | `meeting_title` |
-| `summary.completed` | A summary was written. | `summary_markdown`, `summary_model`, `summary_words` |
-| `summary.failed` | A summary attempt failed. | `phase`, `error` |
+| `summary.completed` | A summary was written, including a normal build's summary and a speaker-edit rewrite. | `summary_markdown`, `summary_model` |
+| `summary.failed` | A summary step failed on a build or summarize attempt. Yielding for a recording or resource pressure is not a failure. | `phase`, `error`, `summary_reason` |
 | `recording.published` | The `.opus` was delivered and the job succeeded. | `published_location` |
 | `recording.failed` | Recording, build, seal or publish reached a terminal failure. | `phase`, `error` |
-| `shares.completed` | Publication finished and a share outcome is recorded. | `sharing` |
+| `shares.completed` | Publication finished and a share outcome is recorded; emitted again when a later Re-share reconciles deferred or partial shares. | `sharing`, `reconciled` (later reconciliations only) |
 
 `shares.completed` includes the same outcome the Operator shows:
 
@@ -80,7 +84,6 @@ Every POST has the same envelope:
     "record_started_at": "2026-11-11T13:00:02Z",
     "record_finished_at": "2026-11-11T13:31:16Z",
     "summary_model": "unsloth/Qwen3.8",
-    "summary_words": 431,
     "summary_markdown": "# Summary\n\n..."
   }
 }
@@ -138,9 +141,11 @@ receiver should deduplicate by `X-Cassini-Delivery`.
 - Events are first written to a SQLite outbox, so a receiver outage or an
   operator restart does not lose a lifecycle event.
 - `2xx` marks delivered.
-- `4xx` (except `408` and `429`) is permanent and stops retrying.
-- `5xx`, timeouts, `408` and `429` retry with exponential backoff, capped at
-  ten attempts.
+- `4xx` (except `408`, `409`, `425` and `429`) is permanent and stops
+  retrying.
+- `5xx`, timeouts, `408`, `409`, `425` and `429` retry with exponential
+  backoff. The window is twelve attempts, with the backoff capped at five
+  minutes.
 - Delivery is **at-least-once**: a crash between the POST and the database
   update redelivers the same delivery id.
 - Delivery is best-effort relative to the recording: a failed webhook never
@@ -152,11 +157,11 @@ pruned automatically.
 
 ## Windmill example
 
-1. Create a Windmill webhook trigger and use its URL as
-   `CASSINI_EVENT_WEBHOOK_URL`.
+1. Create a Windmill webhook trigger and set its URL as `event_webhook_url`
+   through `PUT /settings`.
 2. In the trigger script, verify `X-Cassini-Signature` with the shared secret.
-3. Ignore everything except `summary.completed` (or use
-   `CASSINI_EVENT_WEBHOOK_EVENTS=summary.completed`).
+3. Ignore everything except `summary.completed` (or set
+   `event_webhook_events: ["summary.completed"]`).
 4. Post the summary excerpt and a link to the meeting to Mattermost or Talk.
 5. Deduplicate on `X-Cassini-Delivery`.
 
@@ -172,8 +177,8 @@ instance's Cassini viewer URL.
 - It never sees audio, raw transcripts, Nextcloud credentials or Talk tokens.
 - Prefer a receiver on the same trusted network. If the receiver is remote,
   terminate TLS in front of it.
-- Keep `CASSINI_EVENT_WEBHOOK_SECRET` out of logs and client-side code; rotate
-  it by redeploying the ExApp.
+- Keep `event_webhook_secret` out of logs and client-side code; rotate it by
+  updating the operator's settings, then the receiver's configuration.
 - The outbox contains the same payloads. Treat the app's data volume as
   sensitive.
 

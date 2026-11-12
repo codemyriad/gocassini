@@ -880,6 +880,7 @@ func operatorOnlySecretEnv() map[string]bool {
 		"TALK_RECORDING_SECRET":         true,
 		envTalkSignalingInternalSecret:  true,
 		"CASSINI_OPERATOR_API_TOKEN":    true,
+		"CASSINI_EVENT_WEBHOOK_SECRET":  true,
 	}
 }
 

@@ -80,10 +80,11 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 	if err != nil {
 		detail := rt.extractSiteFailureDetail(attemptArtifactSitePath, err)
 		rt.logger.Printf("publish failed id=%s attempt=%d: %s", task.JobID, task.AttemptNumber, detail)
-		rt.emitEvent(rt.ctx, eventRecordingFailed, task.JobID, task.AttemptNumber, map[string]any{"phase": "publish", "error": detail})
 		if updateErr := rt.store.MarkPublishFailed(context.Background(), task.JobID, "", attemptArtifactSitePath, detail, finishedAt); updateErr != nil {
 			rt.logger.Printf("publish fail update failed id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, updateErr)
+			return
 		}
+		rt.emitEvent(context.Background(), eventRecordingFailed, task.JobID, task.AttemptNumber, map[string]any{"phase": "publish", "error": detail})
 		return
 	}
 	// The destination is the sink's business, not the publish worker's. A sink
@@ -115,10 +116,11 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 		rt.logger.Printf("publish deliver failed id=%s attempt=%d sink=%s attempt_site=%s: %v", task.JobID, task.AttemptNumber, rt.sink().Name(), attemptArtifactSitePath, err)
 		reason, httpStatus, ocsStatus := supportError(err)
 		rt.supportJournal.record(supportEvent{Event: "delivery_failed", Job: task.JobID, Attempt: task.AttemptNumber, Reason: reason, HTTP: httpStatus, OCS: ocsStatus, Detail: supportOriginalError(err)})
-		rt.emitEvent(rt.ctx, eventRecordingFailed, task.JobID, task.AttemptNumber, map[string]any{"phase": "publish", "error": err.Error()})
 		if updateErr := rt.store.MarkPublishFailed(context.Background(), task.JobID, "", attemptArtifactSitePath, err.Error(), finishedAt); updateErr != nil {
 			rt.logger.Printf("publish deliver failure update failed id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, updateErr)
+			return
 		}
+		rt.emitEvent(context.Background(), eventRecordingFailed, task.JobID, task.AttemptNumber, map[string]any{"phase": "publish", "error": err.Error()})
 		return
 	}
 	rt.supportJournal.record(supportEvent{Event: "delivery_succeeded", Job: task.JobID, Attempt: task.AttemptNumber})

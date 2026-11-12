@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -37,13 +38,21 @@ func newTestEventStore(t *testing.T) *Store {
 
 func newTestEventWebhook(t *testing.T, store *Store, url, secret string, events string) *eventWebhook {
 	t.Helper()
-	env := map[string]string{
-		"CASSINI_EVENT_WEBHOOK_URL":    url,
-		"CASSINI_EVENT_WEBHOOK_SECRET": secret,
-		"CASSINI_EVENT_WEBHOOK_EVENTS": events,
-		"APP_VERSION":                  "test",
+	settings := STTSettings{
+		EventWebhookURL:     url,
+		EventWebhookSecret:  secret,
+		EventWebhookEvents:  strings.Split(events, ","),
+		EventWebhookTimeout: "10s",
 	}
-	hook := newEventWebhook(store, log.New(io.Discard, "", 0), func(key string) string { return env[key] })
+	hook, err := newEventWebhook(store, log.New(io.Discard, "", 0), settings, func(key string) string {
+		if key == "APP_VERSION" {
+			return "test"
+		}
+		return ""
+	})
+	if err != nil {
+		t.Fatalf("newEventWebhook() error = %v", err)
+	}
 	if hook == nil {
 		t.Fatal("newEventWebhook() = nil, want a configured webhook")
 	}
@@ -233,4 +242,56 @@ func TestEventWebhookFiltersEvents(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("receiver calls = %d, want 1", calls.Load())
+}
+
+func TestEventWebhookSettingsValidationAndRedactedLog(t *testing.T) {
+	store := newTestEventStore(t)
+	var logs strings.Builder
+	settings := STTSettings{
+		EventWebhookURL:     "https://hooks.example/path?token=very-secret",
+		EventWebhookSecret:  "signing-secret",
+		EventWebhookTimeout: "10s",
+		EventWebhookEvents:  []string{"bogus.event"},
+	}
+	if _, err := newEventWebhook(store, log.New(&logs, "", 0), settings, func(string) string { return "test" }); err == nil {
+		t.Fatal("unknown event name was accepted")
+	}
+
+	settings.EventWebhookEvents = nil
+	if _, err := newEventWebhook(store, log.New(&logs, "", 0), settings, func(string) string { return "test" }); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(logs.String(), "token=very-secret") || strings.Contains(logs.String(), "/path") {
+		t.Fatalf("startup log leaked the webhook path/query: %q", logs.String())
+	}
+	if !strings.Contains(logs.String(), "https://hooks.example") {
+		t.Fatalf("startup log does not name the receiver host: %q", logs.String())
+	}
+}
+
+// A shutdown cancels rt.ctx. The outbox insert must still happen, because that
+// is the write that lets the event survive the restart (#472 review).
+func TestEmitEventSurvivesACanceledContext(t *testing.T) {
+	store := newTestEventStore(t)
+	insertJob(t, store.db, "job-canceled", nowUTCString())
+	hook, err := newEventWebhook(store, log.New(io.Discard, "", 0), STTSettings{
+		EventWebhookURL:     "https://hooks.example/events",
+		EventWebhookSecret:  "secret",
+		EventWebhookTimeout: "10s",
+	}, func(string) string { return "test" })
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt := &Runtime{store: store, logger: log.New(io.Discard, "", 0), eventWebhook: hook, ctx: context.Background()}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	rt.emitEvent(ctx, eventRecordingStarted, "job-canceled", 1, nil)
+
+	var count int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM event_outbox`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("outbox rows = %d, want the event inserted despite the canceled caller context", count)
+	}
 }
