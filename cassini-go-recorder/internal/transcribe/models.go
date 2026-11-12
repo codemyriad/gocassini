@@ -31,10 +31,18 @@ const (
 	// dynamic-int8 ops back to the CPU.
 	ModelParakeetUltra ModelID = "parakeet-ultra-0.6b"
 
-	// ModelParakeetUltraInt8 is Cassini's dynamic int8 quantization of the
-	// same export: the balanced CPU tier and the default. It is published
-	// without bpe.vocab, so it decodes greedily.
-	ModelParakeetUltraInt8 ModelID = "parakeet-ultra-0.6b-int8"
+	// ModelParakeetUltraInt8 is Cassini's conv-fp32 dynamic int8 quantization
+	// (v2, D-924; codemyriad/systems cassini-dist D86) of the same export: the
+	// balanced CPU tier and the default. It keeps depthwise and subsampling
+	// convolutions in fp32 and is published without bpe.vocab, so it decodes
+	// greedily.
+	ModelParakeetUltraInt8 ModelID = "parakeet-ultra-0.6b-int8-v2"
+
+	// ModelParakeetUltraInt8V1 is the initial int8 quantization of Parakeet
+	// Ultra, which v2 replaced once folded-BatchNorm depthwise convs were kept
+	// in fp32 (D-924). Retired: a stand-in only, loaded from the files an
+	// upgraded install still has while v2 is not ready (see modelSpec.Retired).
+	ModelParakeetUltraInt8V1 ModelID = "parakeet-ultra-0.6b-int8"
 
 	// ModelParakeetV3Int8 and ModelParakeetV3 are NVIDIA's Parakeet TDT 0.6B
 	// v3, which Parakeet Ultra replaced at the same precision. Retired: a
@@ -119,9 +127,10 @@ var knownModels = map[ModelID]modelSpec{
 		FeatureDim:    80,
 		ProbeMemoryMB: 1536,
 	},
-	// Same files and treatment as the v3 int8 bundle it replaces, published
-	// without bpe.vocab: on this model greedy search omits less speech than the
-	// unbiased beam decoder, at less CPU and half the peak memory.
+	// Same files and treatment as the v1 and v3 int8 bundles it replaces,
+	// published without bpe.vocab: on Ultra int8 v1 greedy search omitted less
+	// speech than the unbiased beam decoder, at less CPU and half the peak
+	// memory.
 	ModelParakeetUltraInt8: {
 		EncoderFile: "encoder.int8.onnx",
 		DecoderFile: "decoder.int8.onnx",
@@ -151,6 +160,24 @@ var knownModels = map[ModelID]modelSpec{
 		ParakeetBoundaryPolicy: true,
 		CUDA:                   true,
 		ProbeMemoryMB:          4608,
+	},
+	// Retired Ultra int8 v1 (replaced by v2, D-924). Unlike v3, its encoder
+	// carries the plain Moondream url, so it still requires the TDT joiner
+	// runtime marker when standing in.
+	ModelParakeetUltraInt8V1: {
+		EncoderFile: "encoder.int8.onnx",
+		DecoderFile: "decoder.int8.onnx",
+		JoinerFile:  "joiner.int8.onnx",
+		TokensFile:  "tokens.txt",
+		ModelType:   "nemo_transducer",
+		SampleRate:  16000,
+		FeatureDim:  128,
+
+		RuntimeMarkers:         parakeetUltraRuntimeMarkers,
+		ParakeetBoundaryPolicy: true,
+		GreedyWithoutBpeVocab:  true,
+		ProbeMemoryMB:          2816,
+		Retired:                true,
 	},
 	// The retired v3 bundles, on the boundary policy the last version that
 	// shipped them ran them with. Their encoders carry NVIDIA's tdt url, so

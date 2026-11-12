@@ -10,8 +10,9 @@ on:
     # (expensive) suite. paths-ignore is a DENY-list: if any changed file falls
     # outside this list the workflow still runs, so a real code change is
     # never silently skipped (avoids the allow-list false-green trap the PR #36
-    # incident demonstrated; scripts/classify-image-relevance.sh now applies the
-    # same deny-list to the required faithful gate in publish-exapp-image.yml).
+    # incident demonstrated; scripts/classify-image-relevance.sh applies the
+    # same deny-list to pull requests below and to the required faithful gate
+    # in publish-exapp-image.yml).
     # spec/ is intentionally NOT here: it holds the manifest JSON schemas that
     # code validates against.
     paths-ignore:
@@ -22,15 +23,10 @@ on:
       - 'planning/**'
       - 'img/**'
       - 'media-kit.*'
+  # No paths-ignore on pull requests (D-906): `CI passed` is required, and a
+  # workflow that never starts never reports it. The `changes` job skips the
+  # suites instead, and the gate passes on skipped jobs.
   pull_request:
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
-      - 'docs-wip/**'
-      - 'dev-docs-wip/**'
-      - 'planning/**'
-      - 'img/**'
-      - 'media-kit.*'
   # Run the full suite on demand for any commit, without opening a PR:
   #   gh workflow run ci.yml --ref <branch> -f ref=<sha|branch|tag>
   # An empty ref tests the dispatched branch's head. paths-ignore does not
@@ -54,41 +50,84 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  contracts:
-    name: Fast manifest + harness contracts
+  # Decides what this run tests (D-906), from one diff. On a pull request the
+  # suites skip when every changed path is docs, a workflow or file they never
+  # use, or a version-only info.xml bump (classify-image-relevance.sh
+  # --ci-suite); the standalone recorder integration skips for paths it never
+  # exercises (classify-recorder-integration-relevance.sh). Every other event
+  # runs everything. Integration needs only this job, so it starts alongside
+  # contracts instead of after it.
+  changes:
+    name: Classify changes
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
-      recorder-integration: ${{ steps.changes.outputs.relevant }}
+      suite: ${{ steps.classify.outputs.suite }}
+      recorder: ${{ steps.classify.outputs.recorder }}
       recorder-matrix: ${{ steps.matrix.outputs.value }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref }}
-          fetch-depth: 0
-      - name: Classify standalone recorder integration relevance
-        id: changes
+          # A pull request checks out its merge commit, whose parents are the
+          # base and head the diff compares; the classify step fetches them
+          # if not. Trees are enough for a diff, so skip file contents.
+          fetch-depth: ${{ github.event_name == 'pull_request' && '2' || '1' }}
+          filter: blob:none
+      - name: Classify
+        id: classify
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          relevant=true
+          suite=true
+          recorder=true
           if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
-            # Include deletions and both sides of renames. Two-dot deliberately
-            # over-reports base-branch changes; uncertainty runs the suite.
-            if changed="$(git diff --no-renames --name-only "$BASE_SHA" "$HEAD_SHA")"; then
-              relevant="$(printf '%s\n' "$changed" | ./scripts/classify-recorder-integration-relevance.sh)"
-            else
-              echo "::warning::Cannot compute diff; running recorder integration"
+            if ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null \
+              || ! git cat-file -e "$HEAD_SHA^{commit}" 2>/dev/null; then
+              git fetch --no-tags --depth=1 --filter=blob:none origin "$BASE_SHA" "$HEAD_SHA"
+            fi
+            # Both sides of renames, and deletions. Two-dot deliberately
+            # over-reports base-branch changes; uncertainty runs the suites.
+            # A failed diff fails this job, and with it `CI passed`.
+            changed="$(git diff --no-renames --name-only "$BASE_SHA" "$HEAD_SHA")"
+            # The SHAs let a release sync's version-only info.xml bump skip
+            # the suites (D-915); the image workflow still checks the manifest.
+            suite="$(printf '%s\n' "$changed" | ./scripts/classify-image-relevance.sh --ci-suite --base "$BASE_SHA" --head "$HEAD_SHA")"
+            # The classifier's tests are in the suites it would skip.
+            if grep -qxF 'scripts/classify-image-relevance.sh' <<<"$changed"; then
+              suite=true
+            fi
+            recorder=false
+            if [[ "$suite" == true ]]; then
+              recorder="$(printf '%s\n' "$changed" | ./scripts/classify-recorder-integration-relevance.sh)"
             fi
           fi
-          echo "relevant=$relevant" >> "$GITHUB_OUTPUT"
-          echo "Standalone recorder integration relevant: $relevant" >> "$GITHUB_STEP_SUMMARY"
-          echo "Tested commit: $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "suite=$suite"
+            echo "recorder=$recorder"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "Tested commit: $(git rev-parse HEAD)"
+            echo "Test suites: $suite"
+            echo "Standalone recorder integration: $recorder"
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Derive recorder matrix from compatibility inventory
         id: matrix
         run: echo "value=$(python3 scripts/nextcloud_compatibility.py matrix --tier recorder)" >> "$GITHUB_OUTPUT"
+
+  contracts:
+    name: Fast manifest + harness contracts
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.suite == 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
       - name: Check compatibility contracts
         run: |
           python3 scripts/nextcloud_compatibility.py validate
@@ -145,6 +184,8 @@ jobs:
   ui:
     name: UI tests
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.suite == 'true'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -198,6 +239,8 @@ jobs:
   unit:
     name: Unit tests (${{ matrix.module }})
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.suite == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -319,15 +362,14 @@ jobs:
   integration:
     name: "Integration (${{ matrix.script }}${{ matrix.nextcloud_image && format(', {0}', matrix.nextcloud_image) || '' }})"
     runs-on: ubuntu-latest
-    # Not `unit` (D-906): waiting for the slowest unit job, then for a runner,
-    # cost more than the integration runs it saved when a unit test failed.
-    needs:
-      - contracts
-    if: needs.contracts.outputs.recorder-integration == 'true'
+    # Not `unit` or `contracts` (D-906): waiting for them, then for a runner,
+    # cost more than the integration runs it saved when one of them failed.
+    needs: changes
+    if: needs.changes.outputs.recorder == 'true'
     timeout-minutes: 45
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.contracts.outputs.recorder-matrix) }}
+      matrix: ${{ fromJSON(needs.changes.outputs.recorder-matrix) }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -374,11 +416,10 @@ jobs:
   integration-mute:
     name: "Integration (ci-e2e-mute.sh)"
     runs-on: ubuntu-latest
-    # Not `unit` (D-906): waiting for the slowest unit job, then for a runner,
-    # cost more than the integration runs it saved when a unit test failed.
-    needs:
-      - contracts
-    if: needs.contracts.outputs.recorder-integration == 'true'
+    # Not `unit` or `contracts` (D-906): waiting for them, then for a runner,
+    # cost more than the integration runs it saved when one of them failed.
+    needs: changes
+    if: needs.changes.outputs.recorder == 'true'
     # Runs on every relevant PR and every push-to-main, without a label gate.
     # Only known unrelated changes skip these standalone recorder scenarios;
     # packaged operator/UI coverage stays in publish-exapp-image.yml.
@@ -408,7 +449,7 @@ jobs:
           NEXTCLOUD_URL: "http://127.0.0.1:28080"
           SIGNALING_URL: "http://127.0.0.1:28082"
           BOT_PASSWORD: "ci-bot-password"
-          NEXTCLOUD_IMAGE: ${{ fromJSON(needs.contracts.outputs.recorder-matrix).include[0].nextcloud_image }}
+          NEXTCLOUD_IMAGE: ${{ fromJSON(needs.changes.outputs.recorder-matrix).include[0].nextcloud_image }}
         run: ./harness/bin/ci-e2e-mute.sh
       # Capture recorder/publisher logs + session artifact on failure so a
       # genuine (non-flake) regression can be triaged from the funnel summary and
@@ -429,13 +470,13 @@ jobs:
   # The one check branch protection requires from this workflow (D-906).
   # Jobs above can be split, merged or renamed without touching the rulesets:
   # this job fails unless every job it needs passed or was not needed.
-  # `skipped` passes because a job is only skipped by design here: the
-  # recorder classifier skips integration, and a failed `needs` already shows
-  # up as that job's own failure.
+  # `skipped` passes because a job is only skipped by design here: `changes`
+  # skips the suites or integration, and a failed `needs` already shows up as
+  # that job's own failure.
   ci-passed:
     name: CI passed
     runs-on: ubuntu-latest
-    needs: [contracts, ui, unit, integration, integration-mute]
+    needs: [changes, contracts, ui, unit, integration, integration-mute]
     if: always()
     steps:
       - uses: actions/checkout@v4

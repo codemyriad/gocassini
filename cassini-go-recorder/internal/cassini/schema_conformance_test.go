@@ -425,7 +425,7 @@ func TestTranscriptionStandInSurvivesPackingAndMatchesTheSchema(t *testing.T) {
 	if err := json.Unmarshal(raw, &manifest); err != nil {
 		t.Fatal(err)
 	}
-	standIn := &portable.TranscriptionStandIn{For: "parakeet-ultra-0.6b-int8", Reason: portable.StandInReasonInstalling, Detail: "replaces retired parakeet-tdt-0.6b-v3-int8; being installed (downloading, 40%)"}
+	standIn := &portable.TranscriptionStandIn{For: "parakeet-ultra-0.6b-int8-v2", Reason: portable.StandInReasonInstalling, Detail: "replaces retired parakeet-tdt-0.6b-v3-int8; being installed (downloading, 40%)"}
 	manifest["processing"] = portable.Processing{Transcription: portable.TranscriptionStatus{Status: "completed", Model: "parakeet-tdt-0.6b-v3-int8", Revision: "5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf", StandIn: standIn}}
 	raw, _ = json.Marshal(manifest)
 	if err := os.WriteFile(path, raw, 0o600); err != nil {

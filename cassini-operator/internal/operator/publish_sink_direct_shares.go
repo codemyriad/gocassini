@@ -110,7 +110,7 @@ func (s *directSharesPublishSink) Deliver(ctx context.Context, d publishDelivery
 	if s.rt.meetingMetadata != nil {
 		// The entry is derived metadata. No Nextcloud catalog is written.
 		// Room-name overlay is retained while local catalog export exists.
-		overlaid, err := overlayMeetingEntry(entry, d.RoomName)
+		overlaid, err := overlayMeetingEntry(entry, d.RoomName, d.Audience)
 		if err != nil {
 			return "", err
 		}
@@ -185,19 +185,28 @@ func (s *directSharesPublishSink) recordShareOutcome(ctx context.Context, jobID,
 	}
 }
 
-func overlayMeetingEntry(entry json.RawMessage, roomName string) (json.RawMessage, error) {
-	if strings.TrimSpace(roomName) == "" {
+func overlayMeetingEntry(entry json.RawMessage, roomName, audience string) (json.RawMessage, error) {
+	if strings.TrimSpace(roomName) == "" && strings.TrimSpace(audience) == "" {
 		return entry, nil
 	}
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(entry, &fields); err != nil {
 		return nil, err
 	}
-	name, err := json.Marshal(roomName)
-	if err != nil {
-		return nil, err
+	if strings.TrimSpace(roomName) != "" {
+		name, err := json.Marshal(roomName)
+		if err != nil {
+			return nil, err
+		}
+		fields["roomName"] = name
 	}
-	fields["roomName"] = name
+	if strings.TrimSpace(audience) != "" {
+		mode, err := json.Marshal(strings.TrimSpace(audience))
+		if err != nil {
+			return nil, err
+		}
+		fields["audience"] = mode
+	}
 	return json.Marshal(fields)
 }
 
@@ -206,17 +215,51 @@ func (s *directSharesPublishSink) audienceForJob(ctx context.Context, jobID stri
 	if !ok {
 		return nil, false, fmt.Errorf("recording %s has no saved Talk owner or room audience", jobID)
 	}
+	job, err := s.rt.store.GetJob(ctx, jobID)
+	if err != nil {
+		return nil, false, err
+	}
+	rawMode := strings.TrimSpace(job.AudienceMode)
+	mode := normalizeSavedAudience(rawMode)
+	unknownMode := rawMode != "" && rawMode != shareAudienceRoom && rawMode != shareAudienceAttendees
 	audience, captured, err := s.rt.store.JobRoomAudience(ctx, jobID)
 	if err != nil {
 		return nil, false, err
 	}
-	if !captured {
-		if s.rt.fetchTalkParticipants == nil {
-			return nil, false, fmt.Errorf("no captured Talk audience for %s and no participant lookup is available", jobID)
+	if unknownMode {
+		// A mode this build does not know must never widen a recording. Ignore
+		// any captured room roster and share the starter only (#480).
+		if err := s.rt.store.SetJobAudienceNotice(ctx, jobID, jobAudienceNoticeUnknown); err != nil {
+			s.rt.logger.Printf("audience notice write failed job=%s: %v", jobID, err)
 		}
-		audience, _, err = s.rt.resolveRecordingAudience(ctx, jobID, binding.Owner, binding.RoomToken)
-		if err != nil {
-			return nil, false, fmt.Errorf("resolve recording audience: %w", err)
+		audience = nil
+		captured = true
+	}
+	if !captured {
+		if mode == shareAudienceAttendees {
+			// No publish-time Talk lookup in attendee mode: the room's current
+			// call could be the next meeting in a standing channel, and its
+			// people must not receive this recording (#472 review). Share with
+			// the starter only and leave a warning on the run.
+			if err := s.rt.store.SetJobAudienceNotice(ctx, jobID, jobAudienceNoticeNoCapture); err != nil {
+				s.rt.logger.Printf("audience notice write failed job=%s: %v", jobID, err)
+			}
+		} else {
+			if s.rt.fetchTalkParticipants == nil {
+				return nil, false, fmt.Errorf("no captured Talk audience for %s and no participant lookup is available", jobID)
+			}
+			audience, _, err = s.rt.resolveRecordingAudience(ctx, jobID, binding.Owner, binding.RoomToken)
+			if err != nil {
+				return nil, false, fmt.Errorf("resolve recording audience: %w", err)
+			}
+		}
+	} else if !unknownMode && mode == shareAudienceAttendees && len(audience) == 0 {
+		if err := s.rt.store.SetJobAudienceNotice(ctx, jobID, jobAudienceNoticeNoLocal); err != nil {
+			s.rt.logger.Printf("audience notice write failed job=%s: %v", jobID, err)
+		}
+	} else if !unknownMode {
+		if err := s.rt.store.SetJobAudienceNotice(ctx, jobID, ""); err != nil {
+			s.rt.logger.Printf("audience notice clear failed job=%s: %v", jobID, err)
 		}
 	}
 	// The starter is a known local account even if Talk's roster omits them.

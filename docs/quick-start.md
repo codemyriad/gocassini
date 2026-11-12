@@ -58,8 +58,10 @@ which may be an older release even though Git is on your feature branch.
 
 The installed app writes recordings to the `cassini` account's private
 `CassiniRecordings/meetings` tree and creates direct Nextcloud Files shares for the
-captured Talk room audience. See
-[Recording permissions](./direct-shares-cutover.md).
+captured audience: everyone in the Talk room by default, or only the people who
+were in the call while it was recorded when **Share recordings with** is set to
+that option. See
+[Recording permissions](./exapp-nextcloud-recordings-permissions.md).
 
 When it finishes, open Nextcloud and sign in as `admin` / `admin`:
 

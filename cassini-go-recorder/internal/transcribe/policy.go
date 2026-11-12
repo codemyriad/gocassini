@@ -118,10 +118,11 @@ type ResolvedModel struct {
 // always wins; otherwise it is derived from the quality tier and device.
 //
 // An explicit id that an earlier version shipped and the catalogue has since
-// retired (Parakeet v3) resolves to the model that replaced it, at the same
-// precision, and its revision pin is dropped: it named the retired model's
-// files. An id the catalogue never knew stays as it is, so the build reports it
-// as unavailable instead of quietly transcribing with something else.
+// retired (Parakeet Ultra int8 v1, Parakeet v3) resolves to the model that
+// replaced it, at the same precision, and its revision pin is dropped: it
+// named the retired model's files. An id the catalogue never knew stays as it
+// is, so the build reports it as unavailable instead of quietly transcribing
+// with something else.
 func ResolveModel(explicitModel, explicitRevision, quality, device string) ResolvedModel {
 	id := ModelID(strings.TrimSpace(explicitModel))
 	revision := strings.TrimSpace(explicitRevision)

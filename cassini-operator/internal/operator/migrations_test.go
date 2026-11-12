@@ -116,8 +116,9 @@ func TestMigrateDownRemovesSpeakerEditsAndUpRestoresThem(t *testing.T) {
 	if _, err := store.db.Exec(`SELECT speaker_edits_json FROM job_attempts`); err == nil {
 		t.Fatal("job_attempts.speaker_edits_json survived the down migration")
 	}
-	if _, err := store.GetJob(context.Background(), "kept"); err != nil {
-		t.Fatalf("the down migration lost a job: %v", err)
+	var kept string
+	if err := store.db.QueryRow(`SELECT id FROM jobs WHERE id = 'kept'`).Scan(&kept); err != nil || kept != "kept" {
+		t.Fatalf("the down migration lost a job: id=%q err=%v", kept, err)
 	}
 
 	if err := store.ensureSchema(); err != nil {
@@ -507,6 +508,7 @@ func TestNewestMigrationHasARollbackTest(t *testing.T) {
 		"attempt_summary_times":    true,
 		"job_share_outcomes":       true,
 		"share_notice_dismissals":  true,
+		"job_audience_mode":        true,
 		"event_outbox":             true,
 	}
 	newest := migrations[len(migrations)-1].Name
@@ -640,8 +642,9 @@ func TestMigrateDownDropsJobShareOutcomesAndKeepsTheJob(t *testing.T) {
 	if _, err := store.db.Exec(`SELECT job_id FROM job_share_outcomes`); err == nil {
 		t.Fatal("job_share_outcomes survived the down migration")
 	}
-	if _, err := store.GetJob(ctx, "SHARED1"); err != nil {
-		t.Fatalf("the job did not survive the down migration: %v", err)
+	var sharedSurvivor string
+	if err := store.db.QueryRow(`SELECT id FROM jobs WHERE id = 'SHARED1'`).Scan(&sharedSurvivor); err != nil || sharedSurvivor != "SHARED1" {
+		t.Fatalf("the job did not survive the down migration: id=%q err=%v", sharedSurvivor, err)
 	}
 	if err := store.ensureSchema(); err != nil {
 		t.Fatalf("ensureSchema() error = %v", err)
@@ -681,8 +684,9 @@ func TestMigrateDownDropsShareNoticeDismissalsAndKeepsTheJob(t *testing.T) {
 	if _, err := store.db.Exec(`SELECT job_id FROM share_notice_dismissals`); err == nil {
 		t.Fatal("share_notice_dismissals survived the down migration")
 	}
-	if _, err := store.GetJob(ctx, "DISMISSED1"); err != nil {
-		t.Fatalf("the job did not survive the down migration: %v", err)
+	var dismissedSurvivor string
+	if err := store.db.QueryRow(`SELECT id FROM jobs WHERE id = 'DISMISSED1'`).Scan(&dismissedSurvivor); err != nil || dismissedSurvivor != "DISMISSED1" {
+		t.Fatalf("the job did not survive the down migration: id=%q err=%v", dismissedSurvivor, err)
 	}
 	if err := store.ensureSchema(); err != nil {
 		t.Fatalf("ensureSchema() error = %v", err)
@@ -692,7 +696,52 @@ func TestMigrateDownDropsShareNoticeDismissalsAndKeepsTheJob(t *testing.T) {
 	}
 }
 
-// A rollback past 0027 drops queued and delivered webhook events: they are
+// A rollback past 0027 forgets the per-job audience mode and its warning: the
+// recordings fall back to the historical room audience, and the jobs themselves
+// survive. The re-upgrade restores the columns with the default.
+func TestMigrateDownDropsJobAudienceMode(t *testing.T) {
+	migrations, err := loadMigrations()
+	if err != nil {
+		t.Fatalf("loadMigrations() error = %v", err)
+	}
+	at := migrationIndex(migrations, "job_audience_mode")
+	if at < 0 {
+		t.Fatal("no job_audience_mode migration")
+	}
+	store, err := OpenStore(filepath.Join(t.TempDir(), "jobs.sqlite3"))
+	if err != nil {
+		t.Fatalf("OpenStore() error = %v", err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	insertJob(t, store.db, "AUDIENCE1", nowUTCString())
+	if _, err := store.db.Exec(`UPDATE jobs SET audience_mode = 'attendees', audience_notice = 'test notice' WHERE id = 'AUDIENCE1'`); err != nil {
+		t.Fatalf("set audience: %v", err)
+	}
+
+	if err := store.migrateDownTo(migrations[at].Version - 1); err != nil {
+		t.Fatalf("migrateDownTo(%d) error = %v", migrations[at].Version-1, err)
+	}
+	if _, err := store.db.Exec(`SELECT audience_mode FROM jobs`); err == nil {
+		t.Fatal("audience_mode survived the down migration")
+	}
+	var survivor string
+	if err := store.db.QueryRow(`SELECT id FROM jobs WHERE id = 'AUDIENCE1'`).Scan(&survivor); err != nil || survivor != "AUDIENCE1" {
+		t.Fatalf("the job did not survive the down migration: id=%q err=%v", survivor, err)
+	}
+	if err := store.ensureSchema(); err != nil {
+		t.Fatalf("ensureSchema() error = %v", err)
+	}
+	job, err := store.GetJob(ctx, "AUDIENCE1")
+	if err != nil {
+		t.Fatalf("GetJob() after re-upgrade error = %v", err)
+	}
+	if job.AudienceMode != shareAudienceRoom || job.AudienceNotice != "" {
+		t.Fatalf("audience after re-upgrade = %q/%q, want room and no notice", job.AudienceMode, job.AudienceNotice)
+	}
+}
+
+// A rollback past 0028 drops queued and delivered webhook events: they are
 // delivery history, not recording state, and the recording pipeline does not
 // depend on them. The re-upgrade brings an empty, working outbox back, so a
 // fresh event can still be queued and delivered after a downgrade/upgrade.

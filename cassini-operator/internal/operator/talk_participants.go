@@ -32,6 +32,19 @@ const talkParticipantsTimeout = 15 * time.Second
 // talkParticipantsFetcher returns a fetcher backed by the Talk OCS participants
 // API, or nil when the ExApp environment is absent.
 func (c ExAppConfig) talkParticipantsFetcher() talkParticipantsFetcher {
+	return c.talkPrincipalFetcher(false)
+}
+
+// talkAttendeesFetcher returns the same participants, narrowed to the people
+// Talk reports as in the call (the in-call bit of the participant's inCall
+// flags). The room's participants API lists members whether they are on the
+// call or not; this is the option that shares with the call rather than the
+// channel.
+func (c ExAppConfig) talkAttendeesFetcher() talkParticipantsFetcher {
+	return c.talkPrincipalFetcher(true)
+}
+
+func (c ExAppConfig) talkPrincipalFetcher(attendeesOnly bool) talkParticipantsFetcher {
 	if !c.appAPIActive() {
 		return nil
 	}
@@ -41,7 +54,7 @@ func (c ExAppConfig) talkParticipantsFetcher() talkParticipantsFetcher {
 		if err != nil {
 			return nil, err
 		}
-		return participantMappings(rows), nil
+		return participantMappings(rows, attendeesOnly), nil
 	}
 }
 
@@ -95,15 +108,32 @@ type participantRow struct {
 	ActorID     string `json:"actorId"`
 	UserID      string `json:"userId"`
 	DisplayName string `json:"displayName"`
+	// InCall is Talk's in-call flag bitmask: bit 1 means the participant is in
+	// the call, while the higher bits only describe published audio/video. The
+	// attendee option keeps bit 1; the room option ignores the field.
+	InCall int `json:"inCall"`
 }
 
+// participantInCallFlag is the in-call bit of Talk's inCall flags.
+const participantInCallFlag = 1
+
 // participantMappings deduplicates the locally shareable Talk actors.
-func participantMappings(rows []participantRow) []sharePrincipal {
+//
+// attendeesOnly keeps only the actors Talk reports as in the call. A group or
+// Team row is a room grant, not a person on the call, so it is filtered out
+// with the room-presence rows; the starter is added by the caller regardless.
+func participantMappings(rows []participantRow, attendeesOnly bool) []sharePrincipal {
 	seen := map[string]bool{}
 	out := make([]sharePrincipal, 0, len(rows))
 	for _, row := range rows {
 		mapType, ok := participantACTORs[row.ActorType]
 		if !ok {
+			continue
+		}
+		// Attendees are people in the call: a group or Team is a room-level
+		// grant, never a person on the call, so it is left out with the
+		// room-presence rows.
+		if attendeesOnly && (row.InCall&participantInCallFlag == 0 || mapType != "user") {
 			continue
 		}
 		id := strings.TrimSpace(row.ActorID)
@@ -200,7 +230,14 @@ const (
 // whose attendees are all guests/email/federated has no local principal to
 // grant. The caller distinguishes that from "we could not find out".
 func (rt *Runtime) resolveRecordingAudience(ctx context.Context, jobID, starter, roomToken string) ([]sharePrincipal, string, error) {
-	if rt.fetchTalkParticipants == nil {
+	return rt.resolveRecordingAudienceWith(ctx, jobID, starter, roomToken, rt.fetchTalkParticipants)
+}
+
+// resolveRecordingAudienceWith is the resolver with the fetcher chosen by the
+// caller: the room's participants, or the in-call attendees when the operator's
+// "Share recordings with" setting asks for the call rather than the channel.
+func (rt *Runtime) resolveRecordingAudienceWith(ctx context.Context, jobID, starter, roomToken string, fetch talkParticipantsFetcher) ([]sharePrincipal, string, error) {
+	if fetch == nil {
 		return nil, "", nil
 	}
 
@@ -215,7 +252,7 @@ func (rt *Runtime) resolveRecordingAudience(ctx context.Context, jobID, starter,
 			case <-time.After(rt.audienceRetryGap()):
 			}
 		}
-		mappings, err := rt.fetchTalkParticipants(ctx, starter, roomToken)
+		mappings, err := fetch(ctx, starter, roomToken)
 		if err == nil {
 			return mappings, audienceSourceStarter, nil
 		}
@@ -227,7 +264,7 @@ func (rt *Runtime) resolveRecordingAudience(ctx context.Context, jobID, starter,
 	// member. Skipped when they are the same principal.
 	if strings.TrimSpace(starter) != ncRecordingsOwner {
 		rt.logger.Printf("nc files access: participants lookup as %s exhausted id=%s — retrying as %s", starter, jobID, ncRecordingsOwner)
-		mappings, err := rt.fetchTalkParticipants(ctx, ncRecordingsOwner, roomToken)
+		mappings, err := fetch(ctx, ncRecordingsOwner, roomToken)
 		if err == nil {
 			return mappings, audienceSourceOwner, nil
 		}

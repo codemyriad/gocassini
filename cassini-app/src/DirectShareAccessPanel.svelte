@@ -12,6 +12,11 @@
   let loading = true;
   export let busy = false;
   export let disabled = false;
+  // The parent owns the saved settings and Save button; this panel edits only
+  // its draft. settingsLoaded keeps the radios inert until the draft exists.
+  export let shareAudience: "room" | "attendees" = "room";
+  export let settingsLoaded = true;
+  export let onShareAudienceChange: (value: "room" | "attendees") => void = () => {};
   let error = "";
   // Confirms a fix made from this panel; a healthy setup otherwise says nothing.
   let fixed = false;
@@ -51,14 +56,41 @@
 <section class="op-tint access">
   <h2 class="set-row-name op-card-title">{$LL.app.settings.direct_share.heading()}</h2>
   <div class="access-body grid gap-3 text-sm">
-    <!-- Same points as the rooms rail's "Shared with participants" note
+    <!-- Same points as the rooms rail's audience note
          (cassini-viewer RoomsRail.svelte); change both together. -->
     <p>{$LL.common.audience.intro()}</p>
-    <ul class="access-points">
-      <li>{$LL.common.audience.point_participants()}</li>
-      <li>{$LL.common.audience.point_guests()}</li>
-      <li>{$LL.common.audience.point_public_links()}</li>
-    </ul>
+    <p>{$LL.app.settings.direct_share.audience_choose()}</p>
+    <div class="audience-choice" role="group" aria-label={$LL.app.settings.direct_share.audience_group_label()}>
+      <label class="audience-option">
+        <input type="radio" name="recording-audience" checked={shareAudience === "room"} on:change={() => onShareAudienceChange("room")} disabled={disabled || !settingsLoaded} />
+        <span>
+          <strong>{$LL.app.settings.direct_share.audience_room_label()}</strong>
+          <span class="audience-description">{$LL.app.settings.direct_share.audience_room_description()}</span>
+        </span>
+      </label>
+      <label class="audience-option">
+        <input type="radio" name="recording-audience" checked={shareAudience === "attendees"} on:change={() => onShareAudienceChange("attendees")} disabled={disabled || !settingsLoaded} />
+        <span>
+          <strong>{$LL.app.settings.direct_share.audience_attendees_label()}</strong>
+          <span class="audience-description">{$LL.app.settings.direct_share.audience_attendees_description()}</span>
+        </span>
+      </label>
+    </div>
+    <div class="audience-effects" role="note">
+      <p class="audience-effects-heading">{$LL.app.settings.direct_share.audience_effects_heading()}</p>
+      <ul class="access-points">
+        {#if shareAudience === "attendees"}
+          <li>{$LL.common.audience.point_attendees()}</li>
+          <li>{$LL.app.settings.direct_share.audience_late_joiners()}</li>
+          <li>{$LL.app.settings.direct_share.audience_chat_skipped()}</li>
+        {:else}
+          <li>{$LL.common.audience.point_participants()}</li>
+        {/if}
+        <li>{$LL.common.audience.point_guests()}</li>
+        <li>{$LL.common.audience.point_public_links()}</li>
+      </ul>
+    </div>
+    <p class="audience-hint">{$LL.app.settings.direct_share.audience_applies()}</p>
     {#if loading}
       <p role="status">{$LL.app.settings.direct_share.checking()}</p>
     {:else if error || (status && (!status.service_account.exists || !status.ok))}
@@ -101,5 +133,41 @@
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
+  }
+  .audience-choice {
+    display: grid;
+    gap: 8px;
+    margin: 2px 0;
+  }
+  .audience-option {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    cursor: pointer;
+  }
+  .audience-option input {
+    margin-top: 3px;
+    flex: none;
+  }
+  .audience-description {
+    display: block;
+    opacity: 0.8;
+  }
+  /* What the selected choice does: set apart so it reads as the outcome. */
+  .audience-effects {
+    display: grid;
+    gap: 6px;
+    padding: 10px 12px;
+    border-left: 3px solid currentColor;
+    border-radius: 4px;
+    background: color-mix(in srgb, currentColor 6%, transparent);
+  }
+  .audience-effects-heading {
+    margin: 0;
+    font-weight: 600;
+  }
+  .audience-hint {
+    margin: 0;
+    opacity: 0.8;
   }
 </style>

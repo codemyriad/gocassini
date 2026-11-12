@@ -75,6 +75,68 @@ expect true  ".github/workflows/new-workflow.yml"
 expect true  $'.github/workflows/lint.yml\ncassini-operator/main.go'
 expect true  $'cassini-microsite/x.astro\nscripts/lib-release-version.sh'
 
+# ci.yml's suites (--ci-suite): the same, except that ci.yml tests itself.
+expect_suite() {
+  local want="$1" input="$2" got
+  got="$(printf '%s' "$input" | "$CLASSIFIER" --ci-suite)"
+  [[ "$got" == "$want" ]] \
+    || fail "--ci-suite returned '$got', wanted '$want' for input <<${input}>>"
+}
+expect_suite false ""
+expect_suite false $'\n'
+expect_suite false $'README.md\ndocs/guide.md'
+expect_suite false $'.github/workflows/lint.yml\n.github/workflows/pr-conflict-impact.yml'
+expect_suite false $'cassini-microsite/src/pages/index.astro\n.claude/settings.json'
+expect_suite true  ".github/workflows/ci.yml"
+expect_suite true  $'.github/workflows/ci.yml\nREADME.md'
+# contracts tests the image workflow's gate, so it runs the suites too.
+expect_suite true  ".github/workflows/publish-exapp-image.yml"
+expect_suite true  ".github/workflows/new-workflow.yml"
+expect_suite true  "scripts/classify-image-relevance.sh"
+expect_suite true  $'README.md\ncassini-operator/main.go'
+"$CLASSIFIER" --bogus </dev/null >/dev/null 2>&1 && fail "an unknown option must fail"
+
+# A release sync's version-only info.xml bump (D-915), against a scratch repo
+# holding the real manifest.
+repo="$(mktemp -d)"
+trap 'rm -rf "$repo"' EXIT
+git -C "$repo" init -q
+git -C "$repo" config user.email ci@example.invalid
+git -C "$repo" config user.name ci
+mkdir "$repo/appinfo"
+cp "$ROOT/appinfo/info.xml" "$repo/appinfo/info.xml"
+commit() { git -C "$repo" commit -qam "$1" --allow-empty && git -C "$repo" rev-parse HEAD; }
+git -C "$repo" add appinfo/info.xml
+base="$(commit base)"
+sed -i -E 's#<version>[^<]*</version>#<version>9.9.0-alpha.0</version>#; s#<image-tag>[^<]*</image-tag>#<image-tag>9.9.0-alpha.0</image-tag>#' "$repo/appinfo/info.xml"
+bump="$(commit bump)"
+grep -q '<image-tag>9.9.0-alpha.0</image-tag>' "$repo/appinfo/info.xml" || fail "fixture bump did not apply"
+sed -i '0,/<\/routes>/s#</routes>#<route><url>x</url></route></routes>#' "$repo/appinfo/info.xml"
+bump_and_route="$(commit route)"
+git -C "$repo" diff --quiet "$bump" "$bump_and_route" && fail "fixture route change did not apply"
+
+expect_sync() {
+  local want="$1" input="$2" got
+  shift 2
+  got="$(cd "$repo" && printf '%s' "$input" | "$CLASSIFIER" "$@")"
+  [[ "$got" == "$want" ]] \
+    || fail "classifier $* returned '$got', wanted '$want' for input <<${input}>>"
+}
+sync=$'appinfo/info.xml\nCHANGELOG.md\nchangelog.d/x.md'
+expect_sync false "$sync" --base "$base" --head "$bump"
+expect_sync false "$sync" --ci-suite --base "$base" --head "$bump"
+expect_sync true  "$sync" --base "$base" --head "$bump_and_route"
+expect_sync true  "$sync" --ci-suite --base "$base" --head "$bump_and_route"
+expect_sync true  "$sync"                                    # no SHAs: fail closed
+expect_sync true  "$sync" --base "$base" --head 0000000000000000000000000000000000000000
+expect_sync true  $'appinfo/info.xml\nDockerfile' --base "$base" --head "$bump"
+# A second <version> element can't ride along as a "version bump".
+sed -i '0,/<\/routes>/s#</routes>#</routes>\n  <version>1</version>#' "$repo/appinfo/info.xml"
+two_versions="$(commit two-versions)"
+sed -i 's#<version>1</version>#<version>2</version>#' "$repo/appinfo/info.xml"
+two_versions_bumped="$(commit two-versions-bumped)"
+expect_sync true  "$sync" --base "$two_versions" --head "$two_versions_bumped"
+
 echo "PASS: classifier behavioral fixtures"
 
 # ---- (2) drift assertion vs ci.yml paths-ignore ------------------------------
@@ -99,10 +161,19 @@ gh_to_bash_glob() {
   esac
 }
 
-# Extract ci.yml's paths-ignore items. push + pull_request carry identical
-# lists, so we collect both and dedupe. No yq on the contracts runner, so parse
-# the small, stable YAML with awk: take `- '...'` items directly under a
-# `paths-ignore:` key, then strip the dash prefix and surrounding quotes.
+# Pull requests must start ci.yml whatever they change: its `CI passed`
+# check is required, and the `changes` job skips the suites instead (D-906).
+awk '
+  /^  pull_request:/ { in_pr=1; next }
+  in_pr && /^  [^ ]/ { in_pr=0 }
+  in_pr && /paths(-ignore)?:/ { found=1 }
+  END { exit found }
+' "$CI_YML" || fail "ci.yml filters pull_request by path; CI passed would never report"
+
+# Extract ci.yml's paths-ignore items (push only, since pull requests have
+# none). No yq on the contracts runner, so parse the small, stable YAML with
+# awk: take `- '...'` items directly under a `paths-ignore:` key, then strip
+# the dash prefix and surrounding quotes.
 mapfile -t ci_globs_raw < <(
   awk '
     /paths-ignore:/ { collect=1; next }

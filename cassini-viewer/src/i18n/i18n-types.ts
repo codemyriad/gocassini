@@ -128,6 +128,14 @@ type RootTranslation = {
 			 */
 			point_participants: string
 			/**
+			 * E​a​c​h​ ​r​e​c​o​r​d​i​n​g​ ​i​s​ ​s​h​a​r​e​d​ ​o​n​l​y​ ​w​i​t​h​ ​t​h​e​ ​p​e​o​p​l​e​ ​w​h​o​ ​w​e​r​e​ ​i​n​ ​t​h​e​ ​c​a​l​l​ ​w​h​i​l​e​ ​i​t​ ​w​a​s​ ​b​e​i​n​g​ ​r​e​c​o​r​d​e​d​.
+			 */
+			point_attendees: string
+			/**
+			 * S​o​m​e​ ​r​e​c​o​r​d​i​n​g​s​ ​h​e​r​e​ ​a​r​e​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​t​h​e​ ​w​h​o​l​e​ ​T​a​l​k​ ​r​o​o​m​ ​a​n​d​ ​s​o​m​e​ ​o​n​l​y​ ​w​i​t​h​ ​t​h​e​ ​p​e​o​p​l​e​ ​w​h​o​ ​w​e​r​e​ ​i​n​ ​t​h​e​ ​c​a​l​l​.
+			 */
+			point_mixed: string
+			/**
 			 * G​u​e​s​t​s​ ​w​i​t​h​o​u​t​ ​a​ ​N​e​x​t​c​l​o​u​d​ ​a​c​c​o​u​n​t​ ​c​a​n​'​t​ ​o​p​e​n​ ​i​t​.
 			 */
 			point_guests: string
@@ -921,6 +929,20 @@ export type NamespaceAppTranslation = {
 			summaries_action_title: string
 		}
 		step_outcomes: {
+			audience_notice: {
+				/**
+				 * N​o​ ​a​t​t​e​n​d​e​e​ ​l​i​s​t​ ​w​a​s​ ​c​a​p​t​u​r​e​d​;​ ​o​n​l​y​ ​t​h​e​ ​s​t​a​r​t​e​r​ ​r​e​c​e​i​v​e​d​ ​t​h​i​s​ ​r​e​c​o​r​d​i​n​g​.
+				 */
+				no_capture: string
+				/**
+				 * N​o​ ​l​o​c​a​l​ ​a​t​t​e​n​d​e​e​s​ ​w​e​r​e​ ​c​a​p​t​u​r​e​d​;​ ​o​n​l​y​ ​t​h​e​ ​s​t​a​r​t​e​r​ ​r​e​c​e​i​v​e​d​ ​t​h​i​s​ ​r​e​c​o​r​d​i​n​g​.
+				 */
+				no_local: string
+				/**
+				 * T​h​i​s​ ​r​e​c​o​r​d​i​n​g​'​s​ ​a​u​d​i​e​n​c​e​ ​m​o​d​e​ ​w​a​s​ ​n​o​t​ ​r​e​c​o​g​n​i​s​e​d​;​ ​o​n​l​y​ ​t​h​e​ ​s​t​a​r​t​e​r​ ​r​e​c​e​i​v​e​d​ ​t​h​i​s​ ​r​e​c​o​r​d​i​n​g​.
+				 */
+				unknown: string
+			}
 			transcription: {
 				/**
 				 * P​u​b​l​i​s​h​e​d​ ​w​i​t​h​o​u​t​ ​a​ ​t​r​a​n​s​c​r​i​p​t​:​ ​t​r​a​n​s​c​r​i​p​t​i​o​n​ ​i​s​ ​t​u​r​n​e​d​ ​o​f​f
@@ -1071,6 +1093,10 @@ export type NamespaceAppTranslation = {
 				 */
 				starter_refused_hint_rerun: string
 				/**
+				 * F​i​x​ ​t​h​e​ ​s​e​t​t​i​n​g​ ​D​o​c​t​o​r​ ​›​ ​R​e​c​o​r​d​i​n​g​ ​s​h​a​r​i​n​g​ ​n​a​m​e​s​,​ ​t​h​e​n​ ​R​e​r​u​n​.​ ​R​e​r​u​n​ ​p​u​b​l​i​s​h​e​s​ ​i​t​ ​a​n​d​ ​s​h​a​r​e​s​ ​i​t​ ​w​i​t​h​ ​t​h​e​ ​c​a​l​l​'​s​ ​a​t​t​e​n​d​e​e​s​.
+				 */
+				starter_refused_hint_rerun_attendees: string
+				/**
 				 * F​i​x​ ​t​h​e​ ​s​e​t​t​i​n​g​ ​D​o​c​t​o​r​ ​›​ ​R​e​c​o​r​d​i​n​g​ ​s​h​a​r​i​n​g​ ​n​a​m​e​s​ ​s​o​ ​l​a​t​e​r​ ​r​e​c​o​r​d​i​n​g​s​ ​p​u​b​l​i​s​h​.​ ​T​h​i​s​ ​r​u​n​ ​c​a​n​n​o​t​ ​b​e​ ​r​e​r​u​n​.
 				 */
 				starter_refused_hint_no_rerun: string
@@ -1109,9 +1135,17 @@ export type NamespaceAppTranslation = {
 				 */
 				reshare_button: string
 				/**
+				 * R​e​-​s​h​a​r​e​ ​w​i​t​h​ ​c​a​l​l​ ​a​t​t​e​n​d​e​e​s
+				 */
+				reshare_button_attendees: string
+				/**
 				 * A​d​d​s​ ​w​h​o​e​v​e​r​ ​i​s​ ​m​i​s​s​i​n​g​,​ ​i​n​c​l​u​d​i​n​g​ ​a​n​y​o​n​e​ ​r​e​m​o​v​e​d​ ​b​y​ ​h​a​n​d​.​ ​P​e​o​p​l​e​ ​w​h​o​ ​a​c​c​e​p​t​ ​s​h​a​r​e​s​ ​b​y​ ​h​a​n​d​ ​w​i​l​l​ ​f​i​n​d​ ​i​t​ ​w​a​i​t​i​n​g​ ​i​n​ ​B​r​o​w​s​e​.
 				 */
 				reshare_note: string
+				/**
+				 * A​d​d​s​ ​w​h​o​e​v​e​r​ ​w​a​s​ ​i​n​ ​t​h​e​ ​c​a​l​l​ ​a​n​d​ ​i​s​ ​m​i​s​s​i​n​g​,​ ​i​n​c​l​u​d​i​n​g​ ​a​n​y​o​n​e​ ​r​e​m​o​v​e​d​ ​b​y​ ​h​a​n​d​.​ ​P​e​o​p​l​e​ ​w​h​o​ ​a​c​c​e​p​t​ ​s​h​a​r​e​s​ ​b​y​ ​h​a​n​d​ ​w​i​l​l​ ​f​i​n​d​ ​i​t​ ​w​a​i​t​i​n​g​ ​i​n​ ​B​r​o​w​s​e​.
+				 */
+				reshare_note_attendees: string
 			}
 		}
 		run_stages: {
@@ -2735,6 +2769,10 @@ export type NamespaceAppTranslation = {
 				 * C​a​p​t​u​r​e
 				 */
 				capture: string
+				/**
+				 * S​h​a​r​e​d​ ​w​i​t​h
+				 */
+				shared_with: string
 				/**
 				 * S​t​o​p​p​e​d​ ​b​e​c​a​u​s​e
 				 */
@@ -4619,6 +4657,46 @@ export type NamespaceAppTranslation = {
 			 */
 			heading: string
 			/**
+			 * C​h​o​o​s​e​ ​w​h​o​ ​r​e​c​e​i​v​e​s​ ​e​a​c​h​ ​r​e​c​o​r​d​i​n​g​,​ ​a​l​o​n​g​ ​w​i​t​h​ ​i​t​s​ ​t​r​a​n​s​c​r​i​p​t​ ​a​n​d​ ​s​u​m​m​a​r​y​.
+			 */
+			audience_choose: string
+			/**
+			 * S​h​a​r​e​ ​r​e​c​o​r​d​i​n​g​s​ ​w​i​t​h
+			 */
+			audience_group_label: string
+			/**
+			 * E​v​e​r​y​o​n​e​ ​i​n​ ​t​h​e​ ​T​a​l​k​ ​r​o​o​m
+			 */
+			audience_room_label: string
+			/**
+			 * E​v​e​r​y​ ​m​e​m​b​e​r​ ​o​f​ ​t​h​e​ ​r​o​o​m​,​ ​i​n​c​l​u​d​i​n​g​ ​p​e​o​p​l​e​ ​w​h​o​ ​w​e​r​e​ ​n​o​t​ ​o​n​ ​t​h​e​ ​c​a​l​l​.
+			 */
+			audience_room_description: string
+			/**
+			 * O​n​l​y​ ​p​e​o​p​l​e​ ​w​h​o​ ​w​e​r​e​ ​i​n​ ​t​h​e​ ​c​a​l​l
+			 */
+			audience_attendees_label: string
+			/**
+			 * P​e​o​p​l​e​ ​w​i​t​h​ ​a​ ​N​e​x​t​c​l​o​u​d​ ​a​c​c​o​u​n​t​ ​w​h​o​ ​j​o​i​n​e​d​ ​t​h​e​ ​c​a​l​l​ ​w​h​i​l​e​ ​i​t​ ​w​a​s​ ​b​e​i​n​g​ ​r​e​c​o​r​d​e​d​.​ ​U​s​e​f​u​l​ ​f​o​r​ ​a​ ​s​t​a​n​d​i​n​g​ ​c​h​a​n​n​e​l​.
+			 */
+			audience_attendees_description: string
+			/**
+			 * W​i​t​h​ ​t​h​i​s​ ​s​e​t​t​i​n​g
+			 */
+			audience_effects_heading: string
+			/**
+			 * P​e​o​p​l​e​ ​w​h​o​ ​j​o​i​n​ ​l​a​t​e​ ​o​r​ ​l​e​a​v​e​ ​e​a​r​l​y​ ​a​r​e​ ​i​n​c​l​u​d​e​d​.
+			 */
+			audience_late_joiners: string
+			/**
+			 * N​o​ ​m​e​s​s​a​g​e​ ​i​s​ ​p​o​s​t​e​d​ ​i​n​ ​t​h​e​ ​T​a​l​k​ ​r​o​o​m​'​s​ ​c​h​a​t​,​ ​b​e​c​a​u​s​e​ ​t​h​e​ ​w​h​o​l​e​ ​r​o​o​m​ ​w​o​u​l​d​ ​s​e​e​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​'​s​ ​t​i​t​l​e​ ​a​n​d​ ​l​i​n​k​.
+			 */
+			audience_chat_skipped: string
+			/**
+			 * A​p​p​l​i​e​s​ ​t​o​ ​r​e​c​o​r​d​i​n​g​s​ ​t​h​a​t​ ​s​t​a​r​t​ ​a​f​t​e​r​ ​y​o​u​ ​s​a​v​e​.​ ​R​e​c​o​r​d​i​n​g​s​ ​i​n​ ​p​r​o​g​r​e​s​s​ ​o​r​ ​a​l​r​e​a​d​y​ ​p​u​b​l​i​s​h​e​d​ ​k​e​e​p​ ​t​h​e​ ​a​u​d​i​e​n​c​e​ ​t​h​e​y​ ​h​a​d​.
+			 */
+			audience_applies: string
+			/**
 			 * C​h​e​c​k​i​n​g​ ​r​e​c​o​r​d​i​n​g​s​ ​s​e​t​u​p​…
 			 */
 			checking: string
@@ -6024,6 +6102,14 @@ export type NamespaceViewerTranslation = {
 			 * S​h​a​r​e​d​ ​w​i​t​h​ ​p​a​r​t​i​c​i​p​a​n​t​s
 			 */
 			audience_participants: string
+			/**
+			 * S​h​a​r​e​d​ ​w​i​t​h​ ​c​a​l​l​ ​a​t​t​e​n​d​e​e​s
+			 */
+			audience_attendees: string
+			/**
+			 * S​h​a​r​e​d​ ​w​i​t​h​ ​e​a​c​h​ ​r​e​c​o​r​d​i​n​g​'​s​ ​a​u​d​i​e​n​c​e
+			 */
+			audience_mixed: string
 			/**
 			 * A​l​l​ ​m​e​e​t​i​n​g​s
 			 */
@@ -8730,6 +8816,14 @@ export type TranslationFunctions = {
 			 */
 			point_participants: () => LocalizedString
 			/**
+			 * Each recording is shared only with the people who were in the call while it was being recorded.
+			 */
+			point_attendees: () => LocalizedString
+			/**
+			 * Some recordings here are shared with the whole Talk room and some only with the people who were in the call.
+			 */
+			point_mixed: () => LocalizedString
+			/**
 			 * Guests without a Nextcloud account can't open it.
 			 */
 			point_guests: () => LocalizedString
@@ -9474,6 +9568,20 @@ export type TranslationFunctions = {
 				summaries_action_title: () => LocalizedString
 			}
 			step_outcomes: {
+				audience_notice: {
+					/**
+					 * No attendee list was captured; only the starter received this recording.
+					 */
+					no_capture: () => LocalizedString
+					/**
+					 * No local attendees were captured; only the starter received this recording.
+					 */
+					no_local: () => LocalizedString
+					/**
+					 * This recording's audience mode was not recognised; only the starter received this recording.
+					 */
+					unknown: () => LocalizedString
+				}
 				transcription: {
 					/**
 					 * Published without a transcript: transcription is turned off
@@ -9606,6 +9714,10 @@ export type TranslationFunctions = {
 					 */
 					starter_refused_hint_rerun: () => LocalizedString
 					/**
+					 * Fix the setting Doctor › Recording sharing names, then Rerun. Rerun publishes it and shares it with the call's attendees.
+					 */
+					starter_refused_hint_rerun_attendees: () => LocalizedString
+					/**
 					 * Fix the setting Doctor › Recording sharing names so later recordings publish. This run cannot be rerun.
 					 */
 					starter_refused_hint_no_rerun: () => LocalizedString
@@ -9638,9 +9750,17 @@ export type TranslationFunctions = {
 					 */
 					reshare_button: () => LocalizedString
 					/**
+					 * Re-share with call attendees
+					 */
+					reshare_button_attendees: () => LocalizedString
+					/**
 					 * Adds whoever is missing, including anyone removed by hand. People who accept shares by hand will find it waiting in Browse.
 					 */
 					reshare_note: () => LocalizedString
+					/**
+					 * Adds whoever was in the call and is missing, including anyone removed by hand. People who accept shares by hand will find it waiting in Browse.
+					 */
+					reshare_note_attendees: () => LocalizedString
 				}
 			}
 			run_stages: {
@@ -11179,6 +11299,10 @@ export type TranslationFunctions = {
 					 * Capture
 					 */
 					capture: () => LocalizedString
+					/**
+					 * Shared with
+					 */
+					shared_with: () => LocalizedString
 					/**
 					 * Stopped because
 					 */
@@ -12928,6 +13052,46 @@ export type TranslationFunctions = {
 				 */
 				heading: () => LocalizedString
 				/**
+				 * Choose who receives each recording, along with its transcript and summary.
+				 */
+				audience_choose: () => LocalizedString
+				/**
+				 * Share recordings with
+				 */
+				audience_group_label: () => LocalizedString
+				/**
+				 * Everyone in the Talk room
+				 */
+				audience_room_label: () => LocalizedString
+				/**
+				 * Every member of the room, including people who were not on the call.
+				 */
+				audience_room_description: () => LocalizedString
+				/**
+				 * Only people who were in the call
+				 */
+				audience_attendees_label: () => LocalizedString
+				/**
+				 * People with a Nextcloud account who joined the call while it was being recorded. Useful for a standing channel.
+				 */
+				audience_attendees_description: () => LocalizedString
+				/**
+				 * With this setting
+				 */
+				audience_effects_heading: () => LocalizedString
+				/**
+				 * People who join late or leave early are included.
+				 */
+				audience_late_joiners: () => LocalizedString
+				/**
+				 * No message is posted in the Talk room's chat, because the whole room would see the recording's title and link.
+				 */
+				audience_chat_skipped: () => LocalizedString
+				/**
+				 * Applies to recordings that start after you save. Recordings in progress or already published keep the audience they had.
+				 */
+				audience_applies: () => LocalizedString
+				/**
 				 * Checking recordings setup…
 				 */
 				checking: () => LocalizedString
@@ -14237,6 +14401,14 @@ export type TranslationFunctions = {
 				 * Shared with participants
 				 */
 				audience_participants: () => LocalizedString
+				/**
+				 * Shared with call attendees
+				 */
+				audience_attendees: () => LocalizedString
+				/**
+				 * Shared with each recording's audience
+				 */
+				audience_mixed: () => LocalizedString
 				/**
 				 * All meetings
 				 */

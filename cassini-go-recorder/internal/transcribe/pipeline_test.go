@@ -810,7 +810,19 @@ func TestBuildMeetingArtifactWithRetiredOrUnknownModelPin(t *testing.T) {
 		if len(requested) != 1 || requested[0] != ModelParakeetUltraInt8 {
 			t.Fatalf("loaded %v", requested)
 		}
-		if !strings.Contains(log, "parakeet-tdt-0.6b-v3-int8 is retired; using parakeet-ultra-0.6b-int8") {
+		if !strings.Contains(log, "parakeet-tdt-0.6b-v3-int8 is retired; using parakeet-ultra-0.6b-int8-v2") {
+			t.Fatalf("log does not explain the move:\n%s", log)
+		}
+		if p := manifest.Processing; p == nil || p.Transcription.Status != "completed" || p.Transcription.Model != string(ModelParakeetUltraInt8) {
+			t.Fatalf("processing %+v", manifest.Processing)
+		}
+	})
+	t.Run("retired ultra int8 v1", func(t *testing.T) {
+		manifest, log, requested := build(t, "parakeet-ultra-0.6b-int8")
+		if len(requested) != 1 || requested[0] != ModelParakeetUltraInt8 {
+			t.Fatalf("loaded %v", requested)
+		}
+		if !strings.Contains(log, "parakeet-ultra-0.6b-int8 is retired; using parakeet-ultra-0.6b-int8-v2") {
 			t.Fatalf("log does not explain the move:\n%s", log)
 		}
 		if p := manifest.Processing; p == nil || p.Transcription.Status != "completed" || p.Transcription.Model != string(ModelParakeetUltraInt8) {

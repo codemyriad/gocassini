@@ -107,15 +107,22 @@ describe("RoomsRail audience notice", () => {
   it("names each audience in two words and explains it on hover, focus or tap", () => {
     const participants = html("participants");
     expect(participants).toContain("Shared with participants");
-    // The grant is the room's attendee list at publish, not who was present in
-    // the call (talk_participants.go, audience_test.go), so the wording must not
-    // say "in the call".
+    // The default grant is the room's participant list at publish, not who was
+    // present in the call (talk_participants.go, audience_test.go), so the
+    // wording must not say "in the call" for this mode.
     expect(participants).toContain("whether they were present on the call or not");
     expect(participants).not.toContain("in each call");
   });
 
+  it("names the call-attendee audience when the operator shares only with attendees", () => {
+    const attendees = html("attendees");
+    expect(attendees).toContain("Shared with call attendees");
+    expect(attendees).toContain("only with the people who were in the call while it was being recorded");
+    expect(attendees).not.toContain("whether they were present on the call or not");
+  });
+
   it("points readers to Nextcloud Files for each recording's access", () => {
-    for (const audience of ["participants"]) {
+    for (const audience of ["participants", "attendees"]) {
       expect(html(audience)).toContain("Nextcloud Files controls who can read each recording.");
     }
   });

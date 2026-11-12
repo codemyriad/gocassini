@@ -9,6 +9,10 @@ export interface SetupHealth {
   ok: boolean;
   state: string;
   mode: string;
+  // Which share audience the operator is configured to use: "participants"
+  // (everyone in the Talk room) or "attendees" (only people in the call).
+  // Empty on an operator too old to report it; mode then supplies the default.
+  audience: string;
   cause: string;
   features: SetupFeatures | null;
   // The caller's own recording shares (D-885): null on an operator too old to
@@ -106,6 +110,7 @@ export function readSetupHealth(body: unknown): SetupHealth | null {
     ...(body.recording_state === "passed" || body.recording_state === "warn" || body.recording_state === "needs_action" || body.recording_state === "not_verified" ? { recordingState: body.recording_state } : {}),
     ok: body.ok, state: body.state,
     mode: typeof body.mode === "string" ? body.mode : "",
+    audience: typeof body.audience === "string" ? body.audience : "",
     cause: typeof body.cause === "string" ? body.cause : "",
     features: readSetupFeatures(body.features),
     sharing: readSharing(body.sharing),
@@ -185,9 +190,12 @@ function readCount(value: unknown): number {
 }
 
 // A missing setup answer leaves the audience unknown. Every current recording
-// uses Nextcloud shares, regardless of its room's visibility.
-export type RecordingAudience = "" | "participants";
+// uses Nextcloud shares, regardless of its room's visibility. An operator that
+// reports the audience option answers directly; an older one that only reports
+// the direct-share mode is the default room-participants audience.
+export type RecordingAudience = "" | "participants" | "attendees";
 export function recordingAudience(health: SetupHealth | null): RecordingAudience {
+  if (health?.audience === "participants" || health?.audience === "attendees") return health.audience;
   return health?.mode === "direct_shares" ? "participants" : "";
 }
 

@@ -116,6 +116,8 @@
   let savedMeetingFormat: "opus" | "json" = "opus";
   let transcriptionEnabled = false;
   let retainVideo = false;
+  let shareAudience: "room" | "attendees" = "room";
+  let savedShareAudience: "room" | "attendees" = "room";
   let sourceRetention: "storage-policy" | "delete-after-processing" = "storage-policy";
   let savedSourceRetention = "storage-policy";
   let savedRetainVideo = false;
@@ -354,6 +356,8 @@
     savedMeetingFormat = meetingFormat;
     transcriptionEnabled = next.transcription_enabled === true;
     retainVideo = next.retain_video === true;
+    shareAudience = next.share_audience === "attendees" ? "attendees" : "room";
+    savedShareAudience = shareAudience;
     sourceRetention = next.source_retention ?? "storage-policy";
     savedSourceRetention = sourceRetention;
     savedRetainVideo = retainVideo;
@@ -419,6 +423,7 @@
             source_retention: sourceRetention,
             transcription_enabled: transcriptionEnabled,
             retain_video: retainVideo,
+            share_audience: shareAudience,
             active_model: activeModel,
             active_revision: activeRevision,
             ...(quality !== savedQuality ? { quality } : {}),
@@ -686,6 +691,7 @@
   $: sttDirty =
     settings !== null &&
     (sourceRetention !== savedSourceRetention || retainVideo !== savedRetainVideo || JSON.stringify([transcriptionEnabled,activeModel,activeRevision]) !== savedTranscription ||
+      shareAudience !== savedShareAudience ||
       meetingFormat !== savedMeetingFormat ||
       quality !== savedQuality ||
       deviceOverride !== savedDeviceOverride ||
@@ -767,7 +773,7 @@
      component untouched and keeps the cross-link a property of the layout that
      places the two sections, which is where it belongs. -->
 <div id="recording-storage">
-  <DirectShareAccessPanel {operatorClient} />
+  <DirectShareAccessPanel {operatorClient} {shareAudience} onShareAudienceChange={(value) => { shareAudience = value; }} disabled={saving} settingsLoaded={settings !== null} />
 </div>
 
   {#if loadError}

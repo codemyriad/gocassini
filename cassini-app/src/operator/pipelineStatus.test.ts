@@ -75,7 +75,7 @@ describe("pipelineStatus", () => {
 
 describe("helpers", () => {
   it("names the model a tier runs", () => {
-    expect(speechModelFor("balanced", "cpu")).toBe("parakeet-ultra-0.6b-int8");
+    expect(speechModelFor("balanced", "cpu")).toBe("parakeet-ultra-0.6b-int8-v2");
     expect(speechModelFor("best", "cpu")).toBe("parakeet-ultra-0.6b");
     expect(speechModelFor("fast", "cpu")).toBe("parakeet-tdt-ctc-110m-en-int8");
     for (const quality of ["fast", "balanced", "best"]) {
@@ -100,8 +100,9 @@ describe("helpers", () => {
   });
 
   it("names the tier of the saved model, which is what builds use", () => {
-    const status = pipelineStatus({ ...team, quality: "best", activeModel: "parakeet-ultra-0.6b-int8" });
+    const status = pipelineStatus({ ...team, quality: "best", activeModel: "parakeet-ultra-0.6b-int8-v2" });
     expect(status.transcribe.state).toBe("On · Balanced · CPU");
+    expect(pipelineStatus({ ...team, quality: "best", activeModel: "parakeet-ultra-0.6b-int8" }).transcribe.state).toBe("On · Balanced · CPU");
   });
 
   it("warns when transcription is on but its model is not installed", () => {
@@ -113,44 +114,45 @@ describe("helpers", () => {
   });
 
   it("shows the saved model downloading after an upgrade replaced it", () => {
-    const status = pipelineStatus({ ...team, activeModel: "parakeet-ultra-0.6b-int8", activeModelInstalled: false, download: { percent: 40 }, activeModelDownload: { percent: 40 } });
+    const status = pipelineStatus({ ...team, activeModel: "parakeet-ultra-0.6b-int8-v2", activeModelInstalled: false, download: { percent: 40 }, activeModelDownload: { percent: 40 } });
     expect(status.transcribe).toEqual({ state: "On · Balanced · CPU", tone: "busy", reason: "downloading the model · 40%" });
-    const unsized = pipelineStatus({ ...team, activeModel: "parakeet-ultra-0.6b-int8", activeModelInstalled: false, download: { percent: null }, activeModelDownload: { percent: null } });
+    const unsized = pipelineStatus({ ...team, activeModel: "parakeet-ultra-0.6b-int8-v2", activeModelInstalled: false, download: { percent: null }, activeModelDownload: { percent: null } });
     expect(unsized.transcribe.reason).toBe("downloading the model");
   });
 
   it("says the previous model transcribes while the saved one is not ready", () => {
-    const downloading = pipelineStatus({ ...team, activeModel: "parakeet-ultra-0.6b-int8", activeModelInstalled: false, download: { percent: 40 }, activeModelDownload: { percent: 40 }, activeModelStandIn: true });
+    const downloading = pipelineStatus({ ...team, activeModel: "parakeet-ultra-0.6b-int8-v2", activeModelInstalled: false, download: { percent: 40 }, activeModelDownload: { percent: 40 }, activeModelStandIn: true });
     expect(downloading.transcribe).toEqual({ state: "On · Balanced · CPU", tone: "busy", reason: "downloading the model · 40% · previous model transcribes meanwhile" });
     // A failed install, or downloads disabled: still not healthy, but not
     // publishing without a transcript either.
-    const missing = pipelineStatus({ ...team, activeModel: "parakeet-ultra-0.6b-int8", activeModelInstalled: false, activeModelDownload: null, activeModelStandIn: true });
+    const missing = pipelineStatus({ ...team, activeModel: "parakeet-ultra-0.6b-int8-v2", activeModelInstalled: false, activeModelDownload: null, activeModelStandIn: true });
     expect(missing.transcribe).toEqual({ state: "On · Balanced · CPU", tone: "amber", reason: "model not installed · previous model transcribes meanwhile" });
-    // Installed but its runtime check failed: the operator names v3 only
-    // then, and builds transcribe with it while the check fails.
-    expect(pipelineStatus({ ...team, activeModel: "parakeet-ultra-0.6b-int8", activeModelInstalled: true, activeModelStandIn: true }).transcribe).toEqual({ state: "On · Balanced · CPU", tone: "amber", reason: "model check failed · previous model transcribes meanwhile" });
+    // Installed but its runtime check failed: the operator names a stand-in
+    // only then, and builds transcribe with it while the check fails.
+    expect(pipelineStatus({ ...team, activeModel: "parakeet-ultra-0.6b-int8-v2", activeModelInstalled: true, activeModelStandIn: true }).transcribe).toEqual({ state: "On · Balanced · CPU", tone: "amber", reason: "model check failed · previous model transcribes meanwhile" });
     // Installed and checked or still to be checked (the operator names no
     // stand-in): it runs, as the next build checks it first.
-    expect(pipelineStatus({ ...team, activeModel: "parakeet-ultra-0.6b-int8", activeModelInstalled: true, activeModelStandIn: false }).transcribe).toEqual({ state: "On · Balanced · CPU", tone: "on" });
+    expect(pipelineStatus({ ...team, activeModel: "parakeet-ultra-0.6b-int8-v2", activeModelInstalled: true, activeModelStandIn: false }).transcribe).toEqual({ state: "On · Balanced · CPU", tone: "on" });
     // While the inventory is unknown the strip claims nothing.
-    expect(pipelineStatus({ ...team, activeModel: "parakeet-ultra-0.6b-int8", activeModelInstalled: null, activeModelStandIn: true }).transcribe).toEqual({ state: "On · Balanced · CPU", tone: "on" });
+    expect(pipelineStatus({ ...team, activeModel: "parakeet-ultra-0.6b-int8-v2", activeModelInstalled: null, activeModelStandIn: true }).transcribe).toEqual({ state: "On · Balanced · CPU", tone: "on" });
   });
 });
 
 describe("inUseModelState", () => {
   it("says recordings get no transcript only when nothing transcribes or installs the model", () => {
-    // After the upgrade Ultra downloads while v3 stands in: the Transcript card
-    // must not say recordings get no transcript, which the strip contradicts.
-    expect(inUseModelState({ installed: false, stand_in: "parakeet-tdt-0.6b-v3-int8" }, { percent: 40 })).toBe("stand-in");
-    // A failed install or downloads disabled, with v3 still there.
-    expect(inUseModelState({ installed: false, stand_in: "parakeet-tdt-0.6b-v3-int8" }, null)).toBe("stand-in");
+    // After an upgrade the replacement downloads while the previous model
+    // stands in: the Transcript card must not say recordings get no transcript,
+    // which the strip contradicts.
+    expect(inUseModelState({ installed: false, stand_in: "parakeet-ultra-0.6b-int8" }, { percent: 40 })).toBe("stand-in");
+    // A failed install or downloads disabled, with the stand-in still there.
+    expect(inUseModelState({ installed: false, stand_in: "parakeet-ultra-0.6b-int8" }, null)).toBe("stand-in");
     // A fresh install: recordings wait for the download.
     expect(inUseModelState({ installed: false }, { percent: null })).toBe("downloading");
     expect(inUseModelState({ installed: false }, null)).toBe("missing");
-    // Installed but its runtime check failed: the operator names v3 only
-    // then, and builds use it while Ultra's check fails, so the card must not
-    // say Ultra transcribes.
-    expect(inUseModelState({ installed: true, stand_in: "parakeet-tdt-0.6b-v3-int8" }, null)).toBe("stand-in");
+    // Installed but its runtime check failed: the operator names the stand-in
+    // only then, and builds use it while the replacement's check fails, so the
+    // card must not say the replacement transcribes.
+    expect(inUseModelState({ installed: true, stand_in: "parakeet-ultra-0.6b-int8" }, null)).toBe("stand-in");
     // Installed with nothing standing in runs, checked first if need be: the
     // operator names no stand-in while the check is still to run.
     expect(inUseModelState({ installed: true }, null)).toBe("installed");

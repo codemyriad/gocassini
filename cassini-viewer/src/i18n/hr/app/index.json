@@ -211,6 +211,11 @@
       "summaries_action_title": "Dodaj pružatelja za pisanje sažetaka"
     },
     "step_outcomes": {
+      "audience_notice": {
+        "no_capture": "",
+        "no_local": "",
+        "unknown": ""
+      },
       "transcription": {
         "disabled": "Objavljeno bez transkripta: transkripcija je isključena",
         "model_unavailable": "Objavljeno bez transkripta: nijedan govorni model nije se mogao pokrenuti",
@@ -252,6 +257,7 @@
         "starter_refused": "Nije objavljeno: Nextcloud ju je odbio podijeliti s osobom koja je pokrenula snimanje.",
         "starter_refused_named": "Nije objavljeno: Nextcloud ju je odbio podijeliti s korisnikom {starter}, koji je pokrenuo snimanje.",
         "starter_refused_hint_rerun": "Popravi postavku koju navodi Doktor › Dijeljenje snimki, a zatim odaberi Ponovno pokreni. Ponovno pokretanje objavljuje snimku i dijeli je s cijelom sobom.",
+        "starter_refused_hint_rerun_attendees": "",
         "starter_refused_hint_no_rerun": "Popravi postavku koju navodi Doktor › Dijeljenje snimki kako bi se kasnije snimke objavljivale. Ovo izvođenje ne može se ponovno pokrenuti.",
         "held_back": "Objavljeno. Zadržano Nextcloudovim ograničenjem dijeljenja: {recipients}. Ponovno podijeli za 10 minuta ili povećaj ograničenje (Doktor › Dijeljenje snimki).",
         "partial_of": "Objavljeno, ali nije podijeljeno s {count:number|num} od {audience:number|num} {{audience:|primatelja||primatelja||primatelja}}",
@@ -260,7 +266,9 @@
         "partial_hint": "Nextcloud ih je odbio zbog postavke dijeljenja. Doktor › Dijeljenje snimki navodi tu postavku i rješenje.",
         "also_held_back": "Nextcloudovo ograničenje dijeljenja zadržalo je i {count:number|num} {{|primatelja||primatelja||primatelja}}.",
         "reshare_button": "Ponovno podijeli sa sobom",
-        "reshare_note": "Dodaje sve koji nedostaju, uključujući one koji su ručno uklonjeni. Tko dijeljenja prihvaća ručno, naći će snimku na čekanju u kartici Pregledaj."
+        "reshare_button_attendees": "",
+        "reshare_note": "Dodaje sve koji nedostaju, uključujući one koji su ručno uklonjeni. Tko dijeljenja prihvaća ručno, naći će snimku na čekanju u kartici Pregledaj.",
+        "reshare_note_attendees": ""
       }
     },
     "run_stages": {
@@ -707,6 +715,7 @@
         "speech_model": "Govorni model",
         "summary_model": "Model za sažetke",
         "capture": "Snimanje",
+        "shared_with": "",
         "stopped_because": "Razlog zaustavljanja",
         "conversation": "Razgovor",
         "recording": "Snimka",
@@ -1191,6 +1200,16 @@
     },
     "direct_share": {
       "heading": "Tko može vidjeti snimke",
+      "audience_choose": "",
+      "audience_group_label": "",
+      "audience_room_label": "",
+      "audience_room_description": "",
+      "audience_attendees_label": "",
+      "audience_attendees_description": "",
+      "audience_effects_heading": "",
+      "audience_late_joiners": "",
+      "audience_chat_skipped": "",
+      "audience_applies": "",
       "checking": "Provjera postavki snimki…",
       "needs_account": "Cassiniju je potreban račun za snimke prije nego što može objavljivati.",
       "needs_attention": "Postavke snimki zahtijevaju pažnju.",

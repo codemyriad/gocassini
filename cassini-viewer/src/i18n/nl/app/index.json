@@ -211,6 +211,11 @@
       "summaries_action_title": "Voeg een aanbieder toe om samenvattingen te schrijven"
     },
     "step_outcomes": {
+      "audience_notice": {
+        "no_capture": "",
+        "no_local": "",
+        "unknown": ""
+      },
       "transcription": {
         "disabled": "Gepubliceerd zonder transcriptie: transcriberen staat uit",
         "model_unavailable": "Gepubliceerd zonder transcriptie: er kon geen spraakmodel draaien",
@@ -252,6 +257,7 @@
         "starter_refused": "Niet gepubliceerd: Nextcloud weigerde het te delen met de persoon die de opname startte.",
         "starter_refused_named": "Niet gepubliceerd: Nextcloud weigerde het te delen met {starter}, die de opname startte.",
         "starter_refused_hint_rerun": "Herstel de instelling die Diagnose › Delen van opnames noemt en kies daarna Opnieuw uitvoeren. Dat publiceert de opname en deelt hem met de hele ruimte.",
+        "starter_refused_hint_rerun_attendees": "",
         "starter_refused_hint_no_rerun": "Herstel de instelling die Diagnose › Delen van opnames noemt, zodat latere opnames worden gepubliceerd. Deze uitvoering kan niet opnieuw worden uitgevoerd.",
         "held_back": "Gepubliceerd. Tegengehouden door de deellimiet van Nextcloud: {recipients}. Deel over 10 minuten opnieuw, of verhoog de limiet (Diagnose › Delen van opnames).",
         "partial_of": "Gepubliceerd, maar niet gedeeld met {count:number|num} van de {audience:number|num} {{audience:ontvanger|ontvangers}}",
@@ -260,7 +266,9 @@
         "partial_hint": "Nextcloud weigerde hen vanwege een deelinstelling. Diagnose › Delen van opnames noemt die instelling en de oplossing.",
         "also_held_back": "De deellimiet van Nextcloud hield ook {count:number|num} {{ontvanger|ontvangers}} tegen.",
         "reshare_button": "Opnieuw delen met de ruimte",
-        "reshare_note": "Voegt iedereen toe die ontbreekt, ook wie met de hand is verwijderd. Wie shares handmatig accepteert, vindt hem wachtend in Bladeren."
+        "reshare_button_attendees": "",
+        "reshare_note": "Voegt iedereen toe die ontbreekt, ook wie met de hand is verwijderd. Wie shares handmatig accepteert, vindt hem wachtend in Bladeren.",
+        "reshare_note_attendees": ""
       }
     },
     "run_stages": {
@@ -707,6 +715,7 @@
         "speech_model": "Spraakmodel",
         "summary_model": "Samenvattingsmodel",
         "capture": "Vastlegging",
+        "shared_with": "",
         "stopped_because": "Gestopt omdat",
         "conversation": "Gesprek",
         "recording": "Opname",
@@ -1191,6 +1200,16 @@
     },
     "direct_share": {
       "heading": "Wie opnames kan zien",
+      "audience_choose": "",
+      "audience_group_label": "",
+      "audience_room_label": "",
+      "audience_room_description": "",
+      "audience_attendees_label": "",
+      "audience_attendees_description": "",
+      "audience_effects_heading": "",
+      "audience_late_joiners": "",
+      "audience_chat_skipped": "",
+      "audience_applies": "",
       "checking": "Opname-instellingen controleren…",
       "needs_account": "Cassini heeft zijn opname-account nodig voordat het kan publiceren.",
       "needs_attention": "De opname-instellingen vragen aandacht.",

@@ -140,6 +140,8 @@
       "nav_label": "Sobe",
       "rooms_heading": "Sobe",
       "audience_participants": "Dijeljeno sa sudionicima",
+      "audience_attendees": "",
+      "audience_mixed": "",
       "all_meetings": "Svi sastanci",
       "rename_room_named": "Preimenuj sobu {name}",
       "rename_room": "Preimenuj sobu",

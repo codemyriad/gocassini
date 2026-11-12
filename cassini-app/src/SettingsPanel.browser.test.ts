@@ -70,6 +70,42 @@ it("saves the publication format through settings and restores it on reload", as
   await expect.poll(() => saved.meeting_format).toBe("opus");
 });
 
+it("saves the recording audience option", async () => {
+  let saved = { quality: "balanced", meeting_format: "opus", transcription_enabled: false, share_audience: "room" };
+  const writes: Record<string, unknown>[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = new URL(String(input), location.href).pathname;
+    if (path === "/operator/settings") {
+      if (init?.method === "PUT") {
+        const update = JSON.parse(init.body as string);
+        writes.push(update);
+        saved = { ...saved, ...update };
+      }
+      return Response.json(saved);
+    }
+    if (path === "/operator/storage") {
+      return Response.json({ ok: true, state: "provisioned", service_account: { exists: true } });
+    }
+    if (path === "/operator/settings/models") return Response.json({ models: [], jobs: [] });
+    if (path === "/operator/settings/llm") {
+      return Response.json({ providers: [], summary: { enabled: false }, insights: { enabled: false } });
+    }
+    return Response.json({});
+  }));
+  host = document.createElement("div");
+  document.body.append(host);
+  app = mount(SettingsPanel, { target: host, props: { operatorClient: new OperatorClient("/operator") } });
+
+  const room = page.getByRole("radio", { name: /^Everyone in the Talk room/ });
+  const attendees = page.getByRole("radio", { name: /^Only people who were in the call/ });
+  await expect.element(room).toBeChecked();
+  await attendees.click();
+  await expect.element(attendees).toBeChecked();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect.poll(() => saved.share_audience).toBe("attendees");
+  expect(writes[0]).toMatchObject({ share_audience: "attendees" });
+});
+
 it("keeps publication separate from source retention and explicitly opts into deletion", async () => {
   let saved = { quality: "balanced", meeting_format: "opus", source_retention: "storage-policy", retain_video: true, transcription_enabled: true, active_model: "prepared", active_revision: "r1" };
   const writes: Record<string, unknown>[] = [];
@@ -146,7 +182,7 @@ it("requires prepared transcription before saving deletion", async () => {
 it("turns transcription on by picking a ready tier, each tier showing its model on its row", async () => {
   let saved: Record<string, unknown> = { quality: "balanced", meeting_format: "opus", transcription_enabled: false };
   const writes: Record<string, unknown>[] = [];
-  const balanced = { id: "parakeet-ultra-0.6b-int8", name: "Parakeet balanced", description: "", revision: "r1",
+  const balanced = { id: "parakeet-ultra-0.6b-int8-v2", name: "Parakeet balanced", description: "", revision: "r1",
     download_bytes: 700 * 1024 * 1024, installed_bytes: 0, installed: true, ready: true, device: "cpu" };
   const best = { ...balanced, id: "parakeet-ultra-0.6b", name: "Parakeet best", download_bytes: 2.2 * 1024 ** 3, installed: false, ready: false };
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -185,9 +221,9 @@ it("turns transcription on by picking a ready tier, each tier showing its model 
 });
 
 it("shows the saved settings in the status strip and moves only after Save", async () => {
-  let saved: Record<string, unknown> = { quality: "balanced", meeting_format: "opus", transcription_enabled: true, active_model: "parakeet-ultra-0.6b-int8", active_revision: "r1",
+  let saved: Record<string, unknown> = { quality: "balanced", meeting_format: "opus", transcription_enabled: true, active_model: "parakeet-ultra-0.6b-int8-v2", active_revision: "r1",
     source_retention: "storage-policy", retain_video: false, effective: { device: "cpu", model: "", min_free_memory_mb: 0, note: "" } };
-  const balanced = { id: "parakeet-ultra-0.6b-int8", name: "Parakeet balanced", description: "", revision: "r1",
+  const balanced = { id: "parakeet-ultra-0.6b-int8-v2", name: "Parakeet balanced", description: "", revision: "r1",
     download_bytes: 1, installed_bytes: 1, installed: true, ready: true, device: "cpu" };
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(String(input), location.href).pathname;
@@ -263,7 +299,7 @@ it("says how long kept media stays from the Recordings policy and follows the re
 it("greys only what needs a transcript while transcription is off, following the draft", async () => {
   let saved: Record<string, unknown> = { quality: "balanced", meeting_format: "opus", transcription_enabled: false };
   const writes: Record<string, unknown>[] = [];
-  const balanced = { id: "parakeet-ultra-0.6b-int8", name: "Parakeet balanced", description: "", revision: "r1",
+  const balanced = { id: "parakeet-ultra-0.6b-int8-v2", name: "Parakeet balanced", description: "", revision: "r1",
     download_bytes: 1, installed_bytes: 1, installed: true, ready: true, device: "cpu" };
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(String(input), location.href).pathname;
@@ -369,10 +405,10 @@ it("says the installed model transcribes until its runtime check has failed, the
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
     const path = new URL(String(input), location.href).pathname;
     if (path === "/operator/settings") {
-      return Response.json({ quality: "balanced", meeting_format: "opus", transcription_enabled: true, active_model: "parakeet-ultra-0.6b-int8", active_revision: "r1" });
+      return Response.json({ quality: "balanced", meeting_format: "opus", transcription_enabled: true, active_model: "parakeet-ultra-0.6b-int8-v2", active_revision: "r1" });
     }
     if (path === "/operator/settings/models") {
-      return Response.json({ models: [{ id: "parakeet-ultra-0.6b-int8", name: "Parakeet Ultra", description: "", revision: "r1", download_bytes: 1, installed_bytes: 1, installed: true, ready: false, device: "cpu", kind: "speech", stand_in: standIn }], jobs: [], downloads_allowed: true, device: "cpu" });
+      return Response.json({ models: [{ id: "parakeet-ultra-0.6b-int8-v2", name: "Parakeet Ultra", description: "", revision: "r1", download_bytes: 1, installed_bytes: 1, installed: true, ready: false, device: "cpu", kind: "speech", stand_in: standIn }], jobs: [], downloads_allowed: true, device: "cpu" });
     }
     if (path === "/operator/settings/llm") return Response.json({ providers: [], summary: { enabled: false }, insights: { enabled: false } });
     return Response.json({});

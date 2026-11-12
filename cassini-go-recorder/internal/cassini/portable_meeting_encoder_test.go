@@ -94,7 +94,7 @@ func packEncoderProvenanceFixture(t *testing.T, extra []transcribe.AdditionalTra
 		SrcDurationMS:    250,
 		DigestDurationMS: 250,
 		STTBackend:       "sherpa-onnx-go",
-		STTModelID:       "parakeet-ultra-0.6b-int8",
+		STTModelID:       "parakeet-ultra-0.6b-int8-v2",
 		STTDevice:        "cpu",
 		NativeFrontend:   transcribe.NativeFrontendNeMoLogGuard,
 		Encoder:          &transcribe.EncoderProvenance{URL: encoderTestURL, Comment: "cassini export"},

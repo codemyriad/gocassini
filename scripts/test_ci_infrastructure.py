@@ -166,6 +166,83 @@ exit 0
             self.assertIn("ref: ${{ inputs.ref }}", block, f"checkout at ci.yml:{i + 1}")
         self.assertIn("${{ inputs.ref }}", workflow.split("concurrency:")[1].split("jobs:")[0])
 
+    def test_configure_transcription_selects_advertised_model_and_surfaces_http_errors(self):
+        self.executable("curl", '''
+            import json, os, pathlib, sys
+            args = sys.argv[1:]
+            url = args[-1]
+            method = args[args.index("-X") + 1] if "-X" in args else ("POST" if "-d" in args else "GET")
+            body = json.loads(args[args.index("-d") + 1]) if "-d" in args else None
+            models = json.loads(os.environ["CATALOGUE_MODELS"])
+            if url.endswith("/settings") and method == "GET":
+                print(json.dumps({"transcription_enabled": False}))
+            elif "/settings/models?device=" in url:
+                print(json.dumps({"models": models}))
+            elif url.endswith("/settings/models/install"):
+                if os.environ.get("FAIL_INSTALL") == "1":
+                    print(json.dumps({"error": "model rejected by operator"}))
+                    sys.stderr.write("curl: (22) The requested URL returned error: 400\\n")
+                    sys.exit(22)
+                (pathlib.Path(os.environ["RUNNER_TEMP"]) / "installed-model").write_text(body["model"])
+                print(json.dumps({"id": "job-1", "revision": "rev-1", "state": "queued", "progress": {}}))
+            elif url.endswith("/settings/models/jobs/job-1"):
+                print(json.dumps({"id": "job-1", "revision": "rev-1", "state": "ready", "progress": {}, "error": None}))
+            elif url.endswith("/settings") and method == "PUT":
+                print(json.dumps(body))
+            else:
+                sys.exit(2)
+        ''')
+        script = "harness/bin/configure-test-transcription.sh"
+        def run_case(device, model_ids, **extra):
+            models = json.dumps([{"id": m, "kind": "speech", "installed": False} for m in model_ids]
+                                + [{"id": "nemotron-3-diarization-int8", "kind": "diarization", "installed": False}])
+            log_dir = self.directory / f"setup-{device}-{'-'.join(model_ids)}-{extra.get('FAIL_INSTALL', '0')}"
+            env = dict(self.env, OPERATOR_URL="http://example.invalid/operator",
+                       DEVICE=device, LOG_DIR=str(log_dir), CATALOGUE_MODELS=models, **extra)
+            return subprocess.run(["bash", str(ROOT / script)], cwd=ROOT,
+                                  env=env, text=True, capture_output=True)
+
+        # Current catalogue prefers Parakeet Ultra v2 even if older ids also appear.
+        res = run_case("cpu", ["parakeet-tdt-0.6b-v3-int8", "parakeet-ultra-0.6b-int8",
+                               "parakeet-ultra-0.6b-int8-v2"])
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertEqual((self.directory / "installed-model").read_text(), "parakeet-ultra-0.6b-int8-v2")
+
+        # A canary image from before v2 falls back to the Ultra model it advertises.
+        res = run_case("cpu", ["parakeet-tdt-0.6b-v3-int8", "parakeet-ultra-0.6b-int8"])
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertEqual((self.directory / "installed-model").read_text(), "parakeet-ultra-0.6b-int8")
+
+        # Frozen pre-Ultra canary image falls back to the v3 model it advertises.
+        for device, legacy in (("cpu", "parakeet-tdt-0.6b-v3-int8"), ("cuda", "parakeet-tdt-0.6b-v3")):
+            res = run_case(device, ["parakeet-tdt-ctc-110m-en-int8", legacy])
+            self.assertEqual(res.returncode, 0, res.stderr)
+            self.assertEqual((self.directory / "installed-model").read_text(), legacy)
+
+        # Unmatched catalogue fails closed before POST /install and names advertised speech models.
+        res = run_case("cpu", ["parakeet-tdt-ctc-110m-en-int8"])
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("parakeet-tdt-ctc-110m-en-int8", res.stderr)
+
+        # Multi-step `replaces` chains preserve catalogue order (not alphabetical order).
+        custom_catalogue = self.directory / "catalogue.json"
+        custom_catalogue.write_text(json.dumps({
+            "models": [{
+                "id": "parakeet-ultra-0.6b-int8-v2",
+                "kind": "speech",
+                "replaces": ["parakeet-ultra-0.6b-int8-prev", "parakeet-tdt-0.6b-v3-int8"],
+            }]
+        }))
+        res = run_case("cpu", ["parakeet-tdt-0.6b-v3-int8", "parakeet-ultra-0.6b-int8-prev"],
+                       CASSINI_TEST_CATALOGUE_PATH=str(custom_catalogue))
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertEqual((self.directory / "installed-model").read_text(), "parakeet-ultra-0.6b-int8-prev")
+
+        # Redirected curl --fail-with-body error payloads still reach stderr in CI logs.
+        res = run_case("cpu", ["parakeet-ultra-0.6b-int8-v2"], FAIL_INSTALL="1")
+        self.assertEqual(res.returncode, 22)
+        self.assertIn("model rejected by operator", res.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

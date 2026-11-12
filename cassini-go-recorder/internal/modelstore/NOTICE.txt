@@ -43,7 +43,9 @@ Changes from the original model:
   exported, and the preprocessor, tokenizer and vocabulary are v3's.
 - int8 variant by Cassini: the exported encoder, decoder and joiner quantized
   with onnxruntime's dynamic quantization (uint8 encoder weights, int8 decoder
-  and joiner weights), as the sherpa-onnx script does for v3.
+  and joiner weights), with parakeet-ultra-0.6b-int8-v2 keeping the encoder's
+  24 depthwise and 5 /pre_encode/ subsampling Conv nodes in fp32
+  (k2-fsa/sherpa-onnx#4179).
 - Each model file is compressed independently using seekable Zstandard;
   decompressed contents are the exported files.
 No endorsement by Moondream, NVIDIA or sherpa-onnx is implied.

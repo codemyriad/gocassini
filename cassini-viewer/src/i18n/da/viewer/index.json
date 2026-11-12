@@ -140,6 +140,8 @@
       "nav_label": "Samtaler",
       "rooms_heading": "Samtaler",
       "audience_participants": "Delt med deltagerne",
+      "audience_attendees": "",
+      "audience_mixed": "",
       "all_meetings": "Alle møder",
       "rename_room_named": "Omdøb samtalen {name}",
       "rename_room": "Omdøb samtale",

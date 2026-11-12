@@ -228,6 +228,9 @@ type Runtime struct {
 	talkAudienceRetryGap time.Duration
 	// fetchTalkParticipants resolves the room's local share recipients.
 	fetchTalkParticipants talkParticipantsFetcher
+	// fetchTalkAttendees resolves only the people Talk reports in the call.
+	// The operator's "Share recordings with" setting chooses between them.
+	fetchTalkAttendees talkParticipantsFetcher
 	// recordStopAckGrace and recordStopFinalizeGrace default to the package
 	// constants; tests shrink them to exercise stop enforcement quickly.
 	recordStopAckGrace      time.Duration
@@ -443,6 +446,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	defer runtime.Shutdown()
 	runtime.fetchTalkRoomName = exappCfg.talkRoomNameFetcher()
 	runtime.fetchTalkParticipants = exappCfg.talkParticipantsFetcher()
+	runtime.fetchTalkAttendees = exappCfg.talkAttendeesFetcher()
 	runtime.startRoomNamesWorker()
 
 	// Resolve the publish destination. An explicit name always wins; an unset
@@ -1483,6 +1487,14 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 		rt.emitAttemptFailure(job.ID, job.CurrentAttemptNumber, "record", updateErr.Error(), false)
 		return
 	}
+	if len(result.SeenParticipants) > 0 {
+		// #479: the recorder saw everyone who was ever in the call, including
+		// people the stop capture cannot see after the recorder left. Merge
+		// that list into the saved audience before the build and publish.
+		if mergeErr := rt.store.MergeJobRoomAudience(context.Background(), job.ID, result.SeenParticipants, finishedAt); mergeErr != nil {
+			rt.logger.Printf("seen participants merge failed id=%s: %v", job.ID, mergeErr)
+		}
+	}
 	rt.emitEvent(eventRecordingStopped, job.ID, job.CurrentAttemptNumber, map[string]any{"stopped_at": finishedAt, "stop_reason": strings.TrimSpace(result.StopReason)})
 	rt.removeSuccessfulCaptureDuplicate(job.ID, job.CurrentAttemptNumber)
 	// Tell spreed the recording stopped. Status only — the meeting itself
@@ -1566,6 +1578,7 @@ func (rt *Runtime) prepareRecordJob(ctx context.Context, provider, requestBody s
 		CreatedAt:            now,
 		UpdatedAt:            now,
 		RecordQueuedAt:       &now,
+		AudienceMode:         normalizeSavedAudience(settings.ShareAudience),
 	}
 	if err := rt.store.InsertQueuedJob(ctx, job); err != nil {
 		rt.releaseRecordSlot()
@@ -1769,6 +1782,15 @@ type Job struct {
 	// tier. An empty RoomAudience WITH a timestamp is a different state: the
 	// room really had no grantable members.
 	RoomAudienceAt *string `json:"-"`
+	// AudienceMode is the share audience chosen when this recording started:
+	// "room" (everyone in the Talk room) or "attendees" (only people Talk
+	// reported in the call). It is frozen here so a settings change while a
+	// recording is in progress cannot alter its captures, publication,
+	// re-share or label (#472 review).
+	AudienceMode string `json:"audience_mode,omitempty"`
+	// AudienceNotice is a run-level warning about the audience, e.g. attendee
+	// mode had no saved roster and only the starter received the recording.
+	AudienceNotice string `json:"audience_notice,omitempty"`
 }
 
 func (s *Store) InsertQueuedJob(ctx context.Context, job Job) error {
@@ -1782,8 +1804,8 @@ func (s *Store) InsertQueuedJob(ctx context.Context, job Job) error {
 INSERT INTO jobs (
   id, provider, request_json, stage, state,
   current_attempt_number, rerun_count,
-  created_at, updated_at, record_queued_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  created_at, updated_at, record_queued_at, audience_mode
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		job.ID,
 		job.Provider,
 		job.RequestJSON,
@@ -1794,6 +1816,7 @@ INSERT INTO jobs (
 		job.CreatedAt,
 		job.UpdatedAt,
 		stringOrNil(job.RecordQueuedAt),
+		nullableString(firstNonEmpty(job.AudienceMode, shareAudienceRoom)),
 	)
 	if err != nil {
 		return fmt.Errorf("insert job: %w", err)
@@ -1998,7 +2021,7 @@ SELECT id, provider, request_json, stage, state,
        publish_queued_at, publish_started_at, publish_finished_at,
        interrupted_at, completed_at,
        talk_binding, talk_stopped_at,
-       room_token, room_name, room_audience, room_audience_at,
+       room_token, room_name, room_audience, room_audience_at, audience_mode, audience_notice,
        COALESCE((SELECT trigger_kind FROM job_attempts a WHERE a.job_id = jobs.id AND a.attempt_number = jobs.current_attempt_number), '')
 FROM jobs
 ORDER BY created_at DESC, id DESC`)
@@ -2037,7 +2060,7 @@ SELECT id, provider, request_json, stage, state,
        publish_queued_at, publish_started_at, publish_finished_at,
        interrupted_at, completed_at,
        talk_binding, talk_stopped_at,
-       room_token, room_name, room_audience, room_audience_at,
+       room_token, room_name, room_audience, room_audience_at, audience_mode, audience_notice,
        COALESCE((SELECT trigger_kind FROM job_attempts a WHERE a.job_id = jobs.id AND a.attempt_number = jobs.current_attempt_number), '')
 FROM jobs
 WHERE id = ?`, id)
@@ -2086,6 +2109,8 @@ func scanJob(scanner rowScanner) (Job, error) {
 	var roomName sql.NullString
 	var roomAudience sql.NullString
 	var roomAudienceAt sql.NullString
+	var audienceMode sql.NullString
+	var audienceNotice sql.NullString
 
 	err := scanner.Scan(
 		&job.ID,
@@ -2130,6 +2155,8 @@ func scanJob(scanner rowScanner) (Job, error) {
 		&roomName,
 		&roomAudience,
 		&roomAudienceAt,
+		&audienceMode,
+		&audienceNotice,
 		&job.CurrentTriggerKind,
 	)
 	if err != nil {
@@ -2171,6 +2198,13 @@ func scanJob(scanner rowScanner) (Job, error) {
 	job.RoomName = nullableStringPtr(roomName)
 	job.RoomAudience = nullableStringPtr(roomAudience)
 	job.RoomAudienceAt = nullableStringPtr(roomAudienceAt)
+	job.AudienceMode = strings.TrimSpace(audienceMode.String)
+	if job.AudienceMode == "" {
+		job.AudienceMode = shareAudienceRoom
+	}
+	if audienceNotice.Valid {
+		job.AudienceNotice = audienceNotice.String
+	}
 	return job, nil
 }
 

@@ -925,7 +925,7 @@ func newAdmissionTestRuntime(t *testing.T, cassiniBin, jobID string) (*Runtime, 
 	return rt, runPath
 }
 
-const readyInt8Inventory = `[{"id":"parakeet-ultra-0.6b-int8","revision":"r1","installed":true,"ready":true,"device":"cpu"}]`
+const readyInt8Inventory = `[{"id":"parakeet-ultra-0.6b-int8-v2","revision":"r1","installed":true,"ready":true,"device":"cpu"}]`
 
 // A native crash after media preparation leaves a partial bundle. The audio-only
 // rebuild must start from an empty directory, or the meeting build refuses it
@@ -964,7 +964,7 @@ func attemptTranscriptionDetail(t *testing.T, rt *Runtime, jobID string) string 
 // the audio.
 func TestExecuteBuildCLIDefersTransientTranscriptionAdmission(t *testing.T) {
 	const jobID = "probe-deferred"
-	rt, runPath := newAdmissionTestRuntime(t, fakeModelCassini(t, `[{"id":"parakeet-ultra-0.6b-int8","revision":"r1","installed":true,"ready":false,"device":"cpu"}]`), jobID)
+	rt, runPath := newAdmissionTestRuntime(t, fakeModelCassini(t, `[{"id":"parakeet-ultra-0.6b-int8-v2","revision":"r1","installed":true,"ready":false,"device":"cpu"}]`), jobID)
 	t.Setenv("FAKE_PROBE_EXIT", "75")
 	task := buildTask{JobID: jobID, AttemptNumber: 1, ArtifactRunPath: runPath}
 
@@ -1038,7 +1038,7 @@ func TestExecuteBuildCLIKeepsAudioWhenModelRAMNeverFrees(t *testing.T) {
 // audio at once rather than defer.
 func TestExecuteBuildCLIKeepsAudioWhenTheModelIsNotInstalled(t *testing.T) {
 	const jobID = "model-missing"
-	rt, runPath := newAdmissionTestRuntime(t, fakeModelCassini(t, `[{"id":"parakeet-ultra-0.6b-int8","revision":"r1","installed":false,"ready":false,"device":"cpu"}]`), jobID)
+	rt, runPath := newAdmissionTestRuntime(t, fakeModelCassini(t, `[{"id":"parakeet-ultra-0.6b-int8-v2","revision":"r1","installed":false,"ready":false,"device":"cpu"}]`), jobID)
 	meetingPath, err := rt.executeBuildCLI(context.Background(), buildTask{JobID: jobID, AttemptNumber: 1, ArtifactRunPath: runPath})
 	if err != nil {
 		t.Fatalf("executeBuildCLI() = %v, want the audio preserved", err)
