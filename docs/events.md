@@ -32,9 +32,11 @@ A URL without a secret is refused: every event must be verifiable. `PUT
 /settings` answers `400` for any invalid webhook value. Invalid values found in
 `settings.json` at startup turn delivery off and are logged; every other
 setting in the file still applies, and the next settings save removes them.
+Events already queued are kept: fix the values and delivery resumes.
 
-Events are bound to the receiver they were queued for. Changing or clearing
-`event_webhook_url` closes whatever is still undelivered for the old receiver
+Events are bound to the receiver they were queued for. Saving a different
+`event_webhook_url`, or clearing it, closes whatever is still undelivered for
+the old receiver
 (`last_error` = `receiver changed`); nothing queued for one URL is ever sent to
 another. Changing only the secret, allow-list or timeout keeps the queue.
 
@@ -44,12 +46,12 @@ another. Changing only the secret, allow-list or timeout keeps the queue.
 |---|---|---|
 | `recording.started` | Talk's recording request was accepted and the recorder started. | `started_at` |
 | `recording.stopped` | The recording stopped and the capture was safely stored. | `stopped_at`, `stop_reason` |
-| `build.completed` | Transcription/build completed and the meeting was handed to seal. | `meeting_title` |
+| `build.completed` | Transcription/build of a recording completed and the meeting was handed to seal. | `meeting_title` |
 | `summary.completed` | A summary was written: a normal build's summary, one written or regenerated on request, or a speaker-edit rewrite. A speaker edit that keeps the existing summary emits nothing. | `summary_markdown`, `summary_model` |
 | `summary.failed` | A summary could not be written: the summary step of a build failed, or an attempt that only writes a summary failed at any stage. The recording itself is unaffected. Yielding for a recording or resource pressure is not a failure. | `phase`, `error`, `summary_reason` (a build's summary step only), `interrupted` |
-| `recording.published` | The `.opus` was delivered and the job succeeded. | `published_location` |
-| `recording.failed` | Recording, build, seal or publish of a recording reached a terminal failure, or an operator restart interrupted it. | `phase`, `error`, `interrupted` (restarts only) |
-| `shares.completed` | Publication finished and a share outcome is recorded; emitted again when a later Re-share changes that outcome. | `sharing`, `reconciled` (re-shares only) |
+| `recording.published` | A recording's `.opus` was delivered and the job succeeded. | `published_location` |
+| `recording.failed` | Recording, build, seal or publish of a recording stopped without publishing: a failure, a build parked for lack of resources, or an operator restart that interrupted it. | `phase`, `error`, `interrupted` (restarts only) |
+| `shares.completed` | A recording's publication finished and a share outcome is recorded; emitted again when a later Re-share changes that outcome. | `sharing`, `reconciled` (re-shares only) |
 
 `shares.completed` includes the same outcome the Operator shows:
 
@@ -63,8 +65,19 @@ another. Changing only the secret, allow-list or timeout keeps the queue.
 ```
 
 `recording.failed` carries `phase` equal to `record`, `build`, `seal` or
-`publish`. A deferred build (temporary RAM/VRAM pressure) is not a failure and
-does not emit `recording.failed`.
+`publish`. A build deferred for temporary RAM/VRAM pressure is retried on its
+own and emits nothing. A build that is still short of resources after its last
+retry, or that can never run on this host, is parked: `recording.failed`
+arrives with `state` equal to `blocked`. Nothing was lost — the capture is
+kept, and an administrator can rerun the job, which then emits
+`recording.published` like any other. Until someone does, nothing is
+published, which is why a receiver hears about it.
+
+`build.completed`, `recording.published` and `shares.completed` announce a
+recording: its first build, or a full rerun. Regenerating a summary or editing
+speakers rebuilds and republishes a meeting that is already out, and emits
+none of the three, so a "new meeting" automation does not fire again for every
+edit. A summary written that way still emits `summary.completed`.
 
 `summary.failed` carries `phase` equal to `summary`, or to `seal` or `publish`
 when an attempt that only writes a summary got that far. Such an attempt, and a
@@ -163,21 +176,20 @@ receiver should deduplicate by `X-Cassini-Delivery`.
 - Events are first written to a SQLite outbox, so a receiver outage or an
   operator restart does not lose a lifecycle event.
 - `2xx` marks delivered.
-- `4xx` (except `408`, `409`, `425` and `429`) is permanent and stops
-  retrying.
 - Redirects are not followed. A `3xx` is a failed attempt: point
   `event_webhook_url` at the final address.
-- `3xx`, `5xx`, timeouts, connection errors, `408`, `409`, `425` and `429`
-  retry with exponential backoff, at most five minutes apart, until the event
-  is 24 hours old. After that it is marked failed.
+- Everything else — any `3xx`, `4xx` or `5xx`, a timeout, a connection error —
+  is retried with exponential backoff, at most five minutes apart, until the
+  event is 24 hours old. After that it is marked failed. A `401` or `404` is
+  retried too: it usually means the receiver is mid-deploy or its secret is
+  being rotated.
 - Delivery is **at-least-once**: a crash between the POST and the database
   update redelivers the same delivery id.
 - Delivery is best-effort relative to the recording: a failed webhook never
   changes the recording, publication or share result.
 
-Delivery history lives in the `event_outbox` table. Delivered and permanently
-failed rows are retained as operational evidence; they are not currently
-pruned automatically.
+Delivery history lives in the `event_outbox` table. Delivered and failed rows
+are kept for seven days as evidence of what was sent, then deleted.
 
 ## Windmill example
 
