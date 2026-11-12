@@ -1547,7 +1547,7 @@ func (rt *Runtime) prepareRecordJob(ctx context.Context, provider, requestBody s
 		CreatedAt:            now,
 		UpdatedAt:            now,
 		RecordQueuedAt:       &now,
-		AudienceMode:         normalizeShareAudienceOrRoom(settings.ShareAudience),
+		AudienceMode:         normalizeSavedAudience(settings.ShareAudience),
 	}
 	if err := rt.store.InsertQueuedJob(ctx, job); err != nil {
 		rt.releaseRecordSlot()
@@ -2167,11 +2167,9 @@ func scanJob(scanner rowScanner) (Job, error) {
 	job.RoomName = nullableStringPtr(roomName)
 	job.RoomAudience = nullableStringPtr(roomAudience)
 	job.RoomAudienceAt = nullableStringPtr(roomAudienceAt)
-	job.AudienceMode = shareAudienceRoom
-	if audienceMode.Valid {
-		if mode, err := normalizeShareAudience(audienceMode.String); err == nil {
-			job.AudienceMode = mode
-		}
+	job.AudienceMode = strings.TrimSpace(audienceMode.String)
+	if job.AudienceMode == "" {
+		job.AudienceMode = shareAudienceRoom
 	}
 	if audienceNotice.Valid {
 		job.AudienceNotice = audienceNotice.String

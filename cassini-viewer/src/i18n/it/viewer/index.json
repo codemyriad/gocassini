@@ -140,6 +140,8 @@
       "nav_label": "Conversazioni",
       "rooms_heading": "Conversazioni",
       "audience_participants": "Condivise con i partecipanti",
+      "audience_attendees": "",
+      "audience_mixed": "",
       "all_meetings": "Tutte le riunioni",
       "rename_room_named": "Rinomina la conversazione {name}",
       "rename_room": "Rinomina la conversazione",

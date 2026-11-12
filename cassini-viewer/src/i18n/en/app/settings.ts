@@ -268,6 +268,15 @@ const settings = {
   // Operator › Publish pipeline: the "Who can see recordings" card.
   direct_share: {
     heading: "Who can see recordings",
+    audience_choose: "Choose who receives the recording — and with it the transcript and summary.",
+    // Screen-reader name for the audience radio group.
+    audience_group_label: "Share recordings with",
+    audience_room_label: "Everyone in the Talk room",
+    audience_room_description: "The whole channel, including people who were not on the call.",
+    audience_attendees_label: "Only people who were in the call",
+    audience_attendees_description: "Everyone Talk reported in the call while it was being recorded; useful for a standing channel.",
+    audience_applies: "Applies to recordings that start after you save. The mode is fixed when a recording starts, and its attendee roster can grow while the call continues; changing this later does not alter that recording or re-share one already published.",
+    audience_chat_skipped: "In “Only people who were in the call” mode, the Talk room chat message is skipped: the whole room would see the recording's title and link.",
     checking: "Checking recordings setup…",
     needs_account: "Cassini needs its recordings account before it can publish.",
     needs_attention: "Recordings setup needs attention.",

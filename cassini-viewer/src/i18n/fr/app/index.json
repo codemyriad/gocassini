@@ -211,6 +211,11 @@
       "summaries_action_title": "Ajoutez un fournisseur pour rédiger des résumés"
     },
     "step_outcomes": {
+      "audience_notice": {
+        "no_capture": "",
+        "no_local": "",
+        "unknown": ""
+      },
       "transcription": {
         "disabled": "Publiée sans transcription : la transcription est désactivée",
         "model_unavailable": "Publiée sans transcription : aucun modèle vocal n’a pu s’exécuter",
@@ -252,6 +257,7 @@
         "starter_refused": "Non publiée : Nextcloud a refusé de la partager avec la personne qui a lancé l’enregistrement.",
         "starter_refused_named": "Non publiée : Nextcloud a refusé de la partager avec {starter}, qui a lancé l’enregistrement.",
         "starter_refused_hint_rerun": "Corrigez le paramètre indiqué dans Diagnostic › Partage des enregistrements, puis réexécutez. La réexécution la publie et la partage avec toute la conversation.",
+        "starter_refused_hint_rerun_attendees": "",
         "starter_refused_hint_no_rerun": "Corrigez le paramètre indiqué dans Diagnostic › Partage des enregistrements pour que les prochains enregistrements soient publiés. Cette exécution ne peut pas être réexécutée.",
         "held_back": "Publiée. Retenus par la limite de partage de Nextcloud : {recipients}. Repartagez dans 10 minutes, ou relevez la limite (Diagnostic › Partage des enregistrements).",
         "partial_of": "Publiée, mais non partagée avec {count:number|num} {{audience:|destinataire|||destinataires|destinataires}} sur {audience:number|num}",
@@ -260,7 +266,9 @@
         "partial_hint": "Nextcloud les a refusés à cause d’un paramètre de partage. Diagnostic › Partage des enregistrements l’indique, avec la correction.",
         "also_held_back": "La limite de partage de Nextcloud a aussi retenu {count:number|num} {{count:|destinataire|||destinataires|destinataires}}.",
         "reshare_button": "Repartager avec la conversation",
-        "reshare_note": "Ajoute toutes les personnes manquantes, y compris celles retirées manuellement. Les personnes qui acceptent les partages manuellement le trouveront en attente dans Parcourir."
+        "reshare_button_attendees": "",
+        "reshare_note": "Ajoute toutes les personnes manquantes, y compris celles retirées manuellement. Les personnes qui acceptent les partages manuellement le trouveront en attente dans Parcourir.",
+        "reshare_note_attendees": ""
       }
     },
     "run_stages": {
@@ -1191,6 +1199,14 @@
     },
     "direct_share": {
       "heading": "Qui peut voir les enregistrements",
+      "audience_choose": "",
+      "audience_group_label": "",
+      "audience_room_label": "",
+      "audience_room_description": "",
+      "audience_attendees_label": "",
+      "audience_attendees_description": "",
+      "audience_applies": "",
+      "audience_chat_skipped": "",
       "checking": "Vérification de la configuration des enregistrements…",
       "needs_account": "Cassini a besoin de son compte d’enregistrements avant de pouvoir publier.",
       "needs_attention": "La configuration des enregistrements est à vérifier.",

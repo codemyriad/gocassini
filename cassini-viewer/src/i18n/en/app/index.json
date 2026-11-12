@@ -211,6 +211,11 @@
       "summaries_action_title": "Add a provider to write summaries"
     },
     "step_outcomes": {
+      "audience_notice": {
+        "no_capture": "No attendee list was captured; only the starter received this recording.",
+        "no_local": "No local attendees were captured; only the starter received this recording.",
+        "unknown": "This recording's audience mode was not recognised; only the starter received this recording."
+      },
       "transcription": {
         "disabled": "Published without a transcript: transcription is turned off",
         "model_unavailable": "Published without a transcript: no speech model could run",
@@ -252,6 +257,7 @@
         "starter_refused": "Not published: Nextcloud refused to share it with the person who started the recording.",
         "starter_refused_named": "Not published: Nextcloud refused to share it with {starter}, who started the recording.",
         "starter_refused_hint_rerun": "Fix the setting Doctor › Recording sharing names, then Rerun. Rerun publishes it and shares it with the whole room.",
+        "starter_refused_hint_rerun_attendees": "Fix the setting Doctor › Recording sharing names, then Rerun. Rerun publishes it and shares it with the call's attendees.",
         "starter_refused_hint_no_rerun": "Fix the setting Doctor › Recording sharing names so later recordings publish. This run cannot be rerun.",
         "held_back": "Published. Held back by Nextcloud's share limit: {recipients}. Re-share in 10 minutes, or raise the limit (Doctor › Recording sharing).",
         "partial_of": "Published, but not shared with {count:number|num} of {audience:number|num} {{audience:recipient|recipients}}",
@@ -260,7 +266,9 @@
         "partial_hint": "Nextcloud refused them because of a sharing setting. Doctor › Recording sharing names it and the fix.",
         "also_held_back": "Nextcloud's share limit also held back {count:number|num} {{recipient|recipients}}.",
         "reshare_button": "Re-share with the room",
-        "reshare_note": "Adds whoever is missing, including anyone removed by hand. People who accept shares by hand will find it waiting in Browse."
+        "reshare_button_attendees": "Re-share with call attendees",
+        "reshare_note": "Adds whoever is missing, including anyone removed by hand. People who accept shares by hand will find it waiting in Browse.",
+        "reshare_note_attendees": "Adds whoever was in the call and is missing, including anyone removed by hand. People who accept shares by hand will find it waiting in Browse."
       }
     },
     "run_stages": {
@@ -1191,6 +1199,14 @@
     },
     "direct_share": {
       "heading": "Who can see recordings",
+      "audience_choose": "Choose who receives the recording — and with it the transcript and summary.",
+      "audience_group_label": "Share recordings with",
+      "audience_room_label": "Everyone in the Talk room",
+      "audience_room_description": "The whole channel, including people who were not on the call.",
+      "audience_attendees_label": "Only people who were in the call",
+      "audience_attendees_description": "Everyone Talk reported in the call while it was being recorded; useful for a standing channel.",
+      "audience_applies": "Applies to recordings that start after you save. The mode is fixed when a recording starts, and its attendee roster can grow while the call continues; changing this later does not alter that recording or re-share one already published.",
+      "audience_chat_skipped": "In “Only people who were in the call” mode, the Talk room chat message is skipped: the whole room would see the recording's title and link.",
       "checking": "Checking recordings setup…",
       "needs_account": "Cassini needs its recordings account before it can publish.",
       "needs_attention": "Recordings setup needs attention.",

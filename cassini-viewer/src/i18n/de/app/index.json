@@ -211,6 +211,11 @@
       "summaries_action_title": "Füge einen Anbieter hinzu, um Zusammenfassungen zu schreiben"
     },
     "step_outcomes": {
+      "audience_notice": {
+        "no_capture": "",
+        "no_local": "",
+        "unknown": ""
+      },
       "transcription": {
         "disabled": "Ohne Transkript veröffentlicht: Die Transkription ist ausgeschaltet",
         "model_unavailable": "Ohne Transkript veröffentlicht: Kein Sprachmodell konnte laufen",
@@ -252,6 +257,7 @@
         "starter_refused": "Nicht veröffentlicht: Nextcloud hat sich geweigert, sie mit der Person zu teilen, die die Aufnahme gestartet hat.",
         "starter_refused_named": "Nicht veröffentlicht: Nextcloud hat sich geweigert, sie mit {starter} zu teilen, der oder die die Aufnahme gestartet hat.",
         "starter_refused_hint_rerun": "Korrigiere die Einstellung, die Diagnose › Teilen von Aufnahmen nennt, und klicke dann auf „Erneut ausführen“. Das veröffentlicht sie und teilt sie mit der ganzen Unterhaltung.",
+        "starter_refused_hint_rerun_attendees": "",
         "starter_refused_hint_no_rerun": "Korrigiere die Einstellung, die Diagnose › Teilen von Aufnahmen nennt, damit spätere Aufnahmen veröffentlicht werden. Dieser Durchlauf kann nicht erneut ausgeführt werden.",
         "held_back": "Veröffentlicht. Durch das Freigabelimit von Nextcloud zurückgehalten: {recipients}. Teile in 10 Minuten erneut oder erhöhe das Limit (Diagnose › Teilen von Aufnahmen).",
         "partial_of": "Veröffentlicht, aber nicht mit {count:number|num} von {audience:number|num} {{audience:Empfänger|Empfängern}} geteilt",
@@ -260,7 +266,9 @@
         "partial_hint": "Nextcloud hat sie wegen einer Freigabe-Einstellung abgelehnt. Diagnose › Teilen von Aufnahmen nennt sie und die Lösung.",
         "also_held_back": "Das Freigabelimit von Nextcloud hat außerdem {count:number|num} {{Empfänger|Empfänger}} zurückgehalten.",
         "reshare_button": "Erneut mit der Unterhaltung teilen",
-        "reshare_note": "Fügt alle hinzu, die fehlen, auch manuell entfernte. Wer Freigaben manuell annimmt, findet sie wartend unter „Durchsuchen“."
+        "reshare_button_attendees": "",
+        "reshare_note": "Fügt alle hinzu, die fehlen, auch manuell entfernte. Wer Freigaben manuell annimmt, findet sie wartend unter „Durchsuchen“.",
+        "reshare_note_attendees": ""
       }
     },
     "run_stages": {
@@ -1191,6 +1199,14 @@
     },
     "direct_share": {
       "heading": "Wer Aufnahmen sehen kann",
+      "audience_choose": "",
+      "audience_group_label": "",
+      "audience_room_label": "",
+      "audience_room_description": "",
+      "audience_attendees_label": "",
+      "audience_attendees_description": "",
+      "audience_applies": "",
+      "audience_chat_skipped": "",
       "checking": "Einrichtung der Aufnahmen wird geprüft…",
       "needs_account": "Cassini braucht sein Aufnahmekonto, bevor es veröffentlichen kann.",
       "needs_attention": "Die Einrichtung der Aufnahmen erfordert Aufmerksamkeit.",

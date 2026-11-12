@@ -101,9 +101,9 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 	// Refreshing it from Talk is a separate thing nothing does yet.
 	_, roomName := rt.talkRoomForJob(task.JobID)
 	publishJob, publishJobErr := rt.store.GetJob(rt.ctx, task.JobID)
-	audience := ""
+	audience := shareAudienceAttendees
 	if publishJobErr == nil {
-		audience = normalizeShareAudienceOrRoom(publishJob.AudienceMode)
+		audience = normalizeSavedAudience(publishJob.AudienceMode)
 	} else {
 		rt.logger.Printf("publish audience read failed id=%s: %v", task.JobID, publishJobErr)
 	}
@@ -135,9 +135,10 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 	// exclude (#472 review). The stopped callback and the file shares still run.
 	job, jobErr := rt.store.GetJob(rt.ctx, task.JobID)
 	if jobErr != nil {
-		rt.logger.Printf("Talk notification audience read failed id=%s: %v", task.JobID, jobErr)
-	}
-	if jobErr == nil && normalizeShareAudienceOrRoom(job.AudienceMode) == shareAudienceAttendees {
+		// Fail closed: without a readable mode we cannot know the audience is
+		// the room, so leave the room chat alone (#472 review).
+		rt.logger.Printf("Talk notification skipped: audience read failed id=%s: %v", task.JobID, jobErr)
+	} else if normalizeSavedAudience(job.AudienceMode) == shareAudienceAttendees {
 		rt.logger.Printf("Talk notification skipped in attendee mode id=%s", task.JobID)
 	} else if sink, ok := rt.sink().(interface {
 		talkNotificationClient() *talkNotificationClient

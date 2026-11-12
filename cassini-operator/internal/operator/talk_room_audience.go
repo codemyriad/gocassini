@@ -12,7 +12,8 @@ import (
 
 // Capture the Talk audience while a recording is active. Room membership can
 // change later, so publication shares the recording with the users, groups and
-// Teams recorded at start and stop. The .opus lists speakers, which omits
+// Teams recorded at start and stop, plus the local accounts the recorder saw
+// during the call (#479). The .opus lists speakers, which omits
 // silent participants and room-level grants.
 
 // roomAudienceTimeout bounds one capture. Generous relative to the work because
@@ -26,6 +27,14 @@ const roomAudienceTimeout = 60 * time.Second
 const (
 	roomAudiencePhaseStart = "start"
 	roomAudiencePhaseStop  = "stop"
+)
+
+// Audience notice codes stored on a job. The app words these in the reader's
+// language; English is only the operator's fallback surface (#472 review).
+const (
+	jobAudienceNoticeNoCapture = "no_attendee_list"
+	jobAudienceNoticeNoLocal   = "no_local_attendees"
+	jobAudienceNoticeUnknown   = "unknown_audience_mode"
 )
 
 // storedAudiencePrincipal is the on-disk shape of one grantable principal.
@@ -221,7 +230,7 @@ func (rt *Runtime) captureRoomAudience(jobID, owner, roomToken, phase string) {
 		rt.logger.Printf("room audience capture skipped id=%s phase=%s: read job: %v", jobID, phase, err)
 		return
 	}
-	attendeesOnly := normalizeShareAudienceOrRoom(job.AudienceMode) == shareAudienceAttendees
+	attendeesOnly := normalizeSavedAudience(job.AudienceMode) == shareAudienceAttendees
 	fetch := rt.fetchTalkParticipants
 	if attendeesOnly {
 		fetch = rt.fetchTalkAttendees
@@ -246,5 +255,5 @@ func (rt *Runtime) captureRoomAudience(jobID, owner, roomToken, phase string) {
 		rt.logger.Printf("room audience persist failed id=%s phase=%s: %v", jobID, phase, err)
 		return
 	}
-	rt.logger.Printf("room audience captured id=%s phase=%s principals=%d source=%s audience=%s", jobID, phase, len(mappings), source, normalizeShareAudienceOrRoom(job.AudienceMode))
+	rt.logger.Printf("room audience captured id=%s phase=%s principals=%d source=%s audience=%s", jobID, phase, len(mappings), source, normalizeSavedAudience(job.AudienceMode))
 }

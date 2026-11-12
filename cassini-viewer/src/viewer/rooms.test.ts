@@ -75,8 +75,8 @@ describe("buildRoomBuckets", () => {
       meeting({ id: "c", roomId: "r-daily", roomName: "Daily" }),
     ]);
     expect(buckets).toEqual([
-      { key: "id:r-daily", roomId: "r-daily", name: "Daily", count: 2, audience: "", hasRoom: true },
-      { key: "id:r-ops", roomId: "r-ops", name: "Ops & Infra", count: 1, audience: "", hasRoom: true },
+      { key: "id:r-daily", roomId: "r-daily", name: "Daily", count: 2, audience: "room", hasRoom: true },
+      { key: "id:r-ops", roomId: "r-ops", name: "Ops & Infra", count: 1, audience: "room", hasRoom: true },
     ]);
   });
 
@@ -90,7 +90,7 @@ describe("buildRoomBuckets", () => {
       key: NO_ROOM_KEY,
       name: noRoomLabel(),
       count: 2,
-      audience: "",
+      audience: "room",
       hasRoom: false,
     });
   });
@@ -102,7 +102,7 @@ describe("buildRoomBuckets", () => {
       meeting({ id: "a", roomId: "r1", roomName: "Design" }),
     ]);
     expect(buckets).toEqual([
-      { key: "id:r1", roomId: "r1", name: "Design review", count: 2, audience: "", hasRoom: true },
+      { key: "id:r1", roomId: "r1", name: "Design review", count: 2, audience: "room", hasRoom: true },
     ]);
   });
 
@@ -123,6 +123,16 @@ describe("buildRoomBuckets", () => {
       meeting({ id: "b", roomId: "r2", roomName: "Daily", audience: "attendees" }),
     ]);
     expect(audienceForRooms(buckets)).toBe("attendees");
+  });
+
+  it("treats a missing audience as the historical room audience", () => {
+    const buckets = buildRoomBuckets([
+      meeting({ id: "old", roomId: "r1", roomName: "Legacy" }),
+      meeting({ id: "new", roomId: "r2", roomName: "New", audience: "attendees" }),
+    ]);
+    expect(buckets.find((bucket) => bucket.key === "id:r1")?.audience).toBe("room");
+    expect(buckets.find((bucket) => bucket.key === "id:r2")?.audience).toBe("attendees");
+    expect(audienceForRooms(buckets)).toBe("mixed");
   });
 
   it("returns nothing for an empty catalog", () => {

@@ -25,7 +25,8 @@ in it.
 The chosen mode is saved on the job when recording starts: changing the setting
 mid-recording does not alter that recording's captures, publication, re-share or
 viewer label, and changing it later does not re-share recordings already
-published. In attendee mode there is no publish-time Talk lookup. If no attendee
+published. The attendee roster grows while the call runs and is fixed once the
+recording is published. In attendee mode there is no publish-time Talk lookup. If no attendee
 roster was captured at all, the recording is shared only with the person who
 started it and the run carries a warning. Attendee mode also skips the Talk room
 chat post, whose title and link the whole room would see.

@@ -920,27 +920,12 @@ func TestMeetingFormatSettingsPersistAndValidate(t *testing.T) {
 	}
 }
 
-func TestLoadLegacyShareWithAttendeesBoolean(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "settings.json")
-	if err := os.WriteFile(path, []byte(`{"quality":"balanced","source":"user","share_with_attendees":true}`), 0600); err != nil {
-		t.Fatal(err)
+func TestSavedAudienceFailsClosed(t *testing.T) {
+	if got := normalizeSavedAudience(""); got != shareAudienceRoom {
+		t.Fatalf("empty saved mode = %q, want room", got)
 	}
-	loaded, err := LoadOrInitSettings(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if loaded.ShareAudience != shareAudienceAttendees {
-		t.Fatalf("legacy share_with_attendees = true loaded as %q, want attendees", loaded.ShareAudience)
-	}
-	if err := Save(path, loaded); err != nil {
-		t.Fatal(err)
-	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(raw), "share_with_attendees") {
-		t.Fatalf("saved settings still carry the legacy boolean: %s", raw)
+	if got := normalizeSavedAudience("a-mode-from-the-future"); got != shareAudienceAttendees {
+		t.Fatalf("unrecognised saved mode = %q, want attendees (narrower)", got)
 	}
 }
 

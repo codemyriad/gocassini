@@ -50,3 +50,52 @@ func TestSeenParticipantsIncludesLateJoinerAndSkipsGuests(t *testing.T) {
 		t.Fatalf("seen participants after leave = %+v, want alice still present", got)
 	}
 }
+
+// The field parsing must be covered through the real participants handler, not
+// just the identity helper: actorType decides whether an account can receive a
+// Nextcloud share.
+func TestHandleParticipantsEventRecordsSeenLocalUsers(t *testing.T) {
+	r, _ := newIdentityTestRecorder(t)
+	r.seenParticipants = make(map[string]participantIdentity)
+	t.Cleanup(func() {
+		_ = r.removeSubscriber("s-alice")
+		_ = r.removeSubscriber("s-guest")
+	})
+
+	if err := r.handleParticipantsEvent(map[string]any{
+		"changed": []any{
+			map[string]any{
+				"sessionId":          "s-alice",
+				"nextcloudSessionId": "room-alice",
+				"actorType":          "users",
+				"actorId":            "alice",
+				"displayName":        "Alice",
+				"inCall":             float64(7),
+			},
+			map[string]any{
+				"sessionId":          "s-guest",
+				"nextcloudSessionId": "room-guest",
+				"actorType":          "guests",
+				"actorId":            "guest-id",
+				"inCall":             float64(7),
+			},
+			map[string]any{
+				"sessionId":          "s-roomonly",
+				"nextcloudSessionId": "room-only",
+				"actorType":          "users",
+				"actorId":            "room-only-user",
+				"inCall":             float64(0),
+			},
+		},
+	}); err != nil {
+		t.Fatalf("handleParticipantsEvent() error = %v", err)
+	}
+
+	if len(r.seenParticipants) != 1 {
+		t.Fatalf("seenParticipants = %+v, want only alice", r.seenParticipants)
+	}
+	alice, ok := r.seenParticipants["alice"]
+	if !ok || alice.ActorType != "users" || alice.DisplayName != "Alice" {
+		t.Fatalf("seenParticipants = %+v, want Alice as a local user", r.seenParticipants)
+	}
+}

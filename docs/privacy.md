@@ -128,7 +128,8 @@ artifacts:
   the call into the run bundle, and the operator merges that list before
   publishing. This is what lets Cassini later explicitly narrow an
   already-published recording from Operator settings to its captured audience
-  rather than whoever is in the room today. The saved roster is frozen; if
+  rather than whoever is in the room today. The saved roster grows while the call runs and is fixed once the recording is
+  published; if
   attendee mode has no captured roster at all, publication shares only with the
   person who started the recording and records a warning instead of looking the
   room up again. Guests, email invitees and federated participants are not

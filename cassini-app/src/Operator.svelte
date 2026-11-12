@@ -1195,12 +1195,20 @@
   $: meetingMs = selectedJob ? meetingLengthMs(selectedJob.job) : null;
   // Who it could not be shared with (D-885): the meeting's, not an attempt's,
   // because a rerun keeps the file and its shares.
+  $: audienceNotice =
+    selectedJob?.job.audience_notice === "no_attendee_list"
+      ? $LL.app.operator.step_outcomes.audience_notice.no_capture()
+      : selectedJob?.job.audience_notice === "no_local_attendees"
+        ? $LL.app.operator.step_outcomes.audience_notice.no_local()
+        : selectedJob?.job.audience_notice === "unknown_audience_mode"
+          ? $LL.app.operator.step_outcomes.audience_notice.unknown()
+          : selectedJob?.job.audience_notice ?? "";
   $: outcomeNotices = [
     shareNotice(
       selectedJob?.sharing,
       rerunApplies && !rerunBlockedReason,
       !!selectedJob && (!isJobActive(selectedJob.job) || selectedJob.job.state === "interrupted"),
-      selectedJob?.job.audience_mode === "attendees" ? "attendees" : "room",
+      selectedJob?.job.audience_mode && selectedJob.job.audience_mode !== "room" ? "attendees" : "room",
     ),
     ...(outcomeSource
       ? [transcriptionNotice(outcomeSource, rerunApplies && !rerunBlockedReason), summaryNotice(outcomeSource)]
@@ -1662,7 +1670,7 @@
                   {#if selectedJob.job.audience_notice}
                     <div class="flex items-start gap-2 rounded-box border border-warning/50 bg-warning/10 p-3 text-sm" role="status">
                       <TriangleAlert size={16} class="mt-0.5 shrink-0 text-warning" aria-hidden="true" />
-                      <p class="font-medium">{selectedJob.job.audience_notice}</p>
+                      <p class="font-medium">{audienceNotice}</p>
                     </div>
                   {/if}
                   {#each outcomeNotices as notice (notice.title)}

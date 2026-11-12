@@ -211,6 +211,11 @@
       "summaries_action_title": "Aggiungi un provider per scrivere riassunti"
     },
     "step_outcomes": {
+      "audience_notice": {
+        "no_capture": "",
+        "no_local": "",
+        "unknown": ""
+      },
       "transcription": {
         "disabled": "Pubblicata senza trascrizione: la trascrizione è disattivata",
         "model_unavailable": "Pubblicata senza trascrizione: nessun modello vocale ha potuto funzionare",
@@ -252,6 +257,7 @@
         "starter_refused": "Non pubblicata: Nextcloud ha rifiutato di condividerla con la persona che ha avviato la registrazione.",
         "starter_refused_named": "Non pubblicata: Nextcloud ha rifiutato di condividerla con {starter}, che ha avviato la registrazione.",
         "starter_refused_hint_rerun": "Correggi l’impostazione indicata in Diagnostica › Condivisione delle registrazioni, poi Esegui di nuovo. La nuova esecuzione la pubblica e la condivide con tutta la conversazione.",
+        "starter_refused_hint_rerun_attendees": "",
         "starter_refused_hint_no_rerun": "Correggi l’impostazione indicata in Diagnostica › Condivisione delle registrazioni, così le prossime registrazioni verranno pubblicate. Questa esecuzione non può essere ripetuta.",
         "held_back": "Pubblicata. Trattenuti dal limite di condivisione di Nextcloud: {recipients}. Ricondividi tra 10 minuti, o alza il limite (Diagnostica › Condivisione delle registrazioni).",
         "partial_of": "Pubblicata, ma non condivisa con {count:number|num} di {audience:number|num} {{audience:|destinatario|||destinatari|destinatari}}",
@@ -260,7 +266,9 @@
         "partial_hint": "Nextcloud li ha rifiutati a causa di un’impostazione di condivisione. Diagnostica › Condivisione delle registrazioni indica quale e come correggerla.",
         "also_held_back": "Il limite di condivisione di Nextcloud ha trattenuto anche {count:number|num} {{|destinatario|||destinatari|destinatari}}.",
         "reshare_button": "Ricondividi con la conversazione",
-        "reshare_note": "Aggiunge chi manca, compreso chi è stato rimosso a mano. Chi accetta le condivisioni a mano la troverà in attesa in Sfoglia."
+        "reshare_button_attendees": "",
+        "reshare_note": "Aggiunge chi manca, compreso chi è stato rimosso a mano. Chi accetta le condivisioni a mano la troverà in attesa in Sfoglia.",
+        "reshare_note_attendees": ""
       }
     },
     "run_stages": {
@@ -1191,6 +1199,14 @@
     },
     "direct_share": {
       "heading": "Chi può vedere le registrazioni",
+      "audience_choose": "",
+      "audience_group_label": "",
+      "audience_room_label": "",
+      "audience_room_description": "",
+      "audience_attendees_label": "",
+      "audience_attendees_description": "",
+      "audience_applies": "",
+      "audience_chat_skipped": "",
       "checking": "Controllo della configurazione delle registrazioni…",
       "needs_account": "Cassini ha bisogno del suo account delle registrazioni prima di poter pubblicare.",
       "needs_attention": "La configurazione delle registrazioni richiede attenzione.",

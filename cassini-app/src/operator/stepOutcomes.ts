@@ -187,7 +187,7 @@ export function shareNotice(
       detail: skipped.length > 0 ? describeRefused(refusedEntry(skipped[0])) : undefined,
       hint: rerunAvailable
         ? attendees
-          ? "Fix the setting Doctor › Recording sharing names, then Rerun. Rerun publishes it and shares it with the call's attendees."
+          ? t.starter_refused_hint_rerun_attendees()
           : t.starter_refused_hint_rerun()
         : t.starter_refused_hint_no_rerun(),
     };
@@ -196,10 +196,8 @@ export function shareNotice(
     reshareAvailable
       ? {
           kind: "reshare",
-          label: attendees ? "Re-share with call attendees" : t.reshare_button(),
-          note: attendees
-            ? "Adds whoever was in the call and is missing, including anyone removed by hand."
-            : t.reshare_note(),
+          label: attendees ? t.reshare_button_attendees() : t.reshare_button(),
+          note: attendees ? t.reshare_note_attendees() : t.reshare_note(),
         }
       : undefined;
   // Who Nextcloud's share limit held back: not refused, but not shared with

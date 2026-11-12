@@ -59,22 +59,22 @@
     <!-- Same points as the rooms rail's audience note
          (cassini-viewer RoomsRail.svelte); change both together. -->
     <p>{$LL.common.audience.intro()}</p>
-    <p>Choose who receives the recording — and with it the transcript and summary.</p>
-    <div class="audience-choice" role="group" aria-label="Share recordings with">
+    <p>{$LL.app.settings.direct_share.audience_choose()}</p>
+    <div class="audience-choice" role="group" aria-label={$LL.app.settings.direct_share.audience_group_label()}>
       <label class="audience-option">
         <input type="radio" name="recording-audience" checked={shareAudience === "room"} on:change={() => onShareAudienceChange("room")} disabled={disabled || !settingsLoaded} />
-        <span><strong>Everyone in the Talk room</strong> — the whole channel, including people who were not on the call.</span>
+        <span><strong>{$LL.app.settings.direct_share.audience_room_label()}</strong> — {$LL.app.settings.direct_share.audience_room_description()}</span>
       </label>
       <label class="audience-option">
         <input type="radio" name="recording-audience" checked={shareAudience === "attendees"} on:change={() => onShareAudienceChange("attendees")} disabled={disabled || !settingsLoaded} />
-        <span><strong>Only people who were in the call</strong> — everyone Talk reported in the call while it was being recorded; useful for a standing channel.</span>
+        <span><strong>{$LL.app.settings.direct_share.audience_attendees_label()}</strong> — {$LL.app.settings.direct_share.audience_attendees_description()}</span>
       </label>
     </div>
-    <p class="audience-hint">Applies to recordings that start after you save. A recording's mode and roster are fixed when it starts; changing this later does not alter an in-progress recording or re-share one already published.</p>
-    <p class="audience-hint" role="note">In “Only people who were in the call” mode, the Talk room chat message is skipped: the whole room would see the recording's title and link.</p>
+    <p class="audience-hint">{$LL.app.settings.direct_share.audience_applies()}</p>
+    <p class="audience-hint" role="note">{$LL.app.settings.direct_share.audience_chat_skipped()}</p>
     <ul class="access-points">
       {#if shareAudience === "attendees"}
-        <li>Each recording is shared only with the people who were in the call while it was being recorded.</li>
+        <li>{$LL.common.audience.point_attendees()}</li>
       {:else}
         <li>{$LL.common.audience.point_participants()}</li>
       {/if}

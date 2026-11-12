@@ -81,8 +81,7 @@ export function hasRoom(meeting: MeetingCatalogEntry): boolean {
   return (meeting.roomName ?? meeting.roomId ?? "") !== "";
 }
 
-function mergeAudience(current: RoomAudience, next: RecordingAudience | undefined): RoomAudience {
-  if (!next) return current;
+function mergeAudience(current: RoomAudience, next: RecordingAudience): RoomAudience {
   if (current === "") return next;
   if (current === next) return current;
   return "mixed";
@@ -120,7 +119,7 @@ export function buildRoomBuckets(
     const existing = buckets.get(key);
     if (existing) {
       existing.count += 1;
-      existing.audience = mergeAudience(existing.audience, meeting.audience);
+      existing.audience = mergeAudience(existing.audience, meeting.audience ?? "room");
       continue;
     }
     buckets.set(key, {
@@ -132,7 +131,10 @@ export function buildRoomBuckets(
       // own rows — stay grouped under it by id.
       name: key === NO_ROOM_KEY ? noRoomLabel() : roomLabelOf(meeting),
       count: 1,
-      audience: meeting.audience ?? "",
+      // A catalog entry without the field predates audiences. Treat it as the
+      // historical room audience, so one attendee-mode recording cannot make an
+      // old archive read as attendee-only (#472 review).
+      audience: meeting.audience ?? "room",
       hasRoom: key !== NO_ROOM_KEY,
     });
   }

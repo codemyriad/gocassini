@@ -211,6 +211,11 @@
       "summaries_action_title": "Tilføj en udbyder for at skrive opsummeringer"
     },
     "step_outcomes": {
+      "audience_notice": {
+        "no_capture": "",
+        "no_local": "",
+        "unknown": ""
+      },
       "transcription": {
         "disabled": "Udgivet uden transskription: Transskription er slået fra",
         "model_unavailable": "Udgivet uden transskription: Ingen talemodel kunne køre",
@@ -252,6 +257,7 @@
         "starter_refused": "Ikke udgivet: Nextcloud nægtede at dele den med den person, der startede optagelsen.",
         "starter_refused_named": "Ikke udgivet: Nextcloud nægtede at dele den med {starter}, som startede optagelsen.",
         "starter_refused_hint_rerun": "Ret den indstilling, som Diagnose › Deling af optagelser nævner, og vælg så »Kør igen«. »Kør igen« udgiver den og deler den med hele samtalen.",
+        "starter_refused_hint_rerun_attendees": "",
         "starter_refused_hint_no_rerun": "Ret den indstilling, som Diagnose › Deling af optagelser nævner, så senere optagelser bliver udgivet. Denne kørsel kan ikke køres igen.",
         "held_back": "Udgivet. Holdt tilbage af Nextclouds delingsgrænse: {recipients}. Del igen om 10 minutter, eller hæv grænsen (Diagnose › Deling af optagelser).",
         "partial_of": "Udgivet, men ikke delt med {count:number|num} af {audience:number|num} {{audience:modtager|modtagere}}",
@@ -260,7 +266,9 @@
         "partial_hint": "Nextcloud afviste dem på grund af en delingsindstilling. Diagnose › Deling af optagelser nævner den og løsningen.",
         "also_held_back": "Nextclouds delingsgrænse holdt også {count:number|num} {{modtager|modtagere}} tilbage.",
         "reshare_button": "Del igen med samtalen",
-        "reshare_note": "Tilføjer dem, der mangler, også dem, der er fjernet manuelt. Personer, der accepterer delinger manuelt, finder den ventende under Gennemse."
+        "reshare_button_attendees": "",
+        "reshare_note": "Tilføjer dem, der mangler, også dem, der er fjernet manuelt. Personer, der accepterer delinger manuelt, finder den ventende under Gennemse.",
+        "reshare_note_attendees": ""
       }
     },
     "run_stages": {
@@ -1191,6 +1199,14 @@
     },
     "direct_share": {
       "heading": "Hvem kan se optagelser",
+      "audience_choose": "",
+      "audience_group_label": "",
+      "audience_room_label": "",
+      "audience_room_description": "",
+      "audience_attendees_label": "",
+      "audience_attendees_description": "",
+      "audience_applies": "",
+      "audience_chat_skipped": "",
       "checking": "Kontrollerer opsætningen af optagelser…",
       "needs_account": "Cassini skal have sin optagelseskonto, før den kan udgive.",
       "needs_attention": "Opsætningen af optagelser kræver opmærksomhed.",

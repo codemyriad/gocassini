@@ -283,10 +283,14 @@ func normalizeShareAudience(value string) (string, error) {
 	}
 }
 
-func normalizeShareAudienceOrRoom(value string) string {
+// normalizeSavedAudience is the fail-closed reader for a mode saved on a job
+// (or carried in a catalog). An omitted value is the historical room audience;
+// an unrecognised one is treated as attendees, so a future mode this build does
+// not know cannot widen a recording to the whole room (#480).
+func normalizeSavedAudience(value string) string {
 	mode, err := normalizeShareAudience(value)
 	if err != nil {
-		return shareAudienceRoom
+		return shareAudienceAttendees
 	}
 	return mode
 }
@@ -337,17 +341,6 @@ func LoadOrInitSettingsWithMigrationReporter(path string, report SettingsMigrati
 	var s STTSettings
 	if err := json.Unmarshal(raw, &s); err != nil {
 		return STTSettings{}, fmt.Errorf("parse settings %s: %w", path, err)
-	}
-	// The pre-0.4.0-alpha.3 setting was a boolean named share_with_attendees.
-	// A settings file written by that build must keep the administrator's
-	// choice through the upgrade to the named share_audience field.
-	if strings.TrimSpace(s.ShareAudience) == "" {
-		var legacy struct {
-			ShareWithAttendees *bool `json:"share_with_attendees"`
-		}
-		if json.Unmarshal(raw, &legacy) == nil && legacy.ShareWithAttendees != nil && *legacy.ShareWithAttendees {
-			s.ShareAudience = shareAudienceAttendees
-		}
 	}
 	if s.MeetingFormat == "" {
 		s.MeetingFormat = "opus"

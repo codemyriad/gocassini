@@ -128,17 +128,17 @@
       points: [$LL.common.audience.point_participants(), $LL.common.audience.point_guests(), $LL.common.audience.point_public_links()],
     },
     attendees: {
-      label: "Shared with call attendees",
+      label: text.audience_attendees(),
       points: [
-        "Each recording is shared only with the people who were in the call while it was being recorded.",
+        $LL.common.audience.point_attendees(),
         $LL.common.audience.point_guests(),
         $LL.common.audience.point_public_links(),
       ],
     },
     mixed: {
-      label: "Shared with each recording's audience",
+      label: text.audience_mixed(),
       points: [
-        "Recordings in this archive use different audiences; each kept the people captured when it was recorded.",
+        $LL.common.audience.point_mixed(),
         $LL.common.audience.point_guests(),
         $LL.common.audience.point_public_links(),
       ],

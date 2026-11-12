@@ -416,8 +416,38 @@ func TestAttendeeModeWithoutCapturedRosterSharesOnlyTheStarter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(job.AudienceNotice, "only the starter") {
-		t.Fatalf("audience notice = %q, want the starter-only warning", job.AudienceNotice)
+	if job.AudienceNotice != jobAudienceNoticeNoCapture {
+		t.Fatalf("audience notice = %q, want %q", job.AudienceNotice, jobAudienceNoticeNoCapture)
+	}
+}
+
+// An unrecognised saved mode is treated as attendee mode, not room: a mode a
+// future release writes must not widen an old build to the whole room (#480).
+func TestUnrecognisedAudienceModeFailsClosed(t *testing.T) {
+	f := newDirectPublishFixture(t, []sharePrincipal{{Type: "user", ID: "old-recipient"}})
+	if _, err := f.rt.store.db.Exec(`UPDATE jobs SET audience_mode = 'future-mode' WHERE id = ?`, directPublishJob); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	f.rt.fetchTalkParticipants = func(context.Context, string, string) ([]sharePrincipal, error) {
+		called = true
+		return nil, nil
+	}
+	if err := f.deliver(); err != nil {
+		t.Fatalf("Deliver() error = %v", err)
+	}
+	if called {
+		t.Fatal("an unrecognised mode looked the room up at publish time")
+	}
+	if len(f.posted) != 1 || !f.shared("0/alice") || f.shared("0/old-recipient") {
+		t.Fatalf("posted=%v shares=%v, want the starter only", f.posted, f.shares)
+	}
+	job, err := f.rt.store.GetJob(context.Background(), directPublishJob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.AudienceNotice != jobAudienceNoticeUnknown {
+		t.Fatalf("audience notice = %q, want %q", job.AudienceNotice, jobAudienceNoticeUnknown)
 	}
 }
 

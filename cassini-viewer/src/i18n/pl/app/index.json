@@ -211,6 +211,11 @@
       "summaries_action_title": "Dodaj dostawcę, aby pisać podsumowania"
     },
     "step_outcomes": {
+      "audience_notice": {
+        "no_capture": "",
+        "no_local": "",
+        "unknown": ""
+      },
       "transcription": {
         "disabled": "Opublikowano bez transkrypcji: transkrypcja jest wyłączona",
         "model_unavailable": "Opublikowano bez transkrypcji: nie udało się uruchomić żadnego modelu mowy",
@@ -252,6 +257,7 @@
         "starter_refused": "Nie opublikowano: Nextcloud odmówił udostępnienia osobie, która rozpoczęła nagranie.",
         "starter_refused_named": "Nie opublikowano: Nextcloud odmówił udostępnienia użytkownikowi {starter}, który rozpoczął nagranie.",
         "starter_refused_hint_rerun": "Popraw ustawienie wskazane w Doktor › Udostępnianie nagrań, a potem kliknij Uruchom ponownie. Ponowne uruchomienie opublikuje nagranie i udostępni je całemu pokojowi.",
+        "starter_refused_hint_rerun_attendees": "",
         "starter_refused_hint_no_rerun": "Popraw ustawienie wskazane w Doktor › Udostępnianie nagrań, aby kolejne nagrania były publikowane. Tego przebiegu nie można uruchomić ponownie.",
         "held_back": "Opublikowano. Wstrzymani przez limit udostępnień Nextcloud: {recipients}. Udostępnij ponownie za 10 minut albo podnieś limit (Doktor › Udostępnianie nagrań).",
         "partial_of": "Opublikowano, ale nie udostępniono {count:number|num} z {audience:number|num} {{audience:|odbiorcy||odbiorców|odbiorców|odbiorcy}}",
@@ -260,7 +266,9 @@
         "partial_hint": "Nextcloud odmówił z powodu ustawienia udostępniania. Doktor › Udostępnianie nagrań wskazuje to ustawienie i sposób naprawy.",
         "also_held_back": "Limit udostępnień Nextcloud wstrzymał też {count:number|num} {{|odbiorcę||odbiorców|odbiorców|odbiorcy}}.",
         "reshare_button": "Udostępnij ponownie pokojowi",
-        "reshare_note": "Dodaje wszystkich brakujących, w tym osoby usunięte ręcznie. Osoby, które akceptują udostępnienia ręcznie, znajdą nagranie oczekujące w widoku Przeglądaj."
+        "reshare_button_attendees": "",
+        "reshare_note": "Dodaje wszystkich brakujących, w tym osoby usunięte ręcznie. Osoby, które akceptują udostępnienia ręcznie, znajdą nagranie oczekujące w widoku Przeglądaj.",
+        "reshare_note_attendees": ""
       }
     },
     "run_stages": {
@@ -1191,6 +1199,14 @@
     },
     "direct_share": {
       "heading": "Kto może widzieć nagrania",
+      "audience_choose": "",
+      "audience_group_label": "",
+      "audience_room_label": "",
+      "audience_room_description": "",
+      "audience_attendees_label": "",
+      "audience_attendees_description": "",
+      "audience_applies": "",
+      "audience_chat_skipped": "",
       "checking": "Sprawdzanie konfiguracji nagrań…",
       "needs_account": "Zanim Cassini zacznie publikować, potrzebuje konta nagrań.",
       "needs_attention": "Konfiguracja nagrań wymaga uwagi.",
