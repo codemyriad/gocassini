@@ -44,23 +44,11 @@ type STTSettings struct {
 	// recogniser so it gets the name RIGHT next time (D-726), while these find
 	// the recordings where it already got it wrong. An operator needs both, and
 	// only ever learns the variants by reading a transcript.
-	SearchAliases [][]string `json:"search_aliases,omitempty"`
-	// Lifecycle event webhooks. These live in settings.json, not the ExApp's
-	// creation-time deploy environment, so enabling, rotating the secret or
-	// changing the allow-list does not require recreating the ExApp. Empty URL
-	// disables delivery.
-	EventWebhookURL     string   `json:"event_webhook_url,omitempty"`
-	EventWebhookSecret  string   `json:"event_webhook_secret,omitempty"`
-	EventWebhookEvents  []string `json:"event_webhook_events,omitempty"`
-	EventWebhookTimeout string   `json:"event_webhook_timeout,omitempty"`
-	// eventWebhookInvalid is why the webhook values in settings.json were not
-	// accepted, when they were not. The four fields above are then kept as
-	// stored and delivery is off; everything else in the file still applies.
-	eventWebhookInvalid string
-	Source              string `json:"source"` // "auto" | "user"
-	HardwareFingerprint string `json:"hardware_fingerprint"`
-	DetectedGPU         bool   `json:"detected_gpu"`
-	Cores               int    `json:"cores"`
+	SearchAliases       [][]string `json:"search_aliases,omitempty"`
+	Source              string     `json:"source"` // "auto" | "user"
+	HardwareFingerprint string     `json:"hardware_fingerprint"`
+	DetectedGPU         bool       `json:"detected_gpu"`
+	Cores               int        `json:"cores"`
 
 	// StandInFor, StandInReason and StandInDetail are set by build admission
 	// alone, for one build: ActiveModel is then a retired model standing in
@@ -277,7 +265,6 @@ func detectSettings() STTSettings {
 	cores := runtime.NumCPU()
 	return STTSettings{
 		MeetingFormat:       "opus",
-		EventWebhookTimeout: eventWebhookDefaultTimeout.String(),
 		Quality:             defaultQualityForHardware(cudaCapableHost()),
 		Source:              sttSourceAuto,
 		HardwareFingerprint: hardwareFingerprint(gpu, cores),
@@ -324,10 +311,6 @@ func LoadOrInitSettingsWithMigrationReporter(path string, report SettingsMigrati
 	if s.MeetingFormat != "opus" && s.MeetingFormat != "json" {
 		return STTSettings{}, fmt.Errorf("invalid meeting_format %q", s.MeetingFormat)
 	}
-	// A mistake in the webhook values turns the webhook off. It must not fail
-	// the load: the caller would fall back to detected defaults and lose the
-	// model, retention and format the admin chose.
-	checkStoredEventWebhook(&s)
 	if err := normalizeSourceRetention(&s); err != nil {
 		return STTSettings{}, err
 	}
@@ -377,11 +360,6 @@ func LoadOrInitSettingsWithMigrationReporter(path string, report SettingsMigrati
 			s.SourceRetention = previous.SourceRetention
 			s.SearchAliases = previous.SearchAliases
 			s.RetainVideo = previous.RetainVideo
-			s.EventWebhookURL = previous.EventWebhookURL
-			s.EventWebhookSecret = previous.EventWebhookSecret
-			s.EventWebhookEvents = previous.EventWebhookEvents
-			s.EventWebhookTimeout = previous.EventWebhookTimeout
-			s.eventWebhookInvalid = previous.eventWebhookInvalid
 			// Vocabulary is independent of the hardware-derived quality tier.
 			// Preserve it when re-fingerprinting an auto policy.
 			s.TranscriptionTerms = terms
@@ -450,13 +428,6 @@ func Save(path string, s STTSettings) error {
 	if s.MeetingFormat != "opus" && s.MeetingFormat != "json" {
 		return fmt.Errorf("meeting_format must be opus or json")
 	}
-	// Webhook values that were refused on load are written back as they were
-	// stored: they are the administrator's to fix, not this save's to drop.
-	if s.eventWebhookInvalid == "" {
-		if err := normalizeEventWebhookSettings(&s); err != nil {
-			return err
-		}
-	}
 	if strings.TrimSpace(path) == "" {
 		return fmt.Errorf("settings path must not be empty")
 	}
@@ -487,7 +458,7 @@ func Save(path string, s STTSettings) error {
 	}
 	data = append(data, '\n')
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
 		return fmt.Errorf("write settings temp: %w", err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
@@ -673,20 +644,7 @@ func (s STTSettings) modelForDevice(device string) string {
 
 type settingsResponse struct {
 	STTSettings
-	// The signing secret is write-only: a response says whether one is stored
-	// and never what it is.
-	EventWebhookSecretSet bool `json:"event_webhook_secret_set"`
-	// Why the stored webhook values were refused, when they were: delivery is
-	// off until a PUT replaces them.
-	EventWebhookError string       `json:"event_webhook_error,omitempty"`
-	Effective         effectiveSTT `json:"effective"`
-}
-
-func (rt *Runtime) settingsResponseFor(s STTSettings) settingsResponse {
-	effective := rt.effectiveFor(s)
-	secretSet := s.EventWebhookSecret != ""
-	s.EventWebhookSecret = ""
-	return settingsResponse{STTSettings: s, EventWebhookSecretSet: secretSet, EventWebhookError: s.eventWebhookInvalid, Effective: effective}
+	Effective effectiveSTT `json:"effective"`
 }
 
 // settingsUpdate is the PUT body. Pointers distinguish "field omitted" from
@@ -705,12 +663,6 @@ type settingsUpdate struct {
 	// means "leave it alone", so a client that does not know about aliases
 	// cannot erase them by omitting the field.
 	SearchAliases *[][]string `json:"search_aliases"`
-	// EventWebhook* pointers follow the same omitted-preserves rule. The timeout
-	// is a Go duration string ("10s") of at most one minute.
-	EventWebhookURL     *string   `json:"event_webhook_url"`
-	EventWebhookSecret  *string   `json:"event_webhook_secret"`
-	EventWebhookEvents  *[]string `json:"event_webhook_events"`
-	EventWebhookTimeout *string   `json:"event_webhook_timeout"`
 }
 
 // currentSettings returns a copy of the in-memory STT policy, safe for
@@ -724,9 +676,6 @@ func (rt *Runtime) currentSettings() STTSettings {
 	}
 	if s.MeetingFormat == "" {
 		s.MeetingFormat = "opus"
-	}
-	if strings.TrimSpace(s.EventWebhookTimeout) == "" {
-		s.EventWebhookTimeout = eventWebhookDefaultTimeout.String()
 	}
 	return s
 }
@@ -782,10 +731,9 @@ func (rt *Runtime) handleGetSettings(w http.ResponseWriter) {
 		s = rt.currentSettings()
 	} else {
 		rt.setSettings(s)
-		rt.configureEventWebhook(s)
 	}
 	rt.settingsWriteMu.Unlock()
-	writeJSON(w, http.StatusOK, rt.settingsResponseFor(s))
+	writeJSON(w, http.StatusOK, settingsResponse{STTSettings: s, Effective: rt.effectiveFor(s)})
 }
 
 // transcriptionSelectionChanged reports whether next turns transcription on, or
@@ -878,33 +826,7 @@ func (rt *Runtime) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		updated.TranscriptionTerms = terms
 	}
-	if in.EventWebhookURL != nil {
-		updated.EventWebhookURL = *in.EventWebhookURL
-	}
-	// An omitted secret keeps the stored one: responses never carry it, so a
-	// client that sends back what it read must not erase it.
-	if in.EventWebhookSecret != nil {
-		updated.EventWebhookSecret = *in.EventWebhookSecret
-	}
-	if in.EventWebhookEvents != nil {
-		updated.EventWebhookEvents = append([]string(nil), (*in.EventWebhookEvents)...)
-	}
-	if in.EventWebhookTimeout != nil {
-		updated.EventWebhookTimeout = *in.EventWebhookTimeout
-	}
 
-	// The webhook values are checked when this request sets one of them, and
-	// then they must all be right. A request that leaves them alone leaves
-	// stored values that were refused on load alone too, so an unrelated save
-	// still works and cannot erase them.
-	touchesEventWebhook := in.EventWebhookURL != nil || in.EventWebhookSecret != nil || in.EventWebhookEvents != nil || in.EventWebhookTimeout != nil
-	if touchesEventWebhook || updated.eventWebhookInvalid == "" {
-		if err := normalizeEventWebhookSettings(&updated); err != nil {
-			writeJSONError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		updated.eventWebhookInvalid = ""
-	}
 	if err := normalizeSourceRetention(&updated); err != nil {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
@@ -947,10 +869,5 @@ func (rt *Runtime) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rt.setSettings(updated)
-	// Only here does a receiver change close the events queued for the old
-	// one: an administrator chose it. Events queued for the receiver being
-	// saved are kept, so one that a refused settings file had hidden picks up
-	// where it left off.
-	rt.applyEventWebhook(updated, current.EventWebhookURL != updated.EventWebhookURL)
-	writeJSON(w, http.StatusOK, rt.settingsResponseFor(updated))
+	writeJSON(w, http.StatusOK, settingsResponse{STTSettings: updated, Effective: rt.effectiveFor(updated)})
 }

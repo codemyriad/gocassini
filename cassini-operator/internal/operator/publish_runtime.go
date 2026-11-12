@@ -84,7 +84,7 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 			rt.logger.Printf("publish fail update failed id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, updateErr)
 			return
 		}
-		rt.emitAttemptFailure(task.JobID, task.AttemptNumber, "publish", detail, rt.interruptedByShutdown())
+		rt.emitAttemptFailure(task.JobID, task.AttemptNumber, "publish", detail, false)
 		return
 	}
 	// The destination is the sink's business, not the publish worker's. A sink
@@ -120,7 +120,7 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 			rt.logger.Printf("publish deliver failure update failed id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, updateErr)
 			return
 		}
-		rt.emitAttemptFailure(task.JobID, task.AttemptNumber, "publish", err.Error(), rt.interruptedByShutdown())
+		rt.emitAttemptFailure(task.JobID, task.AttemptNumber, "publish", err.Error(), false)
 		return
 	}
 	rt.supportJournal.record(supportEvent{Event: "delivery_succeeded", Job: task.JobID, Attempt: task.AttemptNumber})
@@ -142,17 +142,7 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 		rt.logger.Printf("publish success update failed id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, err)
 		return
 	}
-	// Publication and its shares are announced for a recording only: a
-	// summarize or speaker-edit attempt republishes a meeting that is already
-	// out, and nothing is read for an event no receiver asked for.
-	rt.emitRecordingEvent(eventRecordingPublished, task.JobID, task.AttemptNumber, map[string]any{"published_location": location})
-	if rt.eventEnabled(eventSharesCompleted) {
-		if job, err := rt.store.GetJob(context.Background(), task.JobID); err == nil {
-			if sharing := rt.jobSharing(context.Background(), &job); sharing != nil {
-				rt.emitRecordingEvent(eventSharesCompleted, task.JobID, task.AttemptNumber, map[string]any{"sharing": sharing})
-			}
-		}
-	}
+	rt.emitRecordingPublished(task.JobID, task.AttemptNumber)
 	// Best effort: one bounded request, with no retry or restart recovery.
 	// Failure never changes the publication result or stops its cleanup.
 	if notification != nil {

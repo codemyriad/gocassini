@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -19,12 +20,9 @@ func seedBuildForEventTest(t *testing.T, rt *Runtime, id string) (Job, string) {
 	return job, run
 }
 
-func attachEventWebhookForTest(t *testing.T, rt *Runtime, events string) {
+func attachEventWebhookForTest(t *testing.T, rt *Runtime, events ...string) {
 	t.Helper()
-	hook := newTestEventWebhook(t, rt.store, "https://hooks.example/events", "secret", events)
-	rt.eventWebhookMu.Lock()
-	rt.eventWebhook = hook
-	rt.eventWebhookMu.Unlock()
+	rt.eventWebhook.Store(newTestEventWebhook(t, rt.store, "https://hooks.example/events", "secret", events...))
 }
 
 func writeCompletedMeetingForEventTest(t *testing.T, meetingPath string) {
@@ -71,7 +69,7 @@ func TestNormalBuildEmitsSummaryCompleted(t *testing.T) {
 	rt, cleanup := newBareSealRuntime(t)
 	defer cleanup()
 	job, run := seedBuildForEventTest(t, rt, "summary-build")
-	attachEventWebhookForTest(t, rt, eventSummaryCompleted+","+eventBuildCompleted)
+	attachEventWebhookForTest(t, rt, eventSummaryCompleted)
 	rt.buildJobFn = func(_ context.Context, task buildTask) (string, error) {
 		meetingPath := attemptMeetingPath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber)
 		writeCompletedMeetingForEventTest(t, meetingPath)
@@ -98,7 +96,7 @@ func TestNormalBuildSummaryFailureEmitsSummaryFailedOnly(t *testing.T) {
 	rt, cleanup := newBareSealRuntime(t)
 	defer cleanup()
 	job, run := seedBuildForEventTest(t, rt, "summary-failed")
-	attachEventWebhookForTest(t, rt, eventSummaryFailed+","+eventRecordingFailed)
+	attachEventWebhookForTest(t, rt, eventSummaryFailed, eventRecordingFailed)
 	rt.buildJobFn = func(_ context.Context, task buildTask) (string, error) {
 		meetingPath := attemptMeetingPath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber)
 		if err := os.MkdirAll(meetingPath, 0o755); err != nil {
@@ -133,7 +131,7 @@ func TestSummarizeAttemptFailureDoesNotEmitRecordingFailed(t *testing.T) {
 	if _, err := rt.store.db.Exec(`UPDATE job_attempts SET trigger_kind = ? WHERE job_id = ? AND attempt_number = 1`, triggerKindSummarize, job.ID); err != nil {
 		t.Fatal(err)
 	}
-	attachEventWebhookForTest(t, rt, eventSummaryFailed+","+eventRecordingFailed)
+	attachEventWebhookForTest(t, rt, eventSummaryFailed, eventRecordingFailed)
 	rt.buildJobFn = func(context.Context, buildTask) (string, error) {
 		return "", contextError("model returned 502")
 	}
@@ -157,7 +155,7 @@ func TestDeferredBuildDoesNotEmitFailureEvents(t *testing.T) {
 	if _, err := rt.store.db.Exec(`UPDATE job_attempts SET trigger_kind = ? WHERE job_id = ? AND attempt_number = 1`, triggerKindSummarize, job.ID); err != nil {
 		t.Fatal(err)
 	}
-	attachEventWebhookForTest(t, rt, eventSummaryFailed+","+eventRecordingFailed)
+	attachEventWebhookForTest(t, rt, eventSummaryFailed, eventRecordingFailed)
 	rt.buildJobFn = func(context.Context, buildTask) (string, error) {
 		return "", &resourceUnavailableError{resource: "memory", detail: "under pressure", permanent: false}
 	}
@@ -209,12 +207,12 @@ func TestAttemptFailureEventFollowsWhatTheAttemptWasFor(t *testing.T) {
 			defer cleanup()
 			job, _ := seedBuildForEventTest(t, rt, "attempt-kind")
 			setAttemptKindForEventTest(t, rt, job.ID, tc.kind)
-			attachEventWebhookForTest(t, rt, eventSummaryFailed+","+eventRecordingFailed)
+			attachEventWebhookForTest(t, rt, eventSummaryFailed, eventRecordingFailed)
 
 			rt.failSeal(sealTask{JobID: job.ID, AttemptNumber: 1}, "", contextError("ffmpeg exited 1"), nowUTCString())
-			rt.emitAttemptFailure(job.ID, 1, "publish", "upload refused", nil)
-			// What the startup sweep sends for a job a restart interrupted.
-			rt.emitAttemptFailure(job.ID, 1, "build", "operator restarted before the stage finished", map[string]any{"interrupted": true})
+			rt.emitAttemptFailure(job.ID, 1, "publish", "upload refused", false)
+			// What the startup pass sends for a job a restart interrupted.
+			rt.emitAttemptFailure(job.ID, 1, "build", "operator restarted before the stage finished", true)
 
 			types := eventOutboxTypes(t, rt.store)
 			var want []string
@@ -248,7 +246,7 @@ func TestSpeakerEditThatKeepsTheSummaryEmitsNoSummaryEvent(t *testing.T) {
 			defer cleanup()
 			job, run := seedBuildForEventTest(t, rt, "refine-summary")
 			setAttemptKindForEventTest(t, rt, job.ID, triggerKindRefine)
-			attachEventWebhookForTest(t, rt, eventSummaryCompleted+","+eventSummaryFailed)
+			attachEventWebhookForTest(t, rt, eventSummaryCompleted, eventSummaryFailed)
 			rt.buildJobFn = func(_ context.Context, task buildTask) (string, error) {
 				meetingPath := attemptMeetingPath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber)
 				writeCompletedMeetingForEventTest(t, meetingPath)
@@ -281,72 +279,24 @@ func TestSpeakerEditThatKeepsTheSummaryEmitsNoSummaryEvent(t *testing.T) {
 	}
 }
 
-// The metadata index learns a meeting's title at publication. The events of
-// its first build are emitted before that and must name the meeting anyway,
-// with the stage the job is in once the build has been handed on.
-func TestFirstBuildEventsCarryTheTitleAndCurrentStage(t *testing.T) {
-	rt, cleanup := newBareSealRuntime(t)
-	defer cleanup()
-	job, run := seedBuildForEventTest(t, rt, "first-build")
-	binding, _ := json.Marshal(talkJobBinding{BackendURL: "https://cloud.example", RoomToken: "tok", RoomName: "Weekly operations sync"})
-	if _, err := rt.store.db.Exec(`UPDATE jobs SET talk_binding = ? WHERE id = ?`, string(binding), job.ID); err != nil {
-		t.Fatal(err)
-	}
-	attachEventWebhookForTest(t, rt, eventSummaryCompleted+","+eventBuildCompleted)
-	rt.buildJobFn = func(_ context.Context, task buildTask) (string, error) {
-		meetingPath := attemptMeetingPath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber)
-		writeCompletedMeetingForEventTest(t, meetingPath)
-		return meetingPath, nil
-	}
-	rt.runBuildJob(buildTask{JobID: job.ID, AttemptNumber: 1, ArtifactRunPath: run}, 1)
-
-	rows, err := rt.store.db.Query(`SELECT type, payload FROM event_outbox`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	seen := 0
-	for rows.Next() {
-		var eventType, raw string
-		if err := rows.Scan(&eventType, &raw); err != nil {
-			t.Fatal(err)
-		}
-		var payload outboundEventPayload
-		if err := json.Unmarshal([]byte(raw), &payload); err != nil {
-			t.Fatal(err)
-		}
-		seen++
-		if payload.Data["title"] != "Weekly operations sync" {
-			t.Errorf("%s title = %v, want the room's name before publication", eventType, payload.Data["title"])
-		}
-		if payload.Data["stage"] != "seal" || payload.Data["state"] != "queued" {
-			t.Errorf("%s stage/state = %v/%v, want seal/queued", eventType, payload.Data["stage"], payload.Data["state"])
-		}
-	}
-	if seen != 2 {
-		t.Fatalf("events = %d, want summary.completed and build.completed", seen)
-	}
-}
-
-// build.completed, recording.published and shares.completed announce a
-// recording. A summarize or speaker-edit attempt rebuilds and republishes a
-// meeting that is already out, so it announces none of them; a full rerun is
-// the recording again and does.
-func TestOnlyRecordingAttemptsAnnounceARecording(t *testing.T) {
+// recording.published announces a recording. A summarize or speaker-edit
+// attempt rebuilds and republishes a meeting that is already out, so it does
+// not; a full rerun is the recording again and does.
+func TestOnlyRecordingAttemptsAnnounceAPublication(t *testing.T) {
 	for _, tc := range []struct {
 		kind string
 		want []string
 	}{
 		{kind: triggerKindSummarize, want: []string{eventSummaryCompleted}},
 		{kind: triggerKindRefine, want: nil},
-		{kind: triggerKindRerun, want: []string{eventSummaryCompleted, eventBuildCompleted, eventRecordingPublished}},
+		{kind: triggerKindRerun, want: []string{eventSummaryCompleted, eventRecordingPublished}},
 	} {
 		t.Run(tc.kind, func(t *testing.T) {
 			rt, cleanup := newBareSealRuntime(t)
 			defer cleanup()
 			job, run := seedBuildForEventTest(t, rt, "announce-"+tc.kind)
 			setAttemptKindForEventTest(t, rt, job.ID, tc.kind)
-			attachEventWebhookForTest(t, rt, "")
+			attachEventWebhookForTest(t, rt)
 			rt.buildJobFn = func(_ context.Context, task buildTask) (string, error) {
 				meetingPath := attemptMeetingPath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber)
 				writeCompletedMeetingForEventTest(t, meetingPath)
@@ -354,7 +304,7 @@ func TestOnlyRecordingAttemptsAnnounceARecording(t *testing.T) {
 			}
 			rt.runBuildJob(buildTask{JobID: job.ID, AttemptNumber: 1, ArtifactRunPath: run}, 1)
 			// What the publish worker sends once the meeting is delivered.
-			rt.emitRecordingEvent(eventRecordingPublished, job.ID, 1, map[string]any{"published_location": "meetings/x.opus"})
+			rt.emitRecordingPublished(job.ID, 1)
 
 			if got := eventOutboxTypes(t, rt.store); strings.Join(got, ",") != strings.Join(tc.want, ",") {
 				t.Fatalf("events = %v, want %v", got, tc.want)
@@ -363,25 +313,173 @@ func TestOnlyRecordingAttemptsAnnounceARecording(t *testing.T) {
 	}
 }
 
-// With the events it could send switched off, an emission reads nothing: not
-// the attempt, not summary.md.
-func TestEmissionsReadNothingForAnEventNobodyAskedFor(t *testing.T) {
+// A build parked for want of memory or a GPU is not a failure: its capture is
+// kept and a rerun publishes it. No event says otherwise.
+func TestBlockedBuildEmitsNothing(t *testing.T) {
 	rt, cleanup := newBareSealRuntime(t)
 	defer cleanup()
-	if rt.eventEnabled(eventSummaryCompleted, eventRecordingFailed) {
-		t.Fatal("events are enabled on a runtime with no webhook")
+	insertJob(t, rt.store.db, "blocked-build", nowUTCString())
+	run := seedReadyRunBundle(t, rt.cfg.WorkRoot, "blocked-build")
+	if err := rt.store.MarkBuildQueued(context.Background(), "blocked-build", run, run, nowUTCString()); err != nil {
+		t.Fatal(err)
 	}
-	attachEventWebhookForTest(t, rt, eventRecordingStarted)
-	if rt.eventEnabled(eventSummaryCompleted, eventRecordingFailed) || !rt.eventEnabled(eventRecordingStarted) {
-		t.Fatal("eventEnabled does not follow the allow-list")
+	attachEventWebhookForTest(t, rt)
+	rt.buildJobFn = func(context.Context, buildTask) (string, error) {
+		return "", &resourceUnavailableError{resource: "gpu", detail: "no CUDA runtime", permanent: true}
 	}
-	// A job that does not exist: any lookup would be the only thing to fail.
-	rt.emitAttemptFailure("no-such-job", 1, "build", "boom", nil)
-	rt.emitSummaryOutcomes(buildTask{JobID: "no-such-job", AttemptNumber: 1}, "/nonexistent", stepOutcomes{SummaryStatus: "completed"})
-	rt.emitRecordingEvent(eventBuildCompleted, "no-such-job", 1, nil)
+	rt.runBuildJob(buildTask{JobID: "blocked-build", AttemptNumber: 1, ArtifactRunPath: run}, 1)
+
+	if job := mustGetJob(t, rt.store, "blocked-build"); job.State != "blocked" {
+		t.Fatalf("job state = %s, want blocked", job.State)
+	}
 	if got := eventOutboxTypes(t, rt.store); len(got) != 0 {
-		t.Fatalf("events = %v, want none", got)
+		t.Fatalf("events = %v, want none for a blocked build", got)
 	}
+}
+
+// The jobs a restart cut short are reported once the receiver is known, as a
+// failure that says it was an interruption.
+func TestStartupReportsInterruptedJobs(t *testing.T) {
+	rt, cleanup := newBareSealRuntime(t)
+	defer cleanup()
+	job, _ := seedBuildForEventTest(t, rt, "interrupted-build")
+	if _, err := rt.store.db.Exec(`UPDATE jobs SET state = 'running' WHERE id = ?`, job.ID); err != nil {
+		t.Fatal(err)
+	}
+	at := nowUTCString()
+	if n, err := rt.store.MarkIncompleteJobsInterrupted(context.Background(), at); err != nil || n != 1 {
+		t.Fatalf("MarkIncompleteJobsInterrupted() = %d, %v; want 1", n, err)
+	}
+	attachEventWebhookForTest(t, rt)
+	rt.emitInterruptedAtStartup(at)
+
+	events := eventOutboxPayloads(t, rt.store)
+	if len(events) != 1 || events[0].Type != eventRecordingFailed {
+		t.Fatalf("events = %+v, want one recording.failed", events)
+	}
+	if data := events[0].Data; data["interrupted"] != true || data["phase"] != "build" {
+		t.Fatalf("data = %v, want phase build and interrupted", data)
+	}
+}
+
+func eventOutboxPayloads(t *testing.T, store *Store) []outboundEventPayload {
+	t.Helper()
+	rows, err := store.db.Query(`SELECT payload FROM event_outbox ORDER BY created_at`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var events []outboundEventPayload
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			t.Fatal(err)
+		}
+		var event outboundEventPayload
+		if err := json.Unmarshal([]byte(raw), &event); err != nil {
+			t.Fatal(err)
+		}
+		events = append(events, event)
+	}
+	return events
+}
+
+// The payload of each catalog event is public contract (docs/events.md): its
+// envelope and the exact fields in `data`. The fixture is a meeting that has a
+// Talk room, whose recording has stopped and which has not been published, so
+// record_started_at and the facts the metadata index adds at publication
+// (started_at, duration_seconds) are absent.
+func TestEventPayloadsMatchTheDocumentedContract(t *testing.T) {
+	common := []string{"job_id", "attempt_number", "title", "room_name", "record_finished_at"}
+	writeFailedSummary := func(rt *Runtime) {
+		rt.buildJobFn = func(_ context.Context, task buildTask) (string, error) {
+			meetingPath := attemptMeetingPath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber)
+			if err := os.MkdirAll(meetingPath, 0o755); err != nil {
+				return "", err
+			}
+			raw, _ := json.Marshal(map[string]any{"processing": map[string]any{
+				"meetingSummary": map[string]any{"status": "failed", "reason": "upstream 502"},
+			}})
+			return meetingPath, os.WriteFile(filepath.Join(meetingPath, "manifest.json"), raw, 0o600)
+		}
+	}
+	for _, tc := range []struct {
+		event string
+		extra []string
+		emit  func(rt *Runtime, job Job, run string)
+	}{
+		{event: eventRecordingStarted, extra: []string{"started_at"}, emit: func(rt *Runtime, job Job, _ string) {
+			rt.emitEvent(eventRecordingStarted, job.ID, 1, map[string]any{"started_at": nowUTCString()})
+		}},
+		{event: eventRecordingStopped, extra: []string{"stopped_at", "stop_reason"}, emit: func(rt *Runtime, job Job, _ string) {
+			rt.emitEvent(eventRecordingStopped, job.ID, 1, map[string]any{"stopped_at": nowUTCString(), "stop_reason": "room-empty"})
+		}},
+		{event: eventRecordingPublished, emit: func(rt *Runtime, job Job, _ string) {
+			rt.emitRecordingPublished(job.ID, 1)
+		}},
+		{event: eventRecordingFailed, extra: []string{"phase", "error"}, emit: func(rt *Runtime, job Job, _ string) {
+			rt.failSeal(sealTask{JobID: job.ID, AttemptNumber: 1}, "", contextError("ffmpeg exited 1"), nowUTCString())
+		}},
+		{event: eventSummaryCompleted, extra: []string{"summary_markdown", "summary_model"}, emit: func(rt *Runtime, job Job, run string) {
+			rt.buildJobFn = func(_ context.Context, task buildTask) (string, error) {
+				meetingPath := attemptMeetingPath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber)
+				writeCompletedMeetingForEventTest(t, meetingPath)
+				return meetingPath, nil
+			}
+			rt.runBuildJob(buildTask{JobID: job.ID, AttemptNumber: 1, ArtifactRunPath: run}, 1)
+		}},
+		{event: eventSummaryFailed, extra: []string{"phase", "error"}, emit: func(rt *Runtime, job Job, run string) {
+			writeFailedSummary(rt)
+			rt.runBuildJob(buildTask{JobID: job.ID, AttemptNumber: 1, ArtifactRunPath: run}, 1)
+		}},
+	} {
+		t.Run(tc.event, func(t *testing.T) {
+			rt, cleanup := newBareSealRuntime(t)
+			defer cleanup()
+			job, run := seedBuildForEventTest(t, rt, "contract")
+			binding, _ := json.Marshal(talkJobBinding{BackendURL: "https://cloud.example", RoomToken: "tok", RoomName: "Weekly operations sync"})
+			if _, err := rt.store.db.Exec(`UPDATE jobs SET talk_binding = ? WHERE id = ?`, string(binding), job.ID); err != nil {
+				t.Fatal(err)
+			}
+			attachEventWebhookForTest(t, rt, tc.event)
+			tc.emit(rt, job, run)
+
+			var raw string
+			if err := rt.store.db.QueryRow(`SELECT payload FROM event_outbox`).Scan(&raw); err != nil {
+				t.Fatal(err)
+			}
+			var envelope map[string]json.RawMessage
+			if err := json.Unmarshal([]byte(raw), &envelope); err != nil {
+				t.Fatal(err)
+			}
+			if got, want := sortedEventKeys(envelope), "at,cassini_version,data,id,type"; got != want {
+				t.Fatalf("envelope keys = %s, want %s", got, want)
+			}
+			var data map[string]json.RawMessage
+			if err := json.Unmarshal(envelope["data"], &data); err != nil {
+				t.Fatal(err)
+			}
+			want := map[string]json.RawMessage{}
+			for _, key := range append(append([]string{}, common...), tc.extra...) {
+				want[key] = nil
+			}
+			if got := sortedEventKeys(data); got != sortedEventKeys(want) {
+				t.Fatalf("data keys = %s, want %s", got, sortedEventKeys(want))
+			}
+			if string(data["title"]) != `"Weekly operations sync"` {
+				t.Fatalf("title = %s, want the room's name before publication", data["title"])
+			}
+		})
+	}
+}
+
+func sortedEventKeys(m map[string]json.RawMessage) string {
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return strings.Join(keys, ",")
 }
 
 // A stage cut short because the operator is stopping is reported the way the

@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -37,18 +38,10 @@ func newTestEventStore(t *testing.T) *Store {
 	return store
 }
 
-func newTestEventWebhook(t *testing.T, store *Store, url, secret string, events string) *eventWebhook {
+func newTestEventWebhook(t *testing.T, store *Store, url, secret string, events ...string) *eventWebhook {
 	t.Helper()
-	settings := STTSettings{
-		EventWebhookURL:     url,
-		EventWebhookSecret:  secret,
-		EventWebhookTimeout: "10s",
-	}
-	if events != "" {
-		// Empty means the whole catalog; a blank name in the list is refused.
-		settings.EventWebhookEvents = strings.Split(events, ",")
-	}
-	if err := normalizeEventWebhookSettings(&settings); err != nil {
+	settings, err := normalizeEventWebhookSettings(EventWebhookSettings{URL: url, Secret: secret, Events: events})
+	if err != nil {
 		t.Fatalf("normalizeEventWebhookSettings() error = %v", err)
 	}
 	hook := newEventWebhook(store, log.New(io.Discard, "", 0), settings, "test")
@@ -97,7 +90,7 @@ func TestEventWebhookSignsAndDelivers(t *testing.T) {
 	defer server.Close()
 
 	const secret = "test-secret"
-	hook := newTestEventWebhook(t, store, server.URL, secret, "")
+	hook := newTestEventWebhook(t, store, server.URL, secret)
 	startTestEventWebhook(t, hook)
 	if err := hook.enqueue(context.Background(), eventSummaryCompleted, map[string]any{
 		"job_id":           "job-1",
@@ -242,24 +235,28 @@ func TestEventWebhookFiltersEvents(t *testing.T) {
 }
 
 func TestEventWebhookSettingsValidationAndRedactedLog(t *testing.T) {
-	store := newTestEventStore(t)
-	var logs strings.Builder
-	settings := STTSettings{
-		EventWebhookURL:     "https://hooks.example/path?token=very-secret",
-		EventWebhookSecret:  "signing-secret",
-		EventWebhookTimeout: "10s",
-		EventWebhookEvents:  []string{"bogus.event"},
+	for name, bad := range map[string]EventWebhookSettings{
+		"unknown event":      {URL: "https://hooks.example/x", Secret: "s", Events: []string{"bogus.event"}},
+		"blank event":        {URL: "https://hooks.example/x", Secret: "s", Events: []string{" "}},
+		"url without secret": {URL: "https://hooks.example/x"},
+		"relative url":       {URL: "/hook", Secret: "s"},
+		"timeout over 1m":    {URL: "https://hooks.example/x", Secret: "s", Timeout: "61s"},
+	} {
+		if _, err := normalizeEventWebhookSettings(bad); err == nil {
+			t.Errorf("%s was accepted", name)
+		}
 	}
-	if err := normalizeEventWebhookSettings(&settings); err == nil {
-		t.Fatal("unknown event name was accepted")
+	if s, err := normalizeEventWebhookSettings(EventWebhookSettings{}); err != nil || s.URL != "" {
+		t.Fatalf("empty settings = %+v, %v; want delivery off without error", s, err)
 	}
 
-	settings.EventWebhookEvents = nil
-	if newEventWebhook(store, log.New(&logs, "", 0), settings, "test") == nil {
+	var logs strings.Builder
+	settings := EventWebhookSettings{URL: "https://hooks.example/path?token=very-secret", Secret: "signing-secret"}
+	if newEventWebhook(newTestEventStore(t), log.New(&logs, "", 0), settings, "test") == nil {
 		t.Fatal("newEventWebhook() = nil, want a configured webhook")
 	}
-	if strings.Contains(logs.String(), "token=very-secret") || strings.Contains(logs.String(), "/path") {
-		t.Fatalf("startup log leaked the webhook path/query: %q", logs.String())
+	if strings.Contains(logs.String(), "token=very-secret") || strings.Contains(logs.String(), "/path") || strings.Contains(logs.String(), "signing-secret") {
+		t.Fatalf("startup log leaked the webhook path, query or secret: %q", logs.String())
 	}
 	if !strings.Contains(logs.String(), "https://hooks.example") {
 		t.Fatalf("startup log does not name the receiver host: %q", logs.String())
@@ -274,7 +271,7 @@ func TestEmitEventSurvivesShutdown(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	rt := &Runtime{store: store, logger: log.New(io.Discard, "", 0), ctx: ctx}
-	rt.eventWebhook = newTestEventWebhook(t, store, "https://hooks.example/events", "secret", "")
+	rt.eventWebhook.Store(newTestEventWebhook(t, store, "https://hooks.example/events", "secret"))
 	rt.emitEvent(eventRecordingStarted, "job-canceled", 1, nil)
 
 	var count int
@@ -310,7 +307,7 @@ func TestEventWebhookDoesNotFollowRedirects(t *testing.T) {
 	}))
 	defer server.Close()
 
-	hook := newTestEventWebhook(t, store, server.URL, "secret", "")
+	hook := newTestEventWebhook(t, store, server.URL, "secret")
 	if err := hook.enqueue(context.Background(), eventRecordingStarted, map[string]any{"job_id": "job-1"}); err != nil {
 		t.Fatal(err)
 	}
@@ -326,18 +323,24 @@ func TestEventWebhookDoesNotFollowRedirects(t *testing.T) {
 }
 
 // Retries are bounded by the event's age, not by a count: a receiver that is
-// down for an upgrade gets its events once it is back.
+// down for an upgrade gets its events once it is back, and an event a day old
+// is closed without another request.
 func TestEventWebhookRetriesUntilTheEventIsADayOld(t *testing.T) {
 	store := newTestEventStore(t)
-	hook := newTestEventWebhook(t, store, "https://hooks.example/events", "secret", "")
-	receiver := eventReceiverID(hook.cfg.URL)
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer server.Close()
+	hook := newTestEventWebhook(t, store, server.URL, "secret")
 	ctx := context.Background()
 	fresh := nowUTCString()
-	if err := store.insertEvent(ctx, "evt_fresh", eventRecordingStarted, `{}`, fresh, receiver); err != nil {
+	if err := store.insertEvent(ctx, "evt_1", eventRecordingStarted, `{}`, fresh); err != nil {
 		t.Fatal(err)
 	}
-	// Far more attempts than the old ceiling, and still inside the window.
-	hook.reschedule(outboxEvent{ID: "evt_fresh", Attempts: 200, CreatedAt: fresh}, "receiver returned HTTP 502")
+	// Far more attempts than any count-based ceiling, and still retried.
+	hook.reschedule(outboxEvent{ID: "evt_1", Attempts: 200, CreatedAt: fresh}, "receiver returned HTTP 502")
 	attempts, _, failed, _ := outboxRow(t, store)
 	if failed != "" || attempts != 201 {
 		t.Fatalf("attempts=%d failed=%q, want the fresh event rescheduled", attempts, failed)
@@ -351,167 +354,135 @@ func TestEventWebhookRetriesUntilTheEventIsADayOld(t *testing.T) {
 	}
 
 	old := formatUTCString(time.Now().Add(-eventWebhookRetryWindow - time.Minute))
-	hook.reschedule(outboxEvent{ID: "evt_fresh", Attempts: 3, CreatedAt: old}, "receiver returned HTTP 502")
+	if _, err := store.db.Exec(`UPDATE event_outbox SET created_at = ?, next_attempt_at = ?`, old, old); err != nil {
+		t.Fatal(err)
+	}
+	hook.deliverDue(ctx)
 	if _, _, failed, lastError := outboxRow(t, store); failed == "" || !strings.Contains(lastError, "gave up") {
 		t.Fatalf("failed=%q last_error=%q, want a day-old event closed", failed, lastError)
 	}
-}
-
-// A queued payload carries titles and summaries. It goes to the receiver it
-// was queued for or to nobody: not to one configured later.
-func TestEventsQueuedForAnotherReceiverAreNeverSent(t *testing.T) {
-	rt, cleanup := newTestRuntime(t)
-	defer cleanup()
-	configure := func(url string) {
-		s := STTSettings{EventWebhookURL: url, EventWebhookSecret: "secret"}
-		if err := normalizeEventWebhookSettings(&s); err != nil {
-			t.Fatal(err)
-		}
-		// As PUT /settings does when an administrator saves another receiver.
-		rt.applyEventWebhook(s, true)
-	}
-	pending := func() (count int) {
-		if err := rt.store.db.QueryRow(`SELECT COUNT(*) FROM event_outbox WHERE delivered_at IS NULL AND failed_at IS NULL`).Scan(&count); err != nil {
-			t.Fatal(err)
-		}
-		return count
-	}
-	queue := func(id, url string) {
-		// As if the receiver was down: queued, not yet due.
-		later := formatUTCString(time.Now().Add(time.Hour))
-		if _, err := rt.store.db.Exec(`INSERT INTO event_outbox (id, type, payload, created_at, attempts, next_attempt_at, receiver) VALUES (?, ?, '{}', ?, 1, ?, ?)`,
-			id, eventRecordingStarted, nowUTCString(), later, eventReceiverID(url)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	const first, second = "http://127.0.0.1:9/first", "http://127.0.0.1:9/second"
-
-	configure(first)
-	queue("evt_one", first)
-	configure(first)
-	if pending() != 1 {
-		t.Fatal("an unchanged receiver lost its queued event")
-	}
-	configure(second)
-	if pending() != 0 {
-		t.Fatal("an event queued for the first receiver is still pending for the second")
-	}
-	if _, _, _, lastError := outboxRow(t, rt.store); lastError != eventFailureReceiverChanged {
-		t.Fatalf("last_error = %q, want %q", lastError, eventFailureReceiverChanged)
-	}
-
-	queue("evt_two", second)
-	configure("")
-	if pending() != 0 {
-		t.Fatal("turning delivery off left an event waiting for whichever receiver comes next")
-	}
-
-	// A row that somehow outlives the change is still not offered to a worker
-	// for another receiver.
-	queue("evt_three", first)
-	if _, ok, err := rt.store.nextDueEvent(context.Background(), formatUTCString(time.Now().Add(2*time.Hour)), eventReceiverID(second)); err != nil || ok {
-		t.Fatalf("nextDueEvent() for another receiver ok=%v err=%v, want none", ok, err)
+	if calls.Load() != 0 {
+		t.Fatalf("receiver calls = %d, want none for an event past the window", calls.Load())
 	}
 }
 
-func eventTestSettings(t *testing.T, url, secret string) STTSettings {
-	t.Helper()
-	s := STTSettings{EventWebhookURL: url, EventWebhookSecret: secret}
-	if err := normalizeEventWebhookSettings(&s); err != nil {
-		t.Fatal(err)
-	}
-	return s
-}
-
-func queueEventForTest(t *testing.T, store *Store, id, url string, nextAttempt time.Time) {
-	t.Helper()
-	if _, err := store.db.Exec(`INSERT INTO event_outbox (id, type, payload, created_at, attempts, next_attempt_at, receiver) VALUES (?, ?, '{}', ?, 1, ?, ?)`,
-		id, eventRecordingStarted, nowUTCString(), formatUTCString(nextAttempt), eventReceiverID(url)); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// A restart with a settings file that cannot be read, or whose webhook values
-// are refused, starts with no receiver. That is not an administrator turning
-// the webhook off: the queued events wait for the file to be fixed.
-func TestStartingWithoutAReceiverKeepsQueuedEvents(t *testing.T) {
-	rt, cleanup := newTestRuntime(t)
-	defer cleanup()
-	const receiver = "http://127.0.0.1:9/events"
-	queueEventForTest(t, rt.store, "evt_waiting", receiver, time.Now().Add(-time.Minute))
-
-	for name, startup := range map[string]STTSettings{
-		"unreadable file, detected defaults": detectSettings(),
-		"refused webhook values":             {eventWebhookInvalid: "event_webhook_secret is required when event_webhook_url is set"},
-	} {
-		// What NewRuntime does with the settings it could load, then a
-		// settings read by the Operator page.
-		rt.eventWebhookConfigured = false
-		rt.configureEventWebhook(startup)
-		rt.configureEventWebhook(startup)
-		if _, _, failed, lastError := outboxRow(t, rt.store); failed != "" {
-			t.Fatalf("%s: the queued event was closed (%q)", name, lastError)
-		}
-	}
-
-	// The file is fixed and read again: the same receiver, the same event.
-	rt.configureEventWebhook(eventTestSettings(t, receiver, "secret"))
-	event, ok, err := rt.store.nextDueEvent(context.Background(), nowUTCString(), eventReceiverID(receiver))
-	if err != nil || !ok || event.ID != "evt_waiting" {
-		t.Fatalf("nextDueEvent() = %q ok=%v err=%v, want the event that waited", event.ID, ok, err)
-	}
-}
-
-// An event nobody reads any more ends when it is a day old, whichever receiver
-// it was queued for; delivered and failed rows are deleted a week later.
-func TestEventOutboxExpiresAndPrunes(t *testing.T) {
+// A row holds a meeting's title and its whole summary. It is deleted a week
+// after it was written, whatever became of it.
+func TestEventOutboxPrunesRowsAWeekOld(t *testing.T) {
 	store := newTestEventStore(t)
 	now := time.Now().UTC()
-	insert := func(id string, created time.Time, delivered, failed *time.Time) {
-		t.Helper()
-		var deliveredAt, failedAt any
-		if delivered != nil {
-			deliveredAt = formatUTCString(*delivered)
-		}
-		if failed != nil {
-			failedAt = formatUTCString(*failed)
-		}
-		if _, err := store.db.Exec(`INSERT INTO event_outbox (id, type, payload, created_at, attempts, next_attempt_at, receiver, delivered_at, failed_at) VALUES (?, ?, '{}', ?, 0, ?, 'other', ?, ?)`,
-			id, eventRecordingStarted, formatUTCString(created), formatUTCString(created), deliveredAt, failedAt); err != nil {
+	ctx := context.Background()
+	for id, created := range map[string]time.Time{"evt_old": now.Add(-8 * 24 * time.Hour), "evt_recent": now.Add(-time.Hour)} {
+		if err := store.insertEvent(ctx, id, eventRecordingStarted, `{}`, formatUTCString(created)); err != nil {
 			t.Fatal(err)
 		}
 	}
-	old, recent := now.Add(-8*24*time.Hour), now.Add(-time.Hour)
-	insert("evt_pending_fresh", recent, nil, nil)
-	insert("evt_pending_stale", now.Add(-25*time.Hour), nil, nil)
-	insert("evt_delivered_old", old, &old, nil)
-	insert("evt_failed_old", old, nil, &old)
-	insert("evt_delivered_recent", recent, &recent, nil)
-
-	var logs strings.Builder
-	store.maintainEventOutbox(log.New(&logs, "", 0), now)
-
-	state := map[string]string{}
-	rows, err := store.db.Query(`SELECT id, CASE WHEN delivered_at IS NOT NULL THEN 'delivered' WHEN failed_at IS NOT NULL THEN 'failed' ELSE 'pending' END FROM event_outbox`)
-	if err != nil {
+	store.pruneEventOutbox(log.New(io.Discard, "", 0), now)
+	var ids string
+	if err := store.db.QueryRow(`SELECT group_concat(id) FROM event_outbox`).Scan(&ids); err != nil {
 		t.Fatal(err)
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var id, s string
-		if err := rows.Scan(&id, &s); err != nil {
-			t.Fatal(err)
-		}
-		state[id] = s
+	if ids != "evt_recent" {
+		t.Fatalf("rows left = %q, want only evt_recent", ids)
 	}
-	want := map[string]string{"evt_pending_fresh": "pending", "evt_pending_stale": "failed", "evt_delivered_recent": "delivered"}
-	if len(state) != len(want) {
-		t.Fatalf("rows = %v, want %v", state, want)
+}
+
+func eventWebhookRuntimeForTest(t *testing.T) *Runtime {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	rt := &Runtime{
+		ctx: ctx, store: newTestEventStore(t), logger: log.New(io.Discard, "", 0),
+		eventWebhookSettingsPath: filepath.Join(t.TempDir(), "event-webhook-settings.json"),
 	}
-	for id, s := range want {
-		if state[id] != s {
-			t.Errorf("%s = %q, want %q (all: %v)", id, state[id], s, state)
+	t.Cleanup(func() { cancel(); rt.workerWG.Wait() })
+	return rt
+}
+
+func putEventWebhookSettings(t *testing.T, rt *Runtime, body string) (int, map[string]any) {
+	t.Helper()
+	method := http.MethodPut
+	if body == "" {
+		method = http.MethodGet
+	}
+	rec := httptest.NewRecorder()
+	rt.eventWebhookSettingsHandler(rec, httptest.NewRequest(method, "/settings/webhook", strings.NewReader(body)))
+	var out map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("response %q is not JSON: %v", rec.Body.String(), err)
+	}
+	return rec.Code, out
+}
+
+// The receiver is configured through its own endpoint and kept in its own
+// owner-only file. The secret goes in and never comes back out.
+func TestEventWebhookSettingsEndpoint(t *testing.T) {
+	rt := eventWebhookRuntimeForTest(t)
+	rt.startEventWebhook()
+	if code, out := putEventWebhookSettings(t, rt, ""); code != http.StatusOK || out["url"] != "" || out["secret_set"] != false {
+		t.Fatalf("GET with nothing stored = %d %v, want delivery off", code, out)
+	}
+	for name, body := range map[string]string{
+		"url without secret": `{"url":"https://hooks.example/x"}`,
+		"unknown event":      `{"url":"https://hooks.example/x","secret":"s","events":["summary.complete"]}`,
+		"blank event":        `{"url":"https://hooks.example/x","secret":"s","events":[""]}`,
+		"timeout over 1m":    `{"url":"https://hooks.example/x","secret":"s","timeout":"2m"}`,
+		"timeout not a time": `{"url":"https://hooks.example/x","secret":"s","timeout":"soon"}`,
+		"unknown field":      `{"url":"https://hooks.example/x","secret":"s","retries":3}`,
+	} {
+		if code, out := putEventWebhookSettings(t, rt, body); code != http.StatusBadRequest {
+			t.Errorf("%s: PUT = %d %v, want 400", name, code, out)
 		}
+	}
+	if rt.eventWebhook.Load() != nil {
+		t.Fatal("a refused PUT started a worker")
+	}
+
+	code, out := putEventWebhookSettings(t, rt, `{"url":"https://hooks.example/x?token=t","secret":"signing-secret","events":["summary.completed"]}`)
+	if code != http.StatusOK || out["secret_set"] != true || out["url"] != "https://hooks.example/x?token=t" || out["timeout"] != "10s" {
+		t.Fatalf("PUT = %d %v, want the receiver saved with the default timeout", code, out)
+	}
+	if _, leaked := out["secret"]; leaked {
+		t.Fatalf("the response carries the secret: %v", out)
+	}
+	if !rt.eventEnabled(eventSummaryCompleted) || rt.eventEnabled(eventRecordingStarted) {
+		t.Fatal("the worker does not follow the saved allow-list")
+	}
+	info, err := os.Stat(rt.eventWebhookSettingsPath)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("settings file mode = %v, %v; want 0600", info, err)
+	}
+
+	// A body that leaves the secret out keeps it; clearing the URL turns
+	// delivery off.
+	if code, out := putEventWebhookSettings(t, rt, `{"events":[]}`); code != http.StatusOK || out["secret_set"] != true || !rt.eventEnabled(eventRecordingStarted) {
+		t.Fatalf("PUT without a secret = %d %v, want the stored secret kept and the whole catalog on", code, out)
+	}
+	if code, out := putEventWebhookSettings(t, rt, `{"timeout":"30s"}`); code != http.StatusOK || out["timeout"] != "30s" || rt.eventWebhook.Load().client.Timeout != 30*time.Second {
+		t.Fatalf("PUT timeout = %d %v, want a 30s request timeout", code, out)
+	}
+	if code, out := putEventWebhookSettings(t, rt, `{"timeout":""}`); code != http.StatusOK || out["timeout"] != "10s" {
+		t.Fatalf("PUT empty timeout = %d %v, want the default back", code, out)
+	}
+	if code, _ := putEventWebhookSettings(t, rt, `{"url":""}`); code != http.StatusOK || rt.eventWebhook.Load() != nil {
+		t.Fatalf("clearing the URL = %d, worker=%v; want delivery off", code, rt.eventWebhook.Load())
+	}
+}
+
+// A stored file that is not valid turns delivery off and says why. Nothing
+// else reads it, and the next PUT replaces it.
+func TestInvalidStoredEventWebhookSettingsOnlyDisableDelivery(t *testing.T) {
+	rt := eventWebhookRuntimeForTest(t)
+	if err := os.WriteFile(rt.eventWebhookSettingsPath, []byte(`{"url":"https://hooks.example/x"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rt.startEventWebhook()
+	code, out := putEventWebhookSettings(t, rt, "")
+	if code != http.StatusOK || rt.eventWebhook.Load() != nil || !strings.Contains(out["error"].(string), "secret is required") {
+		t.Fatalf("GET = %d %v, worker=%v; want delivery off with the reason", code, out, rt.eventWebhook.Load())
+	}
+	code, out = putEventWebhookSettings(t, rt, `{"url":"https://hooks.example/x","secret":"s"}`)
+	if _, stillThere := out["error"]; code != http.StatusOK || stillThere || rt.eventWebhook.Load() == nil {
+		t.Fatalf("PUT = %d %v, want the receiver accepted and the reason gone", code, out)
 	}
 }
 
@@ -519,8 +490,7 @@ func TestEventOutboxExpiresAndPrunes(t *testing.T) {
 // one, so the same undelivered row is never read by two workers, and the
 // delivery it interrupted is not counted against the event.
 func TestReplacingTheWorkerWaitsForTheOldOne(t *testing.T) {
-	rt, cleanup := newTestRuntime(t)
-	defer cleanup()
+	rt := eventWebhookRuntimeForTest(t)
 	inFlight := make(chan struct{}, 1)
 	var posts atomic.Int32
 	release := make(chan struct{})
@@ -541,8 +511,10 @@ func TestReplacingTheWorkerWaitsForTheOldOne(t *testing.T) {
 	defer server.Close()
 	defer close(release)
 
-	rt.applyEventWebhook(eventTestSettings(t, server.URL, "old-secret"), true)
-	old := rt.eventWebhook
+	if code, out := putEventWebhookSettings(t, rt, `{"url":"`+server.URL+`","secret":"old-secret"}`); code != http.StatusOK {
+		t.Fatalf("PUT = %d %v", code, out)
+	}
+	old := rt.eventWebhook.Load()
 	if err := old.enqueue(context.Background(), eventRecordingStarted, map[string]any{"job_id": "job-1"}); err != nil {
 		t.Fatal(err)
 	}
@@ -552,13 +524,15 @@ func TestReplacingTheWorkerWaitsForTheOldOne(t *testing.T) {
 		t.Fatal("the first worker never posted")
 	}
 
-	rt.applyEventWebhook(eventTestSettings(t, server.URL, "new-secret"), false)
+	if code, out := putEventWebhookSettings(t, rt, `{"secret":"new-secret"}`); code != http.StatusOK {
+		t.Fatalf("PUT = %d %v", code, out)
+	}
 	select {
 	case <-old.done:
 	default:
 		t.Fatal("the new worker was started while the old one was still running")
 	}
-	if rt.eventWebhook == old || rt.eventWebhook == nil {
+	if now := rt.eventWebhook.Load(); now == old || now == nil {
 		t.Fatal("the worker was not replaced")
 	}
 	deadline := time.Now().Add(5 * time.Second)
@@ -579,7 +553,7 @@ func TestReplacingTheWorkerWaitsForTheOldOne(t *testing.T) {
 func TestCancelledWorkerStopsQuietly(t *testing.T) {
 	store := newTestEventStore(t)
 	var logs strings.Builder
-	hook := newTestEventWebhook(t, store, "http://127.0.0.1:9/events", "secret", "")
+	hook := newTestEventWebhook(t, store, "http://127.0.0.1:9/events", "secret")
 	hook.logger = log.New(&logs, "", 0)
 	if err := hook.enqueue(context.Background(), eventRecordingStarted, map[string]any{"job_id": "job-1"}); err != nil {
 		t.Fatal(err)
@@ -595,45 +569,15 @@ func TestCancelledWorkerStopsQuietly(t *testing.T) {
 	}
 }
 
-// The week of delivered rows left behind when a receiver is removed holds
-// titles and whole summaries. It has to go on time with no worker running.
-func TestEventOutboxIsMaintainedWithoutAReceiver(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	rt := &Runtime{ctx: ctx, store: newTestEventStore(t), logger: log.New(io.Discard, "", 0), eventOutboxMaintenanceInterval: 10 * time.Millisecond}
-	rt.configureEventWebhook(STTSettings{})
-	rt.startEventOutboxMaintenance()
-	defer func() { cancel(); rt.workerWG.Wait() }()
-
-	old := formatUTCString(time.Now().UTC().Add(-8 * 24 * time.Hour))
-	if _, err := rt.store.db.Exec(`INSERT INTO event_outbox (id, type, payload, created_at, attempts, next_attempt_at, receiver, delivered_at) VALUES ('evt_old', ?, '{}', ?, 1, ?, 'gone', ?)`,
-		eventRecordingStarted, old, old, old); err != nil {
-		t.Fatal(err)
-	}
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		var rows int
-		if err := rt.store.db.QueryRow(`SELECT COUNT(*) FROM event_outbox`).Scan(&rows); err != nil {
-			t.Fatal(err)
-		}
-		if rows == 0 {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("a delivered row past its retention was never deleted with no receiver configured")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-}
-
 // Shutdown waits on the workers. A settings request still in flight must not
 // add one behind its back.
 func TestNoEventWebhookWorkerStartsAfterShutdownBegan(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	rt := &Runtime{ctx: ctx, store: newTestEventStore(t), logger: log.New(io.Discard, "", 0)}
+	rt := eventWebhookRuntimeForTest(t)
 	rt.stopEventWebhook()
-	rt.applyEventWebhook(eventTestSettings(t, "https://hooks.example/events", "secret"), false)
-	if rt.eventWebhook != nil {
+	if code, out := putEventWebhookSettings(t, rt, `{"url":"https://hooks.example/events","secret":"secret"}`); code != http.StatusOK {
+		t.Fatalf("PUT = %d %v", code, out)
+	}
+	if rt.eventWebhook.Load() != nil {
 		t.Fatal("a delivery worker was started after shutdown began")
 	}
 	rt.workerWG.Wait()

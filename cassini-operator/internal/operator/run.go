@@ -159,30 +159,31 @@ type Runtime struct {
 	annotations annotationIndex
 	// searchLimiter bounds searches per caller, because each one makes this app
 	// talk to Nextcloud on the caller's behalf.
-	searchLimiter      *searchRateLimiter
-	cfg                Config
-	logger             *log.Logger
-	stdout             io.Writer
-	stderr             io.Writer
-	recordSlots        chan struct{}
-	buildQueue         chan buildTask
-	sealQueue          chan sealTask
-	publishQueue       chan publishTask
-	events             *eventHub
-	eventWebhook       *eventWebhook
-	eventWebhookMu     sync.RWMutex
-	eventWebhookCancel context.CancelFunc
-	// eventWebhookKey is the webhook settings the worker was last built from,
-	// and eventWebhookConfigured whether it was built at all.
-	eventWebhookKey        string
-	eventWebhookConfigured bool
+	searchLimiter *searchRateLimiter
+	cfg           Config
+	logger        *log.Logger
+	stdout        io.Writer
+	stderr        io.Writer
+	recordSlots   chan struct{}
+	buildQueue    chan buildTask
+	sealQueue     chan sealTask
+	publishQueue  chan publishTask
+	events        *eventHub
+	recordMu      sync.Mutex
+	recordJobs    map[string]*recordProcessState
+	recordWG      sync.WaitGroup
+
+	// eventWebhook is the delivery worker, nil while delivery is off.
+	// eventWebhookMu serialises settings changes and guards the fields below.
+	eventWebhook             atomic.Pointer[eventWebhook]
+	eventWebhookMu           sync.Mutex
+	eventWebhookSettings     EventWebhookSettings
+	eventWebhookSettingsPath string
+	eventWebhookLoadError    string
+	eventWebhookCancel       context.CancelFunc
 	// eventWebhookStopped is set by Shutdown: no worker is started after it.
 	eventWebhookStopped bool
-	// eventOutboxMaintenanceInterval is a test seam; zero means daily.
-	eventOutboxMaintenanceInterval time.Duration
-	recordMu                       sync.Mutex
-	recordJobs                     map[string]*recordProcessState
-	recordWG                       sync.WaitGroup
+
 	// buildExecutionMu is the final admission gate around the whole build. The
 	// configured worker count may exceed one, but CUDA recognizers and the RAM/
 	// VRAM headroom probe are not safely reservable between concurrent workers.
@@ -426,18 +427,8 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 	runtime := NewRuntime(ctx, store, cfg, logger, stdout, stderr)
 	logger = runtime.logger
-	if interrupted > 0 && runtime.eventEnabled(eventSummaryFailed, eventRecordingFailed) {
-		if jobs, err := store.InterruptedJobsAt(context.Background(), interruptedAt); err != nil {
-			logger.Printf("startup interrupted event read failed: %v", err)
-		} else {
-			for _, job := range jobs {
-				phase := strings.TrimSpace(job.Stage)
-				if phase == "" {
-					phase = "job"
-				}
-				runtime.emitAttemptFailure(job.ID, job.CurrentAttemptNumber, phase, "operator restarted before the stage finished", map[string]any{"interrupted": true})
-			}
-		}
+	if interrupted > 0 {
+		runtime.emitInterruptedAtStartup(interruptedAt)
 	}
 	exappCfg.supportJournal = runtime.supportJournal
 	exappCfg.meetingMetadata = runtime.meetingMetadata
@@ -920,6 +911,7 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 		recordHealthTimeout:       recordHealthProbeTimeout,
 		settingsPath:              settingsPath(cfg),
 		llmSettingsPath:           llmSettingsPath(cfg),
+		eventWebhookSettingsPath:  eventWebhookSettingsPath(cfg),
 	}
 	// The search index is disposable and nothing depends on it, so a failure to
 	// open it must not take the operator down — it degrades search, and the
@@ -965,7 +957,7 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 		rt.llm = llm
 	}
 	store.SetStateChangePublisher(rt.publishStateChangeEvent)
-	rt.configureEventWebhook(rt.settings)
+	rt.startEventWebhook()
 	rt.recordJobFn = rt.executeRecordCLI
 	rt.buildJobFn = rt.withSpeakerEdits(rt.executeBuildCLI)
 	rt.sealJobFn = rt.executeSealCLIWithTimeout
@@ -1012,7 +1004,6 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 	go rt.requeueDispatcher()
 	rt.startRetentionWorker()
 	rt.startMediaCleanupWorker()
-	rt.startEventOutboxMaintenance()
 	return rt
 }
 
@@ -1105,6 +1096,9 @@ func operatorAPIRoutes(rt *Runtime, exappCfg ExAppConfig) []struct {
 		{"/settings/workflows", http.HandlerFunc(rt.settingsWorkflowsHandler)},
 		// One custom template, written or removed from the panel (D-819).
 		{"/settings/workflows/", http.HandlerFunc(rt.settingsWorkflowHandler)},
+		// The lifecycle event receiver (docs/events.md); exact, so it wins
+		// over the prefix below.
+		{"/settings/webhook", http.HandlerFunc(rt.eventWebhookSettingsHandler)},
 		{"/settings/", http.HandlerFunc(rt.llmSettingsHandler)},
 		{"/storage/usage", exappCfg.storageUsageHandler(rt)},
 		{"/storage/usage/details", exappCfg.detailedStorageUsageHandler(rt)},
@@ -1467,11 +1461,7 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 			rt.logger.Printf("record fail update failed id=%s: %v", job.ID, updateErr)
 			return
 		}
-		failure := map[string]any{"phase": "record", "error": failureText}
-		for key, value := range rt.interruptedByShutdown() {
-			failure[key] = value
-		}
-		rt.emitEvent(eventRecordingFailed, job.ID, job.CurrentAttemptNumber, failure)
+		rt.emitAttemptFailure(job.ID, job.CurrentAttemptNumber, "record", failureText, false)
 		return
 	}
 	canonicalRunPath, promoteErr := promoteRunBundle(rt.cfg.WorkRoot, result.ArtifactRunPath, job.ID)
@@ -1481,7 +1471,7 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 			rt.logger.Printf("record promote failure update failed id=%s: %v", job.ID, failErr)
 			return
 		}
-		rt.emitEvent(eventRecordingFailed, job.ID, job.CurrentAttemptNumber, map[string]any{"phase": "record", "error": promoteErr.Error()})
+		rt.emitAttemptFailure(job.ID, job.CurrentAttemptNumber, "record", promoteErr.Error(), false)
 		return
 	}
 	if updateErr := rt.store.UpdateRecordOutcome(context.Background(), job.ID, result, canonicalRunPath, finishedAt); updateErr != nil {
@@ -1490,7 +1480,7 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 			rt.logger.Printf("record outcome failure update failed id=%s: %v", job.ID, failErr)
 			return
 		}
-		rt.emitEvent(eventRecordingFailed, job.ID, job.CurrentAttemptNumber, map[string]any{"phase": "record", "error": updateErr.Error()})
+		rt.emitAttemptFailure(job.ID, job.CurrentAttemptNumber, "record", updateErr.Error(), false)
 		return
 	}
 	rt.emitEvent(eventRecordingStopped, job.ID, job.CurrentAttemptNumber, map[string]any{"stopped_at": finishedAt, "stop_reason": strings.TrimSpace(result.StopReason)})
@@ -1514,7 +1504,7 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 			rt.logger.Printf("build queue failure update failed id=%s: %v", job.ID, updateErr)
 			return
 		}
-		rt.emitEvent(eventRecordingFailed, job.ID, job.CurrentAttemptNumber, map[string]any{"phase": "build", "error": err.Error()})
+		rt.emitAttemptFailure(job.ID, job.CurrentAttemptNumber, "build", err.Error(), false)
 		return
 	}
 	rt.logger.Printf("record succeeded id=%s attempt_run=%s canonical_run=%s build_queued_at=%s stop_reason=%s", job.ID, result.ArtifactRunPath, canonicalRunPath, finishedAt, strings.TrimSpace(result.StopReason))
@@ -1548,7 +1538,10 @@ func (rt *Runtime) prepareRecordJob(ctx context.Context, provider, requestBody s
 		rt.releaseRecordSlot()
 		return createJobResponse{}, nil, fmt.Errorf("%w: %v", errRecordingSetup, err)
 	}
-	req.ProcessingPolicy = frozenProcessingPolicy(settings)
+	req.ProcessingPolicy = &recordingProcessingPolicy{MeetingFormat: settings.MeetingFormat, SourceRetention: settings.SourceRetention}
+	if settings.SourceRetention == sourceDeleteAfterProcessing {
+		req.ProcessingPolicy.Transcription = &settings
+	}
 	req.RetainVideo = settings.RetainVideo
 	req.CaptureMode = "audio-only"
 	if req.RetainVideo {

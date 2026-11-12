@@ -94,7 +94,7 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 				rt.logger.Printf("build priority cleanup failure update failed id=%s: %v", task.JobID, updateErr)
 				return
 			}
-			rt.emitAttemptFailure(task.JobID, task.AttemptNumber, "build", cleanErr.Error(), nil)
+			rt.emitAttemptFailure(task.JobID, task.AttemptNumber, "build", cleanErr.Error(), false)
 			return
 		}
 		retry := time.Now().UTC()
@@ -138,7 +138,7 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 						rt.logger.Printf("terminal build failure: %v", err)
 						return
 					}
-					rt.emitAttemptFailure(task.JobID, task.AttemptNumber, "build", unavailable.Error(), nil)
+					rt.emitAttemptFailure(task.JobID, task.AttemptNumber, "build", unavailable.Error(), false)
 					return
 				}
 				blocked, blockErr := rt.store.MarkBuildBlocked(
@@ -157,7 +157,6 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 					reason = fmt.Sprintf("retry ceiling reached after %d deferrals", task.DeferralCount)
 				}
 				rt.logger.Printf("build blocked id=%s attempt=%d worker=%d (%s): %v", task.JobID, task.AttemptNumber, workerIndex, reason, unavailable)
-				rt.emitAttemptFailure(task.JobID, task.AttemptNumber, "build", unavailable.Error(), nil)
 				return
 			}
 			delay := exponentialBuildRetryDelay(rt.buildResourceRetryDelay, nextDeferral)
@@ -185,7 +184,7 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 			rt.logger.Printf("build fail update failed id=%s attempt=%d worker=%d: %v", task.JobID, task.AttemptNumber, workerIndex, updateErr)
 			return
 		}
-		rt.emitAttemptFailure(task.JobID, task.AttemptNumber, "build", detail, rt.interruptedByShutdown())
+		rt.emitAttemptFailure(task.JobID, task.AttemptNumber, "build", detail, false)
 		return
 	}
 	// Stamp the Talk room into the ATTEMPT bundle, before it is promoted. The
@@ -235,15 +234,14 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 			rt.logger.Printf("seal queue failure update failed id=%s attempt=%d worker=%d: %v", task.JobID, task.AttemptNumber, workerIndex, updateErr)
 			return
 		}
-		rt.emitAttemptFailure(task.JobID, task.AttemptNumber, "seal", err.Error(), nil)
+		rt.emitAttemptFailure(task.JobID, task.AttemptNumber, "seal", err.Error(), false)
 		return
 	}
-	// After the hand-off, so both events describe a meeting that is on its way
-	// to publication and carry the stage the job is now in.
+	// After the hand-off, so the event describes a meeting that is on its way
+	// to publication.
 	if summaryOutcomes != nil {
 		rt.emitSummaryOutcomes(task, builtMeetingPath, *summaryOutcomes)
 	}
-	rt.emitRecordingEvent(eventBuildCompleted, task.JobID, task.AttemptNumber, map[string]any{"meeting_title": meetingTitle})
 	rt.logger.Printf("build succeeded id=%s attempt=%d worker=%d attempt_meeting=%s canonical_meeting=%s seal_queued_at=%s", task.JobID, task.AttemptNumber, workerIndex, builtMeetingPath, canonicalMeetingPath, finishedAt)
 }
 
@@ -283,11 +281,7 @@ func (rt *Runtime) emitSummaryOutcomes(task buildTask, meetingPath string, outco
 		}
 		rt.emitEvent(eventSummaryCompleted, task.JobID, task.AttemptNumber, data)
 	case "failed":
-		rt.emitEvent(eventSummaryFailed, task.JobID, task.AttemptNumber, map[string]any{
-			"phase":          "summary",
-			"error":          outcomes.SummaryReason,
-			"summary_reason": outcomes.SummaryReason,
-		})
+		rt.emitEvent(eventSummaryFailed, task.JobID, task.AttemptNumber, map[string]any{"phase": "summary", "error": outcomes.SummaryReason})
 	}
 }
 
