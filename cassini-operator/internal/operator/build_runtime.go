@@ -92,6 +92,7 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 			rt.logger.Printf("build priority cleanup failed id=%s: %v", task.JobID, cleanErr)
 			if updateErr := rt.store.MarkBuildFailed(context.Background(), task.JobID, "", cleanErr.Error(), finishedAt); updateErr != nil {
 				rt.logger.Printf("build priority cleanup failure update failed id=%s: %v", task.JobID, updateErr)
+				return
 			}
 			rt.emitAttemptFailure(task.JobID, task.AttemptNumber, "build", cleanErr.Error(), nil)
 			return
@@ -184,7 +185,7 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 			rt.logger.Printf("build fail update failed id=%s attempt=%d worker=%d: %v", task.JobID, task.AttemptNumber, workerIndex, updateErr)
 			return
 		}
-		rt.emitAttemptFailure(task.JobID, task.AttemptNumber, "build", detail, nil)
+		rt.emitAttemptFailure(task.JobID, task.AttemptNumber, "build", detail, rt.interruptedByShutdown())
 		return
 	}
 	// Stamp the Talk room into the ATTEMPT bundle, before it is promoted. The
@@ -254,26 +255,34 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 // only when asked; the copy's record of an earlier attempt's summary is not a
 // new one.
 func (rt *Runtime) emitSummaryOutcomes(task buildTask, meetingPath string, outcomes stepOutcomes) {
-	eventType := map[string]string{"completed": eventSummaryCompleted, "failed": eventSummaryFailed}[outcomes.SummaryStatus]
 	// Nothing below is read unless a receiver is going to be told.
-	if eventType == "" || !rt.eventEnabled(eventType) {
+	if !rt.eventEnabled(eventSummaryCompleted, eventSummaryFailed) {
 		return
 	}
-	if attempt, err := rt.store.GetJobAttempt(context.Background(), task.JobID, task.AttemptNumber); err == nil &&
-		attempt.TriggerKind == triggerKindRefine && attempt.SummaryFinishedAt == "" {
-		return
+	status, model := outcomes.SummaryStatus, outcomes.SummaryModel
+	if attempt, err := rt.store.GetJobAttempt(context.Background(), task.JobID, task.AttemptNumber); err == nil && attempt.TriggerKind == triggerKindRefine {
+		// A speaker-edit attempt works on a copy of the published meeting, so
+		// the bundle's summary step is an earlier attempt's: its status, model
+		// and reason say nothing about this one. What this attempt did is
+		// what its replay reported. A rewrite that ran left its finish time
+		// and wrote summary.md; one that kept the summary left nothing.
+		if attempt.SummaryFinishedAt == "" {
+			return
+		}
+		status, model = "completed", ""
 	}
-	switch eventType {
-	case eventSummaryCompleted:
+	switch status {
+	case "completed":
 		markdown := ""
 		if raw, err := os.ReadFile(filepath.Join(meetingPath, "summary.md")); err == nil {
 			markdown = string(raw)
 		}
-		rt.emitEvent(eventSummaryCompleted, task.JobID, task.AttemptNumber, map[string]any{
-			"summary_markdown": markdown,
-			"summary_model":    outcomes.SummaryModel,
-		})
-	case eventSummaryFailed:
+		data := map[string]any{"summary_markdown": markdown}
+		if model != "" {
+			data["summary_model"] = model
+		}
+		rt.emitEvent(eventSummaryCompleted, task.JobID, task.AttemptNumber, data)
+	case "failed":
 		rt.emitEvent(eventSummaryFailed, task.JobID, task.AttemptNumber, map[string]any{
 			"phase":          "summary",
 			"error":          outcomes.SummaryReason,

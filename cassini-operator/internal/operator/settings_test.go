@@ -948,6 +948,7 @@ func TestPutSettingsRejectsInvalidEventWebhook(t *testing.T) {
 	rt := newSettingsTestRuntime(t)
 	for name, body := range map[string]string{
 		"unknown event":   `{"event_webhook_url":"https://hooks.example/events","event_webhook_secret":"s","event_webhook_events":["typo.event"]}`,
+		"blank event":     `{"event_webhook_url":"https://hooks.example/events","event_webhook_secret":"s","event_webhook_events":[" "]}`,
 		"missing secret":  `{"event_webhook_url":"https://hooks.example/events"}`,
 		"invalid timeout": `{"event_webhook_url":"https://hooks.example/events","event_webhook_secret":"s","event_webhook_timeout":"soon"}`,
 	} {
@@ -996,12 +997,14 @@ func TestReadingSettingsDoesNotRestartTheEventWebhook(t *testing.T) {
 }
 
 // One mistake in the webhook values turns the webhook off. It must not cost
-// the admin every other setting in the file.
+// the admin every other setting in the file, nor the receiver and secret they
+// typed: those stay in the file until they are fixed.
 func TestInvalidEventWebhookInSettingsFileKeepsEverythingElse(t *testing.T) {
 	for name, webhook := range map[string]string{
 		"missing secret":  `"event_webhook_url":"https://hooks.example/events"`,
 		"unknown event":   `"event_webhook_url":"https://hooks.example/events","event_webhook_secret":"s","event_webhook_events":["summary.complete"]`,
 		"invalid timeout": `"event_webhook_url":"https://hooks.example/events","event_webhook_secret":"s","event_webhook_timeout":"2m"`,
+		"blank event":     `"event_webhook_url":"https://hooks.example/events","event_webhook_secret":"s","event_webhook_events":[""]`,
 	} {
 		path := filepath.Join(t.TempDir(), "settings.json")
 		raw := `{"meeting_format":"json","retain_video":true,"source":"user","quality":"balanced","search_aliases":[["Eisbuk","ice book"]],` + webhook + `}`
@@ -1015,8 +1018,15 @@ func TestInvalidEventWebhookInSettingsFileKeepsEverythingElse(t *testing.T) {
 		if loaded.MeetingFormat != "json" || !loaded.RetainVideo || len(loaded.SearchAliases) != 1 {
 			t.Errorf("%s: loaded = %+v, want the other settings kept", name, loaded)
 		}
-		if loaded.EventWebhookURL != "" || loaded.EventWebhookSecret != "" || loaded.eventWebhookInvalid == "" {
-			t.Errorf("%s: webhook = %q invalid=%q, want delivery off and the reason kept", name, loaded.EventWebhookURL, loaded.eventWebhookInvalid)
+		if loaded.EventWebhookURL != "https://hooks.example/events" || loaded.eventWebhookInvalid == "" {
+			t.Errorf("%s: webhook = %q invalid=%q, want the stored values kept and the reason beside them", name, loaded.EventWebhookURL, loaded.eventWebhookInvalid)
+		}
+		// Whatever saves the settings next writes the values back as stored.
+		if err := Save(path, loaded); err != nil {
+			t.Fatalf("%s: Save() error = %v, want refused webhook values written back untouched", name, err)
+		}
+		if saved, _ := os.ReadFile(path); !strings.Contains(string(saved), "https://hooks.example/events") {
+			t.Errorf("%s: a save erased the stored receiver: %s", name, saved)
 		}
 		var logs strings.Builder
 		rt := &Runtime{store: newTestEventStore(t), logger: log.New(&logs, "", 0)}
@@ -1064,5 +1074,66 @@ func TestEventWebhookSecretIsNeverReturned(t *testing.T) {
 	}
 	if strings.Contains(string(raw), "signing-secret") || strings.Contains(string(raw), "hooks.example") || strings.Contains(string(raw), "event_webhook") {
 		t.Fatalf("a job's frozen policy carries the webhook: %s", raw)
+	}
+}
+
+// Refused webhook values wait in the file. Saving something else neither
+// trips over them nor erases them, a read says why delivery is off, and a PUT
+// that sets them right turns delivery on.
+func TestRefusedStoredEventWebhookWaitsToBeFixed(t *testing.T) {
+	var logs strings.Builder
+	rt, cleanup := newTestRuntimeWithLogger(t, log.New(&logs, "", 0))
+	defer cleanup()
+	stored := map[string]any{}
+	if raw, err := os.ReadFile(rt.settingsPath); err != nil {
+		t.Fatal(err)
+	} else if err := json.Unmarshal(raw, &stored); err != nil {
+		t.Fatal(err)
+	}
+	stored["event_webhook_url"], stored["event_webhook_secret"], stored["event_webhook_timeout"] = "https://hooks.example/events", "signing-secret", "90s"
+	raw, _ := json.Marshal(stored)
+	if err := os.WriteFile(rt.settingsPath, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	request := func(method, body string) string {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		rt.settingsHandler(rec, httptest.NewRequest(method, "/settings", strings.NewReader(body)))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s settings code = %d body=%s", method, rec.Code, rec.Body.String())
+		}
+		return rec.Body.String()
+	}
+	worker := func() *eventWebhook {
+		rt.eventWebhookMu.Lock()
+		defer rt.eventWebhookMu.Unlock()
+		return rt.eventWebhook
+	}
+
+	if body := request(http.MethodGet, ""); !strings.Contains(body, `"event_webhook_error":"event_webhook_timeout`) || strings.Contains(body, "signing-secret") {
+		t.Fatalf("GET = %s, want the reason and no secret", body)
+	}
+	request(http.MethodPut, `{"retain_video":false}`)
+	if saved, _ := os.ReadFile(rt.settingsPath); !strings.Contains(string(saved), "signing-secret") || !strings.Contains(string(saved), `"90s"`) {
+		t.Fatalf("an unrelated save changed the refused webhook values: %s", saved)
+	}
+	if worker() != nil {
+		t.Fatal("delivery is on with refused webhook values")
+	}
+
+	logs.Reset()
+	if body := request(http.MethodPut, `{"event_webhook_timeout":"10s"}`); strings.Contains(body, "event_webhook_error") {
+		t.Fatalf("PUT = %s, want no error once the values are right", body)
+	}
+	fixed := worker()
+	if fixed == nil {
+		t.Fatal("fixing the timeout did not turn delivery on")
+	}
+	if strings.Contains(logs.String(), "event webhooks disabled") {
+		t.Fatalf("log = %q, the fixed values were reported as refused", logs.String())
+	}
+	request(http.MethodGet, "")
+	if worker() != fixed {
+		t.Fatal("the next settings read replaced the delivery worker")
 	}
 }

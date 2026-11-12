@@ -54,8 +54,8 @@ type STTSettings struct {
 	EventWebhookEvents  []string `json:"event_webhook_events,omitempty"`
 	EventWebhookTimeout string   `json:"event_webhook_timeout,omitempty"`
 	// eventWebhookInvalid is why the webhook values in settings.json were not
-	// accepted, when they were not. The four fields above are then empty and
-	// delivery is off; everything else in the file still applies.
+	// accepted, when they were not. The four fields above are then kept as
+	// stored and delivery is off; everything else in the file still applies.
 	eventWebhookInvalid string
 	Source              string `json:"source"` // "auto" | "user"
 	HardwareFingerprint string `json:"hardware_fingerprint"`
@@ -324,14 +324,10 @@ func LoadOrInitSettingsWithMigrationReporter(path string, report SettingsMigrati
 	if s.MeetingFormat != "opus" && s.MeetingFormat != "json" {
 		return STTSettings{}, fmt.Errorf("invalid meeting_format %q", s.MeetingFormat)
 	}
-	if err := normalizeEventWebhookSettings(&s); err != nil {
-		// A mistake in the webhook values turns the webhook off. It must not
-		// fail the load: the caller would fall back to detected defaults and
-		// lose the model, retention and format the admin chose.
-		s = s.withoutEventWebhook()
-		s.EventWebhookTimeout = eventWebhookDefaultTimeout.String()
-		s.eventWebhookInvalid = err.Error()
-	}
+	// A mistake in the webhook values turns the webhook off. It must not fail
+	// the load: the caller would fall back to detected defaults and lose the
+	// model, retention and format the admin chose.
+	checkStoredEventWebhook(&s)
 	if err := normalizeSourceRetention(&s); err != nil {
 		return STTSettings{}, err
 	}
@@ -454,8 +450,12 @@ func Save(path string, s STTSettings) error {
 	if s.MeetingFormat != "opus" && s.MeetingFormat != "json" {
 		return fmt.Errorf("meeting_format must be opus or json")
 	}
-	if err := normalizeEventWebhookSettings(&s); err != nil {
-		return err
+	// Webhook values that were refused on load are written back as they were
+	// stored: they are the administrator's to fix, not this save's to drop.
+	if s.eventWebhookInvalid == "" {
+		if err := normalizeEventWebhookSettings(&s); err != nil {
+			return err
+		}
 	}
 	if strings.TrimSpace(path) == "" {
 		return fmt.Errorf("settings path must not be empty")
@@ -675,15 +675,18 @@ type settingsResponse struct {
 	STTSettings
 	// The signing secret is write-only: a response says whether one is stored
 	// and never what it is.
-	EventWebhookSecretSet bool         `json:"event_webhook_secret_set"`
-	Effective             effectiveSTT `json:"effective"`
+	EventWebhookSecretSet bool `json:"event_webhook_secret_set"`
+	// Why the stored webhook values were refused, when they were: delivery is
+	// off until a PUT replaces them.
+	EventWebhookError string       `json:"event_webhook_error,omitempty"`
+	Effective         effectiveSTT `json:"effective"`
 }
 
 func (rt *Runtime) settingsResponseFor(s STTSettings) settingsResponse {
 	effective := rt.effectiveFor(s)
 	secretSet := s.EventWebhookSecret != ""
 	s.EventWebhookSecret = ""
-	return settingsResponse{STTSettings: s, EventWebhookSecretSet: secretSet, Effective: effective}
+	return settingsResponse{STTSettings: s, EventWebhookSecretSet: secretSet, EventWebhookError: s.eventWebhookInvalid, Effective: effective}
 }
 
 // settingsUpdate is the PUT body. Pointers distinguish "field omitted" from
@@ -890,9 +893,17 @@ func (rt *Runtime) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		updated.EventWebhookTimeout = *in.EventWebhookTimeout
 	}
 
-	if err := normalizeEventWebhookSettings(&updated); err != nil {
-		writeJSONError(w, http.StatusBadRequest, err.Error())
-		return
+	// The webhook values are checked when this request sets one of them, and
+	// then they must all be right. A request that leaves them alone leaves
+	// stored values that were refused on load alone too, so an unrelated save
+	// still works and cannot erase them.
+	touchesEventWebhook := in.EventWebhookURL != nil || in.EventWebhookSecret != nil || in.EventWebhookEvents != nil || in.EventWebhookTimeout != nil
+	if touchesEventWebhook || updated.eventWebhookInvalid == "" {
+		if err := normalizeEventWebhookSettings(&updated); err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		updated.eventWebhookInvalid = ""
 	}
 	if err := normalizeSourceRetention(&updated); err != nil {
 		writeJSONError(w, http.StatusBadRequest, err.Error())

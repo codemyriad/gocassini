@@ -231,16 +231,36 @@ func TestAttemptFailureEventFollowsWhatTheAttemptWasFor(t *testing.T) {
 // A speaker-edit attempt copies the published meeting, summary included. The
 // copy's record of that summary is not a new one unless the edit rewrote it.
 func TestSpeakerEditThatKeepsTheSummaryEmitsNoSummaryEvent(t *testing.T) {
-	for name, rewrote := range map[string]bool{"kept": false, "rewritten": true} {
+	for name, tc := range map[string]struct {
+		rewrote bool
+		// earlierFailed: the copied bundle still records an earlier attempt's
+		// failed summary step, which says nothing about this attempt.
+		earlierFailed bool
+	}{
+		"kept":                              {},
+		"rewritten":                         {rewrote: true},
+		"kept after an earlier failure":     {earlierFailed: true},
+		"rewritten over an earlier failure": {rewrote: true, earlierFailed: true},
+	} {
+		rewrote := tc.rewrote
 		t.Run(name, func(t *testing.T) {
 			rt, cleanup := newBareSealRuntime(t)
 			defer cleanup()
 			job, run := seedBuildForEventTest(t, rt, "refine-summary")
 			setAttemptKindForEventTest(t, rt, job.ID, triggerKindRefine)
-			attachEventWebhookForTest(t, rt, eventSummaryCompleted)
+			attachEventWebhookForTest(t, rt, eventSummaryCompleted+","+eventSummaryFailed)
 			rt.buildJobFn = func(_ context.Context, task buildTask) (string, error) {
 				meetingPath := attemptMeetingPath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber)
 				writeCompletedMeetingForEventTest(t, meetingPath)
+				if tc.earlierFailed {
+					manifest := map[string]any{"processing": map[string]any{
+						"meetingSummary": map[string]any{"status": "failed", "reason": "upstream 502"},
+					}}
+					raw, _ := json.Marshal(manifest)
+					if err := os.WriteFile(filepath.Join(meetingPath, "manifest.json"), raw, 0o600); err != nil {
+						return "", err
+					}
+				}
 				if rewrote {
 					if err := rt.store.SetAttemptSummaryTimes(context.Background(), task.JobID, task.AttemptNumber, nowUTCString(), nowUTCString()); err != nil {
 						return "", err
@@ -250,8 +270,12 @@ func TestSpeakerEditThatKeepsTheSummaryEmitsNoSummaryEvent(t *testing.T) {
 			}
 			rt.runBuildJob(buildTask{JobID: job.ID, AttemptNumber: 1, ArtifactRunPath: run}, 1)
 
-			if got := containsEvent(eventOutboxTypes(t, rt.store), eventSummaryCompleted); got != rewrote {
-				t.Fatalf("summary.completed emitted = %v, want %v", got, rewrote)
+			types := eventOutboxTypes(t, rt.store)
+			if got := containsEvent(types, eventSummaryCompleted); got != rewrote {
+				t.Fatalf("summary.completed emitted = %v, want %v (events = %v)", got, rewrote, types)
+			}
+			if containsEvent(types, eventSummaryFailed) {
+				t.Fatalf("events = %v, an earlier attempt's failed summary is not this attempt's", types)
 			}
 		})
 	}
@@ -357,5 +381,38 @@ func TestEmissionsReadNothingForAnEventNobodyAskedFor(t *testing.T) {
 	rt.emitRecordingEvent(eventBuildCompleted, "no-such-job", 1, nil)
 	if got := eventOutboxTypes(t, rt.store); len(got) != 0 {
 		t.Fatalf("events = %v, want none", got)
+	}
+}
+
+// A stage cut short because the operator is stopping is reported the way the
+// startup pass reports one a crash cut short, so a receiver can tell an
+// upgrade from a failed recording.
+func TestStageFailedByShutdownIsMarkedInterrupted(t *testing.T) {
+	for name, stopping := range map[string]bool{"running": false, "stopping": true} {
+		t.Run(name, func(t *testing.T) {
+			rt, cleanup := newBareSealRuntime(t)
+			defer cleanup()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			rt.ctx = ctx
+			job, _ := seedBuildForEventTest(t, rt, "shutdown-seal")
+			attachEventWebhookForTest(t, rt, eventRecordingFailed)
+			if stopping {
+				cancel()
+			}
+			rt.failSeal(sealTask{JobID: job.ID, AttemptNumber: 1}, "", contextError("signal: killed"), nowUTCString())
+
+			var payload string
+			if err := rt.store.db.QueryRow(`SELECT payload FROM event_outbox`).Scan(&payload); err != nil {
+				t.Fatal(err)
+			}
+			var event outboundEventPayload
+			if err := json.Unmarshal([]byte(payload), &event); err != nil {
+				t.Fatal(err)
+			}
+			if got, _ := event.Data["interrupted"].(bool); got != stopping {
+				t.Fatalf("interrupted = %v, want %v (data = %v)", event.Data["interrupted"], stopping, event.Data)
+			}
+		})
 	}
 }

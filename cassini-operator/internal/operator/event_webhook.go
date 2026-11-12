@@ -130,7 +130,24 @@ func eventWebhookSettingsKey(s STTSettings) string {
 // carry them into request_json.
 func (s STTSettings) withoutEventWebhook() STTSettings {
 	s.EventWebhookURL, s.EventWebhookSecret, s.EventWebhookEvents, s.EventWebhookTimeout = "", "", nil, ""
+	s.eventWebhookInvalid = ""
 	return s
+}
+
+// checkStoredEventWebhook validates the webhook values read from
+// settings.json. Accepted values are normalised in place. Refused values are
+// left exactly as stored, with the reason beside them: delivery is off until
+// they are fixed, and nothing that saves the settings in the meantime can
+// erase a receiver URL or secret the administrator typed.
+func checkStoredEventWebhook(s *STTSettings) {
+	candidate := *s
+	candidate.EventWebhookEvents = append([]string(nil), s.EventWebhookEvents...)
+	if err := normalizeEventWebhookSettings(&candidate); err != nil {
+		s.eventWebhookInvalid = err.Error()
+		return
+	}
+	candidate.eventWebhookInvalid = ""
+	*s = candidate
 }
 
 // normalizeEventWebhookSettings trims and validates the persisted webhook
@@ -162,7 +179,9 @@ func normalizeEventWebhookSettings(s *STTSettings) error {
 		for _, name := range s.EventWebhookEvents {
 			name = strings.TrimSpace(name)
 			if name == "" {
-				continue
+				// Dropping it would leave an empty list, and an empty list
+				// means the whole catalog: the opposite of what was sent.
+				return fmt.Errorf("event_webhook_events must not contain an empty name")
 			}
 			if !known[name] {
 				return fmt.Errorf("unknown event_webhook event %q", name)
@@ -199,10 +218,11 @@ func redactEventWebhookURL(raw string) string {
 }
 
 // newEventWebhook builds the delivery worker from settings that
-// normalizeEventWebhookSettings has accepted. An empty URL means no worker.
+// normalizeEventWebhookSettings has accepted. An empty URL means no worker,
+// and so do stored values that were refused.
 func newEventWebhook(store *Store, logger *log.Logger, settings STTSettings, version string) *eventWebhook {
 	rawURL := settings.EventWebhookURL
-	if rawURL == "" {
+	if rawURL == "" || settings.eventWebhookInvalid != "" {
 		return nil
 	}
 	// Normalisation has already bounded the timeout; the default covers a
@@ -266,15 +286,10 @@ func (e *eventWebhook) wait() {
 func (e *eventWebhook) loop(ctx context.Context) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
-	maintenance := time.NewTicker(eventOutboxMaintenanceInterval)
-	defer maintenance.Stop()
-	e.store.maintainEventOutbox(e.logger, time.Now().UTC())
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-maintenance.C:
-			e.store.maintainEventOutbox(e.logger, time.Now().UTC())
 		case <-ticker.C:
 			e.deliverDue(ctx)
 		case <-e.kick:
@@ -611,6 +626,18 @@ func (rt *Runtime) emitAttemptFailure(jobID string, attemptNumber int, phase, de
 	}
 }
 
+// interruptedByShutdown is the extra field for a stage that failed while the
+// operator was stopping: its child was cancelled, which is the same thing the
+// startup pass reports for a stage a crash cut short. A receiver reads
+// `interrupted` to tell a restart from a failure of the recording. Nil
+// otherwise.
+func (rt *Runtime) interruptedByShutdown() map[string]any {
+	if rt.ctx != nil && rt.ctx.Err() != nil {
+		return map[string]any{"interrupted": true}
+	}
+	return nil
+}
+
 // eventBaseData reads the job once and hands it to the room and title
 // lookups, which would otherwise each read it again.
 func (rt *Runtime) eventBaseData(ctx context.Context, jobID string, attemptNumber int) map[string]any {
@@ -706,16 +733,62 @@ func (rt *Runtime) applyEventWebhook(settings STTSettings, receiverChanged bool)
 		}
 	}
 	if hook == nil {
-		// No worker to do it: end what is past the retry window and delete
-		// what is past its retention now.
-		rt.store.maintainEventOutbox(rt.logger, time.Now().UTC())
 		return
 	}
 	base := rt.ctx
 	if base == nil {
 		base = context.Background()
 	}
+	if rt.eventWebhookStopped || base.Err() != nil {
+		// The operator is stopping: Shutdown may already be waiting on the
+		// workers, so none is added. The settings were saved; the next start
+		// builds the worker from them.
+		return
+	}
 	ctx, cancel := context.WithCancel(base)
 	rt.eventWebhook, rt.eventWebhookCancel = hook, cancel
 	hook.start(ctx, &rt.workerWG)
+}
+
+// stopEventWebhook is called by Shutdown before it waits on the workers. Under
+// the lock applyEventWebhook starts a worker with, so a settings request still
+// in flight can never add one to a WaitGroup that is already being waited on.
+func (rt *Runtime) stopEventWebhook() {
+	rt.eventWebhookMu.Lock()
+	defer rt.eventWebhookMu.Unlock()
+	rt.eventWebhookStopped = true
+	if rt.eventWebhookCancel != nil {
+		rt.eventWebhookCancel()
+		rt.eventWebhookCancel = nil
+	}
+}
+
+// startEventOutboxMaintenance ends the events nobody will deliver any more and
+// deletes the rows past their retention, once now and then daily. It belongs
+// to the Runtime, not to a delivery worker: an outbox row holds a meeting's
+// title and its whole summary, and has to go on time whether or not a
+// receiver is configured today.
+func (rt *Runtime) startEventOutboxMaintenance() {
+	if rt.store == nil {
+		return
+	}
+	rt.store.maintainEventOutbox(rt.logger, time.Now().UTC())
+	interval := rt.eventOutboxMaintenanceInterval
+	if interval <= 0 {
+		interval = eventOutboxMaintenanceInterval
+	}
+	rt.workerWG.Add(1)
+	go func() {
+		defer rt.workerWG.Done()
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-rt.ctx.Done():
+				return
+			case <-ticker.C:
+				rt.store.maintainEventOutbox(rt.logger, time.Now().UTC())
+			}
+		}
+	}()
 }

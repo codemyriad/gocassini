@@ -84,7 +84,7 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 			rt.logger.Printf("publish fail update failed id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, updateErr)
 			return
 		}
-		rt.emitAttemptFailure(task.JobID, task.AttemptNumber, "publish", detail, nil)
+		rt.emitAttemptFailure(task.JobID, task.AttemptNumber, "publish", detail, rt.interruptedByShutdown())
 		return
 	}
 	// The destination is the sink's business, not the publish worker's. A sink
@@ -120,7 +120,7 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 			rt.logger.Printf("publish deliver failure update failed id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, updateErr)
 			return
 		}
-		rt.emitAttemptFailure(task.JobID, task.AttemptNumber, "publish", err.Error(), nil)
+		rt.emitAttemptFailure(task.JobID, task.AttemptNumber, "publish", err.Error(), rt.interruptedByShutdown())
 		return
 	}
 	rt.supportJournal.record(supportEvent{Event: "delivery_succeeded", Job: task.JobID, Attempt: task.AttemptNumber})

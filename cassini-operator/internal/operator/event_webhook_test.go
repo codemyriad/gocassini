@@ -42,8 +42,11 @@ func newTestEventWebhook(t *testing.T, store *Store, url, secret string, events 
 	settings := STTSettings{
 		EventWebhookURL:     url,
 		EventWebhookSecret:  secret,
-		EventWebhookEvents:  strings.Split(events, ","),
 		EventWebhookTimeout: "10s",
+	}
+	if events != "" {
+		// Empty means the whole catalog; a blank name in the list is refused.
+		settings.EventWebhookEvents = strings.Split(events, ",")
 	}
 	if err := normalizeEventWebhookSettings(&settings); err != nil {
 		t.Fatalf("normalizeEventWebhookSettings() error = %v", err)
@@ -590,4 +593,48 @@ func TestCancelledWorkerStopsQuietly(t *testing.T) {
 	if logs.Len() != 0 {
 		t.Fatalf("a cancelled worker logged %q", logs.String())
 	}
+}
+
+// The week of delivered rows left behind when a receiver is removed holds
+// titles and whole summaries. It has to go on time with no worker running.
+func TestEventOutboxIsMaintainedWithoutAReceiver(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	rt := &Runtime{ctx: ctx, store: newTestEventStore(t), logger: log.New(io.Discard, "", 0), eventOutboxMaintenanceInterval: 10 * time.Millisecond}
+	rt.configureEventWebhook(STTSettings{})
+	rt.startEventOutboxMaintenance()
+	defer func() { cancel(); rt.workerWG.Wait() }()
+
+	old := formatUTCString(time.Now().UTC().Add(-8 * 24 * time.Hour))
+	if _, err := rt.store.db.Exec(`INSERT INTO event_outbox (id, type, payload, created_at, attempts, next_attempt_at, receiver, delivered_at) VALUES ('evt_old', ?, '{}', ?, 1, ?, 'gone', ?)`,
+		eventRecordingStarted, old, old, old); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var rows int
+		if err := rt.store.db.QueryRow(`SELECT COUNT(*) FROM event_outbox`).Scan(&rows); err != nil {
+			t.Fatal(err)
+		}
+		if rows == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("a delivered row past its retention was never deleted with no receiver configured")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// Shutdown waits on the workers. A settings request still in flight must not
+// add one behind its back.
+func TestNoEventWebhookWorkerStartsAfterShutdownBegan(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rt := &Runtime{ctx: ctx, store: newTestEventStore(t), logger: log.New(io.Discard, "", 0)}
+	rt.stopEventWebhook()
+	rt.applyEventWebhook(eventTestSettings(t, "https://hooks.example/events", "secret"), false)
+	if rt.eventWebhook != nil {
+		t.Fatal("a delivery worker was started after shutdown began")
+	}
+	rt.workerWG.Wait()
 }

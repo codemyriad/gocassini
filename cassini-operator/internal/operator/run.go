@@ -176,9 +176,13 @@ type Runtime struct {
 	// and eventWebhookConfigured whether it was built at all.
 	eventWebhookKey        string
 	eventWebhookConfigured bool
-	recordMu               sync.Mutex
-	recordJobs             map[string]*recordProcessState
-	recordWG               sync.WaitGroup
+	// eventWebhookStopped is set by Shutdown: no worker is started after it.
+	eventWebhookStopped bool
+	// eventOutboxMaintenanceInterval is a test seam; zero means daily.
+	eventOutboxMaintenanceInterval time.Duration
+	recordMu                       sync.Mutex
+	recordJobs                     map[string]*recordProcessState
+	recordWG                       sync.WaitGroup
 	// buildExecutionMu is the final admission gate around the whole build. The
 	// configured worker count may exceed one, but CUDA recognizers and the RAM/
 	// VRAM headroom probe are not safely reservable between concurrent workers.
@@ -1008,6 +1012,7 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 	go rt.requeueDispatcher()
 	rt.startRetentionWorker()
 	rt.startMediaCleanupWorker()
+	rt.startEventOutboxMaintenance()
 	return rt
 }
 
@@ -1040,6 +1045,7 @@ func (rt *Runtime) searchDeps() searchDeps {
 
 func (rt *Runtime) Shutdown() {
 	rt.cancel()
+	rt.stopEventWebhook()
 	rt.workerWG.Wait()
 	// After the workers, so nothing is still writing rows when the handle goes.
 	if rt.searchStore != nil {
@@ -1461,7 +1467,11 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 			rt.logger.Printf("record fail update failed id=%s: %v", job.ID, updateErr)
 			return
 		}
-		rt.emitEvent(eventRecordingFailed, job.ID, job.CurrentAttemptNumber, map[string]any{"phase": "record", "error": failureText})
+		failure := map[string]any{"phase": "record", "error": failureText}
+		for key, value := range rt.interruptedByShutdown() {
+			failure[key] = value
+		}
+		rt.emitEvent(eventRecordingFailed, job.ID, job.CurrentAttemptNumber, failure)
 		return
 	}
 	canonicalRunPath, promoteErr := promoteRunBundle(rt.cfg.WorkRoot, result.ArtifactRunPath, job.ID)
