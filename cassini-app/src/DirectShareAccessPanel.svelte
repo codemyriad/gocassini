@@ -4,7 +4,7 @@
   import type { OperatorClient } from "./operator/client";
   import { accountSteps, isSetupAvailable, runSetupPlan } from "./operator/ncSetup";
   import { notifySetupChanged } from "./operator/setupSignal";
-  import type { StorageStatus } from "./operator/types";
+  import type { ShareAudience, StorageStatus } from "./operator/types";
 
   export let operatorClient: OperatorClient | null = null;
 
@@ -14,9 +14,9 @@
   export let disabled = false;
   // The parent owns the saved settings and Save button; this panel edits only
   // its draft. settingsLoaded keeps the radios inert until the draft exists.
-  export let shareAudience: "room" | "attendees" = "room";
+  export let shareAudience: ShareAudience = "room";
   export let settingsLoaded = true;
-  export let onShareAudienceChange: (value: "room" | "attendees") => void = () => {};
+  export let onShareAudienceChange: (value: ShareAudience) => void = () => {};
   let error = "";
   // Confirms a fix made from this panel; a healthy setup otherwise says nothing.
   let fixed = false;
@@ -75,6 +75,13 @@
           <span class="audience-description">{$LL.app.settings.direct_share.audience_attendees_description()}</span>
         </span>
       </label>
+      <label class="audience-option">
+        <input type="radio" name="recording-audience" checked={shareAudience === "moderators"} on:change={() => onShareAudienceChange("moderators")} disabled={disabled || !settingsLoaded} />
+        <span>
+          <strong>{$LL.app.settings.direct_share.audience_moderators_label()}</strong>
+          <span class="audience-description">{$LL.app.settings.direct_share.audience_moderators_description()}</span>
+        </span>
+      </label>
     </div>
     <div class="audience-effects" role="note">
       <p class="audience-effects-heading">{$LL.app.settings.direct_share.audience_effects_heading()}</p>
@@ -83,11 +90,20 @@
           <li>{$LL.common.audience.point_attendees()}</li>
           <li>{$LL.app.settings.direct_share.audience_late_joiners()}</li>
           <li>{$LL.app.settings.direct_share.audience_chat_skipped()}</li>
+        {:else if shareAudience === "moderators"}
+          <li>{$LL.common.audience.point_moderators()}</li>
+          <li>{$LL.app.settings.direct_share.audience_moderators_starter()}</li>
+          <li>{$LL.app.settings.direct_share.audience_moderators_one_to_one()}</li>
+          <li>{$LL.app.settings.direct_share.audience_chat_skipped()}</li>
         {:else}
           <li>{$LL.common.audience.point_participants()}</li>
         {/if}
         <li>{$LL.common.audience.point_guests()}</li>
-        <li>{$LL.common.audience.point_public_links()}</li>
+        {#if shareAudience === "moderators"}
+          <li>{$LL.common.audience.point_no_reshare()}</li>
+        {:else}
+          <li>{$LL.common.audience.point_public_links()}</li>
+        {/if}
       </ul>
     </div>
     <p class="audience-hint">{$LL.app.settings.direct_share.audience_applies()}</p>

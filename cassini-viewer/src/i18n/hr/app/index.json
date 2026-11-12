@@ -214,7 +214,9 @@
       "audience_notice": {
         "no_capture": "",
         "no_local": "",
-        "unknown": ""
+        "unknown": "",
+        "no_moderators": "",
+        "no_moderators_reshare_note": ""
       },
       "transcription": {
         "disabled": "Objavljeno bez transkripta: transkripcija je isključena",
@@ -250,6 +252,7 @@
         "held_back": "I dalje zadržano Nextcloudovim ograničenjem dijeljenja: {recipients}. Ponovno podijeli za 10 minuta.",
         "shared_again_held_back": "Ponovno podijeljeno. {held_back}",
         "shared_with_everyone": "Podijeljeno sa svima.",
+        "shared_with_moderators": "",
         "still_refused": "Ponovno podijeljeno. Nextcloud je i dalje odbio: {recipients} ({names}). Provjeri Doktor › Dijeljenje snimki.",
         "two_sentences": "{first} {second}"
       },
@@ -258,6 +261,7 @@
         "starter_refused_named": "Nije objavljeno: Nextcloud ju je odbio podijeliti s korisnikom {starter}, koji je pokrenuo snimanje.",
         "starter_refused_hint_rerun": "Popravi postavku koju navodi Doktor › Dijeljenje snimki, a zatim odaberi Ponovno pokreni. Ponovno pokretanje objavljuje snimku i dijeli je s cijelom sobom.",
         "starter_refused_hint_rerun_attendees": "",
+        "starter_refused_hint_rerun_moderators": "",
         "starter_refused_hint_no_rerun": "Popravi postavku koju navodi Doktor › Dijeljenje snimki kako bi se kasnije snimke objavljivale. Ovo izvođenje ne može se ponovno pokrenuti.",
         "held_back": "Objavljeno. Zadržano Nextcloudovim ograničenjem dijeljenja: {recipients}. Ponovno podijeli za 10 minuta ili povećaj ograničenje (Doktor › Dijeljenje snimki).",
         "partial_of": "Objavljeno, ali nije podijeljeno s {count:number|num} od {audience:number|num} {{audience:|primatelja||primatelja||primatelja}}",
@@ -267,8 +271,10 @@
         "also_held_back": "Nextcloudovo ograničenje dijeljenja zadržalo je i {count:number|num} {{|primatelja||primatelja||primatelja}}.",
         "reshare_button": "Ponovno podijeli sa sobom",
         "reshare_button_attendees": "",
+        "reshare_button_moderators": "",
         "reshare_note": "Dodaje sve koji nedostaju, uključujući one koji su ručno uklonjeni. Tko dijeljenja prihvaća ručno, naći će snimku na čekanju u kartici Pregledaj.",
-        "reshare_note_attendees": ""
+        "reshare_note_attendees": "",
+        "reshare_note_moderators": ""
       }
     },
     "run_stages": {
@@ -1206,6 +1212,10 @@
       "audience_room_description": "",
       "audience_attendees_label": "",
       "audience_attendees_description": "",
+      "audience_moderators_label": "",
+      "audience_moderators_description": "",
+      "audience_moderators_starter": "",
+      "audience_moderators_one_to_one": "",
       "audience_effects_heading": "",
       "audience_late_joiners": "",
       "audience_chat_skipped": "",

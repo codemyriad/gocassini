@@ -53,8 +53,11 @@ const en = {
       intro: "Nextcloud Files controls who can read each recording.",
       point_participants: "Each recording is shared with all of the Talk room's participants, whether they were present on the call or not.",
       point_attendees: "Each recording is shared only with the people who were in the call while it was being recorded.",
-      point_mixed: "Some recordings here are shared with the whole Talk room and some only with the people who were in the call.",
+      point_moderators: "Each recording is shared only with the Talk room's owner and moderators, whether they were on the call or not.",
+      point_mixed: "Recordings here are not all shared with the same people: some with the whole Talk room, some with fewer people.",
       point_guests: "Guests without a Nextcloud account can't open it.",
+      // In place of the next one where recipients get a read-only share.
+      point_no_reshare: "Cassini never creates a public link, and the people who receive a recording cannot reshare the file.",
       point_public_links: "Cassini never creates a public link. In public rooms, people can reshare the file if this Nextcloud allows it.",
     },
     // The administrator's surface and its sections, as named in its navigation.

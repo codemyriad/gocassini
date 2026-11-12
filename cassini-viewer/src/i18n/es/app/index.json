@@ -214,7 +214,9 @@
       "audience_notice": {
         "no_capture": "",
         "no_local": "",
-        "unknown": ""
+        "unknown": "",
+        "no_moderators": "",
+        "no_moderators_reshare_note": ""
       },
       "transcription": {
         "disabled": "Publicada sin transcripción: la transcripción está desactivada",
@@ -250,6 +252,7 @@
         "held_back": "El límite de uso compartido de Nextcloud sigue reteniendo: {recipients}. Vuelve a compartir dentro de 10 minutos.",
         "shared_again_held_back": "Compartida de nuevo. {held_back}",
         "shared_with_everyone": "Compartida con todos.",
+        "shared_with_moderators": "",
         "still_refused": "Compartida de nuevo. Nextcloud sigue rechazando {recipients} ({names}). Revisa Diagnóstico › Uso compartido de grabaciones.",
         "two_sentences": "{first} {second}"
       },
@@ -258,6 +261,7 @@
         "starter_refused_named": "No publicada: Nextcloud se negó a compartirla con {starter}, que inició la grabación.",
         "starter_refused_hint_rerun": "Corrige el ajuste que indica Diagnóstico › Uso compartido de grabaciones y luego pulsa Volver a ejecutar. Así se publica y se comparte con toda la sala.",
         "starter_refused_hint_rerun_attendees": "",
+        "starter_refused_hint_rerun_moderators": "",
         "starter_refused_hint_no_rerun": "Corrige el ajuste que indica Diagnóstico › Uso compartido de grabaciones para que las próximas grabaciones se publiquen. Esta ejecución no se puede volver a ejecutar.",
         "held_back": "Publicada. Retenidos por el límite de uso compartido de Nextcloud: {recipients}. Vuelve a compartir dentro de 10 minutos o aumenta el límite (Diagnóstico › Uso compartido de grabaciones).",
         "partial_of": "Publicada, pero no compartida con {count:number|num} de {audience:number|num} {{audience:destinatario|destinatarios}}",
@@ -267,8 +271,10 @@
         "also_held_back": "El límite de uso compartido de Nextcloud también retuvo {count:number|num} {{destinatario|destinatarios}}.",
         "reshare_button": "Volver a compartir con la sala",
         "reshare_button_attendees": "",
+        "reshare_button_moderators": "",
         "reshare_note": "Añade a quien falte, incluido cualquiera que se haya quitado a mano. Quienes aceptan a mano los recursos compartidos la encontrarán esperando en Explorar.",
-        "reshare_note_attendees": ""
+        "reshare_note_attendees": "",
+        "reshare_note_moderators": ""
       }
     },
     "run_stages": {
@@ -1206,6 +1212,10 @@
       "audience_room_description": "",
       "audience_attendees_label": "",
       "audience_attendees_description": "",
+      "audience_moderators_label": "",
+      "audience_moderators_description": "",
+      "audience_moderators_starter": "",
+      "audience_moderators_one_to_one": "",
       "audience_effects_heading": "",
       "audience_late_joiners": "",
       "audience_chat_skipped": "",

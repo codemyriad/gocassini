@@ -214,7 +214,9 @@
       "audience_notice": {
         "no_capture": "",
         "no_local": "",
-        "unknown": ""
+        "unknown": "",
+        "no_moderators": "",
+        "no_moderators_reshare_note": ""
       },
       "transcription": {
         "disabled": "Udgivet uden transskription: Transskription er slået fra",
@@ -250,6 +252,7 @@
         "held_back": "Stadig holdt tilbage af Nextclouds delingsgrænse: {recipients}. Del igen om 10 minutter.",
         "shared_again_held_back": "Delt igen. {held_back}",
         "shared_with_everyone": "Delt med alle.",
+        "shared_with_moderators": "",
         "still_refused": "Delt igen. Nextcloud afviste stadig {recipients} ({names}). Tjek Diagnose › Deling af optagelser.",
         "two_sentences": "{first} {second}"
       },
@@ -258,6 +261,7 @@
         "starter_refused_named": "Ikke udgivet: Nextcloud nægtede at dele den med {starter}, som startede optagelsen.",
         "starter_refused_hint_rerun": "Ret den indstilling, som Diagnose › Deling af optagelser nævner, og vælg så »Kør igen«. »Kør igen« udgiver den og deler den med hele samtalen.",
         "starter_refused_hint_rerun_attendees": "",
+        "starter_refused_hint_rerun_moderators": "",
         "starter_refused_hint_no_rerun": "Ret den indstilling, som Diagnose › Deling af optagelser nævner, så senere optagelser bliver udgivet. Denne kørsel kan ikke køres igen.",
         "held_back": "Udgivet. Holdt tilbage af Nextclouds delingsgrænse: {recipients}. Del igen om 10 minutter, eller hæv grænsen (Diagnose › Deling af optagelser).",
         "partial_of": "Udgivet, men ikke delt med {count:number|num} af {audience:number|num} {{audience:modtager|modtagere}}",
@@ -267,8 +271,10 @@
         "also_held_back": "Nextclouds delingsgrænse holdt også {count:number|num} {{modtager|modtagere}} tilbage.",
         "reshare_button": "Del igen med samtalen",
         "reshare_button_attendees": "",
+        "reshare_button_moderators": "",
         "reshare_note": "Tilføjer dem, der mangler, også dem, der er fjernet manuelt. Personer, der accepterer delinger manuelt, finder den ventende under Gennemse.",
-        "reshare_note_attendees": ""
+        "reshare_note_attendees": "",
+        "reshare_note_moderators": ""
       }
     },
     "run_stages": {
@@ -1206,6 +1212,10 @@
       "audience_room_description": "",
       "audience_attendees_label": "",
       "audience_attendees_description": "",
+      "audience_moderators_label": "",
+      "audience_moderators_description": "",
+      "audience_moderators_starter": "",
+      "audience_moderators_one_to_one": "",
       "audience_effects_heading": "",
       "audience_late_joiners": "",
       "audience_chat_skipped": "",

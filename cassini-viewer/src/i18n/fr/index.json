@@ -28,8 +28,10 @@
       "intro": "Nextcloud Fichiers détermine qui peut lire chaque enregistrement.",
       "point_participants": "Chaque enregistrement est partagé avec tous les participants de la conversation Talk, qu’ils aient été présents à l’appel ou non.",
       "point_attendees": "",
+      "point_moderators": "",
       "point_mixed": "",
       "point_guests": "Les invités sans compte Nextcloud ne peuvent pas l’ouvrir.",
+      "point_no_reshare": "",
       "point_public_links": "Cassini ne crée jamais de lien public. Dans les conversations publiques, les participants peuvent repartager le fichier si ce Nextcloud l’autorise."
     },
     "place": {

@@ -214,7 +214,9 @@
       "audience_notice": {
         "no_capture": "",
         "no_local": "",
-        "unknown": ""
+        "unknown": "",
+        "no_moderators": "",
+        "no_moderators_reshare_note": ""
       },
       "transcription": {
         "disabled": "Ohne Transkript veröffentlicht: Die Transkription ist ausgeschaltet",
@@ -250,6 +252,7 @@
         "held_back": "Weiterhin durch das Freigabelimit von Nextcloud zurückgehalten: {recipients}. Teilen Sie in 10 Minuten erneut.",
         "shared_again_held_back": "Erneut geteilt. {held_back}",
         "shared_with_everyone": "Mit allen geteilt.",
+        "shared_with_moderators": "",
         "still_refused": "Erneut geteilt. Nextcloud hat {recipients} weiterhin abgelehnt ({names}). Prüfen Sie Diagnose › Teilen von Aufnahmen.",
         "two_sentences": "{first} {second}"
       },
@@ -258,6 +261,7 @@
         "starter_refused_named": "Nicht veröffentlicht: Nextcloud hat sich geweigert, sie mit {starter} zu teilen, der oder die die Aufnahme gestartet hat.",
         "starter_refused_hint_rerun": "Korrigieren Sie die Einstellung, die Diagnose › Teilen von Aufnahmen nennt, und klicken Sie dann auf „Erneut ausführen“. Das veröffentlicht sie und teilt sie mit der ganzen Unterhaltung.",
         "starter_refused_hint_rerun_attendees": "",
+        "starter_refused_hint_rerun_moderators": "",
         "starter_refused_hint_no_rerun": "Korrigieren Sie die Einstellung, die Diagnose › Teilen von Aufnahmen nennt, damit spätere Aufnahmen veröffentlicht werden. Dieser Durchlauf kann nicht erneut ausgeführt werden.",
         "held_back": "Veröffentlicht. Durch das Freigabelimit von Nextcloud zurückgehalten: {recipients}. Teilen Sie in 10 Minuten erneut oder erhöhen Sie das Limit (Diagnose › Teilen von Aufnahmen).",
         "partial_of": "Veröffentlicht, aber nicht mit {count:number|num} von {audience:number|num} {{audience:Empfänger|Empfängern}} geteilt",
@@ -267,8 +271,10 @@
         "also_held_back": "Das Freigabelimit von Nextcloud hat außerdem {count:number|num} {{Empfänger|Empfänger}} zurückgehalten.",
         "reshare_button": "Erneut mit der Unterhaltung teilen",
         "reshare_button_attendees": "",
+        "reshare_button_moderators": "",
         "reshare_note": "Fügt alle hinzu, die fehlen, auch manuell entfernte. Wer Freigaben manuell annimmt, findet sie wartend unter „Durchsuchen“.",
-        "reshare_note_attendees": ""
+        "reshare_note_attendees": "",
+        "reshare_note_moderators": ""
       }
     },
     "run_stages": {
@@ -1206,6 +1212,10 @@
       "audience_room_description": "",
       "audience_attendees_label": "",
       "audience_attendees_description": "",
+      "audience_moderators_label": "",
+      "audience_moderators_description": "",
+      "audience_moderators_starter": "",
+      "audience_moderators_one_to_one": "",
       "audience_effects_heading": "",
       "audience_late_joiners": "",
       "audience_chat_skipped": "",

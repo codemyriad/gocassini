@@ -13,7 +13,7 @@ import (
 // Capture the Talk audience while a recording is active. Room membership can
 // change later, so publication shares the recording with the users, groups and
 // Teams recorded at start and stop, plus the local accounts the recorder saw
-// during the call (#479). The .opus lists speakers, which omits
+// during the call (#479; not in moderator mode). The .opus lists speakers, which omits
 // silent participants and room-level grants.
 
 // roomAudienceTimeout bounds one capture. Generous relative to the work because
@@ -33,8 +33,12 @@ const (
 // language; English is only the operator's fallback surface (#472 review).
 const (
 	jobAudienceNoticeNoCapture = "no_attendee_list"
-	jobAudienceNoticeNoLocal   = "no_local_attendees"
-	jobAudienceNoticeUnknown   = "unknown_audience_mode"
+	// jobAudienceNoticeNoModerators: moderator mode never read the room's
+	// moderators, so only the starter received the recording. A re-share reads
+	// them then (#480).
+	jobAudienceNoticeNoModerators = "no_moderator_list"
+	jobAudienceNoticeNoLocal      = "no_local_attendees"
+	jobAudienceNoticeUnknown      = "unknown_audience_mode"
 )
 
 // storedAudiencePrincipal is the on-disk shape of one grantable principal.
@@ -203,6 +207,31 @@ UPDATE jobs SET audience_notice = ?, updated_at = ? WHERE id = ?`,
 	return nil
 }
 
+// audienceFetcher is the Talk lookup for a saved audience mode.
+func (rt *Runtime) audienceFetcher(mode string) talkParticipantsFetcher {
+	switch mode {
+	case shareAudienceAttendees:
+		return rt.fetchTalkAttendees
+	case shareAudienceModerators:
+		return rt.fetchTalkModerators
+	default:
+		return rt.fetchTalkParticipants
+	}
+}
+
+// jobAudienceIncludesAttendees says whether the people the recorder saw in the
+// call belong in a job's audience. Moderator mode leaves them out: being in
+// the call does not make somebody a recipient there (#480). An unreadable job
+// is treated the same way, so a failed read cannot widen a recording.
+func (rt *Runtime) jobAudienceIncludesAttendees(jobID string) bool {
+	job, err := rt.store.GetJob(context.Background(), jobID)
+	if err != nil {
+		rt.logger.Printf("seen participants merge skipped id=%s: read job: %v", jobID, err)
+		return false
+	}
+	return normalizeSavedAudience(job.AudienceMode) != shareAudienceModerators
+}
+
 // captureRoomAudience resolves who had access to the room and records it.
 //
 // Best-effort and entirely off the critical path: it runs in its own goroutine
@@ -220,7 +249,8 @@ UPDATE jobs SET audience_notice = ?, updated_at = ? WHERE id = ?`,
 // The roster is the room's participants (the default) or, when the operator's
 // "Share recordings with" setting is "only people in the call", just the
 // participants Talk reports with the in-call bit set. The second is what keeps
-// a standing channel's non-attendees out of a meeting's shares.
+// a standing channel's non-attendees out of a meeting's shares. "Only the
+// room's moderators" keeps the owner and moderators instead.
 func (rt *Runtime) captureRoomAudience(jobID, owner, roomToken, phase string) {
 	// The mode is the one saved on the job at recording start, not the current
 	// setting: switching settings mid-recording must not add the whole room to
@@ -230,11 +260,7 @@ func (rt *Runtime) captureRoomAudience(jobID, owner, roomToken, phase string) {
 		rt.logger.Printf("room audience capture skipped id=%s phase=%s: read job: %v", jobID, phase, err)
 		return
 	}
-	attendeesOnly := normalizeSavedAudience(job.AudienceMode) == shareAudienceAttendees
-	fetch := rt.fetchTalkParticipants
-	if attendeesOnly {
-		fetch = rt.fetchTalkAttendees
-	}
+	fetch := rt.audienceFetcher(normalizeSavedAudience(job.AudienceMode))
 	if fetch == nil {
 		return
 	}

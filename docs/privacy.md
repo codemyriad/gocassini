@@ -123,7 +123,8 @@ artifacts:
   and teams that had access to the conversation while it was being recorded
   (the default), or — when the administrator sets **Share recordings with: Only
   people who were in the call** — only the local accounts Talk reports in the
-  call. Either roster is captured when the recording starts and again when it
+  call, or, with **Only the room's moderators**, only the room's owner and
+  moderators. The roster is captured when the recording starts and again when it
   stops; in attendee mode the recorder also writes every local account it saw in
   the call into the run bundle, and the operator merges that list before
   publishing. This is what lets Cassini later explicitly narrow an
@@ -132,7 +133,9 @@ artifacts:
   published; if
   attendee mode has no captured roster at all, publication shares only with the
   person who started the recording and records a warning instead of looking the
-  room up again. Guests, email invitees and federated participants are not
+  room up again. In moderator mode the recorder's in-call list is not merged,
+  and a missing roster is read only when an administrator re-shares the
+  recording. Guests, email invitees and federated participants are not
   recorded: they have no local account to grant, so there is nothing to keep.
   It lives on the job row, which outlives the recording itself — job history is
   kept after artifacts are pruned.

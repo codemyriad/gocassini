@@ -214,7 +214,9 @@
       "audience_notice": {
         "no_capture": "",
         "no_local": "",
-        "unknown": ""
+        "unknown": "",
+        "no_moderators": "",
+        "no_moderators_reshare_note": ""
       },
       "transcription": {
         "disabled": "Gepubliceerd zonder transcriptie: transcriberen staat uit",
@@ -250,6 +252,7 @@
         "held_back": "Nog steeds tegengehouden door de deellimiet van Nextcloud: {recipients}. Deel over 10 minuten opnieuw.",
         "shared_again_held_back": "Opnieuw gedeeld. {held_back}",
         "shared_with_everyone": "Met iedereen gedeeld.",
+        "shared_with_moderators": "",
         "still_refused": "Opnieuw gedeeld. Nextcloud weigerde nog steeds {recipients} ({names}). Controleer Diagnose › Delen van opnames.",
         "two_sentences": "{first} {second}"
       },
@@ -258,6 +261,7 @@
         "starter_refused_named": "Niet gepubliceerd: Nextcloud weigerde het te delen met {starter}, die de opname startte.",
         "starter_refused_hint_rerun": "Herstel de instelling die Diagnose › Delen van opnames noemt en kies daarna Opnieuw uitvoeren. Dat publiceert de opname en deelt hem met de hele ruimte.",
         "starter_refused_hint_rerun_attendees": "",
+        "starter_refused_hint_rerun_moderators": "",
         "starter_refused_hint_no_rerun": "Herstel de instelling die Diagnose › Delen van opnames noemt, zodat latere opnames worden gepubliceerd. Deze uitvoering kan niet opnieuw worden uitgevoerd.",
         "held_back": "Gepubliceerd. Tegengehouden door de deellimiet van Nextcloud: {recipients}. Deel over 10 minuten opnieuw, of verhoog de limiet (Diagnose › Delen van opnames).",
         "partial_of": "Gepubliceerd, maar niet gedeeld met {count:number|num} van de {audience:number|num} {{audience:ontvanger|ontvangers}}",
@@ -267,8 +271,10 @@
         "also_held_back": "De deellimiet van Nextcloud hield ook {count:number|num} {{ontvanger|ontvangers}} tegen.",
         "reshare_button": "Opnieuw delen met de ruimte",
         "reshare_button_attendees": "",
+        "reshare_button_moderators": "",
         "reshare_note": "Voegt iedereen toe die ontbreekt, ook wie met de hand is verwijderd. Wie shares handmatig accepteert, vindt hem wachtend in Bladeren.",
-        "reshare_note_attendees": ""
+        "reshare_note_attendees": "",
+        "reshare_note_moderators": ""
       }
     },
     "run_stages": {
@@ -1206,6 +1212,10 @@
       "audience_room_description": "",
       "audience_attendees_label": "",
       "audience_attendees_description": "",
+      "audience_moderators_label": "",
+      "audience_moderators_description": "",
+      "audience_moderators_starter": "",
+      "audience_moderators_one_to_one": "",
       "audience_effects_heading": "",
       "audience_late_joiners": "",
       "audience_chat_skipped": "",

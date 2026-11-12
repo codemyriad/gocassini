@@ -193,9 +193,9 @@ function readCount(value: unknown): number {
 // uses Nextcloud shares, regardless of its room's visibility. An operator that
 // reports the audience option answers directly; an older one that only reports
 // the direct-share mode is the default room-participants audience.
-export type RecordingAudience = "" | "participants" | "attendees";
+export type RecordingAudience = "" | "participants" | "attendees" | "moderators";
 export function recordingAudience(health: SetupHealth | null): RecordingAudience {
-  if (health?.audience === "participants" || health?.audience === "attendees") return health.audience;
+  if (health?.audience === "participants" || health?.audience === "attendees" || health?.audience === "moderators") return health.audience;
   return health?.mode === "direct_shares" ? "participants" : "";
 }
 

@@ -141,6 +141,9 @@ const operator = {
       no_capture: "No attendee list was captured; only the starter received this recording.",
       no_local: "No local attendees were captured; only the starter received this recording.",
       unknown: "This recording's audience mode was not recognised; only the starter received this recording.",
+      no_moderators: "Cassini could not read this room's moderators during the call; only the starter received this recording.",
+      // Under the "Re-share with moderators" button on that notice.
+      no_moderators_reshare_note: "Shares the recording with the room's moderators.",
     },
     transcription: {
       disabled: "Published without a transcript: transcription is turned off",
@@ -189,6 +192,7 @@ const operator = {
       // {held_back}: the sentence above.
       shared_again_held_back: "Shared again. {held_back}",
       shared_with_everyone: "Shared with everyone.",
+      shared_with_moderators: "Shared with the room's moderators.",
       // {names}: who, e.g. "bob, carol and dave".
       still_refused:
         "Shared again. Nextcloud still refused {recipients} ({names}). Check Doctor › Recording sharing.",
@@ -203,6 +207,8 @@ const operator = {
         "Fix the setting Doctor › Recording sharing names, then Rerun. Rerun publishes it and shares it with the whole room.",
       starter_refused_hint_rerun_attendees:
         "Fix the setting Doctor › Recording sharing names, then Rerun. Rerun publishes it and shares it with the call's attendees.",
+      starter_refused_hint_rerun_moderators:
+        "Fix the setting Doctor › Recording sharing names, then Rerun. Rerun publishes it and shares it with the room's moderators.",
       starter_refused_hint_no_rerun:
         "Fix the setting Doctor › Recording sharing names so later recordings publish. This run cannot be rerun.",
       // {recipients}: "1 recipient" or "3 recipients".
@@ -219,10 +225,13 @@ const operator = {
       also_held_back: "Nextcloud's share limit also held back {count:number|num} {{recipient|recipients}}.",
       reshare_button: "Re-share with the room",
       reshare_button_attendees: "Re-share with call attendees",
+      reshare_button_moderators: "Re-share with moderators",
       reshare_note:
         "Adds whoever is missing, including anyone removed by hand. People who accept shares by hand will find it waiting in Browse.",
       reshare_note_attendees:
         "Adds whoever was in the call and is missing, including anyone removed by hand. People who accept shares by hand will find it waiting in Browse.",
+      reshare_note_moderators:
+        "Adds any of the room's moderators who are missing, including anyone removed by hand. People who accept shares by hand will find it waiting in Browse.",
     },
   },
   // operator/runStages.ts: the five steps of a run, on its stage bar in

@@ -32,7 +32,7 @@ const talkParticipantsTimeout = 15 * time.Second
 // talkParticipantsFetcher returns a fetcher backed by the Talk OCS participants
 // API, or nil when the ExApp environment is absent.
 func (c ExAppConfig) talkParticipantsFetcher() talkParticipantsFetcher {
-	return c.talkPrincipalFetcher(false)
+	return c.talkPrincipalFetcher(shareAudienceRoom)
 }
 
 // talkAttendeesFetcher returns the same participants, narrowed to the people
@@ -41,10 +41,16 @@ func (c ExAppConfig) talkParticipantsFetcher() talkParticipantsFetcher {
 // call or not; this is the option that shares with the call rather than the
 // channel.
 func (c ExAppConfig) talkAttendeesFetcher() talkParticipantsFetcher {
-	return c.talkPrincipalFetcher(true)
+	return c.talkPrincipalFetcher(shareAudienceAttendees)
 }
 
-func (c ExAppConfig) talkPrincipalFetcher(attendeesOnly bool) talkParticipantsFetcher {
+// talkModeratorsFetcher returns the room's owner and moderators, whether or
+// not they are in the call.
+func (c ExAppConfig) talkModeratorsFetcher() talkParticipantsFetcher {
+	return c.talkPrincipalFetcher(shareAudienceModerators)
+}
+
+func (c ExAppConfig) talkPrincipalFetcher(audience string) talkParticipantsFetcher {
 	if !c.appAPIActive() {
 		return nil
 	}
@@ -54,7 +60,7 @@ func (c ExAppConfig) talkPrincipalFetcher(attendeesOnly bool) talkParticipantsFe
 		if err != nil {
 			return nil, err
 		}
-		return participantMappings(rows, attendeesOnly), nil
+		return participantMappings(rows, audience), nil
 	}
 }
 
@@ -112,6 +118,9 @@ type participantRow struct {
 	// the call, while the higher bits only describe published audio/video. The
 	// attendee option keeps bit 1; the room option ignores the field.
 	InCall int `json:"inCall"`
+	// ParticipantType is Talk's role in the room; the moderator option keeps
+	// the owner and moderators.
+	ParticipantType int `json:"participantType"`
 }
 
 // participantInCallFlag is the in-call bit of Talk's inCall flags.
@@ -119,10 +128,11 @@ const participantInCallFlag = 1
 
 // participantMappings deduplicates the locally shareable Talk actors.
 //
-// attendeesOnly keeps only the actors Talk reports as in the call. A group or
-// Team row is a room grant, not a person on the call, so it is filtered out
-// with the room-presence rows; the starter is added by the caller regardless.
-func participantMappings(rows []participantRow, attendeesOnly bool) []sharePrincipal {
+// audience narrows the rows. Attendees keeps only the actors Talk reports as
+// in the call; moderators keeps the room's owner and moderators. Both are
+// people: a group or Team row is a room grant, so it is left out. The starter
+// is added by the caller regardless.
+func participantMappings(rows []participantRow, audience string) []sharePrincipal {
 	seen := map[string]bool{}
 	out := make([]sharePrincipal, 0, len(rows))
 	for _, row := range rows {
@@ -130,11 +140,15 @@ func participantMappings(rows []participantRow, attendeesOnly bool) []sharePrinc
 		if !ok {
 			continue
 		}
-		// Attendees are people in the call: a group or Team is a room-level
-		// grant, never a person on the call, so it is left out with the
-		// room-presence rows.
-		if attendeesOnly && (row.InCall&participantInCallFlag == 0 || mapType != "user") {
-			continue
+		switch audience {
+		case shareAudienceAttendees:
+			if mapType != "user" || row.InCall&participantInCallFlag == 0 {
+				continue
+			}
+		case shareAudienceModerators:
+			if mapType != "user" || (row.ParticipantType != talkParticipantOwner && row.ParticipantType != talkParticipantModerator) {
+				continue
+			}
 		}
 		id := strings.TrimSpace(row.ActorID)
 		if id == "" {

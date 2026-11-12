@@ -76,6 +76,9 @@ const (
 
 	shareAudienceRoom      = "room"
 	shareAudienceAttendees = "attendees"
+	// shareAudienceModerators shares with the room's owner and moderators,
+	// whether or not they were in the call (#480).
+	shareAudienceModerators = "moderators"
 
 	envSTTQuality           = "CASSINI_STT_QUALITY"
 	envSTTNumThreads        = "CASSINI_STT_NUM_THREADS"
@@ -278,8 +281,10 @@ func normalizeShareAudience(value string) (string, error) {
 		return shareAudienceRoom, nil
 	case shareAudienceAttendees:
 		return shareAudienceAttendees, nil
+	case shareAudienceModerators:
+		return shareAudienceModerators, nil
 	default:
-		return "", fmt.Errorf("share_audience must be room or attendees (got %q)", value)
+		return "", fmt.Errorf("share_audience must be room, attendees or moderators (got %q)", value)
 	}
 }
 

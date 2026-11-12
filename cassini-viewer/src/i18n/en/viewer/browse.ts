@@ -187,6 +187,7 @@ const browse = {
     rooms_heading: "Rooms",
     audience_participants: "Shared with participants",
     audience_attendees: "Shared with call attendees",
+    audience_moderators: "Shared with moderators",
     audience_mixed: "Shared with each recording's audience",
     all_meetings: "All meetings",
     // {name} is the room's name.

@@ -214,7 +214,9 @@
       "audience_notice": {
         "no_capture": "",
         "no_local": "",
-        "unknown": ""
+        "unknown": "",
+        "no_moderators": "",
+        "no_moderators_reshare_note": ""
       },
       "transcription": {
         "disabled": "Publicada sem transcrição: a transcrição está desativada",
@@ -250,6 +252,7 @@
         "held_back": "Ainda retidos pelo limite de partilha do Nextcloud: {recipients}. Partilhe novamente daqui a 10 minutos.",
         "shared_again_held_back": "Partilhada novamente. {held_back}",
         "shared_with_everyone": "Partilhada com todos.",
+        "shared_with_moderators": "",
         "still_refused": "Partilhada novamente. O Nextcloud continuou a recusar {recipients} ({names}). Verifique Diagnóstico › Partilha das gravações.",
         "two_sentences": "{first} {second}"
       },
@@ -258,6 +261,7 @@
         "starter_refused_named": "Não publicada: o Nextcloud recusou partilhá-la com {starter}, que iniciou a gravação.",
         "starter_refused_hint_rerun": "Corrija a definição indicada em Diagnóstico › Partilha das gravações e depois execute novamente. Executar novamente publica-a e partilha-a com toda a sala.",
         "starter_refused_hint_rerun_attendees": "",
+        "starter_refused_hint_rerun_moderators": "",
         "starter_refused_hint_no_rerun": "Corrija a definição indicada em Diagnóstico › Partilha das gravações para que as próximas gravações sejam publicadas. Esta execução não pode ser repetida.",
         "held_back": "Publicada. Retidos pelo limite de partilha do Nextcloud: {recipients}. Partilhe novamente daqui a 10 minutos ou aumente o limite (Diagnóstico › Partilha das gravações).",
         "partial_of": "Publicada, mas não partilhada com {count:number|num} de {audience:number|num} {{audience:|destinatário|||destinatários|destinatários}}",
@@ -267,8 +271,10 @@
         "also_held_back": "O limite de partilha do Nextcloud também reteve {count:number|num} {{|destinatário|||destinatários|destinatários}}.",
         "reshare_button": "Partilhar novamente com a sala",
         "reshare_button_attendees": "",
+        "reshare_button_moderators": "",
         "reshare_note": "Adiciona quem estiver em falta, incluindo quem tenha sido removido manualmente. Quem aceita partilhas manualmente vai encontrá-la à espera em Navegar.",
-        "reshare_note_attendees": ""
+        "reshare_note_attendees": "",
+        "reshare_note_moderators": ""
       }
     },
     "run_stages": {
@@ -1206,6 +1212,10 @@
       "audience_room_description": "",
       "audience_attendees_label": "",
       "audience_attendees_description": "",
+      "audience_moderators_label": "",
+      "audience_moderators_description": "",
+      "audience_moderators_starter": "",
+      "audience_moderators_one_to_one": "",
       "audience_effects_heading": "",
       "audience_late_joiners": "",
       "audience_chat_skipped": "",

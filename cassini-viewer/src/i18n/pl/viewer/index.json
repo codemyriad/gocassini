@@ -141,6 +141,7 @@
       "rooms_heading": "Pokoje",
       "audience_participants": "Udostępnione uczestnikom",
       "audience_attendees": "",
+      "audience_moderators": "",
       "audience_mixed": "",
       "all_meetings": "Wszystkie spotkania",
       "rename_room_named": "Zmień nazwę pokoju {name}",

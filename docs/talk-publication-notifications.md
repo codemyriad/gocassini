@@ -3,9 +3,9 @@
 After the first successful publication of a Talk recording, Cassini posts
 a named viewer link in its originating room and in **Shared items → Other**.
 
-In **Only people who were in the call** audience mode the room chat post is
-skipped: the whole room would see the recording's title and link, which is the
-audience that mode excludes. The stopped callback and the direct file shares
+In the **Only people who were in the call** and **Only the room's moderators**
+audience modes the room chat post is skipped: the whole room would see the
+recording's title and link, which is the audience those modes exclude. The stopped callback and the direct file shares
 still run.
 
 For example: `Meeting recording available: Weekly planning · 13 Oct · 32 min · Speakers: Alex, Chris, Ivan +1`.

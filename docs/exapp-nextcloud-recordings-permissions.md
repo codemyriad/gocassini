@@ -31,6 +31,19 @@ roster was captured at all, the recording is shared only with the person who
 started it and the run carries a warning. Attendee mode also skips the Talk room
 chat post, whose title and link the whole room would see.
 
+A third choice, **Only the room's moderators**, shares each recording with the
+room's owner and moderators who have a local Nextcloud account, whether or not
+they were in the call, plus the person who started it. Talk only lets a
+moderator record, so the starter is normally one of them. In a one-to-one
+conversation Talk makes both people owners, so both receive the recording. Other members of the
+room receive nothing, the recorder's in-call list is not used, and the room
+chat post is skipped. The shares are read-only, in a public room too, so a
+recipient cannot reshare the file. The moderators are read when the recording starts and
+stops. If neither read worked, the recording is shared only with the person who
+started it and the run carries a notice; **Re-share with moderators** on that
+run reads the room's moderators at that moment, saves that list for the
+recording and shares with them.
+
 ## Access checks
 
 The meeting list starts from the caller's current Nextcloud shares. Cassini's

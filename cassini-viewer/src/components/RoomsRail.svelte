@@ -118,7 +118,7 @@
   $: if (!roomsLoading) remember(ROOMS_KEY, rooms.length);
   $: if (tagRows) remember(TAGS_KEY, tagRows.length);
 
-  export let audience: "" | "participants" | "attendees" | "mixed" = "";
+  export let audience: "" | "participants" | "attendees" | "moderators" | "mixed" = "";
   $: text = $LL.viewer.browse.rooms_rail;
   $: AUDIENCE = {
     participants: {
@@ -133,6 +133,14 @@
         $LL.common.audience.point_attendees(),
         $LL.common.audience.point_guests(),
         $LL.common.audience.point_public_links(),
+      ],
+    },
+    moderators: {
+      label: text.audience_moderators(),
+      points: [
+        $LL.common.audience.point_moderators(),
+        $LL.common.audience.point_guests(),
+        $LL.common.audience.point_no_reshare(),
       ],
     },
     mixed: {
