@@ -93,6 +93,7 @@ jobs:
             ${{ runner.temp }}/canary/info.original.xml
             ${{ runner.temp }}/canary/result/compatibility.json
             ${{ runner.temp }}/canary/result/browser/
+            ${{ runner.temp }}/canary/result/model-setup/
             ${{ runner.temp }}/canary/result/observe.log
             ${{ runner.temp }}/canary/result/phase-timings.jsonl
           retention-days: 14
