@@ -242,7 +242,7 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 	if summaryOutcomes != nil {
 		rt.emitSummaryOutcomes(task, builtMeetingPath, *summaryOutcomes)
 	}
-	rt.emitEvent(eventBuildCompleted, task.JobID, task.AttemptNumber, map[string]any{"meeting_title": meetingTitle})
+	rt.emitRecordingEvent(eventBuildCompleted, task.JobID, task.AttemptNumber, map[string]any{"meeting_title": meetingTitle})
 	rt.logger.Printf("build succeeded id=%s attempt=%d worker=%d attempt_meeting=%s canonical_meeting=%s seal_queued_at=%s", task.JobID, task.AttemptNumber, workerIndex, builtMeetingPath, canonicalMeetingPath, finishedAt)
 }
 
@@ -254,12 +254,17 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 // only when asked; the copy's record of an earlier attempt's summary is not a
 // new one.
 func (rt *Runtime) emitSummaryOutcomes(task buildTask, meetingPath string, outcomes stepOutcomes) {
+	eventType := map[string]string{"completed": eventSummaryCompleted, "failed": eventSummaryFailed}[outcomes.SummaryStatus]
+	// Nothing below is read unless a receiver is going to be told.
+	if eventType == "" || !rt.eventEnabled(eventType) {
+		return
+	}
 	if attempt, err := rt.store.GetJobAttempt(context.Background(), task.JobID, task.AttemptNumber); err == nil &&
 		attempt.TriggerKind == triggerKindRefine && attempt.SummaryFinishedAt == "" {
 		return
 	}
-	switch outcomes.SummaryStatus {
-	case "completed":
+	switch eventType {
+	case eventSummaryCompleted:
 		markdown := ""
 		if raw, err := os.ReadFile(filepath.Join(meetingPath, "summary.md")); err == nil {
 			markdown = string(raw)
@@ -268,7 +273,7 @@ func (rt *Runtime) emitSummaryOutcomes(task buildTask, meetingPath string, outco
 			"summary_markdown": markdown,
 			"summary_model":    outcomes.SummaryModel,
 		})
-	case "failed":
+	case eventSummaryFailed:
 		rt.emitEvent(eventSummaryFailed, task.JobID, task.AttemptNumber, map[string]any{
 			"phase":          "summary",
 			"error":          outcomes.SummaryReason,

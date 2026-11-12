@@ -1,7 +1,6 @@
 package operator
 
 import (
-	"context"
 	"sort"
 	"strings"
 )
@@ -59,9 +58,15 @@ func oneToOneTitleParticipants(rows []participantRow) []talkTitleParticipant {
 // Builds and reruns use the frozen snapshot, never a fresh membership lookup.
 // Old jobs and unresolved lookups retain the room-name fallback.
 func (rt *Runtime) defaultMeetingTitle(jobID, roomName string) string {
+	return rt.defaultMeetingTitleForKnownJob(jobID, roomName, nil)
+}
+
+// defaultMeetingTitleForKnownJob is defaultMeetingTitle for a caller that has
+// already read the job; nil reads it when the binding is needed.
+func (rt *Runtime) defaultMeetingTitleForKnownJob(jobID, roomName string, known *Job) string {
 	state, ok := rt.lookupTalkJobState(jobID)
 	if !ok || state.RoomType == 0 {
-		job, err := rt.store.GetJob(context.Background(), jobID)
+		job, err := rt.knownOrStoredJob(jobID, known)
 		if err != nil || job.TalkBinding == nil {
 			return roomName
 		}

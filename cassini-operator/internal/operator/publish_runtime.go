@@ -142,13 +142,15 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 		rt.logger.Printf("publish success update failed id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, err)
 		return
 	}
-	rt.emitEvent(eventRecordingPublished, task.JobID, task.AttemptNumber, map[string]any{"published_location": location})
-	if job, err := rt.store.GetJob(context.Background(), task.JobID); err == nil {
-		sharing := rt.jobSharing(context.Background(), &job)
-		if sharing != nil {
-			rt.emitEvent(eventSharesCompleted, task.JobID, task.AttemptNumber, map[string]any{
-				"sharing": sharing,
-			})
+	// Publication and its shares are announced for a recording only: a
+	// summarize or speaker-edit attempt republishes a meeting that is already
+	// out, and nothing is read for an event no receiver asked for.
+	rt.emitRecordingEvent(eventRecordingPublished, task.JobID, task.AttemptNumber, map[string]any{"published_location": location})
+	if rt.eventEnabled(eventSharesCompleted) {
+		if job, err := rt.store.GetJob(context.Background(), task.JobID); err == nil {
+			if sharing := rt.jobSharing(context.Background(), &job); sharing != nil {
+				rt.emitRecordingEvent(eventSharesCompleted, task.JobID, task.AttemptNumber, map[string]any{"sharing": sharing})
+			}
 		}
 	}
 	// Best effort: one bounded request, with no retry or restart recovery.

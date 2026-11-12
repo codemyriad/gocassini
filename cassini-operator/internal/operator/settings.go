@@ -703,7 +703,7 @@ type settingsUpdate struct {
 	// cannot erase them by omitting the field.
 	SearchAliases *[][]string `json:"search_aliases"`
 	// EventWebhook* pointers follow the same omitted-preserves rule. The timeout
-	// is a Go duration string ("10s"), matching the former deploy variable.
+	// is a Go duration string ("10s") of at most one minute.
 	EventWebhookURL     *string   `json:"event_webhook_url"`
 	EventWebhookSecret  *string   `json:"event_webhook_secret"`
 	EventWebhookEvents  *[]string `json:"event_webhook_events"`
@@ -936,6 +936,10 @@ func (rt *Runtime) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rt.setSettings(updated)
-	rt.configureEventWebhook(updated)
+	// Only here does a receiver change close the events queued for the old
+	// one: an administrator chose it. Events queued for the receiver being
+	// saved are kept, so one that a refused settings file had hidden picks up
+	// where it left off.
+	rt.applyEventWebhook(updated, current.EventWebhookURL != updated.EventWebhookURL)
 	writeJSON(w, http.StatusOK, rt.settingsResponseFor(updated))
 }

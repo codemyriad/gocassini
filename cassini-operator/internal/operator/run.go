@@ -170,7 +170,7 @@ type Runtime struct {
 	publishQueue       chan publishTask
 	events             *eventHub
 	eventWebhook       *eventWebhook
-	eventWebhookMu     sync.Mutex
+	eventWebhookMu     sync.RWMutex
 	eventWebhookCancel context.CancelFunc
 	// eventWebhookKey is the webhook settings the worker was last built from,
 	// and eventWebhookConfigured whether it was built at all.
@@ -422,7 +422,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 	runtime := NewRuntime(ctx, store, cfg, logger, stdout, stderr)
 	logger = runtime.logger
-	if interrupted > 0 {
+	if interrupted > 0 && runtime.eventEnabled(eventSummaryFailed, eventRecordingFailed) {
 		if jobs, err := store.InterruptedJobsAt(context.Background(), interruptedAt); err != nil {
 			logger.Printf("startup interrupted event read failed: %v", err)
 		} else {

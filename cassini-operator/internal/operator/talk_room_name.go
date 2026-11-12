@@ -258,6 +258,20 @@ func (rt *Runtime) storeTalkRoomInfo(jobID string, info talkRoomInfo) {
 // public conversation any more: that carve-out existed because the published
 // value WAS the join link, and a derivation is not one.
 func (rt *Runtime) talkRoomForJob(jobID string) (roomToken, roomName string) {
+	return rt.talkRoomForKnownJob(jobID, nil)
+}
+
+// knownOrStoredJob is the job a caller already read, or the stored one.
+func (rt *Runtime) knownOrStoredJob(jobID string, known *Job) (Job, error) {
+	if known != nil {
+		return *known, nil
+	}
+	return rt.store.GetJob(context.Background(), jobID)
+}
+
+// talkRoomForKnownJob is talkRoomForJob for a caller that has already read the
+// job; nil reads it when the binding is needed.
+func (rt *Runtime) talkRoomForKnownJob(jobID string, known *Job) (roomToken, roomName string) {
 	if state, ok := rt.lookupTalkJobState(jobID); ok {
 		roomToken = strings.TrimSpace(state.RoomToken)
 		roomName = strings.TrimSpace(state.RoomName)
@@ -268,7 +282,7 @@ func (rt *Runtime) talkRoomForJob(jobID string) (roomToken, roomName string) {
 	if roomToken != "" && roomName != "" {
 		return roomToken, roomName
 	}
-	job, err := rt.store.GetJob(context.Background(), jobID)
+	job, err := rt.knownOrStoredJob(jobID, known)
 	if err != nil || job.TalkBinding == nil {
 		return roomToken, roomName
 	}

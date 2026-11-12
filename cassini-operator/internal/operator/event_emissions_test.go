@@ -303,3 +303,59 @@ func TestFirstBuildEventsCarryTheTitleAndCurrentStage(t *testing.T) {
 		t.Fatalf("events = %d, want summary.completed and build.completed", seen)
 	}
 }
+
+// build.completed, recording.published and shares.completed announce a
+// recording. A summarize or speaker-edit attempt rebuilds and republishes a
+// meeting that is already out, so it announces none of them; a full rerun is
+// the recording again and does.
+func TestOnlyRecordingAttemptsAnnounceARecording(t *testing.T) {
+	for _, tc := range []struct {
+		kind string
+		want []string
+	}{
+		{kind: triggerKindSummarize, want: []string{eventSummaryCompleted}},
+		{kind: triggerKindRefine, want: nil},
+		{kind: triggerKindRerun, want: []string{eventSummaryCompleted, eventBuildCompleted, eventRecordingPublished}},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			rt, cleanup := newBareSealRuntime(t)
+			defer cleanup()
+			job, run := seedBuildForEventTest(t, rt, "announce-"+tc.kind)
+			setAttemptKindForEventTest(t, rt, job.ID, tc.kind)
+			attachEventWebhookForTest(t, rt, "")
+			rt.buildJobFn = func(_ context.Context, task buildTask) (string, error) {
+				meetingPath := attemptMeetingPath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber)
+				writeCompletedMeetingForEventTest(t, meetingPath)
+				return meetingPath, nil
+			}
+			rt.runBuildJob(buildTask{JobID: job.ID, AttemptNumber: 1, ArtifactRunPath: run}, 1)
+			// What the publish worker sends once the meeting is delivered.
+			rt.emitRecordingEvent(eventRecordingPublished, job.ID, 1, map[string]any{"published_location": "meetings/x.opus"})
+
+			if got := eventOutboxTypes(t, rt.store); strings.Join(got, ",") != strings.Join(tc.want, ",") {
+				t.Fatalf("events = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// With the events it could send switched off, an emission reads nothing: not
+// the attempt, not summary.md.
+func TestEmissionsReadNothingForAnEventNobodyAskedFor(t *testing.T) {
+	rt, cleanup := newBareSealRuntime(t)
+	defer cleanup()
+	if rt.eventEnabled(eventSummaryCompleted, eventRecordingFailed) {
+		t.Fatal("events are enabled on a runtime with no webhook")
+	}
+	attachEventWebhookForTest(t, rt, eventRecordingStarted)
+	if rt.eventEnabled(eventSummaryCompleted, eventRecordingFailed) || !rt.eventEnabled(eventRecordingStarted) {
+		t.Fatal("eventEnabled does not follow the allow-list")
+	}
+	// A job that does not exist: any lookup would be the only thing to fail.
+	rt.emitAttemptFailure("no-such-job", 1, "build", "boom", nil)
+	rt.emitSummaryOutcomes(buildTask{JobID: "no-such-job", AttemptNumber: 1}, "/nonexistent", stepOutcomes{SummaryStatus: "completed"})
+	rt.emitRecordingEvent(eventBuildCompleted, "no-such-job", 1, nil)
+	if got := eventOutboxTypes(t, rt.store); len(got) != 0 {
+		t.Fatalf("events = %v, want none", got)
+	}
+}

@@ -174,7 +174,7 @@ func (s *directSharesPublishSink) reshare(ctx context.Context, jobID string) (*j
 	// partial. A re-share that changes who has the meeting is news to a
 	// receiver; one that changes nothing is not. The payload is the one
 	// publication sends, audience count included.
-	if !sameShareOutcome(before, outcome) {
+	if !sameShareOutcome(before, outcome) && s.rt.eventEnabled(eventSharesCompleted) {
 		if job, jobErr := s.rt.store.GetJob(ctx, jobID); jobErr == nil {
 			if sharing := s.rt.jobSharing(ctx, &job); sharing != nil {
 				s.rt.emitEvent(eventSharesCompleted, jobID, job.CurrentAttemptNumber, map[string]any{
