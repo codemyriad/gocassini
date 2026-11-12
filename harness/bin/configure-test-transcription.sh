@@ -10,16 +10,12 @@ DEVICE="${DEVICE:-cpu}"
 LOG_DIR="${LOG_DIR:-/tmp/cassini-model-setup-$$}"
 mkdir -p "$LOG_DIR"
 case "$DEVICE" in
-  cpu)
-    quality=balanced
-    candidates='["parakeet-ultra-0.6b-int8","parakeet-tdt-0.6b-v3-int8"]'
-    ;;
-  cuda)
-    quality=best
-    candidates='["parakeet-ultra-0.6b","parakeet-tdt-0.6b-v3"]'
-    ;;
+  cpu) model=parakeet-ultra-0.6b-int8; quality=balanced ;;
+  cuda) model=parakeet-ultra-0.6b; quality=best ;;
   *) echo "Unsupported test device: $DEVICE" >&2; exit 1 ;;
 esac
+
+CATALOGUE_PATH="${CASSINI_TEST_CATALOGUE_PATH:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/cassini-go-recorder/internal/modelstore/catalogue.json}"
 
 # Preserve redirected error bodies on stderr when curl --fail-with-body exits
 # non-zero, so 4xx/5xx operator replies surface in CI logs.
@@ -38,14 +34,17 @@ jq -e '.transcription_enabled == false' "$LOG_DIR/settings-before.json" >/dev/nu
 fetch_operator_json "$LOG_DIR/models-before.json" "$OPERATOR_URL/settings/models?device=$DEVICE"
 jq -e 'all(.models[]; .installed == false)' "$LOG_DIR/models-before.json" >/dev/null
 
-# Pick the newest known tier model advertised by the running operator so the
-# upstream Nextcloud canary keeps working when main advances its model catalogue
-# ahead of the frozen canary_image release.
+# Pick the configured tier model when the running operator advertises it, or
+# fall back along its `replaces` chain in catalogue.json when testing a frozen
+# canary_image from an earlier release.
+candidates="$(jq -ec --arg model "$model" '
+  [$model] + [.models[] | select(.id == $model) | (.replaces // [])[]]
+' "$CATALOGUE_PATH")"
 if ! model="$(jq -er --argjson candidates "$candidates" '
   ([.models[] | select(.kind == "speech") | .id]) as $available
   | ($candidates | map(select(. as $id | $available | index($id))) | first) // empty
 ' "$LOG_DIR/models-before.json")"; then
-  echo "No expected $DEVICE speech model in operator catalogue; advertised: $(jq -c '[.models[] | select(.kind == "speech") | .id]' "$LOG_DIR/models-before.json")" >&2
+  echo "No expected $DEVICE speech model ($candidates) in operator catalogue; advertised: $(jq -c '[.models[] | select(.kind == "speech") | .id]' "$LOG_DIR/models-before.json")" >&2
   exit 1
 fi
 

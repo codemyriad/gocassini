@@ -218,6 +218,20 @@ exit 0
         self.assertNotEqual(res.returncode, 0)
         self.assertIn("parakeet-tdt-ctc-110m-en-int8", res.stderr)
 
+        # Multi-step `replaces` chains preserve catalogue order (not alphabetical order).
+        custom_catalogue = self.directory / "catalogue.json"
+        custom_catalogue.write_text(json.dumps({
+            "models": [{
+                "id": "parakeet-ultra-0.6b-int8",
+                "kind": "speech",
+                "replaces": ["parakeet-ultra-0.6b-int8-prev", "parakeet-tdt-0.6b-v3-int8"],
+            }]
+        }))
+        res = run_case("cpu", ["parakeet-tdt-0.6b-v3-int8", "parakeet-ultra-0.6b-int8-prev"],
+                       CASSINI_TEST_CATALOGUE_PATH=str(custom_catalogue))
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertEqual((self.directory / "installed-model").read_text(), "parakeet-ultra-0.6b-int8-prev")
+
         # Redirected curl --fail-with-body error payloads still reach stderr in CI logs.
         res = run_case("cpu", ["parakeet-ultra-0.6b-int8"], FAIL_INSTALL="1")
         self.assertEqual(res.returncode, 22)
