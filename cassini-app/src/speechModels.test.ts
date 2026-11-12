@@ -11,7 +11,7 @@ const diarizer: SpeechModel = {
   revision: "c".repeat(64), download_bytes: 64915668, installed_bytes: 103967426, installed: false, ready: false, device: "cpu", runtime_supported: true,
 };
 const speech: SpeechModel = {
-  id: "parakeet-tdt-ctc-110m-en-int8", kind: "speech", name: "Parakeet", description: "Fast", revision: "a".repeat(64),
+  id: "parakeet-tdt-ctc-110m-en-int8-v2", kind: "speech", name: "Parakeet", description: "Fast", revision: "a".repeat(64),
   download_bytes: 1, installed_bytes: 2, installed: true, ready: true, device: "cpu",
 };
 function inventory(models: SpeechModel[], jobs: SpeechModelJob[] = []): SpeechModelInventory {
@@ -47,7 +47,7 @@ describe("voice separation in the speech models", () => {
     }
     expect(transcriptionModelId("best", "cpu")).toBe("parakeet-ultra-0.6b");
     expect(transcriptionModelId("balanced", "cpu")).toBe("parakeet-ultra-0.6b-int8-v2");
-    expect(transcriptionModelId("fast", "cpu")).toBe("parakeet-tdt-ctc-110m-en-int8");
+    expect(transcriptionModelId("fast", "cpu")).toBe("parakeet-tdt-ctc-110m-en-int8-v2");
   });
 
   it("follows its own CPU job whatever device transcribes", () => {

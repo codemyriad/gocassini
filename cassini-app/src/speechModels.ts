@@ -14,7 +14,7 @@ export const VOICE_SEPARATION_MODEL_ID = "nemotron-3-diarization-int8";
 export function transcriptionModelId(quality: string, device: string): string {
   if (device === "cuda") return "parakeet-ultra-0.6b";
   if (quality === "best") return "parakeet-ultra-0.6b";
-  return quality === "fast" ? "parakeet-tdt-ctc-110m-en-int8" : "parakeet-ultra-0.6b-int8-v2";
+  return quality === "fast" ? "parakeet-tdt-ctc-110m-en-int8-v2" : "parakeet-ultra-0.6b-int8-v2";
 }
 
 export function voiceSeparationModel(inventory: SpeechModelInventory | null): SpeechModel | undefined {

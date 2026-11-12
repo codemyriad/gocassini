@@ -11,15 +11,25 @@ https://creativecommons.org/licenses/by/4.0/legalcode.en
 Parakeet TDT-CTC 110M (English):
 https://huggingface.co/nvidia/parakeet-tdt_ctc-110m
 
-The ONNX export and its int8 quantized variant are distributed for sherpa-onnx:
+The fp32 ONNX export and the v1 int8 quantized variant are distributed for
+sherpa-onnx:
 https://github.com/k2-fsa/sherpa-onnx
 https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models
 
-Cassini obtains the int8 model from the sherpa-onnx release.
-For this distribution, Cassini compresses each model file independently using
-seekable Zstandard. Decompressed file contents are
-unchanged. ONNX conversion and int8 quantization are changes from NVIDIA's
-original model format. No endorsement by NVIDIA or sherpa-onnx is implied.
+Changes from the original model:
+- ONNX export distributed by sherpa-onnx
+  (sherpa-onnx-nemo-parakeet_tdt_ctc_110m-en-36000.tar.bz2, sha256
+  c3305c7f9ca024ede34c091dba69a2970152553af49c68035f72a942bbfbe645; model.onnx
+  sha256 936806cf3dd0db5aba53f8c7410bb5632d7a8ad6b2c51009f5e4fc0890ec76bf).
+- int8 v2 variant (parakeet-tdt-ctc-110m-en-int8-v2) by Cassini: model.onnx
+  quantized with onnxruntime dynamic quantization (uint8 weights), keeping the
+  22 depthwise and /pre_encode/ subsampling Conv nodes in fp32
+  (k2-fsa/sherpa-onnx#4179). The retired v1 variant
+  (parakeet-tdt-ctc-110m-en-int8) was obtained unchanged from the sherpa-onnx
+  int8 release.
+- Each model file is compressed independently using seekable Zstandard;
+  decompressed contents are the exported files.
+No endorsement by NVIDIA or sherpa-onnx is implied.
 
 Parakeet Ultra 0.6B
 ===================

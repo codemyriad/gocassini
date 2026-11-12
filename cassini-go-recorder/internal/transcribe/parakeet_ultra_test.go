@@ -157,18 +157,18 @@ func TestParakeetUltraCatalogueEntries(t *testing.T) {
 			t.Fatalf("%s installs a bpe.vocab its spec never loads", id)
 		}
 	}
-	for _, want := range []string{"c9608f36d0ab956c14bfcc525479b0746b3b42a56f6949ec85c14eb7466717dc", "https://huggingface.co/moondream/parakeet-ultra", "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3", "Post-trained by Moondream", "int8 variant by Cassini", "No endorsement by Moondream"} {
+	for _, want := range []string{"c9608f36d0ab956c14bfcc525479b0746b3b42a56f6949ec85c14eb7466717dc", "https://huggingface.co/moondream/parakeet-ultra", "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3", "Post-trained by Moondream", "int8 variant by Cassini", "No endorsement by Moondream", "parakeet-tdt-ctc-110m-en-int8-v2", "936806cf3dd0db5aba53f8c7410bb5632d7a8ad6b2c51009f5e4fc0890ec76bf"} {
 		if !strings.Contains(modelstore.Notices, want) {
 			t.Fatalf("NOTICE lacks %q", want)
 		}
 	}
 }
 
-// Parakeet Ultra int8 v1 and Parakeet v3 are retired: a configuration that
-// still names one resolves to the shipped Ultra model of the same precision,
-// drops the revision it pinned (that was the retired model's), and says so. An
-// id no catalogue ever shipped is left alone, so the build reports it
-// unavailable rather than transcribing with another model.
+// Parakeet 110M int8 v1, Parakeet Ultra int8 v1, and Parakeet v3 are retired: a
+// configuration that still names one resolves to the shipped replacement model
+// of the same precision, drops the revision it pinned (that was the retired
+// model's), and says so. An id no catalogue ever shipped is left alone, so the
+// build reports it unavailable rather than transcribing with another model.
 func TestRetiredModelResolvesToItsReplacement(t *testing.T) {
 	cases := []struct {
 		explicit, revision, device string
@@ -182,6 +182,10 @@ func TestRetiredModelResolvesToItsReplacement(t *testing.T) {
 			ResolvedModel{ID: ModelParakeetUltraInt8, Replaces: "parakeet-ultra-0.6b-int8"}},
 		{"parakeet-ultra-0.6b-int8-v2", "50c15b94ea9cb1c2f8dbcdcbc0f15b450169154deeb206923cb5388f60892366", "cpu",
 			ResolvedModel{ID: ModelParakeetUltraInt8, Revision: "50c15b94ea9cb1c2f8dbcdcbc0f15b450169154deeb206923cb5388f60892366"}},
+		{"parakeet-tdt-ctc-110m-en-int8", "17f945007b52ccd8b7200ffc7c5652e9e8e961dfdf479cefcabd06cf5703630b", "cpu",
+			ResolvedModel{ID: ModelParakeet110M, Replaces: "parakeet-tdt-ctc-110m-en-int8"}},
+		{"parakeet-tdt-ctc-110m-en-int8-v2", "ebf4a16c933237d36d39710ec482c7823d0b6cddc62bd791911b07cf06284e85", "cpu",
+			ResolvedModel{ID: ModelParakeet110M, Revision: "ebf4a16c933237d36d39710ec482c7823d0b6cddc62bd791911b07cf06284e85"}},
 		{"no-such-model", "abc", "cpu", ResolvedModel{ID: "no-such-model", Revision: "abc"}},
 	}
 	for _, c := range cases {
@@ -209,6 +213,12 @@ func TestBuildConfigMovesARetiredEnvPinToUltra(t *testing.T) {
 	t.Setenv("CASSINI_STT_MODEL", "parakeet-ultra-0.6b-int8")
 	t.Setenv("CASSINI_STT_REVISION", "18cb623004dd6c15999b93cb70b14d8a1f6e8f3a2a97ff733f104bfc3494f6a9")
 	if cfg := DefaultBuildConfig(); cfg.ModelID != ModelParakeetUltraInt8 || cfg.ModelRevision != "" || cfg.ReplacedModelID != "parakeet-ultra-0.6b-int8" {
+		t.Fatalf("model %s revision %q replaced %q", cfg.ModelID, cfg.ModelRevision, cfg.ReplacedModelID)
+	}
+
+	t.Setenv("CASSINI_STT_MODEL", "parakeet-tdt-ctc-110m-en-int8")
+	t.Setenv("CASSINI_STT_REVISION", "17f945007b52ccd8b7200ffc7c5652e9e8e961dfdf479cefcabd06cf5703630b")
+	if cfg := DefaultBuildConfig(); cfg.ModelID != ModelParakeet110M || cfg.ModelRevision != "" || cfg.ReplacedModelID != "parakeet-tdt-ctc-110m-en-int8" {
 		t.Fatalf("model %s revision %q replaced %q", cfg.ModelID, cfg.ModelRevision, cfg.ReplacedModelID)
 	}
 
