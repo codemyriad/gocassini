@@ -166,7 +166,10 @@ deletes the fragments that release consumed, replaces main's draft of the
 release notes with the published entry, and moves main's version above the
 release when needed (see [Main's version](#mains-version)). The site deploys
 from main, so the notes appear on gocassini.com when this PR merges.
-`prepare-release.sh` prints these commands after a cut on a release branch.
+`prepare-release.sh` prints these commands after a cut on a release branch. Once
+a stable release publishes, also roll `canary_image` in
+`ci/nextcloud-compatibility.json` to the new `<version>@sha256:...` CPU index
+digest recorded in `release-evidence.json`.
 
 **Non-interactive** (scripting) — pass the choice; drop `--push` to stay local:
 
