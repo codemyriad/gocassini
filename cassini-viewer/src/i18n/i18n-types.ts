@@ -132,7 +132,7 @@ type RootTranslation = {
 			 */
 			point_attendees: string
 			/**
-			 * R​e​c​o​r​d​i​n​g​s​ ​i​n​ ​t​h​i​s​ ​a​r​c​h​i​v​e​ ​u​s​e​ ​d​i​f​f​e​r​e​n​t​ ​a​u​d​i​e​n​c​e​s​;​ ​e​a​c​h​ ​k​e​p​t​ ​t​h​e​ ​p​e​o​p​l​e​ ​c​a​p​t​u​r​e​d​ ​w​h​e​n​ ​i​t​ ​w​a​s​ ​r​e​c​o​r​d​e​d​.
+			 * S​o​m​e​ ​r​e​c​o​r​d​i​n​g​s​ ​h​e​r​e​ ​a​r​e​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​t​h​e​ ​w​h​o​l​e​ ​T​a​l​k​ ​r​o​o​m​ ​a​n​d​ ​s​o​m​e​ ​o​n​l​y​ ​w​i​t​h​ ​t​h​e​ ​p​e​o​p​l​e​ ​w​h​o​ ​w​e​r​e​ ​i​n​ ​t​h​e​ ​c​a​l​l​.
 			 */
 			point_mixed: string
 			/**
@@ -2770,6 +2770,10 @@ export type NamespaceAppTranslation = {
 				 */
 				capture: string
 				/**
+				 * S​h​a​r​e​d​ ​w​i​t​h
+				 */
+				shared_with: string
+				/**
 				 * S​t​o​p​p​e​d​ ​b​e​c​a​u​s​e
 				 */
 				stopped_because: string
@@ -4653,7 +4657,7 @@ export type NamespaceAppTranslation = {
 			 */
 			heading: string
 			/**
-			 * C​h​o​o​s​e​ ​w​h​o​ ​r​e​c​e​i​v​e​s​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​ ​—​ ​a​n​d​ ​w​i​t​h​ ​i​t​ ​t​h​e​ ​t​r​a​n​s​c​r​i​p​t​ ​a​n​d​ ​s​u​m​m​a​r​y​.
+			 * C​h​o​o​s​e​ ​w​h​o​ ​r​e​c​e​i​v​e​s​ ​e​a​c​h​ ​r​e​c​o​r​d​i​n​g​,​ ​a​l​o​n​g​ ​w​i​t​h​ ​i​t​s​ ​t​r​a​n​s​c​r​i​p​t​ ​a​n​d​ ​s​u​m​m​a​r​y​.
 			 */
 			audience_choose: string
 			/**
@@ -4665,7 +4669,7 @@ export type NamespaceAppTranslation = {
 			 */
 			audience_room_label: string
 			/**
-			 * T​h​e​ ​w​h​o​l​e​ ​c​h​a​n​n​e​l​,​ ​i​n​c​l​u​d​i​n​g​ ​p​e​o​p​l​e​ ​w​h​o​ ​w​e​r​e​ ​n​o​t​ ​o​n​ ​t​h​e​ ​c​a​l​l​.
+			 * E​v​e​r​y​ ​m​e​m​b​e​r​ ​o​f​ ​t​h​e​ ​r​o​o​m​,​ ​i​n​c​l​u​d​i​n​g​ ​p​e​o​p​l​e​ ​w​h​o​ ​w​e​r​e​ ​n​o​t​ ​o​n​ ​t​h​e​ ​c​a​l​l​.
 			 */
 			audience_room_description: string
 			/**
@@ -4673,17 +4677,25 @@ export type NamespaceAppTranslation = {
 			 */
 			audience_attendees_label: string
 			/**
-			 * E​v​e​r​y​o​n​e​ ​T​a​l​k​ ​r​e​p​o​r​t​e​d​ ​i​n​ ​t​h​e​ ​c​a​l​l​ ​w​h​i​l​e​ ​i​t​ ​w​a​s​ ​b​e​i​n​g​ ​r​e​c​o​r​d​e​d​;​ ​u​s​e​f​u​l​ ​f​o​r​ ​a​ ​s​t​a​n​d​i​n​g​ ​c​h​a​n​n​e​l​.
+			 * P​e​o​p​l​e​ ​w​i​t​h​ ​a​ ​N​e​x​t​c​l​o​u​d​ ​a​c​c​o​u​n​t​ ​w​h​o​ ​j​o​i​n​e​d​ ​t​h​e​ ​c​a​l​l​ ​w​h​i​l​e​ ​i​t​ ​w​a​s​ ​b​e​i​n​g​ ​r​e​c​o​r​d​e​d​.​ ​U​s​e​f​u​l​ ​f​o​r​ ​a​ ​s​t​a​n​d​i​n​g​ ​c​h​a​n​n​e​l​.
 			 */
 			audience_attendees_description: string
 			/**
-			 * A​p​p​l​i​e​s​ ​t​o​ ​r​e​c​o​r​d​i​n​g​s​ ​t​h​a​t​ ​s​t​a​r​t​ ​a​f​t​e​r​ ​y​o​u​ ​s​a​v​e​.​ ​T​h​e​ ​m​o​d​e​ ​i​s​ ​f​i​x​e​d​ ​w​h​e​n​ ​a​ ​r​e​c​o​r​d​i​n​g​ ​s​t​a​r​t​s​,​ ​a​n​d​ ​i​t​s​ ​a​t​t​e​n​d​e​e​ ​r​o​s​t​e​r​ ​c​a​n​ ​g​r​o​w​ ​w​h​i​l​e​ ​t​h​e​ ​c​a​l​l​ ​c​o​n​t​i​n​u​e​s​;​ ​c​h​a​n​g​i​n​g​ ​t​h​i​s​ ​l​a​t​e​r​ ​d​o​e​s​ ​n​o​t​ ​a​l​t​e​r​ ​t​h​a​t​ ​r​e​c​o​r​d​i​n​g​ ​o​r​ ​r​e​-​s​h​a​r​e​ ​o​n​e​ ​a​l​r​e​a​d​y​ ​p​u​b​l​i​s​h​e​d​.
+			 * W​i​t​h​ ​t​h​i​s​ ​s​e​t​t​i​n​g
 			 */
-			audience_applies: string
+			audience_effects_heading: string
 			/**
-			 * I​n​ ​“​O​n​l​y​ ​p​e​o​p​l​e​ ​w​h​o​ ​w​e​r​e​ ​i​n​ ​t​h​e​ ​c​a​l​l​”​ ​m​o​d​e​,​ ​t​h​e​ ​T​a​l​k​ ​r​o​o​m​ ​c​h​a​t​ ​m​e​s​s​a​g​e​ ​i​s​ ​s​k​i​p​p​e​d​:​ ​t​h​e​ ​w​h​o​l​e​ ​r​o​o​m​ ​w​o​u​l​d​ ​s​e​e​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​'​s​ ​t​i​t​l​e​ ​a​n​d​ ​l​i​n​k​.
+			 * P​e​o​p​l​e​ ​w​h​o​ ​j​o​i​n​ ​l​a​t​e​ ​o​r​ ​l​e​a​v​e​ ​e​a​r​l​y​ ​a​r​e​ ​i​n​c​l​u​d​e​d​.
+			 */
+			audience_late_joiners: string
+			/**
+			 * N​o​ ​m​e​s​s​a​g​e​ ​i​s​ ​p​o​s​t​e​d​ ​i​n​ ​t​h​e​ ​T​a​l​k​ ​r​o​o​m​'​s​ ​c​h​a​t​,​ ​b​e​c​a​u​s​e​ ​t​h​e​ ​w​h​o​l​e​ ​r​o​o​m​ ​w​o​u​l​d​ ​s​e​e​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​'​s​ ​t​i​t​l​e​ ​a​n​d​ ​l​i​n​k​.
 			 */
 			audience_chat_skipped: string
+			/**
+			 * A​p​p​l​i​e​s​ ​t​o​ ​r​e​c​o​r​d​i​n​g​s​ ​t​h​a​t​ ​s​t​a​r​t​ ​a​f​t​e​r​ ​y​o​u​ ​s​a​v​e​.​ ​R​e​c​o​r​d​i​n​g​s​ ​i​n​ ​p​r​o​g​r​e​s​s​ ​o​r​ ​a​l​r​e​a​d​y​ ​p​u​b​l​i​s​h​e​d​ ​k​e​e​p​ ​t​h​e​ ​a​u​d​i​e​n​c​e​ ​t​h​e​y​ ​h​a​d​.
+			 */
+			audience_applies: string
 			/**
 			 * C​h​e​c​k​i​n​g​ ​r​e​c​o​r​d​i​n​g​s​ ​s​e​t​u​p​…
 			 */
@@ -8808,7 +8820,7 @@ export type TranslationFunctions = {
 			 */
 			point_attendees: () => LocalizedString
 			/**
-			 * Recordings in this archive use different audiences; each kept the people captured when it was recorded.
+			 * Some recordings here are shared with the whole Talk room and some only with the people who were in the call.
 			 */
 			point_mixed: () => LocalizedString
 			/**
@@ -11288,6 +11300,10 @@ export type TranslationFunctions = {
 					 */
 					capture: () => LocalizedString
 					/**
+					 * Shared with
+					 */
+					shared_with: () => LocalizedString
+					/**
 					 * Stopped because
 					 */
 					stopped_because: () => LocalizedString
@@ -13036,7 +13052,7 @@ export type TranslationFunctions = {
 				 */
 				heading: () => LocalizedString
 				/**
-				 * Choose who receives the recording — and with it the transcript and summary.
+				 * Choose who receives each recording, along with its transcript and summary.
 				 */
 				audience_choose: () => LocalizedString
 				/**
@@ -13048,7 +13064,7 @@ export type TranslationFunctions = {
 				 */
 				audience_room_label: () => LocalizedString
 				/**
-				 * The whole channel, including people who were not on the call.
+				 * Every member of the room, including people who were not on the call.
 				 */
 				audience_room_description: () => LocalizedString
 				/**
@@ -13056,17 +13072,25 @@ export type TranslationFunctions = {
 				 */
 				audience_attendees_label: () => LocalizedString
 				/**
-				 * Everyone Talk reported in the call while it was being recorded; useful for a standing channel.
+				 * People with a Nextcloud account who joined the call while it was being recorded. Useful for a standing channel.
 				 */
 				audience_attendees_description: () => LocalizedString
 				/**
-				 * Applies to recordings that start after you save. The mode is fixed when a recording starts, and its attendee roster can grow while the call continues; changing this later does not alter that recording or re-share one already published.
+				 * With this setting
 				 */
-				audience_applies: () => LocalizedString
+				audience_effects_heading: () => LocalizedString
 				/**
-				 * In “Only people who were in the call” mode, the Talk room chat message is skipped: the whole room would see the recording's title and link.
+				 * People who join late or leave early are included.
+				 */
+				audience_late_joiners: () => LocalizedString
+				/**
+				 * No message is posted in the Talk room's chat, because the whole room would see the recording's title and link.
 				 */
 				audience_chat_skipped: () => LocalizedString
+				/**
+				 * Applies to recordings that start after you save. Recordings in progress or already published keep the audience they had.
+				 */
+				audience_applies: () => LocalizedString
 				/**
 				 * Checking recordings setup…
 				 */

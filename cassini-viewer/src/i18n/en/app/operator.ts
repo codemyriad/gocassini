@@ -829,6 +829,7 @@ const operator = {
       speech_model: "Speech model",
       summary_model: "Summary model",
       capture: "Capture",
+      shared_with: "Shared with",
       stopped_because: "Stopped because",
       conversation: "Conversation",
       recording: "Recording",

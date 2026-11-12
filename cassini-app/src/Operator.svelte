@@ -1891,6 +1891,16 @@
                       <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">{$LL.app.operator.console.field.capture()}</dt>
                       <dd class="text-sm">{captureModeLabel(selectedJob.job.request_json)}</dd>
                     </div>
+                    {#if selectedJob.job.audience_mode === "room" || selectedJob.job.audience_mode === "attendees"}
+                      <div>
+                        <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">{$LL.app.operator.console.field.shared_with()}</dt>
+                        <dd class="text-sm">
+                          {selectedJob.job.audience_mode === "attendees"
+                            ? $LL.app.settings.direct_share.audience_attendees_label()
+                            : $LL.app.settings.direct_share.audience_room_label()}
+                        </dd>
+                      </div>
+                    {/if}
                     <div>
                       <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">{$LL.app.operator.console.field.stopped_because()}</dt>
                       <dd class="text-sm">
