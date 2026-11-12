@@ -20,7 +20,7 @@ JSON names:
 |---|---|---|
 | `event_webhook_url` | To enable events | Absolute `http` or `https` receiver URL. Empty disables delivery. |
 | `event_webhook_secret` | With the URL | HMAC-SHA256 secret used to sign every request. Write-only: responses never return it and report `event_webhook_secret_set` instead. A `PUT` that omits it keeps the stored secret. |
-| `event_webhook_events` | No | Array allow-list, e.g. `["summary.completed", "recording.failed"]`. Empty delivers the whole catalog. Unknown names are rejected. |
+| `event_webhook_events` | No | Array allow-list, e.g. `["summary.completed", "recording.failed"]`. Empty delivers the whole catalog. Unknown names and blank entries are rejected. |
 | `event_webhook_timeout` | No | Go duration per request, e.g. `10s`. Default `10s`; at most one minute. |
 
 There is no dedicated webhook card in the Operator UI yet; use the settings API
@@ -30,9 +30,11 @@ embedded in the URL is not logged.
 
 A URL without a secret is refused: every event must be verifiable. `PUT
 /settings` answers `400` for any invalid webhook value. Invalid values found in
-`settings.json` at startup turn delivery off and are logged; every other
-setting in the file still applies, and the next settings save removes them.
-Events already queued are kept: fix the values and delivery resumes.
+`settings.json` turn delivery off and are logged; every other setting in the
+file still applies. The values stay in the file as written, `GET /settings`
+reports the reason as `event_webhook_error`, and saving other settings does
+not touch them. Events already queued are kept: fix the values, in the file or
+with a `PUT` that sets them, and delivery resumes.
 
 Events are bound to the receiver they were queued for. Saving a different
 `event_webhook_url`, or clearing it, closes whatever is still undelivered for
@@ -44,13 +46,13 @@ another. Changing only the secret, allow-list or timeout keeps the queue.
 
 | Event | When it is emitted | Event-specific fields |
 |---|---|---|
-| `recording.started` | Talk's recording request was accepted and the recorder started. | `started_at` |
+| `recording.started` | Talk's recording request was accepted and the recorder started. Sent before Talk has answered with the room's name, so `title` and `room_name` may be missing; every later event carries them. | `started_at` |
 | `recording.stopped` | The recording stopped and the capture was safely stored. | `stopped_at`, `stop_reason` |
 | `build.completed` | Transcription/build of a recording completed and the meeting was handed to seal. | `meeting_title` |
-| `summary.completed` | A summary was written: a normal build's summary, one written or regenerated on request, or a speaker-edit rewrite. A speaker edit that keeps the existing summary emits nothing. | `summary_markdown`, `summary_model` |
+| `summary.completed` | A summary was written: a normal build's summary, one written or regenerated on request, or a speaker-edit rewrite. A speaker edit that keeps the existing summary emits nothing. | `summary_markdown`, `summary_model` (not on a speaker-edit rewrite) |
 | `summary.failed` | A summary could not be written: the summary step of a build failed, or an attempt that only writes a summary failed at any stage. The recording itself is unaffected. Yielding for a recording or resource pressure is not a failure. | `phase`, `error`, `summary_reason` (a build's summary step only), `interrupted` |
 | `recording.published` | A recording's `.opus` was delivered and the job succeeded. | `published_location` |
-| `recording.failed` | Recording, build, seal or publish of a recording stopped without publishing: a failure, a build parked for lack of resources, or an operator restart that interrupted it. | `phase`, `error`, `interrupted` (restarts only) |
+| `recording.failed` | Recording, build, seal or publish of a recording stopped without publishing: a failure, a build parked for lack of resources, or an operator restart that interrupted it. | `phase`, `error`, `interrupted` (restarts and shutdowns only) |
 | `shares.completed` | A recording's publication finished and a share outcome is recorded; emitted again when a later Re-share changes that outcome. | `sharing`, `reconciled` (re-shares only) |
 
 `shares.completed` includes the same outcome the Operator shows:
@@ -84,6 +86,11 @@ when an attempt that only writes a summary got that far. Such an attempt, and a
 speaker-edit attempt, work on a copy of a meeting that is already published, so
 neither ever emits `recording.failed`; a failed speaker-edit attempt emits
 nothing.
+
+A failure event carries `interrupted: true` when the stage did not fail on its
+own but was cut short by the operator: stopped for an upgrade while the stage
+was running, or found unfinished at the next start after a crash. The job needs
+a rerun either way; the flag tells a restart from a fault in the recording.
 
 Secondary features — speaker edits, annotations/tags, insights, imports and
 model installs — are not in this catalog yet. The transport and payload shape
@@ -189,7 +196,8 @@ receiver should deduplicate by `X-Cassini-Delivery`.
   changes the recording, publication or share result.
 
 Delivery history lives in the `event_outbox` table. Delivered and failed rows
-are kept for seven days as evidence of what was sent, then deleted.
+are kept for seven days as evidence of what was sent, then deleted, whether or
+not a receiver is still configured.
 
 ## Windmill example
 
