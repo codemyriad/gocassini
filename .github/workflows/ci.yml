@@ -53,10 +53,11 @@ jobs:
   # Decides whether a pull request needs the suites at all (D-906): not when
   # every changed path is docs, or a workflow or file the suites never use, or
   # a version-only info.xml bump (classify-image-relevance.sh --ci-suite).
-  # Every other event runs them.
+  # Other events skip this job and run them, without waiting for a runner.
   changes:
     name: Classify changes
     runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
     timeout-minutes: 5
     outputs:
       suite: ${{ steps.classify.outputs.suite }}
@@ -75,14 +76,15 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          suite=true
-          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
-            # Same diff as the recorder classifier in contracts. A failed
-            # diff fails this job, and with it `CI passed`. The SHAs let a
-            # release sync's version-only info.xml bump skip the suites
-            # (D-915); the image workflow still validates the manifest.
-            changed="$(git diff --no-renames --name-only "$BASE_SHA" "$HEAD_SHA")"
-            suite="$(printf '%s\n' "$changed" | ./scripts/classify-image-relevance.sh --ci-suite --base "$BASE_SHA" --head "$HEAD_SHA")"
+          # Same diff as the recorder classifier in contracts. A failed diff
+          # fails this job, and with it `CI passed`. The SHAs let a release
+          # sync's version-only info.xml bump skip the suites (D-915); the
+          # image workflow still validates the manifest.
+          changed="$(git diff --no-renames --name-only "$BASE_SHA" "$HEAD_SHA")"
+          suite="$(printf '%s\n' "$changed" | ./scripts/classify-image-relevance.sh --ci-suite --base "$BASE_SHA" --head "$HEAD_SHA")"
+          # The classifier's tests are in the suites it would skip.
+          if grep -qxF 'scripts/classify-image-relevance.sh' <<<"$changed"; then
+            suite=true
           fi
           echo "suite=$suite" >> "$GITHUB_OUTPUT"
           if [[ "$suite" == true ]]; then
@@ -95,7 +97,8 @@ jobs:
     name: Fast manifest + harness contracts
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.suite == 'true'
+    # Runs when `changes` was skipped (not a pull request) or said so.
+    if: ${{ !cancelled() && needs.changes.result != 'failure' && needs.changes.outputs.suite != 'false' }}
     outputs:
       recorder-integration: ${{ steps.changes.outputs.relevant }}
       recorder-matrix: ${{ steps.matrix.outputs.value }}
@@ -185,7 +188,8 @@ jobs:
     name: UI tests
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.suite == 'true'
+    # Runs when `changes` was skipped (not a pull request) or said so.
+    if: ${{ !cancelled() && needs.changes.result != 'failure' && needs.changes.outputs.suite != 'false' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -240,7 +244,8 @@ jobs:
     name: Unit tests (${{ matrix.module }})
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.suite == 'true'
+    # Runs when `changes` was skipped (not a pull request) or said so.
+    if: ${{ !cancelled() && needs.changes.result != 'failure' && needs.changes.outputs.suite != 'false' }}
     strategy:
       fail-fast: false
       matrix:
@@ -366,7 +371,9 @@ jobs:
     # cost more than the integration runs it saved when a unit test failed.
     needs:
       - contracts
-    if: needs.contracts.outputs.recorder-integration == 'true'
+    # !cancelled(): on pushes `changes` is skipped, and a skipped job
+    # anywhere upstream skips this one under the implicit success().
+    if: ${{ !cancelled() && needs.contracts.result == 'success' && needs.contracts.outputs.recorder-integration == 'true' }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -421,7 +428,9 @@ jobs:
     # cost more than the integration runs it saved when a unit test failed.
     needs:
       - contracts
-    if: needs.contracts.outputs.recorder-integration == 'true'
+    # !cancelled(): on pushes `changes` is skipped, and a skipped job
+    # anywhere upstream skips this one under the implicit success().
+    if: ${{ !cancelled() && needs.contracts.result == 'success' && needs.contracts.outputs.recorder-integration == 'true' }}
     # Runs on every relevant PR and every push-to-main, without a label gate.
     # Only known unrelated changes skip these standalone recorder scenarios;
     # packaged operator/UI coverage stays in publish-exapp-image.yml.

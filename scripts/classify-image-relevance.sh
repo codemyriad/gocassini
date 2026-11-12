@@ -109,16 +109,29 @@ classify_path_skips_suite() {
 # classify_info_xml_bump_only BASE HEAD -> 0 (true) when appinfo/info.xml
 # differs between BASE and HEAD only in its <version> and <image-tag> lines.
 # Fails closed: an unreadable side returns 1, i.e. relevant.
+# Each side must hold exactly one <version> line and one <image-tag> line, so
+# a second element of either name can't hide a real change.
 classify_info_xml_bump_only() {
-  local base="$1" head="$2" before after
+  local base="$1" head="$2" before after side
   [[ -n "$base" && -n "$head" ]] || return 1
-  before="$(git show "$base:appinfo/info.xml" 2>/dev/null)" || return 1
-  after="$(git show "$head:appinfo/info.xml" 2>/dev/null)" || return 1
+  if ! before="$(git show "$base:appinfo/info.xml")"; then
+    echo "classify: cannot read appinfo/info.xml at $base; treating it as relevant" >&2
+    return 1
+  fi
+  if ! after="$(git show "$head:appinfo/info.xml")"; then
+    echo "classify: cannot read appinfo/info.xml at $head; treating it as relevant" >&2
+    return 1
+  fi
+  for side in "$before" "$after"; do
+    [[ "$(grep -cE '^[[:space:]]*<version>[^<]*</version>[[:space:]]*$' <<<"$side")" == 1 \
+      && "$(grep -cE '^[[:space:]]*<image-tag>[^<]*</image-tag>[[:space:]]*$' <<<"$side")" == 1 ]] \
+      || return 1
+  done
   [[ "$(classify_blank_version "$before")" == "$(classify_blank_version "$after")" ]]
 }
 
-# classify_blank_version TEXT prints TEXT with the value of every <version>
-# and <image-tag> element that sits alone on its line blanked out.
+# classify_blank_version TEXT prints TEXT with the value of the <version> and
+# <image-tag> elements that sit alone on their line blanked out.
 classify_blank_version() {
   printf '%s\n' "$1" | sed -E \
     -e 's#^([[:space:]]*<version>)[^<]*(</version>[[:space:]]*)$#\1\2#' \

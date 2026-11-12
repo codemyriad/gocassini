@@ -130,6 +130,12 @@ expect_sync true  "$sync" --ci-suite --base "$base" --head "$bump_and_route"
 expect_sync true  "$sync"                                    # no SHAs: fail closed
 expect_sync true  "$sync" --base "$base" --head 0000000000000000000000000000000000000000
 expect_sync true  $'appinfo/info.xml\nDockerfile' --base "$base" --head "$bump"
+# A second <version> element can't ride along as a "version bump".
+sed -i '0,/<\/routes>/s#</routes>#</routes>\n  <version>1</version>#' "$repo/appinfo/info.xml"
+two_versions="$(commit two-versions)"
+sed -i 's#<version>1</version>#<version>2</version>#' "$repo/appinfo/info.xml"
+two_versions_bumped="$(commit two-versions-bumped)"
+expect_sync true  "$sync" --base "$two_versions" --head "$two_versions_bumped"
 
 echo "PASS: classifier behavioral fixtures"
 
@@ -155,10 +161,19 @@ gh_to_bash_glob() {
   esac
 }
 
-# Extract ci.yml's paths-ignore items (push only: pull requests always run
-# and classify in the `changes` job). Collected and deduped all the same. No yq on the contracts runner, so parse
-# the small, stable YAML with awk: take `- '...'` items directly under a
-# `paths-ignore:` key, then strip the dash prefix and surrounding quotes.
+# Pull requests must start ci.yml whatever they change: its `CI passed`
+# check is required, and the `changes` job skips the suites instead (D-906).
+awk '
+  /^  pull_request:/ { in_pr=1; next }
+  in_pr && /^  [^ ]/ { in_pr=0 }
+  in_pr && /paths(-ignore)?:/ { found=1 }
+  END { exit found }
+' "$CI_YML" || fail "ci.yml filters pull_request by path; CI passed would never report"
+
+# Extract ci.yml's paths-ignore items (push only, since pull requests have
+# none). No yq on the contracts runner, so parse the small, stable YAML with
+# awk: take `- '...'` items directly under a `paths-ignore:` key, then strip
+# the dash prefix and surrounding quotes.
 mapfile -t ci_globs_raw < <(
   awk '
     /paths-ignore:/ { collect=1; next }
