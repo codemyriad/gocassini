@@ -202,7 +202,13 @@ exit 0
             return subprocess.run(["bash", str(ROOT / script)], cwd=ROOT,
                                   env=env, text=True, capture_output=True)
 
-        # Current catalogue prefers Parakeet Ultra even if a retired v3 id also appears.
+        # Current catalogue prefers Parakeet Ultra v2 even if older ids also appear.
+        res = run_case("cpu", ["parakeet-tdt-0.6b-v3-int8", "parakeet-ultra-0.6b-int8",
+                               "parakeet-ultra-0.6b-int8-v2"])
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertEqual((self.directory / "installed-model").read_text(), "parakeet-ultra-0.6b-int8-v2")
+
+        # A canary image from before v2 falls back to the Ultra model it advertises.
         res = run_case("cpu", ["parakeet-tdt-0.6b-v3-int8", "parakeet-ultra-0.6b-int8"])
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertEqual((self.directory / "installed-model").read_text(), "parakeet-ultra-0.6b-int8")
@@ -222,7 +228,7 @@ exit 0
         custom_catalogue = self.directory / "catalogue.json"
         custom_catalogue.write_text(json.dumps({
             "models": [{
-                "id": "parakeet-ultra-0.6b-int8",
+                "id": "parakeet-ultra-0.6b-int8-v2",
                 "kind": "speech",
                 "replaces": ["parakeet-ultra-0.6b-int8-prev", "parakeet-tdt-0.6b-v3-int8"],
             }]
@@ -233,7 +239,7 @@ exit 0
         self.assertEqual((self.directory / "installed-model").read_text(), "parakeet-ultra-0.6b-int8-prev")
 
         # Redirected curl --fail-with-body error payloads still reach stderr in CI logs.
-        res = run_case("cpu", ["parakeet-ultra-0.6b-int8"], FAIL_INSTALL="1")
+        res = run_case("cpu", ["parakeet-ultra-0.6b-int8-v2"], FAIL_INSTALL="1")
         self.assertEqual(res.returncode, 22)
         self.assertIn("model rejected by operator", res.stderr)
 
