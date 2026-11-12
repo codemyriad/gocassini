@@ -258,7 +258,14 @@ func (rt *Runtime) emitSummaryOutcomes(task buildTask, meetingPath string, outco
 		return
 	}
 	status, model := outcomes.SummaryStatus, outcomes.SummaryModel
-	if attempt, err := rt.store.GetJobAttempt(context.Background(), task.JobID, task.AttemptNumber); err == nil && attempt.TriggerKind == triggerKindRefine {
+	attempt, err := rt.store.GetJobAttempt(context.Background(), task.JobID, task.AttemptNumber)
+	if err != nil {
+		// Without the attempt there is no telling a speaker edit from a
+		// build, and a speaker edit's bundle describes an earlier summary.
+		rt.logger.Printf("summary event skipped id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, err)
+		return
+	}
+	if attempt.TriggerKind == triggerKindRefine {
 		// A speaker-edit attempt works on a copy of the published meeting, so
 		// the bundle's summary step is an earlier attempt's: its status, model
 		// and reason say nothing about this one. What this attempt did is

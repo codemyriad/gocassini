@@ -343,11 +343,16 @@ func (e *eventWebhook) deliverDue(ctx context.Context) {
 			e.markFailed(event.ID, fmt.Sprintf("gave up after %s and %d attempts", e.cfg.retryWindow, event.Attempts))
 			continue
 		}
-		e.deliver(ctx, event)
+		if !e.deliver(ctx, event) {
+			return
+		}
 	}
 }
 
-func (e *eventWebhook) deliver(ctx context.Context, event outboxEvent) {
+// deliver reports whether the pass may go on to the next event. It may not
+// once the outbox cannot record a delivery: the same event would be the next
+// one due, and the receiver would be sent it again at once.
+func (e *eventWebhook) deliver(ctx context.Context, event outboxEvent) bool {
 	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 	mac := hmac.New(sha256.New, []byte(e.cfg.Secret))
 	_, _ = mac.Write([]byte(timestamp))
@@ -358,7 +363,7 @@ func (e *eventWebhook) deliver(ctx context.Context, event outboxEvent) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, e.cfg.URL, bytes.NewReader([]byte(event.Payload)))
 	if err != nil {
 		e.markFailed(event.ID, fmt.Sprintf("build request: %v", err))
-		return
+		return true
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "Cassini/"+e.cfg.Version)
@@ -372,18 +377,22 @@ func (e *eventWebhook) deliver(ctx context.Context, event outboxEvent) {
 		if ctx.Err() != nil {
 			// This worker is being replaced or the operator is stopping: the
 			// receiver did not fail, so the event keeps its place in the queue.
-			return
+			return true
 		}
 		e.reschedule(event, fmt.Sprintf("request: %v", err))
-		return
+		return true
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode >= 200 && resp.StatusCode <= 299 {
 		if err := e.store.markEventDelivered(context.Background(), event.ID, nowUTCString()); err != nil {
 			e.logger.Printf("event webhook mark delivered failed id=%s: %v", event.ID, err)
+			// Back off like a failed attempt, so a store that cannot be
+			// written does not turn into a POST every pass.
+			e.reschedule(event, fmt.Sprintf("delivered, but not recorded: %v", err))
+			return false
 		}
-		return
+		return true
 	}
 
 	// Everything that is not a 2xx is retried until the event is a day old,
@@ -391,6 +400,7 @@ func (e *eventWebhook) deliver(ctx context.Context, event outboxEvent) {
 	// the receiver is redeployed, says the receiver is not ready, not that
 	// the event is wrong.
 	e.reschedule(event, fmt.Sprintf("receiver returned HTTP %d", resp.StatusCode))
+	return true
 }
 
 func (e *eventWebhook) reschedule(event outboxEvent, detail string) {
