@@ -13,19 +13,20 @@
 # (cassini-go-recorder/internal/transcribe/stt.go transcribeSegment
 # pad-tail logic):
 #
-#   length   words (v3, no fix)   v3 with fix   Ultra int8 (CPU)   asserts ≥
-#   5s       1                    11            11                 1
-#   6s       0                    14            13                 1
-#   7s       0                    17            17                 0   (informational only)
-#   8s       0                    20            20                 5
-#   9s       0                    23            23                 5
-#   10s+     15                   24            24                 5
+#   length   words (v3, no fix)   v3 with fix   Ultra int8 v1 (CPU)   asserts ≥
+#   5s       1                    11            11                    1
+#   6s       0                    14            13                    1
+#   7s       0                    17            17                    0   (informational only)
+#   8s       0                    20            20                    5
+#   9s       0                    23            23                    5
+#   10s+     15                   24            24                    5
 #
-# The Ultra column was measured 2026-10-14 with a native `cassini build` on
-# sherpa-onnx-go-linux v1.13.7-cassini.8 (greedy decoding, as the int8 bundle
-# ships without bpe.vocab), and again 2026-10-28 on sherpa-onnx-go-linux/v2
-# v2.0.1-cassini.1 (upstream NeMo log-guard frontend): the same counts on every
-# row, 24 words at 15s.
+# The Ultra int8 v1 column (`parakeet-ultra-0.6b-int8`) was measured 2026-10-14
+# with a native `cassini build` on sherpa-onnx-go-linux v1.13.7-cassini.8
+# (greedy decoding, as the int8 bundle ships without bpe.vocab), and again
+# 2026-10-28 on sherpa-onnx-go-linux/v2 v2.0.1-cassini.1 (upstream NeMo
+# log-guard frontend): the same counts on every row, 24 words at 15s. The
+# script now runs `parakeet-ultra-0.6b-int8-v2` against the `asserts ≥` floor.
 #
 # Without the fix the 6s/8s/9s rows would print "0" and the script
 # would exit non-zero. The 7s row is informational because the model
@@ -97,7 +98,7 @@ fi
 docker cp "$SOURCE_OGG" "$CONTAINER_NAME:/tmp/source.ogg" >/dev/null
 
 # The balanced tier's model on each device: int8 on the CPU, fp32 on CUDA.
-model=parakeet-ultra-0.6b-int8
+model=parakeet-ultra-0.6b-int8-v2
 if [[ "$DEVICE" == cuda ]]; then model=parakeet-ultra-0.6b; fi
 docker exec "$CONTAINER_NAME" cassini models install "$model" --device "$DEVICE"
 

@@ -46,7 +46,7 @@ describe("voice separation in the speech models", () => {
       expect(transcriptionModelId(quality, "cuda")).toBe("parakeet-ultra-0.6b");
     }
     expect(transcriptionModelId("best", "cpu")).toBe("parakeet-ultra-0.6b");
-    expect(transcriptionModelId("balanced", "cpu")).toBe("parakeet-ultra-0.6b-int8");
+    expect(transcriptionModelId("balanced", "cpu")).toBe("parakeet-ultra-0.6b-int8-v2");
     expect(transcriptionModelId("fast", "cpu")).toBe("parakeet-tdt-ctc-110m-en-int8");
   });
 

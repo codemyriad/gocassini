@@ -548,19 +548,20 @@ The optional `processing.transcription` object distinguishes `skipped` (reason
 transcribed; absent processing metadata retains the legacy interpretation. Consumers
 ignore unknown optional fields under the existing v1 compatibility rule.
 
-A completed transcription may carry `standIn`: the model that ran is a retired one
-(Parakeet v3) that transcribed in place of `for`, the model replacing it, which was
-not ready on that device. `reason` is `installing`, `install_failed`,
-`downloads_disabled`, `not_installed` or `runtime_check_failed`, and `detail` is a
-short fixed sentence on the replacement's state, with the download progress while it
-is being installed; it never carries a command's output. `standIn` is the only place
-that records the substitution: the speech-to-text provenance step names the model
-that ran, as for any other transcript. For example:
+A completed transcription may carry `standIn`: the model that ran is a retired
+one (Parakeet Ultra int8 v1 or Parakeet v3) that transcribed in place of `for`,
+the model replacing it, which was not ready on that device. `reason` is
+`installing`, `install_failed`, `downloads_disabled`, `not_installed` or
+`runtime_check_failed`, and `detail` is a short fixed sentence on the
+replacement's state, with the download progress while it is being installed; it
+never carries a command's output. `standIn` is the only place that records the
+substitution: the speech-to-text provenance step names the model that ran, as
+for any other transcript. For example:
 
 ```json
 "processing": {"transcription": {"status": "completed",
-  "model": "parakeet-tdt-0.6b-v3-int8", "revision": "5793d0fd…",
-  "standIn": {"for": "parakeet-ultra-0.6b-int8", "reason": "installing",
+  "model": "parakeet-ultra-0.6b-int8", "revision": "18cb6230…",
+  "standIn": {"for": "parakeet-ultra-0.6b-int8-v2", "reason": "installing",
               "detail": "being installed (downloading, 40%)"}}}
 ```
 

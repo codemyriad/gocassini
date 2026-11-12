@@ -167,7 +167,7 @@ func (rt *Runtime) admitModelForDevice(settings STTSettings, device string) (str
 		return "", fmt.Errorf("speech model %s is not one this version can run; select a quality in Settings: %w", settings.ActiveModel, err)
 	}
 	if !m.Installed || !m.Ready {
-		if candidates := rt.standInCandidates(inventory, m, device, ""); len(candidates) > 0 {
+		if candidates := rt.standInCandidates(inventory, m, device); len(candidates) > 0 {
 			if m.Installed {
 				return m.ID, nil
 			}

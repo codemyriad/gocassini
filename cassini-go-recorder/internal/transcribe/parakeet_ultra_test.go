@@ -104,7 +104,7 @@ func TestParakeetUltraCatalogueEntries(t *testing.T) {
 	tokens := ""
 	for id, revision := range map[ModelID]string{
 		ModelParakeetUltra:     "5030173982bf58c7975b4b26bd47cc4612f54c5c93846756f5c27cbff27f94f6",
-		ModelParakeetUltraInt8: "18cb623004dd6c15999b93cb70b14d8a1f6e8f3a2a97ff733f104bfc3494f6a9",
+		ModelParakeetUltraInt8: "50c15b94ea9cb1c2f8dbcdcbc0f15b450169154deeb206923cb5388f60892366",
 	} {
 		m, err := c.Model(string(id), "")
 		if err != nil {
@@ -164,10 +164,11 @@ func TestParakeetUltraCatalogueEntries(t *testing.T) {
 	}
 }
 
-// Parakeet v3 is retired: a configuration that still names it resolves to the
-// Ultra model of the same precision, drops the revision it pinned (that was
-// v3's), and says so. An id no catalogue ever shipped is left alone, so the
-// build reports it unavailable rather than transcribing with another model.
+// Parakeet Ultra int8 v1 and Parakeet v3 are retired: a configuration that
+// still names one resolves to the shipped Ultra model of the same precision,
+// drops the revision it pinned (that was the retired model's), and says so. An
+// id no catalogue ever shipped is left alone, so the build reports it
+// unavailable rather than transcribing with another model.
 func TestRetiredModelResolvesToItsReplacement(t *testing.T) {
 	cases := []struct {
 		explicit, revision, device string
@@ -178,7 +179,9 @@ func TestRetiredModelResolvesToItsReplacement(t *testing.T) {
 		{"parakeet-tdt-0.6b-v3-int8", "5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf", "cpu",
 			ResolvedModel{ID: ModelParakeetUltraInt8, Replaces: "parakeet-tdt-0.6b-v3-int8"}},
 		{"parakeet-ultra-0.6b-int8", "18cb623004dd6c15999b93cb70b14d8a1f6e8f3a2a97ff733f104bfc3494f6a9", "cpu",
-			ResolvedModel{ID: ModelParakeetUltraInt8, Revision: "18cb623004dd6c15999b93cb70b14d8a1f6e8f3a2a97ff733f104bfc3494f6a9"}},
+			ResolvedModel{ID: ModelParakeetUltraInt8, Replaces: "parakeet-ultra-0.6b-int8"}},
+		{"parakeet-ultra-0.6b-int8-v2", "50c15b94ea9cb1c2f8dbcdcbc0f15b450169154deeb206923cb5388f60892366", "cpu",
+			ResolvedModel{ID: ModelParakeetUltraInt8, Revision: "50c15b94ea9cb1c2f8dbcdcbc0f15b450169154deeb206923cb5388f60892366"}},
 		{"no-such-model", "abc", "cpu", ResolvedModel{ID: "no-such-model", Revision: "abc"}},
 	}
 	for _, c := range cases {
@@ -189,17 +192,24 @@ func TestRetiredModelResolvesToItsReplacement(t *testing.T) {
 }
 
 // The environment the operator, an image or an administrator sets is where a
-// v3 pin survives an upgrade. The build moves to Ultra and its log says why.
+// retired pin survives an upgrade. The build moves to the shipped Ultra export
+// and its log says why.
 func TestBuildConfigMovesARetiredEnvPinToUltra(t *testing.T) {
 	t.Setenv("CASSINI_STT_MODEL", "parakeet-tdt-0.6b-v3-int8")
 	t.Setenv("CASSINI_STT_REVISION", "5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf")
-	t.Setenv("CASSINI_STT_ADDITIONAL_MODELS", "parakeet-tdt-0.6b-v3, parakeet-tdt-ctc-110m-en-int8")
+	t.Setenv("CASSINI_STT_ADDITIONAL_MODELS", "parakeet-tdt-0.6b-v3, parakeet-ultra-0.6b-int8, parakeet-tdt-ctc-110m-en-int8")
 	cfg := DefaultBuildConfig()
 	if cfg.ModelID != ModelParakeetUltraInt8 || cfg.ModelRevision != "" || cfg.ReplacedModelID != "parakeet-tdt-0.6b-v3-int8" {
 		t.Fatalf("model %s revision %q replaced %q", cfg.ModelID, cfg.ModelRevision, cfg.ReplacedModelID)
 	}
-	if !reflect.DeepEqual(cfg.AdditionalModels, []ModelID{ModelParakeetUltra, ModelParakeet110M}) {
+	if !reflect.DeepEqual(cfg.AdditionalModels, []ModelID{ModelParakeetUltra, ModelParakeetUltraInt8, ModelParakeet110M}) {
 		t.Fatalf("additional models %v", cfg.AdditionalModels)
+	}
+
+	t.Setenv("CASSINI_STT_MODEL", "parakeet-ultra-0.6b-int8")
+	t.Setenv("CASSINI_STT_REVISION", "18cb623004dd6c15999b93cb70b14d8a1f6e8f3a2a97ff733f104bfc3494f6a9")
+	if cfg := DefaultBuildConfig(); cfg.ModelID != ModelParakeetUltraInt8 || cfg.ModelRevision != "" || cfg.ReplacedModelID != "parakeet-ultra-0.6b-int8" {
+		t.Fatalf("model %s revision %q replaced %q", cfg.ModelID, cfg.ModelRevision, cfg.ReplacedModelID)
 	}
 
 	t.Setenv("CASSINI_STT_MODEL", "no-such-model")

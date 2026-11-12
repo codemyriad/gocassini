@@ -10,7 +10,7 @@ DEVICE="${DEVICE:-cpu}"
 LOG_DIR="${LOG_DIR:-/tmp/cassini-model-setup-$$}"
 mkdir -p "$LOG_DIR"
 case "$DEVICE" in
-  cpu) model=parakeet-ultra-0.6b-int8; quality=balanced ;;
+  cpu) model=parakeet-ultra-0.6b-int8-v2; quality=balanced ;;
   cuda) model=parakeet-ultra-0.6b; quality=best ;;
   *) echo "Unsupported test device: $DEVICE" >&2; exit 1 ;;
 esac

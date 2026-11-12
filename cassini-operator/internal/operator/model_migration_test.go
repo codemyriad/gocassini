@@ -29,7 +29,7 @@ func setUltraInt8(t *testing.T, rt *Runtime, installed, ready bool) {
 	t.Helper()
 	models := []modelInfo{
 		{ID: modelParakeet110M, Revision: strings.Repeat("a", 64), Device: deviceCPU, Kind: "speech", Installed: true, Ready: true},
-		{ID: modelParakeetUltraInt8, Revision: ultraInt8Rev, Device: deviceCPU, Kind: "speech", Installed: installed, Ready: ready, Replaces: []string{v3Int8}},
+		{ID: modelParakeetUltraInt8, Revision: ultraInt8Rev, Device: deviceCPU, Kind: "speech", Installed: installed, Ready: ready, Replaces: []string{modelParakeetUltraInt8V1, v3Int8}},
 		{ID: modelParakeetUltraFp32, Revision: ultraFp32Rev, Device: deviceCPU, Kind: "speech", Replaces: []string{"parakeet-tdt-0.6b-v3"}},
 	}
 	b, _ := json.Marshal(models)
