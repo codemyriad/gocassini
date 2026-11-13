@@ -337,7 +337,7 @@
   import type { Job, JobAttempt, JobDetailResponse, SummaryPlan } from "./operator/types";
   import { findRecordingInFiles, recordingFilesUrl } from "./operator/recordingFiles";
   import { shouldShowDetailLoading } from "./operator/viewState";
-  import { outcomeAttempt, reshareOutcome, shareNotice, summaryNotice, transcriptionNotice, type OutcomeNotice } from "./operator/stepOutcomes";
+  import { audienceNotice, outcomeAttempt, reshareOutcome, shareNotice, summaryNotice, transcriptionNotice, type OutcomeNotice } from "./operator/stepOutcomes";
   import {
     attemptLogs,
     attemptReason,
@@ -711,7 +711,7 @@
   // because a re-share that reached everyone takes the notice, and the
   // button under it, away with the next read of the run.
   let reshareResult: { jobId: string; refused: string[]; deferred: number } | null = null;
-  $: reshareLine = reshareResult && reshareResult.jobId === selectedJob?.job.id ? reshareOutcome(reshareResult.refused, reshareResult.deferred) : "";
+  $: reshareLine = reshareResult && reshareResult.jobId === selectedJob?.job.id ? reshareOutcome(reshareResult.refused, reshareResult.deferred, selectedJob?.job.audience_mode === "moderators" ? "moderators" : "room") : "";
   // The answer is dropped when the person leaves the run it was made for:
   // they have read it there, and the run's next read says what is true now.
   // Otherwise "Shared with everyone." would come back with every reselection
@@ -1195,25 +1195,37 @@
   $: meetingMs = selectedJob ? meetingLengthMs(selectedJob.job) : null;
   // Who it could not be shared with (D-885): the meeting's, not an attempt's,
   // because a rerun keeps the file and its shares.
-  $: audienceNotice =
-    selectedJob?.job.audience_notice === "no_attendee_list"
-      ? $LL.app.operator.step_outcomes.audience_notice.no_capture()
-      : selectedJob?.job.audience_notice === "no_local_attendees"
-        ? $LL.app.operator.step_outcomes.audience_notice.no_local()
-        : selectedJob?.job.audience_notice === "unknown_audience_mode"
-          ? $LL.app.operator.step_outcomes.audience_notice.unknown()
-          : selectedJob?.job.audience_notice ?? "";
+  // Re-sharing is offered only where the operator would do it: not while the
+  // meeting is being processed again.
+  $: reshareOffered = !!selectedJob && (!isJobActive(selectedJob.job) || selectedJob.job.state === "interrupted");
   $: outcomeNotices = [
+    // Its re-share needs a published meeting: a publication that stopped at
+    // the starter is rerun instead, as the share notice below says.
+    audienceNotice(
+      selectedJob?.job.audience_notice,
+      reshareOffered && !!selectedJob?.sharing && selectedJob.sharing.status !== "starter_refused",
+    ),
     shareNotice(
       selectedJob?.sharing,
       rerunApplies && !rerunBlockedReason,
-      !!selectedJob && (!isJobActive(selectedJob.job) || selectedJob.job.state === "interrupted"),
-      selectedJob?.job.audience_mode && selectedJob.job.audience_mode !== "room" ? "attendees" : "room",
+      reshareOffered,
+      // A mode this build does not know was shared with the starter only; the
+      // attendee wording is the narrow one.
+      selectedJob?.job.audience_mode === "room" || selectedJob?.job.audience_mode === "moderators"
+        ? selectedJob.job.audience_mode
+        : selectedJob?.job.audience_mode
+          ? "attendees"
+          : "room",
     ),
     ...(outcomeSource
       ? [transcriptionNotice(outcomeSource, rerunApplies && !rerunBlockedReason), summaryNotice(outcomeSource)]
       : []),
-  ].filter((notice): notice is OutcomeNotice => notice !== null);
+  ]
+    .filter((notice): notice is OutcomeNotice => notice !== null)
+    // One Re-share button: it does the same thing wherever it is pressed.
+    .map((notice, index, all) =>
+      notice.action && all.findIndex((other) => other.action) < index ? { ...notice, action: undefined } : notice,
+    );
   $: {
     // One plan per finished run and state: a new attempt or an update reloads
     // it, and leaves any open confirmation, which priced the old one.
@@ -1667,12 +1679,6 @@
                       {/if}
                     </div>
                   {/if}
-                  {#if selectedJob.job.audience_notice}
-                    <div class="flex items-start gap-2 rounded-box border border-warning/50 bg-warning/10 p-3 text-sm" role="status">
-                      <TriangleAlert size={16} class="mt-0.5 shrink-0 text-warning" aria-hidden="true" />
-                      <p class="font-medium">{audienceNotice}</p>
-                    </div>
-                  {/if}
                   {#each outcomeNotices as notice (notice.title)}
                     <div class="flex items-start gap-2 rounded-box border p-3 text-sm {outcomeToneClasses[notice.tone]}" role="status">
                       {#if notice.tone === "info"}
@@ -1891,13 +1897,15 @@
                       <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">{$LL.app.operator.console.field.capture()}</dt>
                       <dd class="text-sm">{captureModeLabel(selectedJob.job.request_json)}</dd>
                     </div>
-                    {#if selectedJob.job.audience_mode === "room" || selectedJob.job.audience_mode === "attendees"}
+                    {#if selectedJob.job.audience_mode === "room" || selectedJob.job.audience_mode === "attendees" || selectedJob.job.audience_mode === "moderators"}
                       <div>
                         <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">{$LL.app.operator.console.field.shared_with()}</dt>
                         <dd class="text-sm">
                           {selectedJob.job.audience_mode === "attendees"
                             ? $LL.app.settings.direct_share.audience_attendees_label()
-                            : $LL.app.settings.direct_share.audience_room_label()}
+                            : selectedJob.job.audience_mode === "moderators"
+                              ? $LL.app.settings.direct_share.audience_moderators_label()
+                              : $LL.app.settings.direct_share.audience_room_label()}
                         </dd>
                       </div>
                     {/if}

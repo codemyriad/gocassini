@@ -214,7 +214,9 @@
       "audience_notice": {
         "no_capture": "",
         "no_local": "",
-        "unknown": ""
+        "unknown": "",
+        "no_moderators": "",
+        "no_moderators_reshare_note": ""
       },
       "transcription": {
         "disabled": "Opublikowano bez transkrypcji: transkrypcja jest wyłączona",
@@ -250,6 +252,7 @@
         "held_back": "Nadal wstrzymani przez limit udostępnień Nextcloud: {recipients}. Udostępnij ponownie za 10 minut.",
         "shared_again_held_back": "Udostępniono ponownie. {held_back}",
         "shared_with_everyone": "Udostępniono wszystkim.",
+        "shared_with_moderators": "",
         "still_refused": "Udostępniono ponownie. Nextcloud nadal odmówił: {recipients} ({names}). Sprawdź Doktor › Udostępnianie nagrań.",
         "two_sentences": "{first} {second}"
       },
@@ -258,6 +261,7 @@
         "starter_refused_named": "Nie opublikowano: Nextcloud odmówił udostępnienia użytkownikowi {starter}, który rozpoczął nagranie.",
         "starter_refused_hint_rerun": "Popraw ustawienie wskazane w Doktor › Udostępnianie nagrań, a potem kliknij Uruchom ponownie. Ponowne uruchomienie opublikuje nagranie i udostępni je całemu pokojowi.",
         "starter_refused_hint_rerun_attendees": "",
+        "starter_refused_hint_rerun_moderators": "",
         "starter_refused_hint_no_rerun": "Popraw ustawienie wskazane w Doktor › Udostępnianie nagrań, aby kolejne nagrania były publikowane. Tego przebiegu nie można uruchomić ponownie.",
         "held_back": "Opublikowano. Wstrzymani przez limit udostępnień Nextcloud: {recipients}. Udostępnij ponownie za 10 minut albo podnieś limit (Doktor › Udostępnianie nagrań).",
         "partial_of": "Opublikowano, ale nie udostępniono {count:number|num} z {audience:number|num} {{audience:|odbiorcy||odbiorców|odbiorców|odbiorcy}}",
@@ -267,8 +271,10 @@
         "also_held_back": "Limit udostępnień Nextcloud wstrzymał też {count:number|num} {{|odbiorcę||odbiorców|odbiorców|odbiorcy}}.",
         "reshare_button": "Udostępnij ponownie pokojowi",
         "reshare_button_attendees": "",
+        "reshare_button_moderators": "",
         "reshare_note": "Dodaje wszystkich brakujących, w tym osoby usunięte ręcznie. Osoby, które akceptują udostępnienia ręcznie, znajdą nagranie oczekujące w widoku Przeglądaj.",
-        "reshare_note_attendees": ""
+        "reshare_note_attendees": "",
+        "reshare_note_moderators": ""
       }
     },
     "run_stages": {
@@ -1206,6 +1212,10 @@
       "audience_room_description": "",
       "audience_attendees_label": "",
       "audience_attendees_description": "",
+      "audience_moderators_label": "",
+      "audience_moderators_description": "",
+      "audience_moderators_starter": "",
+      "audience_moderators_one_to_one": "",
       "audience_effects_heading": "",
       "audience_late_joiners": "",
       "audience_chat_skipped": "",

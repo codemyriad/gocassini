@@ -26,7 +26,7 @@ export const noRoomLabel = () => get(LL).viewer.browse.rooms.no_room();
 export const UNDATED_MONTH_KEY = "";
 export const undatedMonthLabel = () => get(LL).viewer.browse.rooms.undated();
 
-export type RecordingAudience = "room" | "attendees";
+export type RecordingAudience = "room" | "attendees" | "moderators";
 export type RoomAudience = RecordingAudience | "mixed" | "";
 
 export interface RoomBucket {
@@ -35,7 +35,7 @@ export interface RoomBucket {
   name: string;
   count: number;
   // The audience(s) carried by this bucket's meetings. "" when no entry has
-  // one (legacy archives); "mixed" when a room holds both modes.
+  // one (legacy archives); "mixed" when a room holds more than one mode.
   audience: RoomAudience;
   // false only for the NO_ROOM_KEY bucket, so the rail can present it as the
   // absence of a room rather than as a room called "No room".

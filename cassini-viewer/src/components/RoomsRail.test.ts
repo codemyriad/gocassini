@@ -121,8 +121,15 @@ describe("RoomsRail audience notice", () => {
     expect(attendees).not.toContain("whether they were present on the call or not");
   });
 
+  it("names the moderator audience when the operator shares only with moderators", () => {
+    const moderators = html("moderators");
+    expect(moderators).toContain("Shared with moderators");
+    expect(moderators).toContain("only with the Talk room's owner and moderators");
+    expect(moderators).not.toContain("who were in the call while it was being recorded");
+  });
+
   it("points readers to Nextcloud Files for each recording's access", () => {
-    for (const audience of ["participants", "attendees"]) {
+    for (const audience of ["participants", "attendees", "moderators"]) {
       expect(html(audience)).toContain("Nextcloud Files controls who can read each recording.");
     }
   });

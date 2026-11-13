@@ -1,3 +1,7 @@
+/** Who receives a recording: the whole Talk room, the people who were in the
+ *  call, or the room's owner and moderators. */
+export type ShareAudience = "room" | "attendees" | "moderators";
+
 export interface MediaCleanupStatus {
   status: "waiting" | "pending" | "error" | "completed";
   last_error?: string;
@@ -57,7 +61,7 @@ export interface Job {
   room_name: string | null;
   room_display_name?: string;
   /** The audience saved on the job when recording started; old jobs are room. */
-  audience_mode?: "room" | "attendees";
+  audience_mode?: ShareAudience;
   /** A run-level audience warning, e.g. no attendee list was captured. */
   audience_notice?: string;
 }
@@ -208,11 +212,12 @@ export interface Settings {
   transcription_enabled?: boolean;
   /**
    * Share a recording's Files file (and so its summary) with all of the Talk
-   * room's participants ("room", the default) or only the people Talk reports
-   * in the call while it is being recorded ("attendees"). The chosen mode is
+   * room's participants ("room", the default), only the people Talk reports
+   * in the call while it is being recorded ("attendees"), or only the room's
+   * owner and moderators ("moderators"). The chosen mode is
    * frozen on the job at recording start.
    */
-  share_audience?: "room" | "attendees";
+  share_audience?: ShareAudience;
   active_model?: string;
   active_revision?: string;
   quality: SettingsQuality;
@@ -236,7 +241,7 @@ export interface SettingsUpdate {
   meeting_format?: "opus" | "json";
   source_retention?: "storage-policy" | "delete-after-processing";
   transcription_enabled?: boolean;
-  share_audience?: "room" | "attendees";
+  share_audience?: ShareAudience;
   active_model?: string;
   active_revision?: string;
   quality?: SettingsQuality;

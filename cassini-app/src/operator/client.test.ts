@@ -309,8 +309,9 @@ describe("the saved share audience", () => {
     return (await new OperatorClient("https://operator.test").getSettings()).share_audience;
   };
 
-  it("is kept when settings load", async () => {
+  it("is kept for each named choice", async () => {
     expect(await read({ share_audience: "attendees" })).toBe("attendees");
+    expect(await read({ share_audience: "moderators" })).toBe("moderators");
     expect(await read({ share_audience: "room" })).toBe("room");
   });
 

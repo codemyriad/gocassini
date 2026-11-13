@@ -55,6 +55,7 @@
     LLMStep,
     Settings,
     SettingsQuality,
+    ShareAudience,
     SpeechModel,
     SpeechModelInventory,
   } from "./operator/types";
@@ -116,8 +117,8 @@
   let savedMeetingFormat: "opus" | "json" = "opus";
   let transcriptionEnabled = false;
   let retainVideo = false;
-  let shareAudience: "room" | "attendees" = "room";
-  let savedShareAudience: "room" | "attendees" = "room";
+  let shareAudience: ShareAudience = "room";
+  let savedShareAudience: ShareAudience = "room";
   let sourceRetention: "storage-policy" | "delete-after-processing" = "storage-policy";
   let savedSourceRetention = "storage-policy";
   let savedRetainVideo = false;
@@ -356,7 +357,7 @@
     savedMeetingFormat = meetingFormat;
     transcriptionEnabled = next.transcription_enabled === true;
     retainVideo = next.retain_video === true;
-    shareAudience = next.share_audience === "attendees" ? "attendees" : "room";
+    shareAudience = next.share_audience === "attendees" || next.share_audience === "moderators" ? next.share_audience : "room";
     savedShareAudience = shareAudience;
     sourceRetention = next.source_retention ?? "storage-policy";
     savedSourceRetention = sourceRetention;

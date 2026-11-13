@@ -4,7 +4,7 @@
 // tested without mounting the Operator.
 import { get } from "svelte/store";
 import { formatCount, LL, locale } from "cassini-viewer/i18n";
-import type { JobAttempt, JobDetailResponse, JobShareOutcome, SkippedShare } from "./types";
+import type { JobAttempt, JobDetailResponse, JobShareOutcome, ShareAudience, SkippedShare } from "./types";
 
 const copy = () => get(LL).app.operator.step_outcomes;
 
@@ -156,10 +156,13 @@ export function listRefusedIds(ids: string[], shown = 3): string {
 // What a re-share's answer says beside the button: everyone, or who is still
 // refused and where the setting is named, and how many Nextcloud's share
 // limit (20 new shares per account every 10 minutes) held back again.
-export function reshareOutcome(refusedIds: string[], deferredCount = 0): string {
+export function reshareOutcome(refusedIds: string[], deferredCount = 0, audienceMode: ShareAudience = "room"): string {
   const t = copy().reshare;
   const heldBack = t.held_back({ recipients: recipients(deferredCount) });
-  if (refusedIds.length === 0) return deferredCount > 0 ? t.shared_again_held_back({ held_back: heldBack }) : t.shared_with_everyone();
+  if (refusedIds.length === 0) {
+    if (deferredCount > 0) return t.shared_again_held_back({ held_back: heldBack });
+    return audienceMode === "moderators" ? t.shared_with_moderators() : t.shared_with_everyone();
+  }
   const refused = t.still_refused({ recipients: recipients(refusedIds.length), names: listRefusedIds(refusedIds) });
   return deferredCount > 0 ? t.two_sentences({ first: refused, second: heldBack }) : refused;
 }
@@ -173,31 +176,40 @@ export function shareNotice(
   sharing: JobShareOutcome | null | undefined,
   rerunAvailable = true,
   reshareAvailable = true,
-  audienceMode: "room" | "attendees" = "room",
+  audienceMode: ShareAudience = "room",
 ): OutcomeNotice | null {
   if (!sharing) return null;
   const skipped = sharing.skipped ?? [];
   const t = copy().share;
-  const attendees = audienceMode === "attendees";
+  // The wording that names who a rerun or a re-share reaches.
+  const worded = {
+    room: { rerun: t.starter_refused_hint_rerun, button: t.reshare_button, note: t.reshare_note },
+    attendees: {
+      rerun: t.starter_refused_hint_rerun_attendees,
+      button: t.reshare_button_attendees,
+      note: t.reshare_note_attendees,
+    },
+    moderators: {
+      rerun: t.starter_refused_hint_rerun_moderators,
+      button: t.reshare_button_moderators,
+      note: t.reshare_note_moderators,
+    },
+  }[audienceMode];
   if (sharing.status === "starter_refused") {
     const starter = skipped[0]?.id ?? "";
     return {
       tone: "error",
       title: starter ? t.starter_refused_named({ starter }) : t.starter_refused(),
       detail: skipped.length > 0 ? describeRefused(refusedEntry(skipped[0])) : undefined,
-      hint: rerunAvailable
-        ? attendees
-          ? t.starter_refused_hint_rerun_attendees()
-          : t.starter_refused_hint_rerun()
-        : t.starter_refused_hint_no_rerun(),
+      hint: rerunAvailable ? worded.rerun() : t.starter_refused_hint_no_rerun(),
     };
   }
   const reshareAction = (): OutcomeNotice["action"] =>
     reshareAvailable
       ? {
           kind: "reshare",
-          label: attendees ? t.reshare_button_attendees() : t.reshare_button(),
-          note: attendees ? t.reshare_note_attendees() : t.reshare_note(),
+          label: worded.button(),
+          note: worded.note(),
         }
       : undefined;
   // Who Nextcloud's share limit held back: not refused, but not shared with
@@ -224,4 +236,30 @@ export function shareNotice(
     // being processed again.
     action: reshareAction(),
   };
+}
+
+// A run-level warning about who received the recording, stored by the operator
+// as a code. When the room's moderators were never read during the call, a
+// re-share reads them, so that notice carries the button.
+export function audienceNotice(code: string | null | undefined, reshareAvailable = true): OutcomeNotice | null {
+  if (!code) return null;
+  const t = copy().audience_notice;
+  if (code === "no_moderator_list") {
+    return {
+      tone: "warning",
+      title: t.no_moderators(),
+      action: reshareAvailable
+        ? { kind: "reshare", label: copy().share.reshare_button_moderators(), note: t.no_moderators_reshare_note() }
+        : undefined,
+    };
+  }
+  const title =
+    code === "no_attendee_list"
+      ? t.no_capture()
+      : code === "no_local_attendees"
+        ? t.no_local()
+        : code === "unknown_audience_mode"
+          ? t.unknown()
+          : code;
+  return { tone: "warning", title };
 }

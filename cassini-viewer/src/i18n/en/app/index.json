@@ -214,7 +214,9 @@
       "audience_notice": {
         "no_capture": "No attendee list was captured; only the starter received this recording.",
         "no_local": "No local attendees were captured; only the starter received this recording.",
-        "unknown": "This recording's audience mode was not recognised; only the starter received this recording."
+        "unknown": "This recording's audience mode was not recognised; only the starter received this recording.",
+        "no_moderators": "Cassini could not read this room's moderators during the call; only the starter received this recording.",
+        "no_moderators_reshare_note": "Shares the recording with the room's moderators."
       },
       "transcription": {
         "disabled": "Published without a transcript: transcription is turned off",
@@ -250,6 +252,7 @@
         "held_back": "Still held back by Nextcloud's share limit: {recipients}. Re-share in 10 minutes.",
         "shared_again_held_back": "Shared again. {held_back}",
         "shared_with_everyone": "Shared with everyone.",
+        "shared_with_moderators": "Shared with the room's moderators.",
         "still_refused": "Shared again. Nextcloud still refused {recipients} ({names}). Check Doctor › Recording sharing.",
         "two_sentences": "{first} {second}"
       },
@@ -258,6 +261,7 @@
         "starter_refused_named": "Not published: Nextcloud refused to share it with {starter}, who started the recording.",
         "starter_refused_hint_rerun": "Fix the setting Doctor › Recording sharing names, then Rerun. Rerun publishes it and shares it with the whole room.",
         "starter_refused_hint_rerun_attendees": "Fix the setting Doctor › Recording sharing names, then Rerun. Rerun publishes it and shares it with the call's attendees.",
+        "starter_refused_hint_rerun_moderators": "Fix the setting Doctor › Recording sharing names, then Rerun. Rerun publishes it and shares it with the room's moderators.",
         "starter_refused_hint_no_rerun": "Fix the setting Doctor › Recording sharing names so later recordings publish. This run cannot be rerun.",
         "held_back": "Published. Held back by Nextcloud's share limit: {recipients}. Re-share in 10 minutes, or raise the limit (Doctor › Recording sharing).",
         "partial_of": "Published, but not shared with {count:number|num} of {audience:number|num} {{audience:recipient|recipients}}",
@@ -267,8 +271,10 @@
         "also_held_back": "Nextcloud's share limit also held back {count:number|num} {{recipient|recipients}}.",
         "reshare_button": "Re-share with the room",
         "reshare_button_attendees": "Re-share with call attendees",
+        "reshare_button_moderators": "Re-share with moderators",
         "reshare_note": "Adds whoever is missing, including anyone removed by hand. People who accept shares by hand will find it waiting in Browse.",
-        "reshare_note_attendees": "Adds whoever was in the call and is missing, including anyone removed by hand. People who accept shares by hand will find it waiting in Browse."
+        "reshare_note_attendees": "Adds whoever was in the call and is missing, including anyone removed by hand. People who accept shares by hand will find it waiting in Browse.",
+        "reshare_note_moderators": "Adds any of the room's moderators who are missing, including anyone removed by hand. People who accept shares by hand will find it waiting in Browse."
       }
     },
     "run_stages": {
@@ -1206,6 +1212,10 @@
       "audience_room_description": "Every member of the room, including people who were not on the call.",
       "audience_attendees_label": "Only people who were in the call",
       "audience_attendees_description": "People with a Nextcloud account who joined the call while it was being recorded. Useful for a standing channel.",
+      "audience_moderators_label": "Only the room's moderators",
+      "audience_moderators_description": "The room's owner and moderators, whether or not they were on the call. Other members of the room do not receive it.",
+      "audience_moderators_starter": "The person who started the recording always receives it.",
+      "audience_moderators_one_to_one": "In a one-to-one conversation, both people receive it.",
       "audience_effects_heading": "With this setting",
       "audience_late_joiners": "People who join late or leave early are included.",
       "audience_chat_skipped": "No message is posted in the Talk room's chat, because the whole room would see the recording's title and link.",

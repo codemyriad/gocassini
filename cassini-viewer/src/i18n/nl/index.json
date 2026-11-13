@@ -28,8 +28,10 @@
       "intro": "Nextcloud Bestanden bepaalt wie elke opname kan lezen.",
       "point_participants": "Elke opname wordt gedeeld met alle deelnemers van de Talk-ruimte, of ze nu bij het gesprek aanwezig waren of niet.",
       "point_attendees": "",
+      "point_moderators": "",
       "point_mixed": "",
       "point_guests": "Gasten zonder Nextcloud-account kunnen hem niet openen.",
+      "point_no_reshare": "",
       "point_public_links": "Cassini maakt nooit een openbare link. In openbare ruimtes kunnen mensen het bestand opnieuw delen als deze Nextcloud dat toestaat."
     },
     "place": {

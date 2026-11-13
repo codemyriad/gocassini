@@ -447,7 +447,8 @@ function normalizeSettings(raw: unknown): Settings {
     retain_video: value.retain_video === true,
     // Kept, or the panel would show the whole room after a reload and the next
     // save, of any setting, would send that and widen later recordings.
-    share_audience: value.share_audience === "attendees" ? "attendees" : "room",
+    share_audience:
+      value.share_audience === "attendees" || value.share_audience === "moderators" ? value.share_audience : "room",
     active_model: asString(value.active_model),
     active_revision: asString(value.active_revision),
     quality: normalizeQuality(value.quality),

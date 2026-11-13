@@ -141,6 +141,7 @@
       "rooms_heading": "Conversations",
       "audience_participants": "Partagé avec les participants",
       "audience_attendees": "",
+      "audience_moderators": "",
       "audience_mixed": "",
       "all_meetings": "Toutes les réunions",
       "rename_room_named": "Renommer la conversation {name}",

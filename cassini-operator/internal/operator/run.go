@@ -219,6 +219,8 @@ type Runtime struct {
 	// fetchTalkAttendees resolves only the people Talk reports in the call.
 	// The operator's "Share recordings with" setting chooses between them.
 	fetchTalkAttendees talkParticipantsFetcher
+	// fetchTalkModerators resolves only the room's owner and moderators.
+	fetchTalkModerators talkParticipantsFetcher
 	// recordStopAckGrace and recordStopFinalizeGrace default to the package
 	// constants; tests shrink them to exercise stop enforcement quickly.
 	recordStopAckGrace      time.Duration
@@ -432,6 +434,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	runtime.fetchTalkRoomName = exappCfg.talkRoomNameFetcher()
 	runtime.fetchTalkParticipants = exappCfg.talkParticipantsFetcher()
 	runtime.fetchTalkAttendees = exappCfg.talkAttendeesFetcher()
+	runtime.fetchTalkModerators = exappCfg.talkModeratorsFetcher()
 	runtime.startRoomNamesWorker()
 
 	// Resolve the publish destination. An explicit name always wins; an unset
@@ -1459,7 +1462,7 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 		}
 		return
 	}
-	if len(result.SeenParticipants) > 0 {
+	if len(result.SeenParticipants) > 0 && rt.jobAudienceIncludesAttendees(job.ID) {
 		// #479: the recorder saw everyone who was ever in the call, including
 		// people the stop capture cannot see after the recorder left. Merge
 		// that list into the saved audience before the build and publish.
@@ -1752,8 +1755,9 @@ type Job struct {
 	// room really had no grantable members.
 	RoomAudienceAt *string `json:"-"`
 	// AudienceMode is the share audience chosen when this recording started:
-	// "room" (everyone in the Talk room) or "attendees" (only people Talk
-	// reported in the call). It is frozen here so a settings change while a
+	// "room" (everyone in the Talk room), "attendees" (only people Talk
+	// reported in the call) or "moderators" (the room's owner and moderators).
+	// It is frozen here so a settings change while a
 	// recording is in progress cannot alter its captures, publication,
 	// re-share or label (#472 review).
 	AudienceMode string `json:"audience_mode,omitempty"`

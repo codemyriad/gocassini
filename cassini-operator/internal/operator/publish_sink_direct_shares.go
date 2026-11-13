@@ -221,7 +221,7 @@ func (s *directSharesPublishSink) audienceForJob(ctx context.Context, jobID stri
 	}
 	rawMode := strings.TrimSpace(job.AudienceMode)
 	mode := normalizeSavedAudience(rawMode)
-	unknownMode := rawMode != "" && rawMode != shareAudienceRoom && rawMode != shareAudienceAttendees
+	unknownMode := rawMode != "" && rawMode != shareAudienceRoom && rawMode != shareAudienceAttendees && rawMode != shareAudienceModerators
 	audience, captured, err := s.rt.store.JobRoomAudience(ctx, jobID)
 	if err != nil {
 		return nil, false, err
@@ -236,7 +236,14 @@ func (s *directSharesPublishSink) audienceForJob(ctx context.Context, jobID stri
 		captured = true
 	}
 	if !captured {
-		if mode == shareAudienceAttendees {
+		if mode == shareAudienceModerators {
+			// The same rule as attendee mode: no lookup at publish time. The
+			// starter gets the recording, and a re-share reads the room's
+			// moderators when an administrator asks for it (#480).
+			if err := s.rt.store.SetJobAudienceNotice(ctx, jobID, jobAudienceNoticeNoModerators); err != nil {
+				s.rt.logger.Printf("audience notice write failed job=%s: %v", jobID, err)
+			}
+		} else if mode == shareAudienceAttendees {
 			// No publish-time Talk lookup in attendee mode: the room's current
 			// call could be the next meeting in a standing channel, and its
 			// people must not receive this recording (#472 review). Share with
@@ -264,5 +271,7 @@ func (s *directSharesPublishSink) audienceForJob(ctx context.Context, jobID stri
 	}
 	// The starter is a known local account even if Talk's roster omits them.
 	audience = append([]sharePrincipal{{Type: "user", ID: binding.Owner}}, audience...)
-	return audience, binding.Public, nil
+	// A public room's recipients may pass the recording on. Not in moderator
+	// mode: the point of it is that the room does not receive the recording.
+	return audience, binding.Public && mode != shareAudienceModerators, nil
 }
