@@ -9,9 +9,6 @@ export NEXTCLOUD_URL="http://127.0.0.1:28080"
 export NEXTCLOUD_STATUS_URL="${NEXTCLOUD_URL}/status.php"
 
 
-# Required for `cassini-viewer` demo-data:* scripts.
-export DEMO_DATA_URL="https://example.com/cassini-demo-site"
-
 # Optional: source your own local, gitignored setup here (agent config, aliases,
 # etc.). Keep such files out of version control. Example:
 #   [ -f .envrc.local ] && source_env .envrc.local

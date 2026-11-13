@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { claimEscape } from "../../ui/escapeClaim";
   import { createEventDispatcher, onMount } from "svelte";
   import { Plus } from "@lucide/svelte";
 
@@ -39,10 +40,13 @@
   }
 
   function onKeydown(event: KeyboardEvent) {
-    if (event.key !== "Enter" && event.key !== "Escape") return;
-    event.preventDefault();
-    if (event.key === "Enter") save();
-    else dispatch("cancel");
+    if (event.key === "Enter") {
+      event.preventDefault();
+      save();
+    } else if (event.key === "Escape") {
+      claimEscape(event);
+      dispatch("cancel");
+    }
   }
 
   const toggle = (which: "color" | "icon") => (choosing = choosing === which ? null : which);

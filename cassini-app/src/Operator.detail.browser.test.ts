@@ -229,7 +229,7 @@ it("says a muted call failed to capture audio, and names the real reason", async
   // nothing to publish and nothing to rerun, and the detail pane must name the
   // reason — not show "Failed · Process exited with error".
   const emptyJob = {
-    ...job, id: "01KEMPTYRUN", state: "failed", stop_reason: "no_audio_captured",
+    ...job, id: "01KEMPTYRUN", state: "failed", stop_reason: "no_audio_captured", audience_mode: "room",
     record_exit_code: 3, error: "no audio captured: every participant was muted or silent",
     artifact_run_path: "/var/lib/cassini-operator/jobs/current/01KEMPTYRUN.run",
     artifact_meeting_path: null, artifact_opus_path: null, artifact_opus_sha256: null, artifact_site_path: null,
@@ -266,7 +266,11 @@ it("says a muted call failed to capture audio, and names the real reason", async
   const pane = document.querySelector(".op-detail-pane")!;
   expect(pane.textContent).not.toContain("Failed");
   expect(pane.textContent).not.toContain("Process exited with error");
-  // There is no recording, so rerun has nothing to offer.
-  await expect.element(page.getByText("No audio was captured; this run has nothing to rerun.", { exact: true })).toBeVisible();
+  // There is no recording, so rerun has nothing to offer. The no-audio notice
+  // says why; the operator's English rerun reason is not shown beside it.
+  await expect.element(page.getByRole("button", { name: "Rerun", exact: true })).toBeDisabled();
+  expect(pane.textContent).not.toContain("this run has nothing to rerun");
+  // Nothing was shared, and a rerun could not share anything either.
+  expect(pane.textContent).not.toContain("Shared with");
   await page.screenshot({ element: pane, path: `${SHOTS}/06-no-audio.png` });
 });

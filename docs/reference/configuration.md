@@ -187,18 +187,10 @@ Compose bundle does not start the app’s Vite server; run it separately.
 
 ## Viewer development config
 
-The viewer’s most common local development need is demo data.
-
-Typical workflow:
-
-```bash
-cd cassini-viewer
-npm install
-npm run demo-data:pull
-npm run dev
-```
-
-Before pulling demo data, set `DEMO_DATA_URL` in a local shell or gitignored `.envrc`.
+The viewer dev server needs meetings to show. It reads them from
+`cassini-viewer/exports/viewer-demo`; no environment variable is involved.
+See [Development in the viewer README](../../cassini-viewer/README.md#development) for the meetings the
+viewer dev server reads and how to fill it.
 
 ## Practical advice
 

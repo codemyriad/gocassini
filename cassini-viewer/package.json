@@ -32,8 +32,6 @@
     "materialize:display": "node ./scripts/materialize-display-transcripts.mjs",
     "merge:sites": "node ./scripts/merge-published-sites.mjs",
     "pack:portable-artifacts": "node ./scripts/pack-portable-artifacts.mjs",
-    "demo-data:clean": "node ./scripts/demo-data-clean.mjs",
-    "demo-data:pull": "node ./scripts/demo-data-pull.mjs",
     "preview": "vite preview",
     "test": "vitest run",
     "build:public": "vite build --config vite.public.config.ts && node ./scripts/assert-embedded-single-bundle.mjs --dir dist/public --js viewer.js --css viewer.css",
