@@ -10,6 +10,10 @@ Events are opt-in. The receiver is configured in the running app, not in
 AppAPI's creation-time deploy environment, so enabling events, rotating the
 secret or changing the allow-list does not require recreating the ExApp.
 
+This contract is experimental until Cassini's first stable release. Event
+names, payload fields and the settings endpoint may change between
+pre-releases; any such change is listed in the changelog.
+
 ## Configuration
 
 `GET` and `PUT operator/settings/webhook` (administrators only, like the rest
