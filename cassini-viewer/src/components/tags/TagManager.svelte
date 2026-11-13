@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { claimEscape, escapeClaimed } from "../ui/escapeClaim";
   import { createEventDispatcher, onDestroy, tick } from "svelte";
   import { fade } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
@@ -90,8 +91,8 @@
         event.preventDefault();
         next?.focus();
       }
-    } else if (event.key === "Escape" && !event.defaultPrevented) {
-      event.preventDefault();
+    } else if (event.key === "Escape" && !escapeClaimed(event)) {
+      claimEscape(event);
       if (editing || confirming) dismiss();
       else dispatch("close");
     }

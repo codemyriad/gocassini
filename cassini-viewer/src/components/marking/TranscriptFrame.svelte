@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { claimEscape } from "../ui/escapeClaim";
   import { onMount, tick } from "svelte";
 
   import { LL } from "../../i18n";
@@ -764,7 +765,7 @@
       else return;
       const active = (root.getRootNode() as Document | ShadowRoot).activeElement;
       if (active instanceof HTMLElement && active.matches(".cassini-word, [data-pin]")) active.blur();
-      event.preventDefault();
+      claimEscape(event);
     } else if (event.key === "Enter" && selection && editing) {
       // A word is a button, and the one a drag began on keeps the focus; its
       // own Enter would seek, where the reader means the selection.

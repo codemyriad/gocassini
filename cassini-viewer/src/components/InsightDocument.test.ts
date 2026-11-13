@@ -208,7 +208,7 @@ describe("InsightDocument", () => {
 
     it("saves on Enter, cancels on Escape, and dispatches rather than performing one", () => {
       expect(insightDocumentSource).toContain('if (event.key !== "Enter" && event.key !== "Escape") {');
-      expect(insightDocumentSource).toMatch(/if \(event\.key === "Enter"\) \{\s*saveRename\(\);\s*\} else \{\s*cancelRename\(\);/);
+      expect(insightDocumentSource).toMatch(/if \(event\.key === "Enter"\) \{\s*event\.preventDefault\(\);\s*saveRename\(\);\s*\} else \{\s*claimEscape\(event\);\s*cancelRename\(\);/);
       expect(insightDocumentSource).toContain('dispatch("rename", name)');
       expect(insightDocumentSource).not.toContain("fetch(");
     });
