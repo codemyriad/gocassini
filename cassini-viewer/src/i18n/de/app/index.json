@@ -212,11 +212,11 @@
     },
     "step_outcomes": {
       "audience_notice": {
-        "no_capture": "",
-        "no_local": "",
-        "unknown": "",
-        "no_moderators": "",
-        "no_moderators_reshare_note": ""
+        "no_capture": "Es wurde keine Teilnehmerliste erfasst; nur die Person, die die Aufnahme gestartet hat, hat sie erhalten.",
+        "no_local": "Es wurden keine lokalen Teilnehmer erfasst; nur die Person, die die Aufnahme gestartet hat, hat sie erhalten.",
+        "unknown": "Die Empfängereinstellung dieser Aufnahme wurde nicht erkannt; nur die Person, die die Aufnahme gestartet hat, hat sie erhalten.",
+        "no_moderators": "Cassini konnte die Moderatoren dieser Unterhaltung während des Anrufs nicht auslesen; nur die Person, die die Aufnahme gestartet hat, hat sie erhalten.",
+        "no_moderators_reshare_note": "Teilt die Aufnahme mit den Moderatoren der Unterhaltung."
       },
       "transcription": {
         "disabled": "Ohne Transkript veröffentlicht: Die Transkription ist ausgeschaltet",
@@ -252,7 +252,7 @@
         "held_back": "Weiterhin durch das Freigabelimit von Nextcloud zurückgehalten: {recipients}. Teile in 10 Minuten erneut.",
         "shared_again_held_back": "Erneut geteilt. {held_back}",
         "shared_with_everyone": "Mit allen geteilt.",
-        "shared_with_moderators": "",
+        "shared_with_moderators": "Mit den Moderatoren der Unterhaltung geteilt.",
         "still_refused": "Erneut geteilt. Nextcloud hat {recipients} weiterhin abgelehnt ({names}). Prüfe Diagnose › Teilen von Aufnahmen.",
         "two_sentences": "{first} {second}"
       },
@@ -260,8 +260,8 @@
         "starter_refused": "Nicht veröffentlicht: Nextcloud hat sich geweigert, sie mit der Person zu teilen, die die Aufnahme gestartet hat.",
         "starter_refused_named": "Nicht veröffentlicht: Nextcloud hat sich geweigert, sie mit {starter} zu teilen, der oder die die Aufnahme gestartet hat.",
         "starter_refused_hint_rerun": "Korrigiere die Einstellung, die Diagnose › Teilen von Aufnahmen nennt, und klicke dann auf „Erneut ausführen“. Das veröffentlicht sie und teilt sie mit der ganzen Unterhaltung.",
-        "starter_refused_hint_rerun_attendees": "",
-        "starter_refused_hint_rerun_moderators": "",
+        "starter_refused_hint_rerun_attendees": "Korrigiere die Einstellung, die Diagnose › Teilen von Aufnahmen nennt, und klicke dann auf „Erneut ausführen“. Das veröffentlicht sie und teilt sie mit den Teilnehmern des Anrufs.",
+        "starter_refused_hint_rerun_moderators": "Korrigiere die Einstellung, die Diagnose › Teilen von Aufnahmen nennt, und klicke dann auf „Erneut ausführen“. Das veröffentlicht sie und teilt sie mit den Moderatoren der Unterhaltung.",
         "starter_refused_hint_no_rerun": "Korrigiere die Einstellung, die Diagnose › Teilen von Aufnahmen nennt, damit spätere Aufnahmen veröffentlicht werden. Dieser Durchlauf kann nicht erneut ausgeführt werden.",
         "held_back": "Veröffentlicht. Durch das Freigabelimit von Nextcloud zurückgehalten: {recipients}. Teile in 10 Minuten erneut oder erhöhe das Limit (Diagnose › Teilen von Aufnahmen).",
         "partial_of": "Veröffentlicht, aber nicht mit {count:number|num} von {audience:number|num} {{audience:Empfänger|Empfängern}} geteilt",
@@ -270,11 +270,11 @@
         "partial_hint": "Nextcloud hat sie wegen einer Freigabe-Einstellung abgelehnt. Diagnose › Teilen von Aufnahmen nennt sie und die Lösung.",
         "also_held_back": "Das Freigabelimit von Nextcloud hat außerdem {count:number|num} {{Empfänger|Empfänger}} zurückgehalten.",
         "reshare_button": "Erneut mit der Unterhaltung teilen",
-        "reshare_button_attendees": "",
-        "reshare_button_moderators": "",
+        "reshare_button_attendees": "Erneut mit Anrufteilnehmern teilen",
+        "reshare_button_moderators": "Erneut mit Moderatoren teilen",
         "reshare_note": "Fügt alle hinzu, die fehlen, auch manuell entfernte. Wer Freigaben manuell annimmt, findet sie wartend unter „Durchsuchen“.",
-        "reshare_note_attendees": "",
-        "reshare_note_moderators": ""
+        "reshare_note_attendees": "Fügt alle hinzu, die beim Anruf dabei waren und fehlen, auch manuell entfernte. Wer Freigaben manuell annimmt, findet sie wartend unter „Durchsuchen“.",
+        "reshare_note_moderators": "Fügt alle Moderatoren der Unterhaltung hinzu, die fehlen, auch manuell entfernte. Wer Freigaben manuell annimmt, findet sie wartend unter „Durchsuchen“."
       }
     },
     "run_stages": {
@@ -655,14 +655,14 @@
         "signaling_connection_error": "Fehler bei der Signaling-Verbindung",
         "join_failed": "Beitritt zur Unterhaltung fehlgeschlagen",
         "record_process_exit_nonzero": "Prozess mit Fehler beendet",
-        "no_audio_captured": ""
+        "no_audio_captured": "Kein Ton aufgenommen"
       },
       "no_audio": {
-        "headline": "",
-        "detail": ""
+        "headline": "Es wurde kein Ton aufgenommen. Waren alle Teilnehmer stummgeschaltet?",
+        "detail": "Diese Aufnahme enthält keinen Ton zum Transkribieren oder Veröffentlichen."
       },
       "status": {
-        "no_audio_captured": "",
+        "no_audio_captured": "Kein Ton aufgenommen",
         "build_blocked": "Build blockiert",
         "waiting_for_resources": "Wartet auf Ressourcen",
         "failed": "Fehlgeschlagen",
@@ -721,7 +721,7 @@
         "speech_model": "Sprachmodell",
         "summary_model": "Zusammenfassungsmodell",
         "capture": "Aufzeichnung",
-        "shared_with": "",
+        "shared_with": "Geteilt mit",
         "stopped_because": "Gestoppt wegen",
         "conversation": "Unterhaltung",
         "recording": "Aufnahme",
@@ -1206,20 +1206,20 @@
     },
     "direct_share": {
       "heading": "Wer Aufnahmen sehen kann",
-      "audience_choose": "",
-      "audience_group_label": "",
-      "audience_room_label": "",
-      "audience_room_description": "",
-      "audience_attendees_label": "",
-      "audience_attendees_description": "",
-      "audience_moderators_label": "",
-      "audience_moderators_description": "",
-      "audience_moderators_starter": "",
-      "audience_moderators_one_to_one": "",
-      "audience_effects_heading": "",
-      "audience_late_joiners": "",
-      "audience_chat_skipped": "",
-      "audience_applies": "",
+      "audience_choose": "Wähle, wer jede Aufnahme samt Transkript und Zusammenfassung erhält.",
+      "audience_group_label": "Aufnahmen teilen mit",
+      "audience_room_label": "Alle in der Talk-Unterhaltung",
+      "audience_room_description": "Alle Mitglieder der Unterhaltung, auch wer nicht beim Anruf dabei war.",
+      "audience_attendees_label": "Nur Personen, die beim Anruf dabei waren",
+      "audience_attendees_description": "Personen mit Nextcloud-Konto, die dem Anruf während der Aufnahme beigetreten sind. Praktisch für einen dauerhaften Kanal.",
+      "audience_moderators_label": "Nur die Moderatoren der Unterhaltung",
+      "audience_moderators_description": "Besitzer und Moderatoren der Unterhaltung, ob sie beim Anruf dabei waren oder nicht. Andere Mitglieder der Unterhaltung erhalten sie nicht.",
+      "audience_moderators_starter": "Die Person, die die Aufnahme gestartet hat, erhält sie immer.",
+      "audience_moderators_one_to_one": "In einer Unterhaltung zu zweit erhalten sie beide Personen.",
+      "audience_effects_heading": "Mit dieser Einstellung",
+      "audience_late_joiners": "Wer später beitritt oder früher geht, ist eingeschlossen.",
+      "audience_chat_skipped": "In den Chat der Talk-Unterhaltung wird keine Nachricht gesendet, weil die ganze Unterhaltung den Titel und Link der Aufnahme sehen würde.",
+      "audience_applies": "Gilt für Aufnahmen, die nach dem Speichern beginnen. Laufende oder bereits veröffentlichte Aufnahmen behalten ihre bisherigen Empfänger.",
       "checking": "Einrichtung der Aufnahmen wird geprüft…",
       "needs_account": "Cassini braucht sein Aufnahmekonto, bevor es veröffentlichen kann.",
       "needs_attention": "Die Einrichtung der Aufnahmen erfordert Aufmerksamkeit.",
