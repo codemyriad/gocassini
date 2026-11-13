@@ -214,7 +214,9 @@
       "audience_notice": {
         "no_capture": "",
         "no_local": "",
-        "unknown": ""
+        "unknown": "",
+        "no_moderators": "",
+        "no_moderators_reshare_note": ""
       },
       "transcription": {
         "disabled": "Pubblicata senza trascrizione: la trascrizione è disattivata",
@@ -250,6 +252,7 @@
         "held_back": "Ancora trattenuti dal limite di condivisione di Nextcloud: {recipients}. Ricondividi tra 10 minuti.",
         "shared_again_held_back": "Condivisa di nuovo. {held_back}",
         "shared_with_everyone": "Condivisa con tutti.",
+        "shared_with_moderators": "",
         "still_refused": "Condivisa di nuovo. Nextcloud ha ancora rifiutato {recipients} ({names}). Controlla Diagnostica › Condivisione delle registrazioni.",
         "two_sentences": "{first} {second}"
       },
@@ -258,6 +261,7 @@
         "starter_refused_named": "Non pubblicata: Nextcloud ha rifiutato di condividerla con {starter}, che ha avviato la registrazione.",
         "starter_refused_hint_rerun": "Correggi l’impostazione indicata in Diagnostica › Condivisione delle registrazioni, poi Esegui di nuovo. La nuova esecuzione la pubblica e la condivide con tutta la conversazione.",
         "starter_refused_hint_rerun_attendees": "",
+        "starter_refused_hint_rerun_moderators": "",
         "starter_refused_hint_no_rerun": "Correggi l’impostazione indicata in Diagnostica › Condivisione delle registrazioni, così le prossime registrazioni verranno pubblicate. Questa esecuzione non può essere ripetuta.",
         "held_back": "Pubblicata. Trattenuti dal limite di condivisione di Nextcloud: {recipients}. Ricondividi tra 10 minuti, o alza il limite (Diagnostica › Condivisione delle registrazioni).",
         "partial_of": "Pubblicata, ma non condivisa con {count:number|num} di {audience:number|num} {{audience:|destinatario|||destinatari|destinatari}}",
@@ -267,8 +271,10 @@
         "also_held_back": "Il limite di condivisione di Nextcloud ha trattenuto anche {count:number|num} {{|destinatario|||destinatari|destinatari}}.",
         "reshare_button": "Ricondividi con la conversazione",
         "reshare_button_attendees": "",
+        "reshare_button_moderators": "",
         "reshare_note": "Aggiunge chi manca, compreso chi è stato rimosso a mano. Chi accetta le condivisioni a mano la troverà in attesa in Sfoglia.",
-        "reshare_note_attendees": ""
+        "reshare_note_attendees": "",
+        "reshare_note_moderators": ""
       }
     },
     "run_stages": {
@@ -1206,6 +1212,10 @@
       "audience_room_description": "",
       "audience_attendees_label": "",
       "audience_attendees_description": "",
+      "audience_moderators_label": "",
+      "audience_moderators_description": "",
+      "audience_moderators_starter": "",
+      "audience_moderators_one_to_one": "",
       "audience_effects_heading": "",
       "audience_late_joiners": "",
       "audience_chat_skipped": "",

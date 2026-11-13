@@ -243,7 +243,7 @@ func TestTalkNotificationSkippedInAttendeeMode(t *testing.T) {
 	if job := mustGetJob(t, rt.store, "one"); job.State != "succeeded" {
 		t.Fatalf("state = %q, want succeeded", job.State)
 	}
-	if !strings.Contains(logs.String(), "skipped in attendee mode") {
+	if !strings.Contains(logs.String(), "skipped in attendees mode") {
 		t.Fatalf("log = %q, want the skip named", logs.String())
 	}
 }

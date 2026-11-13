@@ -134,16 +134,16 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 	rt.supportJournal.record(supportEvent{Event: "delivery_succeeded", Job: task.JobID, Attempt: task.AttemptNumber})
 	var notification *talkNotification
 	var notificationClient *talkNotificationClient
-	// Attendee mode skips the room chat post: the whole room would see the
-	// recording's title and link, which is exactly the audience it is meant to
-	// exclude (#472 review). The stopped callback and the file shares still run.
+	// The attendee and moderator modes skip the room chat post: the whole room
+	// would see the recording's title and link, which is exactly the audience
+	// they are meant to exclude (#472 review). The stopped callback and the file shares still run.
 	job, jobErr := rt.store.GetJob(rt.ctx, task.JobID)
 	if jobErr != nil {
 		// Fail closed: without a readable mode we cannot know the audience is
 		// the room, so leave the room chat alone (#472 review).
 		rt.logger.Printf("Talk notification skipped: audience read failed id=%s: %v", task.JobID, jobErr)
-	} else if normalizeSavedAudience(job.AudienceMode) == shareAudienceAttendees {
-		rt.logger.Printf("Talk notification skipped in attendee mode id=%s", task.JobID)
+	} else if mode := normalizeSavedAudience(job.AudienceMode); mode != shareAudienceRoom {
+		rt.logger.Printf("Talk notification skipped in %s mode id=%s", mode, task.JobID)
 	} else if sink, ok := rt.sink().(interface {
 		talkNotificationClient() *talkNotificationClient
 	}); ok {

@@ -125,8 +125,8 @@ func siteRelativeAsset(raw string) (string, bool) {
 // an earlier publish did resolve.
 type catalogEntryOverlay struct {
 	RoomName string
-	// Audience is the named mode frozen on the job at recording start ("room"
-	// or "attendees"). The viewer labels the archive from this per-meeting
+	// Audience is the named mode frozen on the job at recording start ("room",
+	// "attendees" or "moderators"). The viewer labels the archive from this per-meeting
 	// value, not from whatever setting happens to be current when it loads.
 	Audience string
 }

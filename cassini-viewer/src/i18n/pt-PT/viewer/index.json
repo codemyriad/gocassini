@@ -141,6 +141,7 @@
       "rooms_heading": "Salas",
       "audience_participants": "Partilhada com os participantes",
       "audience_attendees": "",
+      "audience_moderators": "",
       "audience_mixed": "",
       "all_meetings": "Todas as reuniões",
       "rename_room_named": "Mudar o nome da sala {name}",

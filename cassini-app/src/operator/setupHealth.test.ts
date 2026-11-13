@@ -13,6 +13,7 @@ describe("direct share setup status", () => {
   });
   it("shows the attendee audience when the operator reports it", () => {
     expect(recordingAudience({ ...health, audience: "attendees" })).toBe("attendees");
+    expect(recordingAudience({ ...health, audience: "moderators" })).toBe("moderators");
     // An older operator has no audience field; the direct-share mode is the
     // room-participants default.
     expect(recordingAudience({ ...health, audience: "" })).toBe("participants");

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeRefused, listRefusedIds, outcomeAttempt, reshareOutcome, shareNotice, summaryNotice, transcriptionNotice } from "./stepOutcomes";
+import { audienceNotice, describeRefused, listRefusedIds, outcomeAttempt, reshareOutcome, shareNotice, summaryNotice, transcriptionNotice } from "./stepOutcomes";
 import type { JobAttempt, JobDetailResponse } from "./types";
 
 const attempt = (n: number, outcomes: Partial<JobAttempt> = {}): JobAttempt =>
@@ -182,5 +182,31 @@ describe("after a re-share", () => {
     expect(describeRefused({ id: "bob", kind: "person", reason: "" })).toBe("bob");
     expect(describeRefused({ id: "marketing", kind: "group", reason: "Sharing is only allowed with group members" })).toBe("marketing (group): Sharing is only allowed with group members");
     expect(describeRefused({ id: "design", kind: "Team", reason: "" })).toBe("design (Team)");
+  });
+});
+
+describe("the moderators audience", () => {
+  it("names the room's moderators on the re-share button", () => {
+    const notice = shareNotice({ status: "partial", skipped: [{ type: "user", id: "bob" }] }, true, true, "moderators");
+    expect(notice?.action?.label).toBe("Re-share with moderators");
+    expect(notice?.action?.note).toContain("room's moderators");
+  });
+
+  it("says who a clean re-share reached", () => {
+    expect(reshareOutcome([], 0, "moderators")).toBe("Shared with the room's moderators.");
+  });
+
+  it("offers a re-share when the moderators were never read during the call", () => {
+    const notice = audienceNotice("no_moderator_list");
+    expect(notice?.title).toContain("could not read this room's moderators");
+    expect(notice?.action).toMatchObject({ kind: "reshare", label: "Re-share with moderators" });
+    expect(audienceNotice("no_moderator_list", false)?.action).toBeUndefined();
+  });
+
+  it("words the other audience notices without a button", () => {
+    expect(audienceNotice("no_attendee_list")?.action).toBeUndefined();
+    expect(audienceNotice("no_attendee_list")?.title).toContain("No attendee list");
+    expect(audienceNotice("")).toBeNull();
+    expect(audienceNotice(undefined)).toBeNull();
   });
 });

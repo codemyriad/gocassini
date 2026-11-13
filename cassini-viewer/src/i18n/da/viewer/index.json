@@ -141,6 +141,7 @@
       "rooms_heading": "Samtaler",
       "audience_participants": "Delt med deltagerne",
       "audience_attendees": "",
+      "audience_moderators": "",
       "audience_mixed": "",
       "all_meetings": "Alle møder",
       "rename_room_named": "Omdøb samtalen {name}",

@@ -101,7 +101,7 @@ func TestParticipantMappingsSkipsAndDedups(t *testing.T) {
 		{ActorType: "users", ActorID: ""},   // empty -> dropped
 		{ActorType: "unknown", ActorID: "z"},
 	}
-	got := participantMappings(rows, false)
+	got := participantMappings(rows, shareAudienceRoom)
 	if len(got) != 1 || got[0] != (sharePrincipal{Type: "user", ID: "u1"}) {
 		t.Fatalf("participantMappings = %v, want [user/u1]", got)
 	}
@@ -115,7 +115,7 @@ func TestParticipantMappingsAttendeesOnlyKeepsInCallActors(t *testing.T) {
 		{ActorType: "users", ActorID: "dave", InCall: 0},  // room presence only
 		{ActorType: "groups", ActorID: "team-eng", InCall: 1},
 	}
-	got := participantMappings(rows, true)
+	got := participantMappings(rows, shareAudienceAttendees)
 	want := []sharePrincipal{
 		{Type: "user", ID: "alice"},
 		{Type: "user", ID: "bob"},

@@ -487,8 +487,11 @@ func (rt *Runtime) setupHandler(w http.ResponseWriter, r *http.Request) {
 	// endpoint" would defeat that (D-749).
 	w.Header().Set("Cache-Control", "no-store")
 	audience := "participants"
-	if rt.currentSettings().ShareAudience == shareAudienceAttendees {
+	switch rt.currentSettings().ShareAudience {
+	case shareAudienceAttendees:
 		audience = "attendees"
+	case shareAudienceModerators:
+		audience = "moderators"
 	}
 	writeJSON(w, http.StatusOK, setupResponse{
 		// RecordingState is this branch's own addition and is orthogonal to the

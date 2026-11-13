@@ -104,6 +104,12 @@ it("saves the recording audience option", async () => {
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect.poll(() => saved.share_audience).toBe("attendees");
   expect(writes[0]).toMatchObject({ share_audience: "attendees" });
+
+  const moderators = page.getByRole("radio", { name: /^Only the room's moderators/ });
+  await moderators.click();
+  await expect.element(moderators).toBeChecked();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect.poll(() => saved.share_audience).toBe("moderators");
 });
 
 it("keeps publication separate from source retention and explicitly opts into deletion", async () => {

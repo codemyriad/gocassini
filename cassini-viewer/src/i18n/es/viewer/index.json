@@ -141,6 +141,7 @@
       "rooms_heading": "Salas",
       "audience_participants": "Compartida con los participantes",
       "audience_attendees": "",
+      "audience_moderators": "",
       "audience_mixed": "",
       "all_meetings": "Todas las reuniones",
       "rename_room_named": "Renombrar la sala {name}",

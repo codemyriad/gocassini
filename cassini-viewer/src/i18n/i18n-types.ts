@@ -132,13 +132,21 @@ type RootTranslation = {
 			 */
 			point_attendees: string
 			/**
-			 * S​o​m​e​ ​r​e​c​o​r​d​i​n​g​s​ ​h​e​r​e​ ​a​r​e​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​t​h​e​ ​w​h​o​l​e​ ​T​a​l​k​ ​r​o​o​m​ ​a​n​d​ ​s​o​m​e​ ​o​n​l​y​ ​w​i​t​h​ ​t​h​e​ ​p​e​o​p​l​e​ ​w​h​o​ ​w​e​r​e​ ​i​n​ ​t​h​e​ ​c​a​l​l​.
+			 * E​a​c​h​ ​r​e​c​o​r​d​i​n​g​ ​i​s​ ​s​h​a​r​e​d​ ​o​n​l​y​ ​w​i​t​h​ ​t​h​e​ ​T​a​l​k​ ​r​o​o​m​'​s​ ​o​w​n​e​r​ ​a​n​d​ ​m​o​d​e​r​a​t​o​r​s​,​ ​w​h​e​t​h​e​r​ ​t​h​e​y​ ​w​e​r​e​ ​o​n​ ​t​h​e​ ​c​a​l​l​ ​o​r​ ​n​o​t​.
+			 */
+			point_moderators: string
+			/**
+			 * R​e​c​o​r​d​i​n​g​s​ ​h​e​r​e​ ​a​r​e​ ​n​o​t​ ​a​l​l​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​t​h​e​ ​s​a​m​e​ ​p​e​o​p​l​e​:​ ​s​o​m​e​ ​w​i​t​h​ ​t​h​e​ ​w​h​o​l​e​ ​T​a​l​k​ ​r​o​o​m​,​ ​s​o​m​e​ ​w​i​t​h​ ​f​e​w​e​r​ ​p​e​o​p​l​e​.
 			 */
 			point_mixed: string
 			/**
 			 * G​u​e​s​t​s​ ​w​i​t​h​o​u​t​ ​a​ ​N​e​x​t​c​l​o​u​d​ ​a​c​c​o​u​n​t​ ​c​a​n​'​t​ ​o​p​e​n​ ​i​t​.
 			 */
 			point_guests: string
+			/**
+			 * C​a​s​s​i​n​i​ ​n​e​v​e​r​ ​c​r​e​a​t​e​s​ ​a​ ​p​u​b​l​i​c​ ​l​i​n​k​,​ ​a​n​d​ ​t​h​e​ ​p​e​o​p​l​e​ ​w​h​o​ ​r​e​c​e​i​v​e​ ​a​ ​r​e​c​o​r​d​i​n​g​ ​c​a​n​n​o​t​ ​r​e​s​h​a​r​e​ ​t​h​e​ ​f​i​l​e​.
+			 */
+			point_no_reshare: string
 			/**
 			 * C​a​s​s​i​n​i​ ​n​e​v​e​r​ ​c​r​e​a​t​e​s​ ​a​ ​p​u​b​l​i​c​ ​l​i​n​k​.​ ​I​n​ ​p​u​b​l​i​c​ ​r​o​o​m​s​,​ ​p​e​o​p​l​e​ ​c​a​n​ ​r​e​s​h​a​r​e​ ​t​h​e​ ​f​i​l​e​ ​i​f​ ​t​h​i​s​ ​N​e​x​t​c​l​o​u​d​ ​a​l​l​o​w​s​ ​i​t​.
 			 */
@@ -942,6 +950,14 @@ export type NamespaceAppTranslation = {
 				 * T​h​i​s​ ​r​e​c​o​r​d​i​n​g​'​s​ ​a​u​d​i​e​n​c​e​ ​m​o​d​e​ ​w​a​s​ ​n​o​t​ ​r​e​c​o​g​n​i​s​e​d​;​ ​o​n​l​y​ ​t​h​e​ ​s​t​a​r​t​e​r​ ​r​e​c​e​i​v​e​d​ ​t​h​i​s​ ​r​e​c​o​r​d​i​n​g​.
 				 */
 				unknown: string
+				/**
+				 * C​a​s​s​i​n​i​ ​c​o​u​l​d​ ​n​o​t​ ​r​e​a​d​ ​t​h​i​s​ ​r​o​o​m​'​s​ ​m​o​d​e​r​a​t​o​r​s​ ​d​u​r​i​n​g​ ​t​h​e​ ​c​a​l​l​;​ ​o​n​l​y​ ​t​h​e​ ​s​t​a​r​t​e​r​ ​r​e​c​e​i​v​e​d​ ​t​h​i​s​ ​r​e​c​o​r​d​i​n​g​.
+				 */
+				no_moderators: string
+				/**
+				 * S​h​a​r​e​s​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​ ​w​i​t​h​ ​t​h​e​ ​r​o​o​m​'​s​ ​m​o​d​e​r​a​t​o​r​s​.
+				 */
+				no_moderators_reshare_note: string
 			}
 			transcription: {
 				/**
@@ -1066,6 +1082,10 @@ export type NamespaceAppTranslation = {
 				 */
 				shared_with_everyone: string
 				/**
+				 * S​h​a​r​e​d​ ​w​i​t​h​ ​t​h​e​ ​r​o​o​m​'​s​ ​m​o​d​e​r​a​t​o​r​s​.
+				 */
+				shared_with_moderators: string
+				/**
 				 * S​h​a​r​e​d​ ​a​g​a​i​n​.​ ​N​e​x​t​c​l​o​u​d​ ​s​t​i​l​l​ ​r​e​f​u​s​e​d​ ​{​r​e​c​i​p​i​e​n​t​s​}​ ​(​{​n​a​m​e​s​}​)​.​ ​C​h​e​c​k​ ​D​o​c​t​o​r​ ​›​ ​R​e​c​o​r​d​i​n​g​ ​s​h​a​r​i​n​g​.
 				 * @param {unknown} names
 				 * @param {unknown} recipients
@@ -1096,6 +1116,10 @@ export type NamespaceAppTranslation = {
 				 * F​i​x​ ​t​h​e​ ​s​e​t​t​i​n​g​ ​D​o​c​t​o​r​ ​›​ ​R​e​c​o​r​d​i​n​g​ ​s​h​a​r​i​n​g​ ​n​a​m​e​s​,​ ​t​h​e​n​ ​R​e​r​u​n​.​ ​R​e​r​u​n​ ​p​u​b​l​i​s​h​e​s​ ​i​t​ ​a​n​d​ ​s​h​a​r​e​s​ ​i​t​ ​w​i​t​h​ ​t​h​e​ ​c​a​l​l​'​s​ ​a​t​t​e​n​d​e​e​s​.
 				 */
 				starter_refused_hint_rerun_attendees: string
+				/**
+				 * F​i​x​ ​t​h​e​ ​s​e​t​t​i​n​g​ ​D​o​c​t​o​r​ ​›​ ​R​e​c​o​r​d​i​n​g​ ​s​h​a​r​i​n​g​ ​n​a​m​e​s​,​ ​t​h​e​n​ ​R​e​r​u​n​.​ ​R​e​r​u​n​ ​p​u​b​l​i​s​h​e​s​ ​i​t​ ​a​n​d​ ​s​h​a​r​e​s​ ​i​t​ ​w​i​t​h​ ​t​h​e​ ​r​o​o​m​'​s​ ​m​o​d​e​r​a​t​o​r​s​.
+				 */
+				starter_refused_hint_rerun_moderators: string
 				/**
 				 * F​i​x​ ​t​h​e​ ​s​e​t​t​i​n​g​ ​D​o​c​t​o​r​ ​›​ ​R​e​c​o​r​d​i​n​g​ ​s​h​a​r​i​n​g​ ​n​a​m​e​s​ ​s​o​ ​l​a​t​e​r​ ​r​e​c​o​r​d​i​n​g​s​ ​p​u​b​l​i​s​h​.​ ​T​h​i​s​ ​r​u​n​ ​c​a​n​n​o​t​ ​b​e​ ​r​e​r​u​n​.
 				 */
@@ -1139,6 +1163,10 @@ export type NamespaceAppTranslation = {
 				 */
 				reshare_button_attendees: string
 				/**
+				 * R​e​-​s​h​a​r​e​ ​w​i​t​h​ ​m​o​d​e​r​a​t​o​r​s
+				 */
+				reshare_button_moderators: string
+				/**
 				 * A​d​d​s​ ​w​h​o​e​v​e​r​ ​i​s​ ​m​i​s​s​i​n​g​,​ ​i​n​c​l​u​d​i​n​g​ ​a​n​y​o​n​e​ ​r​e​m​o​v​e​d​ ​b​y​ ​h​a​n​d​.​ ​P​e​o​p​l​e​ ​w​h​o​ ​a​c​c​e​p​t​ ​s​h​a​r​e​s​ ​b​y​ ​h​a​n​d​ ​w​i​l​l​ ​f​i​n​d​ ​i​t​ ​w​a​i​t​i​n​g​ ​i​n​ ​B​r​o​w​s​e​.
 				 */
 				reshare_note: string
@@ -1146,6 +1174,10 @@ export type NamespaceAppTranslation = {
 				 * A​d​d​s​ ​w​h​o​e​v​e​r​ ​w​a​s​ ​i​n​ ​t​h​e​ ​c​a​l​l​ ​a​n​d​ ​i​s​ ​m​i​s​s​i​n​g​,​ ​i​n​c​l​u​d​i​n​g​ ​a​n​y​o​n​e​ ​r​e​m​o​v​e​d​ ​b​y​ ​h​a​n​d​.​ ​P​e​o​p​l​e​ ​w​h​o​ ​a​c​c​e​p​t​ ​s​h​a​r​e​s​ ​b​y​ ​h​a​n​d​ ​w​i​l​l​ ​f​i​n​d​ ​i​t​ ​w​a​i​t​i​n​g​ ​i​n​ ​B​r​o​w​s​e​.
 				 */
 				reshare_note_attendees: string
+				/**
+				 * A​d​d​s​ ​a​n​y​ ​o​f​ ​t​h​e​ ​r​o​o​m​'​s​ ​m​o​d​e​r​a​t​o​r​s​ ​w​h​o​ ​a​r​e​ ​m​i​s​s​i​n​g​,​ ​i​n​c​l​u​d​i​n​g​ ​a​n​y​o​n​e​ ​r​e​m​o​v​e​d​ ​b​y​ ​h​a​n​d​.​ ​P​e​o​p​l​e​ ​w​h​o​ ​a​c​c​e​p​t​ ​s​h​a​r​e​s​ ​b​y​ ​h​a​n​d​ ​w​i​l​l​ ​f​i​n​d​ ​i​t​ ​w​a​i​t​i​n​g​ ​i​n​ ​B​r​o​w​s​e​.
+				 */
+				reshare_note_moderators: string
 			}
 		}
 		run_stages: {
@@ -4681,6 +4713,22 @@ export type NamespaceAppTranslation = {
 			 */
 			audience_attendees_description: string
 			/**
+			 * O​n​l​y​ ​t​h​e​ ​r​o​o​m​'​s​ ​m​o​d​e​r​a​t​o​r​s
+			 */
+			audience_moderators_label: string
+			/**
+			 * T​h​e​ ​r​o​o​m​'​s​ ​o​w​n​e​r​ ​a​n​d​ ​m​o​d​e​r​a​t​o​r​s​,​ ​w​h​e​t​h​e​r​ ​o​r​ ​n​o​t​ ​t​h​e​y​ ​w​e​r​e​ ​o​n​ ​t​h​e​ ​c​a​l​l​.​ ​O​t​h​e​r​ ​m​e​m​b​e​r​s​ ​o​f​ ​t​h​e​ ​r​o​o​m​ ​d​o​ ​n​o​t​ ​r​e​c​e​i​v​e​ ​i​t​.
+			 */
+			audience_moderators_description: string
+			/**
+			 * T​h​e​ ​p​e​r​s​o​n​ ​w​h​o​ ​s​t​a​r​t​e​d​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​ ​a​l​w​a​y​s​ ​r​e​c​e​i​v​e​s​ ​i​t​.
+			 */
+			audience_moderators_starter: string
+			/**
+			 * I​n​ ​a​ ​o​n​e​-​t​o​-​o​n​e​ ​c​o​n​v​e​r​s​a​t​i​o​n​,​ ​b​o​t​h​ ​p​e​o​p​l​e​ ​r​e​c​e​i​v​e​ ​i​t​.
+			 */
+			audience_moderators_one_to_one: string
+			/**
 			 * W​i​t​h​ ​t​h​i​s​ ​s​e​t​t​i​n​g
 			 */
 			audience_effects_heading: string
@@ -6106,6 +6154,10 @@ export type NamespaceViewerTranslation = {
 			 * S​h​a​r​e​d​ ​w​i​t​h​ ​c​a​l​l​ ​a​t​t​e​n​d​e​e​s
 			 */
 			audience_attendees: string
+			/**
+			 * S​h​a​r​e​d​ ​w​i​t​h​ ​m​o​d​e​r​a​t​o​r​s
+			 */
+			audience_moderators: string
 			/**
 			 * S​h​a​r​e​d​ ​w​i​t​h​ ​e​a​c​h​ ​r​e​c​o​r​d​i​n​g​'​s​ ​a​u​d​i​e​n​c​e
 			 */
@@ -8820,13 +8872,21 @@ export type TranslationFunctions = {
 			 */
 			point_attendees: () => LocalizedString
 			/**
-			 * Some recordings here are shared with the whole Talk room and some only with the people who were in the call.
+			 * Each recording is shared only with the Talk room's owner and moderators, whether they were on the call or not.
+			 */
+			point_moderators: () => LocalizedString
+			/**
+			 * Recordings here are not all shared with the same people: some with the whole Talk room, some with fewer people.
 			 */
 			point_mixed: () => LocalizedString
 			/**
 			 * Guests without a Nextcloud account can't open it.
 			 */
 			point_guests: () => LocalizedString
+			/**
+			 * Cassini never creates a public link, and the people who receive a recording cannot reshare the file.
+			 */
+			point_no_reshare: () => LocalizedString
 			/**
 			 * Cassini never creates a public link. In public rooms, people can reshare the file if this Nextcloud allows it.
 			 */
@@ -9581,6 +9641,14 @@ export type TranslationFunctions = {
 					 * This recording's audience mode was not recognised; only the starter received this recording.
 					 */
 					unknown: () => LocalizedString
+					/**
+					 * Cassini could not read this room's moderators during the call; only the starter received this recording.
+					 */
+					no_moderators: () => LocalizedString
+					/**
+					 * Shares the recording with the room's moderators.
+					 */
+					no_moderators_reshare_note: () => LocalizedString
 				}
 				transcription: {
 					/**
@@ -9692,6 +9760,10 @@ export type TranslationFunctions = {
 					 */
 					shared_with_everyone: () => LocalizedString
 					/**
+					 * Shared with the room's moderators.
+					 */
+					shared_with_moderators: () => LocalizedString
+					/**
 					 * Shared again. Nextcloud still refused {recipients} ({names}). Check Doctor › Recording sharing.
 					 */
 					still_refused: (arg: { names: unknown, recipients: unknown }) => LocalizedString
@@ -9717,6 +9789,10 @@ export type TranslationFunctions = {
 					 * Fix the setting Doctor › Recording sharing names, then Rerun. Rerun publishes it and shares it with the call's attendees.
 					 */
 					starter_refused_hint_rerun_attendees: () => LocalizedString
+					/**
+					 * Fix the setting Doctor › Recording sharing names, then Rerun. Rerun publishes it and shares it with the room's moderators.
+					 */
+					starter_refused_hint_rerun_moderators: () => LocalizedString
 					/**
 					 * Fix the setting Doctor › Recording sharing names so later recordings publish. This run cannot be rerun.
 					 */
@@ -9754,6 +9830,10 @@ export type TranslationFunctions = {
 					 */
 					reshare_button_attendees: () => LocalizedString
 					/**
+					 * Re-share with moderators
+					 */
+					reshare_button_moderators: () => LocalizedString
+					/**
 					 * Adds whoever is missing, including anyone removed by hand. People who accept shares by hand will find it waiting in Browse.
 					 */
 					reshare_note: () => LocalizedString
@@ -9761,6 +9841,10 @@ export type TranslationFunctions = {
 					 * Adds whoever was in the call and is missing, including anyone removed by hand. People who accept shares by hand will find it waiting in Browse.
 					 */
 					reshare_note_attendees: () => LocalizedString
+					/**
+					 * Adds any of the room's moderators who are missing, including anyone removed by hand. People who accept shares by hand will find it waiting in Browse.
+					 */
+					reshare_note_moderators: () => LocalizedString
 				}
 			}
 			run_stages: {
@@ -13076,6 +13160,22 @@ export type TranslationFunctions = {
 				 */
 				audience_attendees_description: () => LocalizedString
 				/**
+				 * Only the room's moderators
+				 */
+				audience_moderators_label: () => LocalizedString
+				/**
+				 * The room's owner and moderators, whether or not they were on the call. Other members of the room do not receive it.
+				 */
+				audience_moderators_description: () => LocalizedString
+				/**
+				 * The person who started the recording always receives it.
+				 */
+				audience_moderators_starter: () => LocalizedString
+				/**
+				 * In a one-to-one conversation, both people receive it.
+				 */
+				audience_moderators_one_to_one: () => LocalizedString
+				/**
 				 * With this setting
 				 */
 				audience_effects_heading: () => LocalizedString
@@ -14405,6 +14505,10 @@ export type TranslationFunctions = {
 				 * Shared with call attendees
 				 */
 				audience_attendees: () => LocalizedString
+				/**
+				 * Shared with moderators
+				 */
+				audience_moderators: () => LocalizedString
 				/**
 				 * Shared with each recording's audience
 				 */

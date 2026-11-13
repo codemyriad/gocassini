@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"path"
+	"strings"
 )
 
 // Re-applying a published meeting's room audience (D-885).
@@ -80,6 +81,9 @@ func (rt *Runtime) handleReshareJob(w http.ResponseWriter, r *http.Request, id s
 	case errors.Is(err, errReshareNoCapturedAudience):
 		writeJSONError(w, http.StatusConflict, err.Error())
 		return
+	case errors.Is(err, errReshareModeratorsUnreadable):
+		writeJSONError(w, http.StatusBadGateway, err.Error())
+		return
 	case err != nil:
 		rt.logger.Printf("reshare job=%s: %v", id, err)
 		writeJSONError(w, http.StatusBadGateway, "Cassini could not share the meeting again. Check Doctor's Recording storage and Recording sharing, then try again.")
@@ -122,10 +126,17 @@ func (s *directSharesPublishSink) reshare(ctx context.Context, jobID string) (*j
 			return nil, &meetingRetiredError{reason: reason}
 		}
 	}
-	if _, captured, err := s.rt.store.JobRoomAudience(ctx, jobID); err != nil {
+	_, captured, err := s.rt.store.JobRoomAudience(ctx, jobID)
+	if err != nil {
 		return nil, err
-	} else if !captured {
-		return nil, errReshareNoCapturedAudience
+	}
+	var moderatorsOf talkRecordingBinding
+	if !captured {
+		// Refused here for every mode but moderators; the room is read further
+		// down, once nothing else can stop the re-share.
+		if moderatorsOf, err = s.moderatorRoomForReshare(ctx, jobID); err != nil {
+			return nil, err
+		}
 	}
 	if !ncAccessSubstrate.usable() {
 		s.cfg.preflightDirectShares(ctx, s.rt.logger)
@@ -151,6 +162,11 @@ func (s *directSharesPublishSink) reshare(ctx context.Context, jobID string) (*j
 		}
 		return nil, err
 	}
+	if !captured {
+		if err := s.captureModeratorsForReshare(ctx, jobID, moderatorsOf); err != nil {
+			return nil, err
+		}
+	}
 	audience, public, err := s.audienceForJob(ctx, jobID)
 	if err != nil {
 		return nil, err
@@ -164,6 +180,47 @@ func (s *directSharesPublishSink) reshare(ctx context.Context, jobID string) (*j
 		return nil, err
 	}
 	return s.rt.store.JobShareOutcome(ctx, jobID)
+}
+
+// A moderator-mode recording with no saved roster was shared with the starter
+// only, because the room's moderators were never read during the call. An
+// administrator asking for a re-share is the one place they are read
+// afterwards: a role, unlike who was in a call, is still a fair answer later
+// (#480). Every other mode keeps refusing, as before.
+//
+// moderatorRoomForReshare says whether that applies and which room to ask.
+func (s *directSharesPublishSink) moderatorRoomForReshare(ctx context.Context, jobID string) (talkRecordingBinding, error) {
+	job, err := s.rt.store.GetJob(ctx, jobID)
+	if err != nil {
+		return talkRecordingBinding{}, err
+	}
+	if strings.TrimSpace(job.AudienceMode) != shareAudienceModerators || s.rt.fetchTalkModerators == nil {
+		return talkRecordingBinding{}, errReshareNoCapturedAudience
+	}
+	binding, ok := s.rt.talkBindingForJob(jobID)
+	if !ok {
+		return talkRecordingBinding{}, errReshareNoCapturedAudience
+	}
+	return binding, nil
+}
+
+// errReshareModeratorsUnreadable: Talk would not say who moderates the room,
+// so the re-share shared with nobody.
+var errReshareModeratorsUnreadable = errors.New("Cassini could not read this room's moderators from Talk, so nothing was shared. Check that the conversation still exists, then try again.")
+
+// captureModeratorsForReshare reads the room's moderators and saves them as
+// the recording's roster. From then on room_audience_at is when an
+// administrator asked, not a moment during the meeting, and later re-shares
+// use this saved list.
+func (s *directSharesPublishSink) captureModeratorsForReshare(ctx context.Context, jobID string, binding talkRecordingBinding) error {
+	ctx, cancel := context.WithTimeout(ctx, roomAudienceTimeout)
+	defer cancel()
+	moderators, _, err := s.rt.resolveRecordingAudienceWith(ctx, jobID, binding.Owner, binding.RoomToken, s.rt.fetchTalkModerators)
+	if err != nil {
+		s.rt.logger.Printf("reshare job=%s: read moderators: %v", jobID, err)
+		return errReshareModeratorsUnreadable
+	}
+	return s.rt.store.MergeJobRoomAudience(ctx, jobID, moderators, nowUTCString())
 }
 
 // deliveredMeetingPath is where publication put the job's meeting: an audio

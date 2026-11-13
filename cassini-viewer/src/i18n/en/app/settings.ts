@@ -276,6 +276,11 @@ const settings = {
     audience_attendees_label: "Only people who were in the call",
     audience_attendees_description:
       "People with a Nextcloud account who joined the call while it was being recorded. Useful for a standing channel.",
+    audience_moderators_label: "Only the room's moderators",
+    audience_moderators_description:
+      "The room's owner and moderators, whether or not they were on the call. Other members of the room do not receive it.",
+    audience_moderators_starter: "The person who started the recording always receives it.",
+    audience_moderators_one_to_one: "In a one-to-one conversation, both people receive it.",
     // Heading above the list of what the selected choice does.
     audience_effects_heading: "With this setting",
     audience_late_joiners: "People who join late or leave early are included.",
