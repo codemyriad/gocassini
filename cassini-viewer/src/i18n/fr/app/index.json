@@ -212,11 +212,11 @@
     },
     "step_outcomes": {
       "audience_notice": {
-        "no_capture": "",
-        "no_local": "",
-        "unknown": "",
-        "no_moderators": "",
-        "no_moderators_reshare_note": ""
+        "no_capture": "Aucune liste des participants n’a été relevée ; seule la personne qui a lancé l’enregistrement l’a reçu.",
+        "no_local": "Aucun participant local n’a été relevé ; seule la personne qui a lancé l’enregistrement l’a reçu.",
+        "unknown": "Le mode de destinataires de cet enregistrement n’a pas été reconnu ; seule la personne qui l’a lancé l’a reçu.",
+        "no_moderators": "Cassini n’a pas pu lire les modérateurs de cette conversation pendant l’appel ; seule la personne qui a lancé l’enregistrement l’a reçu.",
+        "no_moderators_reshare_note": "Partage l’enregistrement avec les modérateurs de la conversation."
       },
       "transcription": {
         "disabled": "Publiée sans transcription : la transcription est désactivée",
@@ -252,7 +252,7 @@
         "held_back": "Toujours retenus par la limite de partage de Nextcloud : {recipients}. Repartagez dans 10 minutes.",
         "shared_again_held_back": "Partagée à nouveau. {held_back}",
         "shared_with_everyone": "Partagée avec tout le monde.",
-        "shared_with_moderators": "",
+        "shared_with_moderators": "Partagée avec les modérateurs de la conversation.",
         "still_refused": "Partagée à nouveau. Nextcloud refuse toujours {recipients} ({names}). Consultez Diagnostic › Partage des enregistrements.",
         "two_sentences": "{first} {second}"
       },
@@ -260,8 +260,8 @@
         "starter_refused": "Non publiée : Nextcloud a refusé de la partager avec la personne qui a lancé l’enregistrement.",
         "starter_refused_named": "Non publiée : Nextcloud a refusé de la partager avec {starter}, qui a lancé l’enregistrement.",
         "starter_refused_hint_rerun": "Corrigez le paramètre indiqué dans Diagnostic › Partage des enregistrements, puis réexécutez. La réexécution la publie et la partage avec toute la conversation.",
-        "starter_refused_hint_rerun_attendees": "",
-        "starter_refused_hint_rerun_moderators": "",
+        "starter_refused_hint_rerun_attendees": "Corrigez le paramètre indiqué dans Diagnostic › Partage des enregistrements, puis réexécutez. La réexécution la publie et la partage avec les participants à l’appel.",
+        "starter_refused_hint_rerun_moderators": "Corrigez le paramètre indiqué dans Diagnostic › Partage des enregistrements, puis réexécutez. La réexécution la publie et la partage avec les modérateurs de la conversation.",
         "starter_refused_hint_no_rerun": "Corrigez le paramètre indiqué dans Diagnostic › Partage des enregistrements pour que les prochains enregistrements soient publiés. Cette exécution ne peut pas être réexécutée.",
         "held_back": "Publiée. Retenus par la limite de partage de Nextcloud : {recipients}. Repartagez dans 10 minutes, ou relevez la limite (Diagnostic › Partage des enregistrements).",
         "partial_of": "Publiée, mais non partagée avec {count:number|num} {{audience:|destinataire|||destinataires|destinataires}} sur {audience:number|num}",
@@ -270,11 +270,11 @@
         "partial_hint": "Nextcloud les a refusés à cause d’un paramètre de partage. Diagnostic › Partage des enregistrements l’indique, avec la correction.",
         "also_held_back": "La limite de partage de Nextcloud a aussi retenu {count:number|num} {{count:|destinataire|||destinataires|destinataires}}.",
         "reshare_button": "Repartager avec la conversation",
-        "reshare_button_attendees": "",
-        "reshare_button_moderators": "",
+        "reshare_button_attendees": "Repartager avec les participants à l’appel",
+        "reshare_button_moderators": "Repartager avec les modérateurs",
         "reshare_note": "Ajoute toutes les personnes manquantes, y compris celles retirées manuellement. Les personnes qui acceptent les partages manuellement le trouveront en attente dans Parcourir.",
-        "reshare_note_attendees": "",
-        "reshare_note_moderators": ""
+        "reshare_note_attendees": "Ajoute les personnes présentes à l’appel qui manquent, y compris celles retirées manuellement. Les personnes qui acceptent les partages manuellement le trouveront en attente dans Parcourir.",
+        "reshare_note_moderators": "Ajoute les modérateurs de la conversation qui manquent, y compris ceux retirés manuellement. Les personnes qui acceptent les partages manuellement le trouveront en attente dans Parcourir."
       }
     },
     "run_stages": {
@@ -655,14 +655,14 @@
         "signaling_connection_error": "Erreur de connexion à la signalisation",
         "join_failed": "Impossible de rejoindre la conversation",
         "record_process_exit_nonzero": "Le processus s’est terminé par une erreur",
-        "no_audio_captured": ""
+        "no_audio_captured": "Aucun son capté"
       },
       "no_audio": {
-        "headline": "",
-        "detail": ""
+        "headline": "Aucun son n’a été capté. Tous les participants avaient-ils coupé leur micro ?",
+        "detail": "Cet enregistrement ne contient aucun son à transcrire ou à publier."
       },
       "status": {
-        "no_audio_captured": "",
+        "no_audio_captured": "Aucun son capté",
         "build_blocked": "Assemblage bloqué",
         "waiting_for_resources": "En attente de ressources",
         "failed": "Échouée",
@@ -721,7 +721,7 @@
         "speech_model": "Modèle vocal",
         "summary_model": "Modèle de résumé",
         "capture": "Capture",
-        "shared_with": "",
+        "shared_with": "Partagé avec",
         "stopped_because": "Motif de l’arrêt",
         "conversation": "Conversation",
         "recording": "Enregistrement",
@@ -1206,20 +1206,20 @@
     },
     "direct_share": {
       "heading": "Qui peut voir les enregistrements",
-      "audience_choose": "",
-      "audience_group_label": "",
-      "audience_room_label": "",
-      "audience_room_description": "",
-      "audience_attendees_label": "",
-      "audience_attendees_description": "",
-      "audience_moderators_label": "",
-      "audience_moderators_description": "",
-      "audience_moderators_starter": "",
-      "audience_moderators_one_to_one": "",
-      "audience_effects_heading": "",
-      "audience_late_joiners": "",
-      "audience_chat_skipped": "",
-      "audience_applies": "",
+      "audience_choose": "Choisissez qui reçoit chaque enregistrement, avec sa transcription et son résumé.",
+      "audience_group_label": "Partager les enregistrements avec",
+      "audience_room_label": "Tous les membres de la conversation Talk",
+      "audience_room_description": "Tous les membres de la conversation, y compris les personnes absentes de l’appel.",
+      "audience_attendees_label": "Uniquement les personnes présentes à l’appel",
+      "audience_attendees_description": "Les personnes avec un compte Nextcloud qui ont rejoint l’appel pendant l’enregistrement. Utile pour un canal permanent.",
+      "audience_moderators_label": "Uniquement les modérateurs de la conversation",
+      "audience_moderators_description": "Le propriétaire et les modérateurs de la conversation, qu’ils aient été présents à l’appel ou non. Les autres membres de la conversation ne le reçoivent pas.",
+      "audience_moderators_starter": "La personne qui a lancé l’enregistrement le reçoit toujours.",
+      "audience_moderators_one_to_one": "Dans une conversation à deux, les deux personnes le reçoivent.",
+      "audience_effects_heading": "Avec ce paramètre",
+      "audience_late_joiners": "Les personnes arrivées en retard ou parties plus tôt sont incluses.",
+      "audience_chat_skipped": "Aucun message n’est publié dans le chat de la conversation Talk, car toute la conversation verrait le titre et le lien de l’enregistrement.",
+      "audience_applies": "S’applique aux enregistrements qui démarrent une fois les paramètres sauvegardés. Les enregistrements en cours ou déjà publiés gardent leurs destinataires.",
       "checking": "Vérification de la configuration des enregistrements…",
       "needs_account": "Cassini a besoin de son compte d’enregistrements avant de pouvoir publier.",
       "needs_attention": "La configuration des enregistrements est à vérifier.",
