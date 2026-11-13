@@ -212,11 +212,11 @@
     },
     "step_outcomes": {
       "audience_notice": {
-        "no_capture": "",
-        "no_local": "",
-        "unknown": "",
-        "no_moderators": "",
-        "no_moderators_reshare_note": ""
+        "no_capture": "Der blev ikke registreret nogen deltagerliste; kun den person, der startede optagelsen, har modtaget den.",
+        "no_local": "Der blev ikke registreret nogen lokale deltagere; kun den person, der startede optagelsen, har modtaget den.",
+        "unknown": "Optagelsens modtagerindstilling blev ikke genkendt; kun den person, der startede optagelsen, har modtaget den.",
+        "no_moderators": "Cassini kunne ikke læse samtalens moderatorer under opkaldet; kun den person, der startede optagelsen, har modtaget den.",
+        "no_moderators_reshare_note": "Deler optagelsen med samtalens moderatorer."
       },
       "transcription": {
         "disabled": "Udgivet uden transskription: Transskription er slået fra",
@@ -252,7 +252,7 @@
         "held_back": "Stadig holdt tilbage af Nextclouds delingsgrænse: {recipients}. Del igen om 10 minutter.",
         "shared_again_held_back": "Delt igen. {held_back}",
         "shared_with_everyone": "Delt med alle.",
-        "shared_with_moderators": "",
+        "shared_with_moderators": "Delt med samtalens moderatorer.",
         "still_refused": "Delt igen. Nextcloud afviste stadig {recipients} ({names}). Tjek Diagnose › Deling af optagelser.",
         "two_sentences": "{first} {second}"
       },
@@ -260,8 +260,8 @@
         "starter_refused": "Ikke udgivet: Nextcloud nægtede at dele den med den person, der startede optagelsen.",
         "starter_refused_named": "Ikke udgivet: Nextcloud nægtede at dele den med {starter}, som startede optagelsen.",
         "starter_refused_hint_rerun": "Ret den indstilling, som Diagnose › Deling af optagelser nævner, og vælg så »Kør igen«. »Kør igen« udgiver den og deler den med hele samtalen.",
-        "starter_refused_hint_rerun_attendees": "",
-        "starter_refused_hint_rerun_moderators": "",
+        "starter_refused_hint_rerun_attendees": "Ret den indstilling, som Diagnose › Deling af optagelser nævner, og vælg så »Kør igen«. »Kør igen« udgiver den og deler den med deltagerne i opkaldet.",
+        "starter_refused_hint_rerun_moderators": "Ret den indstilling, som Diagnose › Deling af optagelser nævner, og vælg så »Kør igen«. »Kør igen« udgiver den og deler den med samtalens moderatorer.",
         "starter_refused_hint_no_rerun": "Ret den indstilling, som Diagnose › Deling af optagelser nævner, så senere optagelser bliver udgivet. Denne kørsel kan ikke køres igen.",
         "held_back": "Udgivet. Holdt tilbage af Nextclouds delingsgrænse: {recipients}. Del igen om 10 minutter, eller hæv grænsen (Diagnose › Deling af optagelser).",
         "partial_of": "Udgivet, men ikke delt med {count:number|num} af {audience:number|num} {{audience:modtager|modtagere}}",
@@ -270,11 +270,11 @@
         "partial_hint": "Nextcloud afviste dem på grund af en delingsindstilling. Diagnose › Deling af optagelser nævner den og løsningen.",
         "also_held_back": "Nextclouds delingsgrænse holdt også {count:number|num} {{modtager|modtagere}} tilbage.",
         "reshare_button": "Del igen med samtalen",
-        "reshare_button_attendees": "",
-        "reshare_button_moderators": "",
+        "reshare_button_attendees": "Del igen med deltagerne i opkaldet",
+        "reshare_button_moderators": "Del igen med moderatorerne",
         "reshare_note": "Tilføjer dem, der mangler, også dem, der er fjernet manuelt. Personer, der accepterer delinger manuelt, finder den ventende under Gennemse.",
-        "reshare_note_attendees": "",
-        "reshare_note_moderators": ""
+        "reshare_note_attendees": "Tilføjer dem, der var med i opkaldet og mangler, også dem, der er fjernet manuelt. Personer, der accepterer delinger manuelt, finder den ventende under Gennemse.",
+        "reshare_note_moderators": "Tilføjer de af samtalens moderatorer, der mangler, også dem, der er fjernet manuelt. Personer, der accepterer delinger manuelt, finder den ventende under Gennemse."
       }
     },
     "run_stages": {
@@ -655,14 +655,14 @@
         "signaling_connection_error": "Fejl i forbindelsen til signaleringsserveren",
         "join_failed": "Kunne ikke deltage i samtalen",
         "record_process_exit_nonzero": "Processen afsluttede med en fejl",
-        "no_audio_captured": ""
+        "no_audio_captured": "Ingen lyd optaget"
       },
       "no_audio": {
-        "headline": "",
-        "detail": ""
+        "headline": "Der blev ikke optaget nogen lyd. Havde alle deltagere slået mikrofonen fra?",
+        "detail": "Optagelsen har ingen lyd at transskribere eller udgive."
       },
       "status": {
-        "no_audio_captured": "",
+        "no_audio_captured": "Ingen lyd optaget",
         "build_blocked": "Bygning blokeret",
         "waiting_for_resources": "Venter på ressourcer",
         "failed": "Mislykkedes",
@@ -721,7 +721,7 @@
         "speech_model": "Talemodel",
         "summary_model": "Opsummeringsmodel",
         "capture": "Optagelsestype",
-        "shared_with": "",
+        "shared_with": "Delt med",
         "stopped_because": "Stoppet fordi",
         "conversation": "Samtale",
         "recording": "Optagelse",
@@ -1206,20 +1206,20 @@
     },
     "direct_share": {
       "heading": "Hvem kan se optagelser",
-      "audience_choose": "",
-      "audience_group_label": "",
-      "audience_room_label": "",
-      "audience_room_description": "",
-      "audience_attendees_label": "",
-      "audience_attendees_description": "",
-      "audience_moderators_label": "",
-      "audience_moderators_description": "",
-      "audience_moderators_starter": "",
-      "audience_moderators_one_to_one": "",
-      "audience_effects_heading": "",
-      "audience_late_joiners": "",
-      "audience_chat_skipped": "",
-      "audience_applies": "",
+      "audience_choose": "Vælg, hvem der modtager hver optagelse sammen med dens transskription og opsummering.",
+      "audience_group_label": "Del optagelser med",
+      "audience_room_label": "Alle i Talk-samtalen",
+      "audience_room_description": "Alle medlemmer af samtalen, også dem, der ikke var med i opkaldet.",
+      "audience_attendees_label": "Kun personer, der var med i opkaldet",
+      "audience_attendees_description": "Personer med en Nextcloud-konto, der deltog i opkaldet, mens det blev optaget. Nyttigt til en fast kanal.",
+      "audience_moderators_label": "Kun samtalens moderatorer",
+      "audience_moderators_description": "Samtalens ejer og moderatorer, uanset om de var med i opkaldet eller ej. Samtalens øvrige medlemmer modtager den ikke.",
+      "audience_moderators_starter": "Den person, der startede optagelsen, modtager den altid.",
+      "audience_moderators_one_to_one": "I en samtale mellem to personer modtager begge den.",
+      "audience_effects_heading": "Med denne indstilling",
+      "audience_late_joiners": "Personer, der kommer sent eller går tidligt, er med.",
+      "audience_chat_skipped": "Der sendes ingen besked i Talk-samtalens chat, fordi hele samtalen ville kunne se optagelsens titel og link.",
+      "audience_applies": "Gælder optagelser, der starter, efter du har gemt. Igangværende eller allerede udgivne optagelser beholder deres modtagere.",
       "checking": "Kontrollerer opsætningen af optagelser…",
       "needs_account": "Cassini skal have sin optagelseskonto, før den kan udgive.",
       "needs_attention": "Opsætningen af optagelser kræver opmærksomhed.",
