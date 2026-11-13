@@ -172,6 +172,18 @@ type Runtime struct {
 	recordMu      sync.Mutex
 	recordJobs    map[string]*recordProcessState
 	recordWG      sync.WaitGroup
+
+	// eventWebhook is the delivery worker, nil while delivery is off.
+	// eventWebhookMu serialises settings changes and guards the fields below.
+	eventWebhook             atomic.Pointer[eventWebhook]
+	eventWebhookMu           sync.Mutex
+	eventWebhookSettings     EventWebhookSettings
+	eventWebhookSettingsPath string
+	eventWebhookLoadError    string
+	eventWebhookCancel       context.CancelFunc
+	// eventWebhookStopped is set by Shutdown: no worker is started after it.
+	eventWebhookStopped bool
+
 	// buildExecutionMu is the final admission gate around the whole build. The
 	// configured worker count may exceed one, but CUDA recognizers and the RAM/
 	// VRAM headroom probe are not safely reservable between concurrent workers.
@@ -420,6 +432,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 	runtime := NewRuntime(ctx, store, cfg, logger, stdout, stderr)
 	logger = runtime.logger
+	if interrupted > 0 {
+		runtime.emitInterruptedAtStartup(interruptedAt)
+	}
 	exappCfg.supportJournal = runtime.supportJournal
 	exappCfg.meetingMetadata = runtime.meetingMetadata
 	exappCfg.lifecycle = store
@@ -903,6 +918,7 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 		recordHealthTimeout:       recordHealthProbeTimeout,
 		settingsPath:              settingsPath(cfg),
 		llmSettingsPath:           llmSettingsPath(cfg),
+		eventWebhookSettingsPath:  eventWebhookSettingsPath(cfg),
 	}
 	// The search index is disposable and nothing depends on it, so a failure to
 	// open it must not take the operator down — it degrades search, and the
@@ -948,6 +964,7 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 		rt.llm = llm
 	}
 	store.SetStateChangePublisher(rt.publishStateChangeEvent)
+	rt.startEventWebhook()
 	rt.recordJobFn = rt.executeRecordCLI
 	rt.buildJobFn = rt.withSpeakerEdits(rt.executeBuildCLI)
 	rt.sealJobFn = rt.executeSealCLIWithTimeout
@@ -1026,6 +1043,7 @@ func (rt *Runtime) searchDeps() searchDeps {
 
 func (rt *Runtime) Shutdown() {
 	rt.cancel()
+	rt.stopEventWebhook()
 	rt.workerWG.Wait()
 	// After the workers, so nothing is still writing rows when the handle goes.
 	if rt.searchStore != nil {
@@ -1085,6 +1103,9 @@ func operatorAPIRoutes(rt *Runtime, exappCfg ExAppConfig) []struct {
 		{"/settings/workflows", http.HandlerFunc(rt.settingsWorkflowsHandler)},
 		// One custom template, written or removed from the panel (D-819).
 		{"/settings/workflows/", http.HandlerFunc(rt.settingsWorkflowHandler)},
+		// The lifecycle event receiver (docs/events.md); exact, so it wins
+		// over the prefix below.
+		{"/settings/webhook", http.HandlerFunc(rt.eventWebhookSettingsHandler)},
 		{"/settings/", http.HandlerFunc(rt.llmSettingsHandler)},
 		{"/storage/usage", exappCfg.storageUsageHandler(rt)},
 		{"/storage/usage/details", exappCfg.detailedStorageUsageHandler(rt)},
@@ -1423,6 +1444,7 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 		return
 	}
 	rt.logger.Printf("record started id=%s", job.ID)
+	rt.emitEvent(eventRecordingStarted, job.ID, job.CurrentAttemptNumber, map[string]any{"started_at": startedAt})
 
 	result, err := rt.recordJobFn(rt.ctx, job, req)
 	releaseSlot()
@@ -1444,7 +1466,9 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 		}
 		if updateErr := rt.store.MarkRecordFailed(context.Background(), job.ID, failureText, result, finishedAt); updateErr != nil {
 			rt.logger.Printf("record fail update failed id=%s: %v", job.ID, updateErr)
+			return
 		}
+		rt.emitAttemptFailure(job.ID, job.CurrentAttemptNumber, "record", failureText, false)
 		return
 	}
 	canonicalRunPath, promoteErr := promoteRunBundle(rt.cfg.WorkRoot, result.ArtifactRunPath, job.ID)
@@ -1452,14 +1476,18 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 		rt.logger.Printf("record promote failed id=%s run=%s: %v", job.ID, result.ArtifactRunPath, promoteErr)
 		if failErr := rt.store.MarkRecordFailed(context.Background(), job.ID, promoteErr.Error(), result, finishedAt); failErr != nil {
 			rt.logger.Printf("record promote failure update failed id=%s: %v", job.ID, failErr)
+			return
 		}
+		rt.emitAttemptFailure(job.ID, job.CurrentAttemptNumber, "record", promoteErr.Error(), false)
 		return
 	}
 	if updateErr := rt.store.UpdateRecordOutcome(context.Background(), job.ID, result, canonicalRunPath, finishedAt); updateErr != nil {
 		rt.logger.Printf("record outcome update failed id=%s: %v", job.ID, updateErr)
 		if failErr := rt.store.MarkRecordFailed(context.Background(), job.ID, updateErr.Error(), result, finishedAt); failErr != nil {
 			rt.logger.Printf("record outcome failure update failed id=%s: %v", job.ID, failErr)
+			return
 		}
+		rt.emitAttemptFailure(job.ID, job.CurrentAttemptNumber, "record", updateErr.Error(), false)
 		return
 	}
 	if len(result.SeenParticipants) > 0 && rt.jobAudienceIncludesAttendees(job.ID) {
@@ -1470,6 +1498,7 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 			rt.logger.Printf("seen participants merge failed id=%s: %v", job.ID, mergeErr)
 		}
 	}
+	rt.emitEvent(eventRecordingStopped, job.ID, job.CurrentAttemptNumber, map[string]any{"stopped_at": finishedAt, "stop_reason": strings.TrimSpace(result.StopReason)})
 	rt.removeSuccessfulCaptureDuplicate(job.ID, job.CurrentAttemptNumber)
 	// Tell spreed the recording stopped. Status only — the meeting itself
 	// goes to Nextcloud as the published .opus, never through Talk's
@@ -1488,7 +1517,9 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 		rt.logger.Printf("build queue update failed id=%s: %v", job.ID, err)
 		if updateErr := rt.store.MarkBuildFailed(context.Background(), job.ID, "", err.Error(), finishedAt); updateErr != nil {
 			rt.logger.Printf("build queue failure update failed id=%s: %v", job.ID, updateErr)
+			return
 		}
+		rt.emitAttemptFailure(job.ID, job.CurrentAttemptNumber, "build", err.Error(), false)
 		return
 	}
 	rt.logger.Printf("record succeeded id=%s attempt_run=%s canonical_run=%s build_queued_at=%s stop_reason=%s", job.ID, result.ArtifactRunPath, canonicalRunPath, finishedAt, strings.TrimSpace(result.StopReason))

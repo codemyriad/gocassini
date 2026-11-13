@@ -82,7 +82,9 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 		rt.logger.Printf("publish failed id=%s attempt=%d: %s", task.JobID, task.AttemptNumber, detail)
 		if updateErr := rt.store.MarkPublishFailed(context.Background(), task.JobID, "", attemptArtifactSitePath, detail, finishedAt); updateErr != nil {
 			rt.logger.Printf("publish fail update failed id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, updateErr)
+			return
 		}
+		rt.emitAttemptFailure(task.JobID, task.AttemptNumber, "publish", detail, false)
 		return
 	}
 	// The destination is the sink's business, not the publish worker's. A sink
@@ -124,7 +126,9 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 		rt.supportJournal.record(supportEvent{Event: "delivery_failed", Job: task.JobID, Attempt: task.AttemptNumber, Reason: reason, HTTP: httpStatus, OCS: ocsStatus, Detail: supportOriginalError(err)})
 		if updateErr := rt.store.MarkPublishFailed(context.Background(), task.JobID, "", attemptArtifactSitePath, err.Error(), finishedAt); updateErr != nil {
 			rt.logger.Printf("publish deliver failure update failed id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, updateErr)
+			return
 		}
+		rt.emitAttemptFailure(task.JobID, task.AttemptNumber, "publish", err.Error(), false)
 		return
 	}
 	rt.supportJournal.record(supportEvent{Event: "delivery_succeeded", Job: task.JobID, Attempt: task.AttemptNumber})
@@ -156,6 +160,7 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 		rt.logger.Printf("publish success update failed id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, err)
 		return
 	}
+	rt.emitRecordingPublished(task.JobID, task.AttemptNumber)
 	// Best effort: one bounded request, with no retry or restart recovery.
 	// Failure never changes the publication result or stops its cleanup.
 	if notification != nil {

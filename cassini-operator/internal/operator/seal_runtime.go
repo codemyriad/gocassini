@@ -95,7 +95,9 @@ func (rt *Runtime) runSealJob(task sealTask) {
 		rt.logger.Printf("publish queue update failed id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, err)
 		if updateErr := rt.store.MarkPublishFailed(context.Background(), task.JobID, "", "", err.Error(), finishedAt); updateErr != nil {
 			rt.logger.Printf("publish queue failure update failed id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, updateErr)
+			return
 		}
+		rt.emitAttemptFailure(task.JobID, task.AttemptNumber, "publish", err.Error(), false)
 		return
 	}
 	rt.logger.Printf("seal succeeded id=%s attempt=%d opus=%s sha256=%s canonical_opus=%s publish_queued_at=%s", task.JobID, task.AttemptNumber, attemptOpus, digest, canonicalOpus, finishedAt)
@@ -108,7 +110,11 @@ func (rt *Runtime) failSeal(task sealTask, attemptOpus string, cause error, fini
 	rt.logger.Printf("seal failed id=%s attempt=%d opus=%s: %v", task.JobID, task.AttemptNumber, attemptOpus, cause)
 	if err := rt.store.MarkSealFailed(context.Background(), task.JobID, attemptOpus, cause.Error(), finishedAt); err != nil {
 		rt.logger.Printf("seal fail update failed id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, err)
+		// The row does not say failed, so no event says it either: the next
+		// start marks the job interrupted and reports it then, once.
+		return
 	}
+	rt.emitAttemptFailure(task.JobID, task.AttemptNumber, "seal", cause.Error(), false)
 }
 
 // enqueueSealJobNonBlocking durably marks the job seal/queued and hands it to

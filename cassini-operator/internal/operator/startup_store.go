@@ -2,6 +2,7 @@ package operator
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 )
 
@@ -59,4 +60,35 @@ WHERE state NOT IN (?, ?, ?, ?)
 		return 0, fmt.Errorf("commit interrupt update: %w", err)
 	}
 	return count, nil
+}
+
+// InterruptedJobsAt lists the jobs one startup pass marked interrupted, so the
+// runtime can emit recording.failed for each after the webhook configuration
+// is loaded. The timestamp is unique to that pass.
+func (s *Store) InterruptedJobsAt(ctx context.Context, at string) ([]Job, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT id, current_attempt_number, stage, state, error
+FROM jobs
+WHERE interrupted_at = ?
+ORDER BY id`, at)
+	if err != nil {
+		return nil, fmt.Errorf("list interrupted jobs: %w", err)
+	}
+	defer rows.Close()
+	jobs := []Job{}
+	for rows.Next() {
+		var job Job
+		var errorText sql.NullString
+		if err := rows.Scan(&job.ID, &job.CurrentAttemptNumber, &job.Stage, &job.State, &errorText); err != nil {
+			return nil, fmt.Errorf("scan interrupted job: %w", err)
+		}
+		if errorText.Valid {
+			job.Error = &errorText.String
+		}
+		jobs = append(jobs, job)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate interrupted jobs: %w", err)
+	}
+	return jobs, nil
 }

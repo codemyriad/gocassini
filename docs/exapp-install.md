@@ -333,6 +333,8 @@ Options).
 | `LLM_MODEL` | No | Initial model for summaries (default `openai/gpt-4o-mini`) |
 | `CASSINI_OPERATOR_API_TOKEN` | No | Bearer token for direct non-AppAPI operator API calls. AppAPI-proxied requests are authenticated by Nextcloud/AppAPI |
 
+Lifecycle event webhooks are configured later in the running app (`PUT operator/settings/webhook`), not at deploy time; see [Lifecycle events](./events.md).
+
 ### Updating deploy options after install
 
 AppAPI deploy env is container-creation-time configuration, not live Nextcloud
