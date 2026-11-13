@@ -78,6 +78,13 @@
     text-box: trim-both ex alphabetic;
     translate: 0 0.5px;
   }
+  /* Without text-box (Firefox) the label is centred on its whole line box, which
+     leaves the letters about a pixel low; lift them to where trimming puts them. */
+  @supports not (text-box: trim-both ex alphabetic) {
+    .tag-chip-label {
+      translate: 0 -0.5px;
+    }
+  }
   .tag-chip-remove {
     display: inline-flex;
     margin: -2px -3px -2px 0;
