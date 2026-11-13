@@ -165,25 +165,8 @@ The harness implementation is under [`harness/`](../harness/README.md).
 
 ## Viewer demo data
 
-For local viewer development, pull demo data directly into the viewer dev server
-root. Set `DEMO_DATA_URL` in a gitignored `.envrc` or export it in your shell,
-then run:
-
-```bash
-cd cassini-viewer
-npm install
-npm run build
-npm run demo-data:pull
-npm run dev
-```
-
-Use `npm run demo-data:clean` to remove the pulled bundle.
-
-The pull downloads `index.html`, referenced `assets/*`, `catalog.json` and each
-meeting directory into `cassini-viewer/exports/viewer-demo`, which is where the
-Vite dev server already serves `/catalog.json` and `/meetings/*` from. Meeting
-file names are read from each meeting's `manifest.json`, so `DEMO_DATA_URL`
-stays the only required setting.
+See [Development in the viewer README](../cassini-viewer/README.md#development) for the meetings the
+viewer dev server reads and how to fill it.
 
 ## The commands
 

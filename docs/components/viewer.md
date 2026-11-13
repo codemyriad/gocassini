@@ -158,23 +158,14 @@ The viewer is optimized for:
 
 ## Local development
 
-Typical local viewer workflow:
-
 ```bash
 cd cassini-viewer
 npm install
-npm run demo-data:pull
 npm run dev
 ```
 
-That pulls a hosted static viewer bundle into `exports/viewer-demo`, which the Vite dev server serves.
-
-To remove the pulled demo bundle:
-
-```bash
-cd cassini-viewer
-npm run demo-data:clean
-```
+See [Development in the viewer README](../../cassini-viewer/README.md#development) for the meetings the
+viewer dev server reads and how to fill it.
 
 Build validation:
 

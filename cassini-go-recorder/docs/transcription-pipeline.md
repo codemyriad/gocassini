@@ -50,7 +50,7 @@ After a successful build, `outputDir` contains:
   manifest.json                   (always)
 ```
 
-The viewer (`cassini-viewer`) treats `summary.md`, `captions.vtt`, and `chapters.vtt` as **optional** sidecars — see `cassini-viewer/scripts/demo-data-pull.mjs:144`. A 404 is tolerated; the UI falls back to a "no summary" state. This is what makes step 9's warn-and-skip semantics safe end-to-end.
+The viewer (`cassini-viewer`) treats `summary.md`, `captions.vtt`, and `chapters.vtt` as **optional** sidecars — see `probeOptionalText` in `cassini-viewer/src/viewer/loadArtifact.ts`. A 404 is tolerated; the UI falls back to a "no summary" state. This is what makes step 9's warn-and-skip semantics safe end-to-end.
 
 The portable `.opus` packer (`internal/cassini/portable_meeting.go`) embeds the audio, the transcripts, and — when the bundle carries one — `summary.md` as a manifest attachment plus summary metadata (`format`, `templateVersion`, `model`), so a published file carries its summary inside.
 
@@ -134,7 +134,7 @@ The acceptance criteria from D-242 map to:
 | AC | Where it lives |
 |---|---|
 | Pipeline produces summary in V0 template format | `summary.go` → `summarySystemPrompt` splices the registry's `summarise` prompt (`internal/insight/workflows/prompts/summarise*.v0.md`); tests pin both ends |
-| Summary renders correctly in V3 viewer | `summary.md` written next to other artifacts; viewer's optional-sidecar logic at `cassini-viewer/scripts/demo-data-pull.mjs:144` already handles it |
+| Summary renders correctly in V3 viewer | `summary.md` written next to other artifacts; viewer's optional-sidecar logic (`probeOptionalText` in `cassini-viewer/src/viewer/loadArtifact.ts`) already handles it |
 | Disabling summary generation does not break pipeline | `SummaryLLM.IsConfigured()` gate in `writeSummaryArtifact`; warn-and-skip on errors |
 | Summary written alongside transcript artifacts | `os.WriteFile(filepath.Join(outputDir, "summary.md"), …)` in `writeSummaryArtifact` |
 
