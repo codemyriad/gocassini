@@ -212,11 +212,11 @@
     },
     "step_outcomes": {
       "audience_notice": {
-        "no_capture": "",
-        "no_local": "",
-        "unknown": "",
-        "no_moderators": "",
-        "no_moderators_reshare_note": ""
+        "no_capture": "Popis sudionika nije zabilježen; snimku je primila samo osoba koja je pokrenula snimanje.",
+        "no_local": "Nije zabilježen nijedan lokalni sudionik; snimku je primila samo osoba koja je pokrenula snimanje.",
+        "unknown": "Način dijeljenja ove snimke nije prepoznat; snimku je primila samo osoba koja je pokrenula snimanje.",
+        "no_moderators": "Cassini tijekom poziva nije mogao očitati moderatore ove sobe; snimku je primila samo osoba koja je pokrenula snimanje.",
+        "no_moderators_reshare_note": "Dijeli snimku s moderatorima sobe."
       },
       "transcription": {
         "disabled": "Objavljeno bez transkripta: transkripcija je isključena",
@@ -252,7 +252,7 @@
         "held_back": "I dalje zadržano Nextcloudovim ograničenjem dijeljenja: {recipients}. Ponovno podijeli za 10 minuta.",
         "shared_again_held_back": "Ponovno podijeljeno. {held_back}",
         "shared_with_everyone": "Podijeljeno sa svima.",
-        "shared_with_moderators": "",
+        "shared_with_moderators": "Podijeljeno s moderatorima sobe.",
         "still_refused": "Ponovno podijeljeno. Nextcloud je i dalje odbio: {recipients} ({names}). Provjeri Doktor › Dijeljenje snimki.",
         "two_sentences": "{first} {second}"
       },
@@ -260,8 +260,8 @@
         "starter_refused": "Nije objavljeno: Nextcloud ju je odbio podijeliti s osobom koja je pokrenula snimanje.",
         "starter_refused_named": "Nije objavljeno: Nextcloud ju je odbio podijeliti s korisnikom {starter}, koji je pokrenuo snimanje.",
         "starter_refused_hint_rerun": "Popravi postavku koju navodi Doktor › Dijeljenje snimki, a zatim odaberi Ponovno pokreni. Ponovno pokretanje objavljuje snimku i dijeli je s cijelom sobom.",
-        "starter_refused_hint_rerun_attendees": "",
-        "starter_refused_hint_rerun_moderators": "",
+        "starter_refused_hint_rerun_attendees": "Popravi postavku koju navodi Doktor › Dijeljenje snimki, a zatim odaberi Ponovno pokreni. Ponovno pokretanje objavljuje snimku i dijeli je sa sudionicima poziva.",
+        "starter_refused_hint_rerun_moderators": "Popravi postavku koju navodi Doktor › Dijeljenje snimki, a zatim odaberi Ponovno pokreni. Ponovno pokretanje objavljuje snimku i dijeli je s moderatorima sobe.",
         "starter_refused_hint_no_rerun": "Popravi postavku koju navodi Doktor › Dijeljenje snimki kako bi se kasnije snimke objavljivale. Ovo izvođenje ne može se ponovno pokrenuti.",
         "held_back": "Objavljeno. Zadržano Nextcloudovim ograničenjem dijeljenja: {recipients}. Ponovno podijeli za 10 minuta ili povećaj ograničenje (Doktor › Dijeljenje snimki).",
         "partial_of": "Objavljeno, ali nije podijeljeno s {count:number|num} od {audience:number|num} {{audience:|primatelja||primatelja||primatelja}}",
@@ -270,11 +270,11 @@
         "partial_hint": "Nextcloud ih je odbio zbog postavke dijeljenja. Doktor › Dijeljenje snimki navodi tu postavku i rješenje.",
         "also_held_back": "Nextcloudovo ograničenje dijeljenja zadržalo je i {count:number|num} {{|primatelja||primatelja||primatelja}}.",
         "reshare_button": "Ponovno podijeli sa sobom",
-        "reshare_button_attendees": "",
-        "reshare_button_moderators": "",
+        "reshare_button_attendees": "Ponovno podijeli sa sudionicima poziva",
+        "reshare_button_moderators": "Ponovno podijeli s moderatorima",
         "reshare_note": "Dodaje sve koji nedostaju, uključujući one koji su ručno uklonjeni. Tko dijeljenja prihvaća ručno, naći će snimku na čekanju u kartici Pregledaj.",
-        "reshare_note_attendees": "",
-        "reshare_note_moderators": ""
+        "reshare_note_attendees": "Dodaje sve koji su bili u pozivu, a nedostaju, uključujući one koji su ručno uklonjeni. Tko dijeljenja prihvaća ručno, naći će snimku na čekanju u kartici Pregledaj.",
+        "reshare_note_moderators": "Dodaje moderatore sobe koji nedostaju, uključujući one koji su ručno uklonjeni. Tko dijeljenja prihvaća ručno, naći će snimku na čekanju u kartici Pregledaj."
       }
     },
     "run_stages": {
@@ -655,14 +655,14 @@
         "signaling_connection_error": "Pogreška signalizacijske veze",
         "join_failed": "Pridruživanje sobi nije uspjelo",
         "record_process_exit_nonzero": "Proces je završio s pogreškom",
-        "no_audio_captured": ""
+        "no_audio_captured": "Nije snimljen zvuk"
       },
       "no_audio": {
-        "headline": "",
-        "detail": ""
+        "headline": "Nije snimljen nikakav zvuk. Jesu li svi sudionici imali isključen mikrofon?",
+        "detail": "Ova snimka nema zvuka za transkripciju ni objavu."
       },
       "status": {
-        "no_audio_captured": "",
+        "no_audio_captured": "Nije snimljen zvuk",
         "build_blocked": "Izrada blokirana",
         "waiting_for_resources": "Čeka resurse",
         "failed": "Neuspjelo",
@@ -721,7 +721,7 @@
         "speech_model": "Govorni model",
         "summary_model": "Model za sažetke",
         "capture": "Snimanje",
-        "shared_with": "",
+        "shared_with": "Dijeljeno s",
         "stopped_because": "Razlog zaustavljanja",
         "conversation": "Razgovor",
         "recording": "Snimka",
@@ -1206,20 +1206,20 @@
     },
     "direct_share": {
       "heading": "Tko može vidjeti snimke",
-      "audience_choose": "",
-      "audience_group_label": "",
-      "audience_room_label": "",
-      "audience_room_description": "",
-      "audience_attendees_label": "",
-      "audience_attendees_description": "",
-      "audience_moderators_label": "",
-      "audience_moderators_description": "",
-      "audience_moderators_starter": "",
-      "audience_moderators_one_to_one": "",
-      "audience_effects_heading": "",
-      "audience_late_joiners": "",
-      "audience_chat_skipped": "",
-      "audience_applies": "",
+      "audience_choose": "Odaberi tko prima svaku snimku, zajedno s transkriptom i sažetkom.",
+      "audience_group_label": "Dijeli snimke s",
+      "audience_room_label": "Svi u sobi u Talku",
+      "audience_room_description": "Svi članovi sobe, uključujući osobe koje nisu bile u pozivu.",
+      "audience_attendees_label": "Samo osobe koje su bile u pozivu",
+      "audience_attendees_description": "Osobe s Nextcloud računom koje su se pridružile pozivu dok se snimao. Korisno za stalni kanal.",
+      "audience_moderators_label": "Samo moderatori sobe",
+      "audience_moderators_description": "Vlasnik i moderatori sobe, bez obzira na to jesu li bili u pozivu. Ostali članovi sobe je ne primaju.",
+      "audience_moderators_starter": "Osoba koja je pokrenula snimanje uvijek je prima.",
+      "audience_moderators_one_to_one": "U razgovoru jedan na jedan primaju je obje osobe.",
+      "audience_effects_heading": "Uz ovu postavku",
+      "audience_late_joiners": "Uključene su i osobe koje se pridruže kasnije ili odu ranije.",
+      "audience_chat_skipped": "U chatu sobe u Talku ne objavljuje se poruka jer bi cijela soba vidjela naslov i poveznicu snimke.",
+      "audience_applies": "Primjenjuje se na snimanja koja počnu nakon spremanja. Snimke u tijeku ili već objavljene zadržavaju dosadašnje primatelje.",
       "checking": "Provjera postavki snimki…",
       "needs_account": "Cassiniju je potreban račun za snimke prije nego što može objavljivati.",
       "needs_attention": "Postavke snimki zahtijevaju pažnju.",

@@ -140,9 +140,9 @@
       "nav_label": "Sobe",
       "rooms_heading": "Sobe",
       "audience_participants": "Dijeljeno sa sudionicima",
-      "audience_attendees": "",
-      "audience_moderators": "",
-      "audience_mixed": "",
+      "audience_attendees": "Dijeljeno sa sudionicima poziva",
+      "audience_moderators": "Dijeljeno s moderatorima",
+      "audience_mixed": "Dijeljeno s primateljima svake snimke",
       "all_meetings": "Svi sastanci",
       "rename_room_named": "Preimenuj sobu {name}",
       "rename_room": "Preimenuj sobu",
@@ -452,7 +452,7 @@
       "export_copied": "Transkript je kopiran.",
       "export_clipboard_blocked": "Međuspremnik je ovdje blokiran — koristi Preuzmi transkript.",
       "export_downloaded": "Transkript je preuzet.",
-      "export_summary_downloaded": "",
+      "export_summary_downloaded": "Sažetak je preuzet.",
       "export_preparing_file": "Priprema datoteke sastanka…",
       "export_file_downloaded": "Datoteka sastanka je preuzeta.",
       "reload_failed": "Nije moguće ponovno učitati snimku: {error}",
@@ -836,7 +836,7 @@
     "copy_transcripts": "Kopiraj transkripte",
     "download_transcript": "Preuzmi transkript",
     "download_transcripts": "Preuzmi transkripte",
-    "download_summary": "",
+    "download_summary": "Preuzmi sažetak",
     "download_audio": "Preuzmi zvuk"
   }
 }
