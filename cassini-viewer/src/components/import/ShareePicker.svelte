@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { claimEscape } from "../ui/escapeClaim";
   // A small people/groups/Teams combobox over the provider's sharee search.
   // Deliberately minimal: type, pick, repeat — the chips beside it are the
   // state, so the picker itself holds nothing but the current query.
@@ -80,7 +81,7 @@
     on:keydown={(event) => {
       if (event.key === "Escape" && open) {
         // Closes the results only, not the sheet around the picker.
-        event.preventDefault();
+        claimEscape(event);
         open = false;
       } else if (event.key === "Enter" && results.length > 0) {
         event.preventDefault();

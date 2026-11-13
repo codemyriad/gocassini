@@ -4,6 +4,7 @@
   import { fade } from "svelte/transition";
   import { get } from "svelte/store";
   import { LL } from "./i18n";
+  import { escapeClaimed } from "./components/ui/escapeClaim";
   import type { PortableMeetingSummary } from "./viewer/loadArtifact";
   import {
     filterMeetingCatalogEntries,
@@ -599,7 +600,7 @@
 
   function handleShellKeydown(event: KeyboardEvent) {
     if (editingRoomId) return;
-    if (event.key !== "Escape" || event.defaultPrevented) {
+    if (event.key !== "Escape" || escapeClaimed(event)) {
       return;
     }
     if (rootEl?.querySelector("dialog[open]")) {

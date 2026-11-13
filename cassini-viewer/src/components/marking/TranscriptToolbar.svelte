@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { claimEscape } from "../ui/escapeClaim";
   import { createEventDispatcher } from "svelte";
   import { ChevronDown, ChevronUp, ListFilter, Search, X } from "@lucide/svelte";
 
@@ -28,7 +29,7 @@
       dispatch("step", event.shiftKey ? -1 : 1);
     } else if (event.key === "Escape") {
       // Handled here, so the shell does not close the meeting on it.
-      event.preventDefault();
+      claimEscape(event);
       if (query) query = "";
       else field.blur();
     }

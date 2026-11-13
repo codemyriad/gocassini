@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { claimEscape } from "./ui/escapeClaim";
   import { createEventDispatcher, tick } from "svelte";
   import { around } from "./ui/richText";
   import { marked } from "marked";
@@ -144,10 +145,11 @@
     if (event.key !== "Enter" && event.key !== "Escape") {
       return;
     }
-    event.preventDefault();
     if (event.key === "Enter") {
+      event.preventDefault();
       saveRename();
     } else {
+      claimEscape(event);
       cancelRename();
     }
   }
