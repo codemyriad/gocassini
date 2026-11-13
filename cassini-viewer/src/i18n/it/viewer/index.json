@@ -140,9 +140,9 @@
       "nav_label": "Conversazioni",
       "rooms_heading": "Conversazioni",
       "audience_participants": "Condivise con i partecipanti",
-      "audience_attendees": "",
-      "audience_moderators": "",
-      "audience_mixed": "",
+      "audience_attendees": "Condivise con i partecipanti alla chiamata",
+      "audience_moderators": "Condivise con i moderatori",
+      "audience_mixed": "Condivise con i destinatari di ciascuna registrazione",
       "all_meetings": "Tutte le riunioni",
       "rename_room_named": "Rinomina la conversazione {name}",
       "rename_room": "Rinomina la conversazione",
@@ -452,7 +452,7 @@
       "export_copied": "Trascrizione copiata.",
       "export_clipboard_blocked": "Appunti bloccati qui: usa Scarica la trascrizione.",
       "export_downloaded": "Trascrizione scaricata.",
-      "export_summary_downloaded": "",
+      "export_summary_downloaded": "Riassunto scaricato.",
       "export_preparing_file": "Preparazione del file della riunione…",
       "export_file_downloaded": "File della riunione scaricato.",
       "reload_failed": "Impossibile ricaricare la registrazione: {error}",
@@ -836,7 +836,7 @@
     "copy_transcripts": "Copia le trascrizioni",
     "download_transcript": "Scarica la trascrizione",
     "download_transcripts": "Scarica le trascrizioni",
-    "download_summary": "",
+    "download_summary": "Scarica il riassunto",
     "download_audio": "Scarica l’audio"
   }
 }
