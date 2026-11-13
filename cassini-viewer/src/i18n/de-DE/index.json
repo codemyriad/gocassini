@@ -27,11 +27,11 @@
     "audience": {
       "intro": "Nextcloud Dateien regelt, wer jede Aufnahme lesen kann.",
       "point_participants": "Jede Aufnahme wird mit allen Teilnehmern der Talk-Unterhaltung geteilt, ob sie beim Anruf dabei waren oder nicht.",
-      "point_attendees": "",
-      "point_moderators": "",
-      "point_mixed": "",
+      "point_attendees": "Jede Aufnahme wird nur mit den Personen geteilt, die während der Aufnahme beim Anruf dabei waren.",
+      "point_moderators": "Jede Aufnahme wird nur mit dem Besitzer und den Moderatoren der Talk-Unterhaltung geteilt, ob sie beim Anruf dabei waren oder nicht.",
+      "point_mixed": "Die Aufnahmen hier werden nicht alle mit denselben Personen geteilt: manche mit der ganzen Talk-Unterhaltung, manche mit weniger Personen.",
       "point_guests": "Gäste ohne Nextcloud-Konto können sie nicht öffnen.",
-      "point_no_reshare": "",
+      "point_no_reshare": "Cassini erstellt nie einen öffentlichen Link, und wer eine Aufnahme erhält, kann die Datei nicht weiterteilen.",
       "point_public_links": "Cassini erstellt nie einen öffentlichen Link. In öffentlichen Unterhaltungen können andere die Datei weiterteilen, wenn diese Nextcloud das erlaubt."
     },
     "place": {
