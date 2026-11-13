@@ -140,9 +140,9 @@
       "nav_label": "Unterhaltungen",
       "rooms_heading": "Unterhaltungen",
       "audience_participants": "Mit Teilnehmern geteilt",
-      "audience_attendees": "",
-      "audience_moderators": "",
-      "audience_mixed": "",
+      "audience_attendees": "Mit Anrufteilnehmern geteilt",
+      "audience_moderators": "Mit Moderatoren geteilt",
+      "audience_mixed": "Mit den Empfängern der jeweiligen Aufnahme geteilt",
       "all_meetings": "Alle Besprechungen",
       "rename_room_named": "Unterhaltung {name} umbenennen",
       "rename_room": "Unterhaltung umbenennen",
@@ -452,7 +452,7 @@
       "export_copied": "Transkript kopiert.",
       "export_clipboard_blocked": "Zwischenablage hier blockiert – nutze „Transkript herunterladen“.",
       "export_downloaded": "Transkript heruntergeladen.",
-      "export_summary_downloaded": "",
+      "export_summary_downloaded": "Zusammenfassung heruntergeladen.",
       "export_preparing_file": "Besprechungsdatei wird vorbereitet…",
       "export_file_downloaded": "Besprechungsdatei heruntergeladen.",
       "reload_failed": "Die Aufnahme konnte nicht neu geladen werden: {error}",
@@ -836,7 +836,7 @@
     "copy_transcripts": "Transkripte kopieren",
     "download_transcript": "Transkript herunterladen",
     "download_transcripts": "Transkripte herunterladen",
-    "download_summary": "",
+    "download_summary": "Zusammenfassung herunterladen",
     "download_audio": "Audio herunterladen"
   }
 }

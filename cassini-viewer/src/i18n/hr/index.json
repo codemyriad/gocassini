@@ -27,11 +27,11 @@
     "audience": {
       "intro": "Nextcloud Datoteke određuju tko može čitati pojedinu snimku.",
       "point_participants": "Svaka snimka dijeli se sa svim sudionicima sobe u Talku, bez obzira na to jesu li bili u pozivu ili ne.",
-      "point_attendees": "",
-      "point_moderators": "",
-      "point_mixed": "",
+      "point_attendees": "Svaka snimka dijeli se samo s osobama koje su bile u pozivu dok se snimao.",
+      "point_moderators": "Svaka snimka dijeli se samo s vlasnikom i moderatorima sobe u Talku, bez obzira na to jesu li bili u pozivu ili ne.",
+      "point_mixed": "Snimke ovdje nisu sve podijeljene s istim osobama: neke s cijelom sobom u Talku, neke s manje osoba.",
       "point_guests": "Gosti bez Nextcloud računa ne mogu je otvoriti.",
-      "point_no_reshare": "",
+      "point_no_reshare": "Cassini nikad ne stvara javnu poveznicu, a osobe koje prime snimku ne mogu ponovno podijeliti datoteku.",
       "point_public_links": "Cassini nikad ne stvara javnu poveznicu. U javnim sobama ljudi mogu ponovno podijeliti datoteku ako ovaj Nextcloud to dopušta."
     },
     "place": {

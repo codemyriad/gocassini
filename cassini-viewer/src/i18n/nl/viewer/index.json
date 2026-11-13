@@ -140,9 +140,9 @@
       "nav_label": "Ruimtes",
       "rooms_heading": "Ruimtes",
       "audience_participants": "Gedeeld met deelnemers",
-      "audience_attendees": "",
-      "audience_moderators": "",
-      "audience_mixed": "",
+      "audience_attendees": "Gedeeld met gespreksdeelnemers",
+      "audience_moderators": "Gedeeld met moderators",
+      "audience_mixed": "Gedeeld met de ontvangers van elke opname",
       "all_meetings": "Alle vergaderingen",
       "rename_room_named": "Naam van ruimte {name} wijzigen",
       "rename_room": "Naam van ruimte wijzigen",
@@ -452,7 +452,7 @@
       "export_copied": "Transcriptie gekopieerd.",
       "export_clipboard_blocked": "Klembord hier geblokkeerd. Gebruik Transcriptie downloaden.",
       "export_downloaded": "Transcriptie gedownload.",
-      "export_summary_downloaded": "",
+      "export_summary_downloaded": "Samenvatting gedownload.",
       "export_preparing_file": "Vergaderingsbestand voorbereiden…",
       "export_file_downloaded": "Vergaderingsbestand gedownload.",
       "reload_failed": "Kon de opname niet opnieuw laden: {error}",
@@ -836,7 +836,7 @@
     "copy_transcripts": "Transcripties kopiëren",
     "download_transcript": "Transcriptie downloaden",
     "download_transcripts": "Transcripties downloaden",
-    "download_summary": "",
+    "download_summary": "Samenvatting downloaden",
     "download_audio": "Audio downloaden"
   }
 }

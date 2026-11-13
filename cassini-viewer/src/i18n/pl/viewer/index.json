@@ -140,9 +140,9 @@
       "nav_label": "Pokoje",
       "rooms_heading": "Pokoje",
       "audience_participants": "Udostępnione uczestnikom",
-      "audience_attendees": "",
-      "audience_moderators": "",
-      "audience_mixed": "",
+      "audience_attendees": "Udostępnione uczestnikom połączenia",
+      "audience_moderators": "Udostępnione moderatorom",
+      "audience_mixed": "Udostępnione odbiorcom poszczególnych nagrań",
       "all_meetings": "Wszystkie spotkania",
       "rename_room_named": "Zmień nazwę pokoju {name}",
       "rename_room": "Zmień nazwę pokoju",
@@ -452,7 +452,7 @@
       "export_copied": "Skopiowano transkrypcję.",
       "export_clipboard_blocked": "Schowek jest tutaj zablokowany — użyj opcji Pobierz transkrypcję.",
       "export_downloaded": "Pobrano transkrypcję.",
-      "export_summary_downloaded": "",
+      "export_summary_downloaded": "Pobrano podsumowanie.",
       "export_preparing_file": "Przygotowywanie pliku spotkania…",
       "export_file_downloaded": "Pobrano plik spotkania.",
       "reload_failed": "Nie udało się ponownie wczytać nagrania: {error}",
@@ -836,7 +836,7 @@
     "copy_transcripts": "Kopiuj transkrypcje",
     "download_transcript": "Pobierz transkrypcję",
     "download_transcripts": "Pobierz transkrypcje",
-    "download_summary": "",
+    "download_summary": "Pobierz podsumowanie",
     "download_audio": "Pobierz dźwięk"
   }
 }

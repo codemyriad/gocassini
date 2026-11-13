@@ -140,9 +140,9 @@
       "nav_label": "Salas",
       "rooms_heading": "Salas",
       "audience_participants": "Compartida con los participantes",
-      "audience_attendees": "",
-      "audience_moderators": "",
-      "audience_mixed": "",
+      "audience_attendees": "Compartida con los asistentes a la llamada",
+      "audience_moderators": "Compartida con los moderadores",
+      "audience_mixed": "Compartida con los destinatarios de cada grabación",
       "all_meetings": "Todas las reuniones",
       "rename_room_named": "Renombrar la sala {name}",
       "rename_room": "Renombrar sala",
@@ -452,7 +452,7 @@
       "export_copied": "Transcripción copiada.",
       "export_clipboard_blocked": "El portapapeles está bloqueado aquí. Usa Descargar transcripción.",
       "export_downloaded": "Transcripción descargada.",
-      "export_summary_downloaded": "",
+      "export_summary_downloaded": "Resumen descargado.",
       "export_preparing_file": "Preparando el archivo de reunión…",
       "export_file_downloaded": "Archivo de reunión descargado.",
       "reload_failed": "No se pudo volver a cargar la grabación: {error}",
@@ -836,7 +836,7 @@
     "copy_transcripts": "Copiar transcripciones",
     "download_transcript": "Descargar transcripción",
     "download_transcripts": "Descargar transcripciones",
-    "download_summary": "",
+    "download_summary": "Descargar resumen",
     "download_audio": "Descargar audio"
   }
 }

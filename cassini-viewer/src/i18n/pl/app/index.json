@@ -212,11 +212,11 @@
     },
     "step_outcomes": {
       "audience_notice": {
-        "no_capture": "",
-        "no_local": "",
-        "unknown": "",
-        "no_moderators": "",
-        "no_moderators_reshare_note": ""
+        "no_capture": "Nie zarejestrowano listy uczestników; nagranie otrzymała tylko osoba, która je rozpoczęła.",
+        "no_local": "Nie zarejestrowano żadnych lokalnych uczestników; nagranie otrzymała tylko osoba, która je rozpoczęła.",
+        "unknown": "Nie rozpoznano trybu odbiorców tego nagrania; otrzymała je tylko osoba, która je rozpoczęła.",
+        "no_moderators": "Cassini nie mógł odczytać moderatorów tego pokoju podczas połączenia; nagranie otrzymała tylko osoba, która je rozpoczęła.",
+        "no_moderators_reshare_note": "Udostępnia nagranie moderatorom pokoju."
       },
       "transcription": {
         "disabled": "Opublikowano bez transkrypcji: transkrypcja jest wyłączona",
@@ -252,7 +252,7 @@
         "held_back": "Nadal wstrzymani przez limit udostępnień Nextcloud: {recipients}. Udostępnij ponownie za 10 minut.",
         "shared_again_held_back": "Udostępniono ponownie. {held_back}",
         "shared_with_everyone": "Udostępniono wszystkim.",
-        "shared_with_moderators": "",
+        "shared_with_moderators": "Udostępniono moderatorom pokoju.",
         "still_refused": "Udostępniono ponownie. Nextcloud nadal odmówił: {recipients} ({names}). Sprawdź Doktor › Udostępnianie nagrań.",
         "two_sentences": "{first} {second}"
       },
@@ -260,8 +260,8 @@
         "starter_refused": "Nie opublikowano: Nextcloud odmówił udostępnienia osobie, która rozpoczęła nagranie.",
         "starter_refused_named": "Nie opublikowano: Nextcloud odmówił udostępnienia użytkownikowi {starter}, który rozpoczął nagranie.",
         "starter_refused_hint_rerun": "Popraw ustawienie wskazane w Doktor › Udostępnianie nagrań, a potem kliknij Uruchom ponownie. Ponowne uruchomienie opublikuje nagranie i udostępni je całemu pokojowi.",
-        "starter_refused_hint_rerun_attendees": "",
-        "starter_refused_hint_rerun_moderators": "",
+        "starter_refused_hint_rerun_attendees": "Popraw ustawienie wskazane w Doktor › Udostępnianie nagrań, a potem kliknij Uruchom ponownie. Ponowne uruchomienie opublikuje nagranie i udostępni je uczestnikom połączenia.",
+        "starter_refused_hint_rerun_moderators": "Popraw ustawienie wskazane w Doktor › Udostępnianie nagrań, a potem kliknij Uruchom ponownie. Ponowne uruchomienie opublikuje nagranie i udostępni je moderatorom pokoju.",
         "starter_refused_hint_no_rerun": "Popraw ustawienie wskazane w Doktor › Udostępnianie nagrań, aby kolejne nagrania były publikowane. Tego przebiegu nie można uruchomić ponownie.",
         "held_back": "Opublikowano. Wstrzymani przez limit udostępnień Nextcloud: {recipients}. Udostępnij ponownie za 10 minut albo podnieś limit (Doktor › Udostępnianie nagrań).",
         "partial_of": "Opublikowano, ale nie udostępniono {count:number|num} z {audience:number|num} {{audience:|odbiorcy||odbiorców|odbiorców|odbiorcy}}",
@@ -270,11 +270,11 @@
         "partial_hint": "Nextcloud odmówił z powodu ustawienia udostępniania. Doktor › Udostępnianie nagrań wskazuje to ustawienie i sposób naprawy.",
         "also_held_back": "Limit udostępnień Nextcloud wstrzymał też {count:number|num} {{|odbiorcę||odbiorców|odbiorców|odbiorcy}}.",
         "reshare_button": "Udostępnij ponownie pokojowi",
-        "reshare_button_attendees": "",
-        "reshare_button_moderators": "",
+        "reshare_button_attendees": "Udostępnij ponownie uczestnikom połączenia",
+        "reshare_button_moderators": "Udostępnij ponownie moderatorom",
         "reshare_note": "Dodaje wszystkich brakujących, w tym osoby usunięte ręcznie. Osoby, które akceptują udostępnienia ręcznie, znajdą nagranie oczekujące w widoku Przeglądaj.",
-        "reshare_note_attendees": "",
-        "reshare_note_moderators": ""
+        "reshare_note_attendees": "Dodaje brakujące osoby, które były na połączeniu, w tym usunięte ręcznie. Osoby, które akceptują udostępnienia ręcznie, znajdą nagranie oczekujące w widoku Przeglądaj.",
+        "reshare_note_moderators": "Dodaje brakujących moderatorów pokoju, w tym usuniętych ręcznie. Osoby, które akceptują udostępnienia ręcznie, znajdą nagranie oczekujące w widoku Przeglądaj."
       }
     },
     "run_stages": {
@@ -655,14 +655,14 @@
         "signaling_connection_error": "Błąd połączenia sygnalizacyjnego",
         "join_failed": "Nie udało się dołączyć do pokoju",
         "record_process_exit_nonzero": "Proces zakończył się błędem",
-        "no_audio_captured": ""
+        "no_audio_captured": "Nie nagrano dźwięku"
       },
       "no_audio": {
-        "headline": "",
-        "detail": ""
+        "headline": "Nie nagrano żadnego dźwięku. Czy wszyscy uczestnicy mieli wyciszone mikrofony?",
+        "detail": "To nagranie nie zawiera dźwięku do transkrypcji ani publikacji."
       },
       "status": {
-        "no_audio_captured": "",
+        "no_audio_captured": "Nie nagrano dźwięku",
         "build_blocked": "Budowa zablokowana",
         "waiting_for_resources": "Oczekiwanie na zasoby",
         "failed": "Nieudany",
@@ -721,7 +721,7 @@
         "speech_model": "Model mowy",
         "summary_model": "Model podsumowań",
         "capture": "Rejestracja",
-        "shared_with": "",
+        "shared_with": "Udostępniono",
         "stopped_because": "Przyczyna zatrzymania",
         "conversation": "Rozmowa",
         "recording": "Nagranie",
@@ -1206,20 +1206,20 @@
     },
     "direct_share": {
       "heading": "Kto może widzieć nagrania",
-      "audience_choose": "",
-      "audience_group_label": "",
-      "audience_room_label": "",
-      "audience_room_description": "",
-      "audience_attendees_label": "",
-      "audience_attendees_description": "",
-      "audience_moderators_label": "",
-      "audience_moderators_description": "",
-      "audience_moderators_starter": "",
-      "audience_moderators_one_to_one": "",
-      "audience_effects_heading": "",
-      "audience_late_joiners": "",
-      "audience_chat_skipped": "",
-      "audience_applies": "",
+      "audience_choose": "Wybierz, kto otrzymuje każde nagranie wraz z transkrypcją i podsumowaniem.",
+      "audience_group_label": "Udostępniaj nagrania",
+      "audience_room_label": "Wszystkim w pokoju Talk",
+      "audience_room_description": "Wszyscy członkowie pokoju, także osoby, których nie było na połączeniu.",
+      "audience_attendees_label": "Tylko osobom, które były na połączeniu",
+      "audience_attendees_description": "Osoby z kontem Nextcloud, które dołączyły do połączenia podczas nagrywania. Przydatne w stałym kanale.",
+      "audience_moderators_label": "Tylko moderatorom pokoju",
+      "audience_moderators_description": "Właściciel i moderatorzy pokoju, niezależnie od tego, czy byli na połączeniu. Pozostali członkowie pokoju go nie otrzymują.",
+      "audience_moderators_starter": "Osoba, która rozpoczęła nagranie, zawsze je otrzymuje.",
+      "audience_moderators_one_to_one": "W rozmowie jeden na jeden otrzymują je obie osoby.",
+      "audience_effects_heading": "Przy tym ustawieniu",
+      "audience_late_joiners": "Uwzględniane są osoby, które dołączą później lub wyjdą wcześniej.",
+      "audience_chat_skipped": "Na czacie pokoju Talk nie jest publikowana żadna wiadomość, bo cały pokój zobaczyłby tytuł i link nagrania.",
+      "audience_applies": "Dotyczy nagrań rozpoczętych po zapisaniu. Nagrania w toku lub już opublikowane zachowują dotychczasowych odbiorców.",
       "checking": "Sprawdzanie konfiguracji nagrań…",
       "needs_account": "Zanim Cassini zacznie publikować, potrzebuje konta nagrań.",
       "needs_attention": "Konfiguracja nagrań wymaga uwagi.",

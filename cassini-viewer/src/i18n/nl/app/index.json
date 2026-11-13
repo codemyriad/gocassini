@@ -212,11 +212,11 @@
     },
     "step_outcomes": {
       "audience_notice": {
-        "no_capture": "",
-        "no_local": "",
-        "unknown": "",
-        "no_moderators": "",
-        "no_moderators_reshare_note": ""
+        "no_capture": "Er is geen deelnemerslijst vastgelegd; alleen de persoon die de opname startte, heeft hem ontvangen.",
+        "no_local": "Er zijn geen lokale deelnemers vastgelegd; alleen de persoon die de opname startte, heeft hem ontvangen.",
+        "unknown": "De ontvangersinstelling van deze opname werd niet herkend; alleen de persoon die de opname startte, heeft hem ontvangen.",
+        "no_moderators": "Cassini kon de moderators van deze ruimte tijdens het gesprek niet uitlezen; alleen de persoon die de opname startte, heeft hem ontvangen.",
+        "no_moderators_reshare_note": "Deelt de opname met de moderators van de ruimte."
       },
       "transcription": {
         "disabled": "Gepubliceerd zonder transcriptie: transcriberen staat uit",
@@ -252,7 +252,7 @@
         "held_back": "Nog steeds tegengehouden door de deellimiet van Nextcloud: {recipients}. Deel over 10 minuten opnieuw.",
         "shared_again_held_back": "Opnieuw gedeeld. {held_back}",
         "shared_with_everyone": "Met iedereen gedeeld.",
-        "shared_with_moderators": "",
+        "shared_with_moderators": "Gedeeld met de moderators van de ruimte.",
         "still_refused": "Opnieuw gedeeld. Nextcloud weigerde nog steeds {recipients} ({names}). Controleer Diagnose › Delen van opnames.",
         "two_sentences": "{first} {second}"
       },
@@ -260,8 +260,8 @@
         "starter_refused": "Niet gepubliceerd: Nextcloud weigerde het te delen met de persoon die de opname startte.",
         "starter_refused_named": "Niet gepubliceerd: Nextcloud weigerde het te delen met {starter}, die de opname startte.",
         "starter_refused_hint_rerun": "Herstel de instelling die Diagnose › Delen van opnames noemt en kies daarna Opnieuw uitvoeren. Dat publiceert de opname en deelt hem met de hele ruimte.",
-        "starter_refused_hint_rerun_attendees": "",
-        "starter_refused_hint_rerun_moderators": "",
+        "starter_refused_hint_rerun_attendees": "Herstel de instelling die Diagnose › Delen van opnames noemt en kies daarna Opnieuw uitvoeren. Dat publiceert de opname en deelt hem met de deelnemers aan het gesprek.",
+        "starter_refused_hint_rerun_moderators": "Herstel de instelling die Diagnose › Delen van opnames noemt en kies daarna Opnieuw uitvoeren. Dat publiceert de opname en deelt hem met de moderators van de ruimte.",
         "starter_refused_hint_no_rerun": "Herstel de instelling die Diagnose › Delen van opnames noemt, zodat latere opnames worden gepubliceerd. Deze uitvoering kan niet opnieuw worden uitgevoerd.",
         "held_back": "Gepubliceerd. Tegengehouden door de deellimiet van Nextcloud: {recipients}. Deel over 10 minuten opnieuw, of verhoog de limiet (Diagnose › Delen van opnames).",
         "partial_of": "Gepubliceerd, maar niet gedeeld met {count:number|num} van de {audience:number|num} {{audience:ontvanger|ontvangers}}",
@@ -270,11 +270,11 @@
         "partial_hint": "Nextcloud weigerde hen vanwege een deelinstelling. Diagnose › Delen van opnames noemt die instelling en de oplossing.",
         "also_held_back": "De deellimiet van Nextcloud hield ook {count:number|num} {{ontvanger|ontvangers}} tegen.",
         "reshare_button": "Opnieuw delen met de ruimte",
-        "reshare_button_attendees": "",
-        "reshare_button_moderators": "",
+        "reshare_button_attendees": "Opnieuw delen met gespreksdeelnemers",
+        "reshare_button_moderators": "Opnieuw delen met moderators",
         "reshare_note": "Voegt iedereen toe die ontbreekt, ook wie met de hand is verwijderd. Wie shares handmatig accepteert, vindt hem wachtend in Bladeren.",
-        "reshare_note_attendees": "",
-        "reshare_note_moderators": ""
+        "reshare_note_attendees": "Voegt iedereen toe die in het gesprek zat en ontbreekt, ook wie met de hand is verwijderd. Wie shares handmatig accepteert, vindt hem wachtend in Bladeren.",
+        "reshare_note_moderators": "Voegt moderators van de ruimte toe die ontbreken, ook wie met de hand is verwijderd. Wie shares handmatig accepteert, vindt hem wachtend in Bladeren."
       }
     },
     "run_stages": {
@@ -655,14 +655,14 @@
         "signaling_connection_error": "Fout in de signaleringsverbinding",
         "join_failed": "Kon niet deelnemen aan de ruimte",
         "record_process_exit_nonzero": "Proces gestopt met een fout",
-        "no_audio_captured": ""
+        "no_audio_captured": "Geen audio opgenomen"
       },
       "no_audio": {
-        "headline": "",
-        "detail": ""
+        "headline": "Er is geen audio opgenomen. Hadden alle deelnemers hun microfoon gedempt?",
+        "detail": "Deze opname bevat geen audio om te transcriberen of te publiceren."
       },
       "status": {
-        "no_audio_captured": "",
+        "no_audio_captured": "Geen audio opgenomen",
         "build_blocked": "Bouwen geblokkeerd",
         "waiting_for_resources": "Wacht op middelen",
         "failed": "Mislukt",
@@ -721,7 +721,7 @@
         "speech_model": "Spraakmodel",
         "summary_model": "Samenvattingsmodel",
         "capture": "Vastlegging",
-        "shared_with": "",
+        "shared_with": "Gedeeld met",
         "stopped_because": "Gestopt omdat",
         "conversation": "Gesprek",
         "recording": "Opname",
@@ -1206,20 +1206,20 @@
     },
     "direct_share": {
       "heading": "Wie opnames kan zien",
-      "audience_choose": "",
-      "audience_group_label": "",
-      "audience_room_label": "",
-      "audience_room_description": "",
-      "audience_attendees_label": "",
-      "audience_attendees_description": "",
-      "audience_moderators_label": "",
-      "audience_moderators_description": "",
-      "audience_moderators_starter": "",
-      "audience_moderators_one_to_one": "",
-      "audience_effects_heading": "",
-      "audience_late_joiners": "",
-      "audience_chat_skipped": "",
-      "audience_applies": "",
+      "audience_choose": "Kies wie elke opname ontvangt, samen met de transcriptie en samenvatting.",
+      "audience_group_label": "Opnames delen met",
+      "audience_room_label": "Iedereen in de Talk-ruimte",
+      "audience_room_description": "Alle leden van de ruimte, ook mensen die niet bij het gesprek waren.",
+      "audience_attendees_label": "Alleen mensen die in het gesprek zaten",
+      "audience_attendees_description": "Mensen met een Nextcloud-account die aan het gesprek deelnamen terwijl het werd opgenomen. Handig voor een vast kanaal.",
+      "audience_moderators_label": "Alleen de moderators van de ruimte",
+      "audience_moderators_description": "De eigenaar en moderators van de ruimte, of ze nu bij het gesprek waren of niet. Andere leden van de ruimte ontvangen hem niet.",
+      "audience_moderators_starter": "De persoon die de opname startte, ontvangt hem altijd.",
+      "audience_moderators_one_to_one": "In een gesprek met z’n tweeën ontvangen beide personen hem.",
+      "audience_effects_heading": "Met deze instelling",
+      "audience_late_joiners": "Mensen die later aansluiten of eerder vertrekken, worden meegenomen.",
+      "audience_chat_skipped": "Er wordt geen bericht in de chat van de Talk-ruimte geplaatst, omdat de hele ruimte dan de titel en link van de opname zou zien.",
+      "audience_applies": "Geldt voor opnames die starten nadat je hebt opgeslagen. Lopende of al gepubliceerde opnames houden hun ontvangers.",
       "checking": "Opname-instellingen controleren…",
       "needs_account": "Cassini heeft zijn opname-account nodig voordat het kan publiceren.",
       "needs_attention": "De opname-instellingen vragen aandacht.",

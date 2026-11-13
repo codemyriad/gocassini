@@ -212,11 +212,11 @@
     },
     "step_outcomes": {
       "audience_notice": {
-        "no_capture": "",
-        "no_local": "",
-        "unknown": "",
-        "no_moderators": "",
-        "no_moderators_reshare_note": ""
+        "no_capture": "No se registró ninguna lista de asistentes; solo la persona que inició la grabación la ha recibido.",
+        "no_local": "No se registró ningún asistente local; solo la persona que inició la grabación la ha recibido.",
+        "unknown": "No se reconoció el modo de destinatarios de esta grabación; solo la persona que la inició la ha recibido.",
+        "no_moderators": "Cassini no pudo leer los moderadores de esta sala durante la llamada; solo la persona que inició la grabación la ha recibido.",
+        "no_moderators_reshare_note": "Comparte la grabación con los moderadores de la sala."
       },
       "transcription": {
         "disabled": "Publicada sin transcripción: la transcripción está desactivada",
@@ -252,7 +252,7 @@
         "held_back": "El límite de uso compartido de Nextcloud sigue reteniendo: {recipients}. Vuelve a compartir dentro de 10 minutos.",
         "shared_again_held_back": "Compartida de nuevo. {held_back}",
         "shared_with_everyone": "Compartida con todos.",
-        "shared_with_moderators": "",
+        "shared_with_moderators": "Compartida con los moderadores de la sala.",
         "still_refused": "Compartida de nuevo. Nextcloud sigue rechazando {recipients} ({names}). Revisa Diagnóstico › Uso compartido de grabaciones.",
         "two_sentences": "{first} {second}"
       },
@@ -260,8 +260,8 @@
         "starter_refused": "No publicada: Nextcloud se negó a compartirla con la persona que inició la grabación.",
         "starter_refused_named": "No publicada: Nextcloud se negó a compartirla con {starter}, que inició la grabación.",
         "starter_refused_hint_rerun": "Corrige el ajuste que indica Diagnóstico › Uso compartido de grabaciones y luego pulsa Volver a ejecutar. Así se publica y se comparte con toda la sala.",
-        "starter_refused_hint_rerun_attendees": "",
-        "starter_refused_hint_rerun_moderators": "",
+        "starter_refused_hint_rerun_attendees": "Corrige el ajuste que indica Diagnóstico › Uso compartido de grabaciones y luego pulsa Volver a ejecutar. Así se publica y se comparte con los asistentes a la llamada.",
+        "starter_refused_hint_rerun_moderators": "Corrige el ajuste que indica Diagnóstico › Uso compartido de grabaciones y luego pulsa Volver a ejecutar. Así se publica y se comparte con los moderadores de la sala.",
         "starter_refused_hint_no_rerun": "Corrige el ajuste que indica Diagnóstico › Uso compartido de grabaciones para que las próximas grabaciones se publiquen. Esta ejecución no se puede volver a ejecutar.",
         "held_back": "Publicada. Retenidos por el límite de uso compartido de Nextcloud: {recipients}. Vuelve a compartir dentro de 10 minutos o aumenta el límite (Diagnóstico › Uso compartido de grabaciones).",
         "partial_of": "Publicada, pero no compartida con {count:number|num} de {audience:number|num} {{audience:destinatario|destinatarios}}",
@@ -270,11 +270,11 @@
         "partial_hint": "Nextcloud los rechazó por un ajuste de uso compartido. Diagnóstico › Uso compartido de grabaciones indica cuál es y cómo corregirlo.",
         "also_held_back": "El límite de uso compartido de Nextcloud también retuvo {count:number|num} {{destinatario|destinatarios}}.",
         "reshare_button": "Volver a compartir con la sala",
-        "reshare_button_attendees": "",
-        "reshare_button_moderators": "",
+        "reshare_button_attendees": "Volver a compartir con los asistentes a la llamada",
+        "reshare_button_moderators": "Volver a compartir con los moderadores",
         "reshare_note": "Añade a quien falte, incluido cualquiera que se haya quitado a mano. Quienes aceptan a mano los recursos compartidos la encontrarán esperando en Explorar.",
-        "reshare_note_attendees": "",
-        "reshare_note_moderators": ""
+        "reshare_note_attendees": "Añade a quien estuvo en la llamada y falte, incluido cualquiera que se haya quitado a mano. Quienes aceptan a mano los recursos compartidos la encontrarán esperando en Explorar.",
+        "reshare_note_moderators": "Añade a los moderadores de la sala que falten, incluido cualquiera que se haya quitado a mano. Quienes aceptan a mano los recursos compartidos la encontrarán esperando en Explorar."
       }
     },
     "run_stages": {
@@ -655,14 +655,14 @@
         "signaling_connection_error": "Error de conexión de señalización",
         "join_failed": "No se pudo unir a la sala",
         "record_process_exit_nonzero": "El proceso terminó con un error",
-        "no_audio_captured": ""
+        "no_audio_captured": "No se capturó audio"
       },
       "no_audio": {
-        "headline": "",
-        "detail": ""
+        "headline": "No se capturó audio. ¿Tenían todos los participantes el micrófono silenciado?",
+        "detail": "Esta grabación no tiene audio que transcribir ni publicar."
       },
       "status": {
-        "no_audio_captured": "",
+        "no_audio_captured": "Sin audio capturado",
         "build_blocked": "Montaje bloqueado",
         "waiting_for_resources": "Esperando recursos",
         "failed": "Fallida",
@@ -721,7 +721,7 @@
         "speech_model": "Modelo de voz",
         "summary_model": "Modelo de resumen",
         "capture": "Captura",
-        "shared_with": "",
+        "shared_with": "Compartida con",
         "stopped_because": "Motivo de la detención",
         "conversation": "Conversación",
         "recording": "Grabación",
@@ -1206,20 +1206,20 @@
     },
     "direct_share": {
       "heading": "Quién puede ver las grabaciones",
-      "audience_choose": "",
-      "audience_group_label": "",
-      "audience_room_label": "",
-      "audience_room_description": "",
-      "audience_attendees_label": "",
-      "audience_attendees_description": "",
-      "audience_moderators_label": "",
-      "audience_moderators_description": "",
-      "audience_moderators_starter": "",
-      "audience_moderators_one_to_one": "",
-      "audience_effects_heading": "",
-      "audience_late_joiners": "",
-      "audience_chat_skipped": "",
-      "audience_applies": "",
+      "audience_choose": "Elige quién recibe cada grabación, junto con su transcripción y su resumen.",
+      "audience_group_label": "Compartir grabaciones con",
+      "audience_room_label": "Todos los de la sala de Talk",
+      "audience_room_description": "Todos los miembros de la sala, incluidas las personas que no estuvieron en la llamada.",
+      "audience_attendees_label": "Solo las personas que estuvieron en la llamada",
+      "audience_attendees_description": "Personas con cuenta de Nextcloud que se unieron a la llamada mientras se grababa. Útil para un canal permanente.",
+      "audience_moderators_label": "Solo los moderadores de la sala",
+      "audience_moderators_description": "El propietario y los moderadores de la sala, tanto si estuvieron en la llamada como si no. Los demás miembros de la sala no la reciben.",
+      "audience_moderators_starter": "La persona que inició la grabación siempre la recibe.",
+      "audience_moderators_one_to_one": "En una conversación individual, ambas personas la reciben.",
+      "audience_effects_heading": "Con este ajuste",
+      "audience_late_joiners": "Se incluye a quienes se unen tarde o se van antes.",
+      "audience_chat_skipped": "No se publica ningún mensaje en el chat de la sala de Talk, porque toda la sala vería el título y el enlace de la grabación.",
+      "audience_applies": "Se aplica a las grabaciones que empiecen después de guardar. Las grabaciones en curso o ya publicadas conservan sus destinatarios.",
       "checking": "Comprobando la configuración de grabación…",
       "needs_account": "Cassini necesita su cuenta de grabaciones para poder publicar.",
       "needs_attention": "La configuración de grabación requiere atención.",

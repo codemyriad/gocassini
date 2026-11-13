@@ -212,11 +212,11 @@
     },
     "step_outcomes": {
       "audience_notice": {
-        "no_capture": "",
-        "no_local": "",
-        "unknown": "",
-        "no_moderators": "",
-        "no_moderators_reshare_note": ""
+        "no_capture": "Non è stato rilevato alcun elenco dei partecipanti; solo la persona che ha avviato la registrazione l’ha ricevuta.",
+        "no_local": "Non è stato rilevato alcun partecipante locale; solo la persona che ha avviato la registrazione l’ha ricevuta.",
+        "unknown": "La modalità dei destinatari di questa registrazione non è stata riconosciuta; solo la persona che l’ha avviata l’ha ricevuta.",
+        "no_moderators": "Cassini non è riuscito a leggere i moderatori di questa conversazione durante la chiamata; solo la persona che ha avviato la registrazione l’ha ricevuta.",
+        "no_moderators_reshare_note": "Condivide la registrazione con i moderatori della conversazione."
       },
       "transcription": {
         "disabled": "Pubblicata senza trascrizione: la trascrizione è disattivata",
@@ -252,7 +252,7 @@
         "held_back": "Ancora trattenuti dal limite di condivisione di Nextcloud: {recipients}. Ricondividi tra 10 minuti.",
         "shared_again_held_back": "Condivisa di nuovo. {held_back}",
         "shared_with_everyone": "Condivisa con tutti.",
-        "shared_with_moderators": "",
+        "shared_with_moderators": "Condivisa con i moderatori della conversazione.",
         "still_refused": "Condivisa di nuovo. Nextcloud ha ancora rifiutato {recipients} ({names}). Controlla Diagnostica › Condivisione delle registrazioni.",
         "two_sentences": "{first} {second}"
       },
@@ -260,8 +260,8 @@
         "starter_refused": "Non pubblicata: Nextcloud ha rifiutato di condividerla con la persona che ha avviato la registrazione.",
         "starter_refused_named": "Non pubblicata: Nextcloud ha rifiutato di condividerla con {starter}, che ha avviato la registrazione.",
         "starter_refused_hint_rerun": "Correggi l’impostazione indicata in Diagnostica › Condivisione delle registrazioni, poi Esegui di nuovo. La nuova esecuzione la pubblica e la condivide con tutta la conversazione.",
-        "starter_refused_hint_rerun_attendees": "",
-        "starter_refused_hint_rerun_moderators": "",
+        "starter_refused_hint_rerun_attendees": "Correggi l’impostazione indicata in Diagnostica › Condivisione delle registrazioni, poi Esegui di nuovo. La nuova esecuzione la pubblica e la condivide con i partecipanti alla chiamata.",
+        "starter_refused_hint_rerun_moderators": "Correggi l’impostazione indicata in Diagnostica › Condivisione delle registrazioni, poi Esegui di nuovo. La nuova esecuzione la pubblica e la condivide con i moderatori della conversazione.",
         "starter_refused_hint_no_rerun": "Correggi l’impostazione indicata in Diagnostica › Condivisione delle registrazioni, così le prossime registrazioni verranno pubblicate. Questa esecuzione non può essere ripetuta.",
         "held_back": "Pubblicata. Trattenuti dal limite di condivisione di Nextcloud: {recipients}. Ricondividi tra 10 minuti, o alza il limite (Diagnostica › Condivisione delle registrazioni).",
         "partial_of": "Pubblicata, ma non condivisa con {count:number|num} di {audience:number|num} {{audience:|destinatario|||destinatari|destinatari}}",
@@ -270,11 +270,11 @@
         "partial_hint": "Nextcloud li ha rifiutati a causa di un’impostazione di condivisione. Diagnostica › Condivisione delle registrazioni indica quale e come correggerla.",
         "also_held_back": "Il limite di condivisione di Nextcloud ha trattenuto anche {count:number|num} {{|destinatario|||destinatari|destinatari}}.",
         "reshare_button": "Ricondividi con la conversazione",
-        "reshare_button_attendees": "",
-        "reshare_button_moderators": "",
+        "reshare_button_attendees": "Ricondividi con i partecipanti alla chiamata",
+        "reshare_button_moderators": "Ricondividi con i moderatori",
         "reshare_note": "Aggiunge chi manca, compreso chi è stato rimosso a mano. Chi accetta le condivisioni a mano la troverà in attesa in Sfoglia.",
-        "reshare_note_attendees": "",
-        "reshare_note_moderators": ""
+        "reshare_note_attendees": "Aggiunge chi era nella chiamata e manca, compreso chi è stato rimosso a mano. Chi accetta le condivisioni a mano la troverà in attesa in Sfoglia.",
+        "reshare_note_moderators": "Aggiunge i moderatori della conversazione che mancano, compreso chi è stato rimosso a mano. Chi accetta le condivisioni a mano la troverà in attesa in Sfoglia."
       }
     },
     "run_stages": {
@@ -655,14 +655,14 @@
         "signaling_connection_error": "Errore di connessione alla segnalazione",
         "join_failed": "Impossibile entrare nella conversazione",
         "record_process_exit_nonzero": "Processo terminato con un errore",
-        "no_audio_captured": ""
+        "no_audio_captured": "Nessun audio acquisito"
       },
       "no_audio": {
-        "headline": "",
-        "detail": ""
+        "headline": "Non è stato acquisito alcun audio. Tutti i partecipanti avevano il microfono disattivato?",
+        "detail": "Questa registrazione non contiene audio da trascrivere o pubblicare."
       },
       "status": {
-        "no_audio_captured": "",
+        "no_audio_captured": "Nessun audio acquisito",
         "build_blocked": "Elaborazione bloccata",
         "waiting_for_resources": "In attesa di risorse",
         "failed": "Non riuscita",
@@ -721,7 +721,7 @@
         "speech_model": "Modello vocale",
         "summary_model": "Modello di riassunto",
         "capture": "Cattura",
-        "shared_with": "",
+        "shared_with": "Condivisa con",
         "stopped_because": "Fermata perché",
         "conversation": "Conversazione",
         "recording": "Registrazione",
@@ -1206,20 +1206,20 @@
     },
     "direct_share": {
       "heading": "Chi può vedere le registrazioni",
-      "audience_choose": "",
-      "audience_group_label": "",
-      "audience_room_label": "",
-      "audience_room_description": "",
-      "audience_attendees_label": "",
-      "audience_attendees_description": "",
-      "audience_moderators_label": "",
-      "audience_moderators_description": "",
-      "audience_moderators_starter": "",
-      "audience_moderators_one_to_one": "",
-      "audience_effects_heading": "",
-      "audience_late_joiners": "",
-      "audience_chat_skipped": "",
-      "audience_applies": "",
+      "audience_choose": "Scegli chi riceve ogni registrazione, insieme alla trascrizione e al riassunto.",
+      "audience_group_label": "Condividi le registrazioni con",
+      "audience_room_label": "Tutti nella conversazione di Talk",
+      "audience_room_description": "Tutti i membri della conversazione, comprese le persone che non erano alla chiamata.",
+      "audience_attendees_label": "Solo le persone presenti alla chiamata",
+      "audience_attendees_description": "Le persone con un account Nextcloud che sono entrate nella chiamata mentre veniva registrata. Utile per un canale permanente.",
+      "audience_moderators_label": "Solo i moderatori della conversazione",
+      "audience_moderators_description": "Il proprietario e i moderatori della conversazione, che fossero presenti alla chiamata o no. Gli altri membri della conversazione non la ricevono.",
+      "audience_moderators_starter": "La persona che ha avviato la registrazione la riceve sempre.",
+      "audience_moderators_one_to_one": "In una conversazione a due, la ricevono entrambe le persone.",
+      "audience_effects_heading": "Con questa impostazione",
+      "audience_late_joiners": "Sono incluse le persone che entrano tardi o escono prima.",
+      "audience_chat_skipped": "Nessun messaggio viene pubblicato nella chat della conversazione di Talk, perché tutta la conversazione vedrebbe il titolo e il link della registrazione.",
+      "audience_applies": "Si applica alle registrazioni che iniziano dopo il salvataggio. Le registrazioni in corso o già pubblicate mantengono i destinatari che avevano.",
       "checking": "Controllo della configurazione delle registrazioni…",
       "needs_account": "Cassini ha bisogno del suo account delle registrazioni prima di poter pubblicare.",
       "needs_attention": "La configurazione delle registrazioni richiede attenzione.",

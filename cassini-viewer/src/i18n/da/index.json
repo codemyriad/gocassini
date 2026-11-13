@@ -27,11 +27,11 @@
     "audience": {
       "intro": "Nextcloud Filer styrer, hvem der kan læse hver optagelse.",
       "point_participants": "Hver optagelse deles med alle deltagere i Talk-samtalen, uanset om de var med i opkaldet eller ej.",
-      "point_attendees": "",
-      "point_moderators": "",
-      "point_mixed": "",
+      "point_attendees": "Hver optagelse deles kun med de personer, der var med i opkaldet, mens det blev optaget.",
+      "point_moderators": "Hver optagelse deles kun med Talk-samtalens ejer og moderatorer, uanset om de var med i opkaldet eller ej.",
+      "point_mixed": "Optagelserne her deles ikke alle med de samme personer: nogle med hele Talk-samtalen, andre med færre personer.",
       "point_guests": "Gæster uden en Nextcloud-konto kan ikke åbne den.",
-      "point_no_reshare": "",
+      "point_no_reshare": "Cassini opretter aldrig et offentligt link, og de personer, der modtager en optagelse, kan ikke videredele filen.",
       "point_public_links": "Cassini opretter aldrig et offentligt link. I offentlige samtaler kan andre videredele filen, hvis denne Nextcloud tillader det."
     },
     "place": {
