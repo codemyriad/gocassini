@@ -27,11 +27,11 @@
     "audience": {
       "intro": "Pliki Nextcloud decydują, kto może czytać każde nagranie.",
       "point_participants": "Każde nagranie jest udostępniane wszystkim uczestnikom pokoju Talk, niezależnie od tego, czy byli obecni na połączeniu.",
-      "point_attendees": "",
-      "point_moderators": "",
-      "point_mixed": "",
+      "point_attendees": "Każde nagranie jest udostępniane tylko osobom, które były na połączeniu podczas nagrywania.",
+      "point_moderators": "Każde nagranie jest udostępniane tylko właścicielowi i moderatorom pokoju Talk, niezależnie od tego, czy byli obecni na połączeniu.",
+      "point_mixed": "Nie wszystkie nagrania tutaj są udostępniane tym samym osobom: niektóre całemu pokojowi Talk, inne mniejszej liczbie osób.",
       "point_guests": "Goście bez konta Nextcloud nie mogą go otworzyć.",
-      "point_no_reshare": "",
+      "point_no_reshare": "Cassini nigdy nie tworzy linku publicznego, a osoby, które otrzymują nagranie, nie mogą ponownie udostępnić pliku.",
       "point_public_links": "Cassini nigdy nie tworzy linku publicznego. W pokojach publicznych uczestnicy mogą ponownie udostępnić plik, jeśli ten Nextcloud na to pozwala."
     },
     "place": {
