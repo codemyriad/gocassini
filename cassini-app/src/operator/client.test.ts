@@ -297,3 +297,24 @@ it("installs without implicitly writing settings", async () => {
   expect(String(fetchMock.mock.calls[0][0])).toContain("/operator/settings/models/install");
   expect(JSON.parse(fetchMock.mock.calls[0][1]?.body as string)).toEqual({model: "fast-model", revision: "revision-a", device: "cpu"});
 });
+
+// The saved audience has to survive the read: the panel sends it back with
+// every save, so a dropped value would reset it to the whole room.
+describe("the saved share audience", () => {
+  const read = async (body: unknown) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } })),
+    );
+    return (await new OperatorClient("https://operator.test").getSettings()).share_audience;
+  };
+
+  it("is kept when settings load", async () => {
+    expect(await read({ share_audience: "attendees" })).toBe("attendees");
+    expect(await read({ share_audience: "room" })).toBe("room");
+  });
+
+  it("reads as the whole room from an operator that does not report it", async () => {
+    expect(await read({})).toBe("room");
+  });
+});
