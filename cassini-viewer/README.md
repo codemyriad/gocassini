@@ -57,30 +57,33 @@ The schema snapshot used for this bootstrap lives at [schema/transcript-words-v1
 ```bash
 cd cassini-viewer
 npm install
-npm run demo-data:pull
 npm run dev
 ```
 
-Before pulling demo data, check `../.envrc.example` and set `DEMO_DATA_URL` in
-your local gitignored `.envrc` or shell.
+The dev server serves `/catalog.json` and `/meetings/*` from
+`cassini-viewer/exports/viewer-demo` (gitignored). Fill it one of two ways.
 
-`npm run demo-data:pull` downloads a hosted static viewer bundle into
-`exports/viewer-demo`, which is where the Vite dev server serves `/catalog.json`
-and `/meetings/*` from.
-
-To clear the pulled bundle:
+The public sample meeting:
 
 ```bash
 cd cassini-viewer
-npm run demo-data:clean
+mkdir -p exports/sample
+curl -L -o exports/sample/cassini-final-moments.opus \
+  https://format.gocassini.com/demo/cassini-final-moments.opus
+node ./scripts/export-static-meetings.mjs \
+  --source-dir exports/sample --output-dir exports/viewer-demo
 ```
 
-Current demo-data behavior and limitations:
+Or the meetings your account can read on a Nextcloud, from the repository root
+(set `CASSINI_NC_*` first; the download is confidential):
 
-- `npm run demo-data:pull` refreshes `exports/viewer-demo` from `DEMO_DATA_URL`.
-- `npm run demo-data:clean` removes the pulled viewer demo bundle.
-- Audio currently does not work on the Vite dev server. Treat that as a known
-  local-dev limitation for now.
+```bash
+./bin/cassini dev meetings pull --out cassini-viewer/exports/viewer-demo
+```
+
+To start over, delete `cassini-viewer/exports/viewer-demo`.
+
+Audio does not play on the Vite dev server; that is a known local-dev limitation.
 
 ## Validation
 
