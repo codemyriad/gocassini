@@ -1182,8 +1182,11 @@
   $: rerunVisible = !!selectedJob?.job && (jobFinished || isBuildBlocked(selectedJob.job));
   $: rerunApplies = !!selectedJob?.job && isRerunnableJob(selectedJob.job);
   $: recordingDeleted = selectedJob?.availability?.source === "deleted" || selectedJob?.availability?.source === "expired" || selectedJob?.job.source_expired === true;
-  $: rerunBlockedReason =
-    (selectedJob?.availability?.source === "expired" || selectedJob?.job.source_expired ? $LL.app.operator.console.rerun_blocked_expired() : selectedJob?.availability?.rerun_blocked_reason) || (rerunVisible && !selectedJob?.job.artifact_run_path
+  // A muted call has nothing to rerun. The no-audio notice already says why, in
+  // the reader's language, so the operator's English reason is not shown too.
+  $: rerunBlockedReason = noAudioCaptured
+    ? $LL.app.operator.console.no_audio.headline()
+    : (selectedJob?.availability?.source === "expired" || selectedJob?.job.source_expired ? $LL.app.operator.console.rerun_blocked_expired() : selectedJob?.availability?.rerun_blocked_reason) || (rerunVisible && !selectedJob?.job.artifact_run_path
       ? $LL.app.operator.console.rerun_no_recording()
       : "");
   $: canStopSelectedJob = !submittingStop && stopApplies;
@@ -1762,7 +1765,7 @@
                   {#if summaryError}
                     <p class="text-sm text-error" role="alert">{summaryError}</p>
                   {/if}
-                  {#if rerunBlockedReason && rerunVisible}
+                  {#if rerunBlockedReason && rerunVisible && !noAudioCaptured}
                     <div class="flex items-start gap-2 rounded-box border border-warning/50 bg-warning/10 p-3 text-sm" role="status">
                       <TriangleAlert size={16} class="mt-0.5 shrink-0 text-warning" aria-hidden="true" />
                       <p>{rerunBlockedReason}</p>
@@ -1796,10 +1799,7 @@
                          "were all participants muted?", not a generic process
                          exit. Yellow marks it as a warning, not a red error. -->
                     <div class="grid gap-1 rounded-box border border-warning/50 bg-warning/10 p-3" role="status">
-                      <div class="flex items-center gap-2 text-warning">
-                        <TriangleAlert size={16} class="shrink-0" aria-hidden="true" />
-                        <p class="text-sm font-semibold">{$LL.app.operator.console.no_audio.headline()}</p>
-                      </div>
+                      <p class="text-sm font-semibold text-warning">{$LL.app.operator.console.no_audio.headline()}</p>
                       <p class="text-xs break-words text-base-content/75">
                         {$LL.app.operator.console.no_audio.detail()}
                       </p>
@@ -1897,7 +1897,8 @@
                       <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">{$LL.app.operator.console.field.capture()}</dt>
                       <dd class="text-sm">{captureModeLabel(selectedJob.job.request_json)}</dd>
                     </div>
-                    {#if selectedJob.job.audience_mode === "room" || selectedJob.job.audience_mode === "attendees" || selectedJob.job.audience_mode === "moderators"}
+                    <!-- A muted call shares nothing, now or on a rerun, so it names no audience. -->
+                    {#if !noAudioCaptured && (selectedJob.job.audience_mode === "room" || selectedJob.job.audience_mode === "attendees" || selectedJob.job.audience_mode === "moderators")}
                       <div>
                         <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">{$LL.app.operator.console.field.shared_with()}</dt>
                         <dd class="text-sm">
