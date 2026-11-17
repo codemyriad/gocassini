@@ -208,3 +208,58 @@ func TestSplitSpeakerVoiceNumbersDependOnlyOnTheTurns(t *testing.T) {
 		t.Fatalf("voice without words must keep its number: %+v", b)
 	}
 }
+
+func TestDiarizeSingleTrackSegmentsNumbersContiguouslyByFirstSpokenWord(t *testing.T) {
+	// Raw speaker 1 has an early turn with no words; raw speaker 3 speaks first,
+	// then raw speaker 0. Output speakers must be spk_1 ("Speaker 1") and spk_2
+	// ("Speaker 2"), without skipping to Speaker 3.
+	turns := []SpeakerTurn{
+		{StartMS: 0, EndMS: 500, Speaker: 1},
+		{StartMS: 1000, EndMS: 2000, Speaker: 3},
+		{StartMS: 3000, EndMS: 4000, Speaker: 0},
+		{StartMS: 5000, EndMS: 6000, Speaker: 3},
+	}
+	base := []Segment{{
+		SpeakerID: "spk_speaker_1",
+		Words:     []Word{diarWord(1100, 1500), diarWord(3100, 3500), diarWord(5100, 5500)},
+	}}
+	got, state := DiarizeSingleTrackSegments(base, turns)
+	if state == nil {
+		t.Fatal("expected multi-speaker diarization state")
+	}
+	wantStreams := []AudioStream{
+		{Index: 0, SpeakerID: "spk_1", SpeakerLabel: "Speaker 1"},
+		{Index: 1, SpeakerID: "spk_2", SpeakerLabel: "Speaker 2"},
+	}
+	if !reflect.DeepEqual(state.Streams(), wantStreams) {
+		t.Fatalf("streams = %+v, want %+v", state.Streams(), wantStreams)
+	}
+	if len(got) != 3 || got[0].SpeakerID != "spk_1" || got[1].SpeakerID != "spk_2" || got[2].SpeakerID != "spk_1" {
+		t.Fatalf("segments = %+v, want [spk_1, spk_2, spk_1]", got)
+	}
+
+	// Secondary pass maps raw speakers 3 -> spk_1 and 0 -> spk_2 consistently,
+	// and extends to spk_3 when raw speaker 1 receives a word there.
+	extra := state.Apply([]Segment{{
+		SpeakerID: "spk_speaker_1",
+		Words:     []Word{diarWord(100, 300), diarWord(3100, 3400), diarWord(1200, 1500)},
+	}})
+	if len(extra) != 3 || extra[0].SpeakerID != "spk_3" || extra[1].SpeakerID != "spk_1" || extra[2].SpeakerID != "spk_2" {
+		t.Fatalf("secondary segments = %+v, want [spk_3, spk_1, spk_2]", extra)
+	}
+	if len(state.Streams()) != 3 || state.Streams()[2].SpeakerID != "spk_3" {
+		t.Fatalf("extended streams = %+v, want spk_3 appended", state.Streams())
+	}
+}
+
+func TestDiarizeSingleTrackSegmentsLeavesOneVoiceUntouched(t *testing.T) {
+	turns := []SpeakerTurn{
+		{StartMS: 0, EndMS: 500, Speaker: 0},
+		{StartMS: 1000, EndMS: 5000, Speaker: 2},
+	}
+	base := []Segment{{SpeakerID: "spk_orig", Words: []Word{diarWord(1200, 1600), diarWord(2000, 2400)}}}
+	got, state := DiarizeSingleTrackSegments(base, turns)
+	if state != nil || !reflect.DeepEqual(got, base) {
+		t.Fatalf("single-voice recording was altered: state=%+v got=%+v", state, got)
+	}
+}

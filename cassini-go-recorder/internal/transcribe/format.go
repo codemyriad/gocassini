@@ -272,6 +272,9 @@ type provStep struct {
 	// greedy_search and why. Absent means there was nothing to apply; the pass
 	// ran unbiased, with greedy search unless biasing was turned back on.
 	Hints *HintsProvenance `json:"hints,omitempty"`
+	// SpeakerDiarization records whole-recording speaker separation when a
+	// single-track build split its words across multiple voices.
+	SpeakerDiarization *DiarizationProvenance `json:"x-speakerDiarization,omitempty"`
 }
 
 // HintsProvenance records the decoder biasing applied to one ASR pass. It says
@@ -352,6 +355,7 @@ type ManifestInput struct {
 
 	Additional     []AdditionalTranscript
 	Attribution    *AttributionProvenance
+	Diarization    *DiarizationProvenance
 	WordTimings    *WordTimingProvenance
 	NativeFrontend string
 	// Encoder is the primary model's encoder metadata, or nil.
@@ -373,7 +377,7 @@ func WriteManifest(path string, in ManifestInput) error {
 		primaryID := sanitizeTranscriptID(string(in.STTModelID))
 		files.Transcripts = append(files.Transcripts, artifactTranscriptRef{
 			ID: primaryID, Path: "transcript.words.v1.json", Default: true,
-			Provenance: &provStep{Backend: in.STTBackend, Model: string(in.STTModelID), Device: in.STTDevice, NativeFrontend: in.NativeFrontend, Encoder: in.Encoder, Hints: in.Hints},
+			Provenance: &provStep{Backend: in.STTBackend, Model: string(in.STTModelID), Device: in.STTDevice, NativeFrontend: in.NativeFrontend, Encoder: in.Encoder, Hints: in.Hints, SpeakerDiarization: in.Diarization},
 		})
 		for _, extra := range in.Additional {
 			extraBackend := extra.Backend
@@ -384,7 +388,7 @@ func WriteManifest(path string, in ManifestInput) error {
 			}
 			files.Transcripts = append(files.Transcripts, artifactTranscriptRef{
 				ID: extra.ID, Path: extra.Path,
-				Provenance: &provStep{Backend: extraBackend, Model: string(extra.ModelID), Device: in.STTDevice, NativeFrontend: extra.NativeFrontend},
+				Provenance: &provStep{Backend: extraBackend, Model: string(extra.ModelID), Device: in.STTDevice, NativeFrontend: extra.NativeFrontend, SpeakerDiarization: in.Diarization},
 			})
 		}
 	}
@@ -394,12 +398,13 @@ func WriteManifest(path string, in ManifestInput) error {
 
 	prov := &provenanceInfo{
 		SpeechToText: &provStep{
-			Backend:        in.STTBackend,
-			Model:          string(in.STTModelID),
-			Device:         in.STTDevice,
-			NativeFrontend: in.NativeFrontend,
-			Encoder:        in.Encoder,
-			Hints:          in.Hints,
+			Backend:            in.STTBackend,
+			Model:              string(in.STTModelID),
+			Device:             in.STTDevice,
+			NativeFrontend:     in.NativeFrontend,
+			Encoder:            in.Encoder,
+			Hints:              in.Hints,
+			SpeakerDiarization: in.Diarization,
 		},
 		Attribution: in.Attribution,
 		// nil here writes no wordTimings key at all, which is what a consumer

@@ -250,3 +250,109 @@ func countTurnSpeakers(turns []SpeakerTurn) int {
 	}
 	return len(seen)
 }
+
+// DiarizationProvenance records whole-recording speaker separation on a
+// single-track build's speech-to-text provenance (x-speakerDiarization).
+// Counts, ids and hashes only: no audio or biometric voice data.
+type DiarizationProvenance struct {
+	Backend          string  `json:"backend"`
+	Model            string  `json:"model"`
+	ModelSHA256      string  `json:"modelSha256"`
+	MinDurationOn    float64 `json:"minDurationOn"`
+	MinDurationOff   float64 `json:"minDurationOff"`
+	Assignment       string  `json:"assignment"`
+	SourceSeparation bool    `json:"sourceSeparation"`
+	TurnCount        int     `json:"turnCount"`
+	SpeakerCount     int     `json:"speakerCount"`
+	ElapsedMS        int64   `json:"elapsedMs,omitempty"`
+}
+
+// SingleTrackDiarization holds the diarizer turns and the anonymous speaker
+// numbering (spk_1, spk_2, ... in order of first spoken word, matching Cassini
+// for Android) established over a single-track recording's primary transcript,
+// so any secondary STT pass in the same build maps the same voice to the same
+// speaker id.
+type SingleTrackDiarization struct {
+	turns   []SpeakerTurn
+	ordinal map[int]int
+	streams []AudioStream
+}
+
+// Streams returns the anonymous Speaker 1..N streams that received words.
+func (d *SingleTrackDiarization) Streams() []AudioStream {
+	if d == nil {
+		return nil
+	}
+	return append([]AudioStream(nil), d.streams...)
+}
+
+// DiarizeSingleTrackSegments assigns the words of a single-track recording to
+// anonymous top-level speakers (spk_1 "Speaker 1", spk_2 "Speaker 2", ...) by
+// first spoken word. When fewer than two voices receive words, the transcript
+// is returned unchanged with nil state so a one-person recording claims no
+// separation.
+func DiarizeSingleTrackSegments(segments []Segment, turns []SpeakerTurn) ([]Segment, *SingleTrackDiarization) {
+	state := &SingleTrackDiarization{
+		turns:   append([]SpeakerTurn(nil), turns...),
+		ordinal: map[int]int{},
+	}
+	out := state.assign(segments)
+	if len(state.streams) < 2 {
+		return segments, nil
+	}
+	return out, state
+}
+
+// Apply assigns a secondary transcript's words to the same anonymous speakers
+// measured on the recording, extending the roster if a voice that spoke no
+// words in the primary pass receives words here.
+func (d *SingleTrackDiarization) Apply(segments []Segment) []Segment {
+	if d == nil {
+		return segments
+	}
+	return d.assign(segments)
+}
+
+func (d *SingleTrackDiarization) assign(segments []Segment) []Segment {
+	var words []Word
+	var perSpeaker [][]Segment
+	for _, seg := range segments {
+		if len(seg.Words) > 0 {
+			words = append(words, seg.Words...)
+			continue
+		}
+		perSpeaker = append(perSpeaker, []Segment{seg})
+	}
+	if len(words) == 0 {
+		return segments
+	}
+	sort.SliceStable(words, func(i, j int) bool { return words[i].StartMS < words[j].StartMS })
+	assigned := assignWordsToTurns(words, d.turns)
+	if assigned == nil {
+		return segments
+	}
+	perVoice := map[int][]Word{}
+	for i, rawSpeaker := range assigned {
+		n, ok := d.ordinal[rawSpeaker]
+		if !ok {
+			n = len(d.ordinal) + 1
+			d.ordinal[rawSpeaker] = n
+			d.streams = append(d.streams, AudioStream{
+				Index:        n - 1,
+				SpeakerID:    fmt.Sprintf("spk_%d", n),
+				SpeakerLabel: fmt.Sprintf("Speaker %d", n),
+			})
+		}
+		perVoice[n] = append(perVoice[n], words[i])
+	}
+	for n := 1; n <= len(d.streams); n++ {
+		if len(perVoice[n]) == 0 {
+			continue
+		}
+		perSpeaker = append(perSpeaker, []Segment{{
+			SpeakerID: fmt.Sprintf("spk_%d", n),
+			Words:     perVoice[n],
+		}})
+	}
+	return MergeAndSortSegments(perSpeaker)
+}

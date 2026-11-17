@@ -61,6 +61,12 @@ type BuildConfig struct {
 	// see opus_encode.go. omitempty keeps the portable-build resume
 	// fingerprint of a default build unchanged.
 	AudioEncodePolicy string `json:",omitempty"`
+	// DiarizeMode controls whole-recording speaker separation on single-track
+	// inputs: "" / "off" (default), "auto" (run when a diarizer is installed,
+	// otherwise keep the single-speaker transcript), or "on" (require it).
+	// omitempty keeps the portable-build resume fingerprint of a default build
+	// unchanged.
+	DiarizeMode string `json:",omitempty"`
 }
 
 var (
@@ -72,6 +78,8 @@ var (
 	ensureVADFn             = InstalledVAD
 	modelReadyFn            = ModelReady
 	buildSpeakerEnvelopesFn = BuildSpeakerEnvelopes
+	resolveBuildDiarizerFn  = ResolveDiarizationModel
+	diarizeBuildSpeakerFn   = DiarizeSpeaker
 )
 
 // BuildMeetingArtifact transcribes an MKV recording and writes all meeting
@@ -140,6 +148,9 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 	}
 	if ctx.Err() != nil {
 		return ctx.Err()
+	}
+	if errors.Is(err, errDiarizationRequired) {
+		return err
 	}
 	status, reason := "failed", "transcription_failed"
 	if errors.Is(err, errModelUnavailable) {
@@ -339,11 +350,19 @@ func transcribePrepared(ctx context.Context, mkvPath, outputDir, webmPath, recor
 		segments = applyAttributionReported(mkvPath, streams, segments, modelPaths.SampleRate, cfg, envCache, stdout, attrProv)
 	}
 
+	sourceStreams := streams
+	speakerStreams, diarizedSegments, diarizeProv, diarizeState, err := diarizeSingleTrackBuild(ctx, mkvPath, sourceStreams, segments, usedMerged, cfg, stdout)
+	if err != nil {
+		return err
+	}
+	streams = speakerStreams
+	segments = diarizedSegments
+
 	if err := writeTranscriptWithHash(filepath.Join(outputDir, "transcript.words.v1.json"), "transcript.words.v1", streams, segments, audioDurationMS, sha256hex); err != nil {
 		return fmt.Errorf("write transcript: %w", err)
 	}
 
-	additionalTranscripts, err := runAdditionalTranscripts(ctx, mkvPath, outputDir, streams, audioDurationMS, sha256hex, pass, cfg, envCache, stdout)
+	additionalTranscripts, err := runAdditionalTranscripts(ctx, mkvPath, outputDir, sourceStreams, diarizeState, audioDurationMS, sha256hex, pass, cfg, envCache, stdout)
 	if err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -353,6 +372,13 @@ func transcribePrepared(ctx context.Context, mkvPath, outputDir, webmPath, recor
 		// here would send the build to writeUntranscribed and replace the
 		// primary with an empty one.
 		fmt.Fprintf(stdout, "  additional transcripts incomplete: %v\n", err)
+	}
+	if diarizeState != nil && len(diarizeState.Streams()) != len(streams) {
+		streams = diarizeState.Streams()
+		diarizeProv.SpeakerCount = len(streams)
+		if err := writeTranscriptWithHash(filepath.Join(outputDir, "transcript.words.v1.json"), "transcript.words.v1", streams, segments, audioDurationMS, sha256hex); err != nil {
+			return fmt.Errorf("write transcript: %w", err)
+		}
 	}
 
 	// --- 8. Captions ---
@@ -403,6 +429,7 @@ func transcribePrepared(ctx context.Context, mkvPath, outputDir, webmPath, recor
 		SummaryTemplate:  SummaryTemplateRecordOf(summaryTemplate),
 		Additional:       additionalTranscripts,
 		Attribution:      attrProv,
+		Diarization:      diarizeProv,
 		WordTimings:      wordEnds.provenance(),
 		NativeFrontend:   frontendGuarantee.provenance(cfg.ModelID),
 		Encoder:          encoderProvenance(modelPaths.EncoderFile),
@@ -779,7 +806,7 @@ feed:
 // either be rejected or, worse, silently encode the terms wrongly; a different
 // model may also not support beam search at all. Each additional model resolves
 // its own. On error it still returns the transcripts it has already written.
-func runAdditionalTranscripts(ctx context.Context, mkvPath, outputDir string, streams []AudioStream, audioDurationMS int64, sha256hex string, primary passConfig, cfg BuildConfig, envCache *speakerEnvelopeCache, stdout io.Writer) ([]AdditionalTranscript, error) {
+func runAdditionalTranscripts(ctx context.Context, mkvPath, outputDir string, streams []AudioStream, diarize *SingleTrackDiarization, audioDurationMS int64, sha256hex string, primary passConfig, cfg BuildConfig, envCache *speakerEnvelopeCache, stdout io.Writer) ([]AdditionalTranscript, error) {
 	if len(cfg.AdditionalModels) == 0 {
 		return nil, nil
 	}
@@ -830,13 +857,114 @@ func runAdditionalTranscripts(ctx context.Context, mkvPath, outputDir string, st
 		if !cfg.SkipAttribution {
 			segs = applyAttributionCached(mkvPath, streams, segs, modelPaths.SampleRate, cfg, envCache, stdout)
 		}
+		transcriptStreams := streams
+		if diarize != nil {
+			segs = diarize.Apply(segs)
+			transcriptStreams = diarize.Streams()
+		}
 		path := fmt.Sprintf("transcript-%s.words.v1.json", id)
-		if err := writeTranscriptWithHash(filepath.Join(outputDir, path), "transcript.words.v1", streams, segs, audioDurationMS, sha256hex); err != nil {
+		if err := writeTranscriptWithHash(filepath.Join(outputDir, path), "transcript.words.v1", transcriptStreams, segs, audioDurationMS, sha256hex); err != nil {
 			return out, fmt.Errorf("write additional transcript %s: %w", id, err)
 		}
 		out = append(out, AdditionalTranscript{ID: id, Path: path, ModelID: modelID, Backend: primary.Backend, NativeFrontend: extra.FrontendGuarantee.provenance(modelID)})
 	}
 	return out, nil
+}
+
+var errDiarizationRequired = errors.New("diarization required")
+
+// ValidDiarizeMode reports whether mode is a recognised single-track
+// diarization policy ("", "off", "auto", "on").
+func ValidDiarizeMode(mode string) bool {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "", "off", "auto", "on":
+		return true
+	}
+	return false
+}
+
+// NormalizeDiarizeMode canonicalises a diarization mode: "" for off/unset so
+// default build fingerprints stay unchanged, or "auto" / "on".
+func NormalizeDiarizeMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "auto":
+		return "auto"
+	case "on":
+		return "on"
+	default:
+		return ""
+	}
+}
+
+// diarizeSingleTrackBuild separates speakers on a single-track recording when
+// requested by cfg.DiarizeMode. In "auto" mode an unavailable model or runtime
+// error leaves the single-speaker transcript intact; in "on" mode it fails the
+// build instead of falling back to audio-only.
+func diarizeSingleTrackBuild(
+	ctx context.Context,
+	mkvPath string,
+	streams []AudioStream,
+	segments []Segment,
+	usedMerged bool,
+	cfg BuildConfig,
+	stdout io.Writer,
+) ([]AudioStream, []Segment, *DiarizationProvenance, *SingleTrackDiarization, error) {
+	mode := NormalizeDiarizeMode(cfg.DiarizeMode)
+	if mode == "" {
+		return streams, segments, nil, nil, nil
+	}
+	if len(streams) != 1 || usedMerged {
+		fmt.Fprintf(stdout, "  diarization skipped: recording has %d speaker track(s)\n", len(streams))
+		return streams, segments, nil, nil, nil
+	}
+	if CountWords(segments) == 0 {
+		fmt.Fprintln(stdout, "  diarization skipped: transcript has no words")
+		return streams, segments, nil, nil, nil
+	}
+	model, err := resolveBuildDiarizerFn(cfg.CacheDir)
+	if err != nil {
+		if mode == "on" {
+			return nil, nil, nil, nil, fmt.Errorf("%w: %w", errDiarizationRequired, err)
+		}
+		fmt.Fprintf(stdout, "  diarization skipped: %v\n", err)
+		return streams, segments, nil, nil, nil
+	}
+	threads, warnErr := DiarizationThreads()
+	if warnErr != nil {
+		fmt.Fprintf(stdout, "  diarization: %v\n", warnErr)
+	}
+	fmt.Fprintf(stdout, "  diarizing single-track audio (%s, %d threads)...\n", model.Name, threads)
+	set, err := diarizeBuildSpeakerFn(ctx, mkvPath, streams[0].SpeakerID, model, threads)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, nil, nil, nil, ctx.Err()
+		}
+		if mode == "on" {
+			return nil, nil, nil, nil, fmt.Errorf("%w: %w", errDiarizationRequired, err)
+		}
+		fmt.Fprintf(stdout, "  diarization failed (%v); keeping single-speaker transcript\n", err)
+		return streams, segments, nil, nil, nil
+	}
+	diarized, state := DiarizeSingleTrackSegments(segments, set.SpeakerTurns())
+	if state == nil {
+		fmt.Fprintf(stdout, "  diarization: fewer than 2 voices with words (%d turns, %d ms); keeping single speaker\n", len(set.Turns), set.ElapsedMS)
+		return streams, segments, nil, nil, nil
+	}
+	speakerStreams := state.Streams()
+	prov := &DiarizationProvenance{
+		Backend:          fmt.Sprintf("sherpa-onnx %s Nemotron diarization, %s, %d threads", set.Model.Runtime, strings.ToUpper(set.Params.Provider), set.Params.Threads),
+		Model:            set.Model.Name,
+		ModelSHA256:      set.Model.SHA256,
+		MinDurationOn:    set.Params.MinDurationOn,
+		MinDurationOff:   set.Params.MinDurationOff,
+		Assignment:       set.Assignment,
+		SourceSeparation: false,
+		TurnCount:        len(set.Turns),
+		SpeakerCount:     len(speakerStreams),
+		ElapsedMS:        set.ElapsedMS,
+	}
+	fmt.Fprintf(stdout, "  diarized: %d speakers (%d turns, %d ms)\n", len(speakerStreams), len(set.Turns), set.ElapsedMS)
+	return speakerStreams, diarized, prov, state, nil
 }
 
 // sanitizeTranscriptID maps a model id to the published transcript-id regex
@@ -978,6 +1106,7 @@ func DefaultBuildConfig() BuildConfig {
 		SkipAttribution:     envBool("CASSINI_ATTRIBUTION_DISABLED"),
 		DropCrosstalk:       envBool("CASSINI_ATTRIBUTION_DROP"),
 		Vocabulary:          ParseVocabulary(os.Getenv("CASSINI_TRANSCRIPTION_TERMS")),
+		DiarizeMode:         NormalizeDiarizeMode(os.Getenv("CASSINI_DIARIZE")),
 	}
 }
 

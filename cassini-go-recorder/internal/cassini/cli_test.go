@@ -571,6 +571,54 @@ func TestBuildPassesTheAudioEncodePolicyToTheBuild(t *testing.T) {
 	}
 }
 
+func TestBuildPassesTheDiarizePolicyToTheBuild(t *testing.T) {
+	requireFFMediaTools(t)
+
+	tmp := t.TempDir()
+	input := filepath.Join(tmp, "source.mkv")
+	if err := os.WriteFile(input, []byte("fake-mkv"), 0o644); err != nil {
+		t.Fatalf("write input: %v", err)
+	}
+
+	var modes []string
+	prev := buildArtifactFn
+	fake := fakeSuccessBuildFn(t)
+	buildArtifactFn = func(ctx context.Context, mkvPath, outputDir string, cfg transcribe.BuildConfig, stdout io.Writer) error {
+		modes = append(modes, cfg.DiarizeMode)
+		return fake(ctx, mkvPath, outputDir, cfg, stdout)
+	}
+	t.Cleanup(func() { buildArtifactFn = prev })
+
+	build := func(out string, extra ...string) (int, string) {
+		t.Helper()
+		var stdout, stderr bytes.Buffer
+		code := Run(context.Background(), append([]string{"build", input, "--out", filepath.Join(tmp, out)}, extra...), &stdout, &stderr)
+		return code, stderr.String()
+	}
+
+	// Default fingerprint is unchanged when --diarize is off or omitted.
+	if buildPolicyFingerprint(buildOptions{}) != buildPolicyFingerprint(buildOptions{diarize: "off"}) {
+		t.Fatal("default build policy fingerprint changed when --diarize off was specified")
+	}
+
+	if code, stderr := build("default.meeting"); code != 0 {
+		t.Fatalf("default build failed: code=%d stderr=%q", code, stderr)
+	}
+	t.Setenv("CASSINI_DIARIZE", "auto")
+	if code, stderr := build("env-auto.meeting"); code != 0 {
+		t.Fatalf("env auto build failed: code=%d stderr=%q", code, stderr)
+	}
+	if code, stderr := build("flag-off.meeting", "--diarize", "off"); code != 0 {
+		t.Fatalf("flag off override failed: code=%d stderr=%q", code, stderr)
+	}
+	if want := []string{"", "auto", ""}; !reflect.DeepEqual(modes, want) {
+		t.Fatalf("builds ran with diarize modes %q, want %q", modes, want)
+	}
+	if code, stderr := build("bad.meeting", "--diarize", "bogus"); code == 0 || !strings.Contains(stderr, `invalid --diarize "bogus"`) {
+		t.Fatalf("unknown --diarize mode: code=%d stderr=%q", code, stderr)
+	}
+}
+
 func TestBuildRejectsArtifactOutputsMissingRequiredFiles(t *testing.T) {
 	requireFFMediaTools(t)
 

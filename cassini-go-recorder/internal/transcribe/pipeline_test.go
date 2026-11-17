@@ -927,3 +927,145 @@ func TestAdditionalModelKeepsThePrimaryNativeFrontend(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildMeetingArtifactDiarizesSingleTrackBeforeSummary(t *testing.T) {
+	requireFFMediaTools(t)
+	stubModelEnsurers(t)
+	const backend = "fake-single-track-diarize"
+	registerFixedBackend(t, backend, fixedTimedWords(12))
+
+	prevResolve, prevDiarize, prevSummary := resolveBuildDiarizerFn, diarizeBuildSpeakerFn, buildMeetingSummaryFn
+	t.Cleanup(func() {
+		resolveBuildDiarizerFn, diarizeBuildSpeakerFn, buildMeetingSummaryFn = prevResolve, prevDiarize, prevSummary
+	})
+	resolveBuildDiarizerFn = func(string) (DiarizationModel, error) {
+		return DiarizationModel{Path: "/models/m.int8.onnx", Name: "nvidia/Nemotron-3-Diarization INT8", SHA256: strings.Repeat("d", 64)}, nil
+	}
+	diarizeBuildSpeakerFn = func(_ context.Context, _, speakerID string, model DiarizationModel, threads int) (SpeakerTurnSet, error) {
+		return SpeakerTurnSet{
+			Format:     SpeakerTurnsFormat,
+			SpeakerID:  speakerID,
+			Assignment: DiarizationAssignment,
+			Model:      TurnSetModel{Name: model.Name, SHA256: model.SHA256, Runtime: "2.0.1-test"},
+			Params:     TurnSetParams{MinDurationOn: diarizationMinDurationOn, MinDurationOff: diarizationMinDurationOff, Threads: threads, Provider: "cpu"},
+			ElapsedMS:  42,
+			Turns: []SpeakerTurnEntry{
+				{StartMS: 0, EndMS: 6000, Speaker: 2},
+				{StartMS: 6000, EndMS: 14000, Speaker: 0},
+			},
+		}, nil
+	}
+	var summarySpeakers []string
+	var summaryCalls int
+	buildMeetingSummaryFn = func(_ LLMConfig, _ insight.Workflow, streams []AudioStream, segs []Segment) (string, error) {
+		summaryCalls++
+		for _, s := range streams {
+			summarySpeakers = append(summarySpeakers, s.SpeakerID+"="+s.SpeakerLabel)
+		}
+		if len(segs) < 2 || segs[0].SpeakerID != "spk_1" || segs[len(segs)-1].SpeakerID != "spk_2" {
+			t.Errorf("summary received un-diarized segments: %+v", segs)
+		}
+		return "## Summary\nSpeaker 1 and Speaker 2 discussed the plan.\n", nil
+	}
+
+	smoke := filepath.Join("..", "..", "..", "harness", "media", "parakeet-smoke.mkv")
+	outDir := filepath.Join(t.TempDir(), "out")
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := BuildConfig{
+		Device:          "cpu",
+		Backend:         backend,
+		ModelID:         ModelParakeetUltraInt8,
+		CacheDir:        t.TempDir(),
+		NumThreads:      1,
+		SkipAttribution: true,
+		DiarizeMode:     "auto",
+		SummaryLLM:      LLMConfig{BaseURL: "http://127.0.0.1:9", Model: "test-llm"},
+	}
+	var stdout bytes.Buffer
+	if err := BuildMeetingArtifact(context.Background(), smoke, outDir, cfg, &stdout); err != nil {
+		t.Fatalf("BuildMeetingArtifact: %v\noutput:\n%s", err, stdout.String())
+	}
+	if summaryCalls != 1 || strings.Join(summarySpeakers, ",") != "spk_1=Speaker 1,spk_2=Speaker 2" {
+		t.Fatalf("summary calls=%d speakers=%v, want 1 call over Speaker 1 & Speaker 2", summaryCalls, summarySpeakers)
+	}
+
+	captions, err := os.ReadFile(filepath.Join(outDir, "captions.vtt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(captions), "<Speaker 1>") || !strings.Contains(string(captions), "<Speaker 2>") {
+		t.Fatalf("captions did not carry diarized labels:\n%s", captions)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(outDir, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest artifactManifest
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if manifest.SpeakerCount != 2 {
+		t.Fatalf("manifest.speakerCount = %d, want 2", manifest.SpeakerCount)
+	}
+	if manifest.Provenance == nil || manifest.Provenance.SpeechToText == nil || manifest.Provenance.SpeechToText.SpeakerDiarization == nil {
+		t.Fatalf("manifest missing x-speakerDiarization provenance: %s", raw)
+	}
+	if got := manifest.Provenance.SpeechToText.SpeakerDiarization; got.SpeakerCount != 2 || got.TurnCount != 2 || got.ModelSHA256 != strings.Repeat("d", 64) {
+		t.Fatalf("x-speakerDiarization = %+v", got)
+	}
+}
+
+func TestBuildMeetingArtifactDiarizeAutoKeepsTranscriptAndOnRefusesWithoutModel(t *testing.T) {
+	requireFFMediaTools(t)
+	stubModelEnsurers(t)
+	const backend = "fake-diarize-unavailable"
+	registerFixedBackend(t, backend, fixedTimedWords(12))
+
+	prevResolve := resolveBuildDiarizerFn
+	t.Cleanup(func() { resolveBuildDiarizerFn = prevResolve })
+	resolveBuildDiarizerFn = func(string) (DiarizationModel, error) {
+		return DiarizationModel{}, fmt.Errorf("%w: not installed", ErrDiarizationUnavailable)
+	}
+
+	smoke := filepath.Join("..", "..", "..", "harness", "media", "parakeet-smoke.mkv")
+	autoDir := filepath.Join(t.TempDir(), "auto")
+	if err := os.MkdirAll(autoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	baseCfg := BuildConfig{
+		Device:          "cpu",
+		Backend:         backend,
+		ModelID:         ModelParakeetUltraInt8,
+		CacheDir:        t.TempDir(),
+		NumThreads:      1,
+		SkipAttribution: true,
+		DiarizeMode:     "auto",
+	}
+	if err := BuildMeetingArtifact(context.Background(), smoke, autoDir, baseCfg, &bytes.Buffer{}); err != nil {
+		t.Fatalf("auto diarize without model failed: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(autoDir, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest artifactManifest
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Processing == nil || manifest.Processing.Transcription.Status != "completed" || manifest.SpeakerCount != 1 || manifest.WordCount != 12 {
+		t.Fatalf("auto fallback manifest = %+v", manifest)
+	}
+
+	onDir := filepath.Join(t.TempDir(), "on")
+	if err := os.MkdirAll(onDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	onCfg := baseCfg
+	onCfg.DiarizeMode = "on"
+	if err := BuildMeetingArtifact(context.Background(), smoke, onDir, onCfg, &bytes.Buffer{}); !errors.Is(err, ErrDiarizationUnavailable) {
+		t.Fatalf("DiarizeMode=on err = %v, want ErrDiarizationUnavailable", err)
+	}
+}

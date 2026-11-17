@@ -108,6 +108,9 @@ func buildPolicyFingerprint(opts buildOptions) string {
 		cfg.Device = opts.device
 	}
 	cfg.AudioEncodePolicy = strings.TrimSpace(opts.audioEncode)
+	if opts.diarize != "" {
+		cfg.DiarizeMode = transcribe.NormalizeDiarizeMode(opts.diarize)
+	}
 	if cfg.TranscriptionMode != "off" {
 		cfg.Device = transcribe.ResolveDevice(cfg.Device)
 		if cfg.ModelID == "" {

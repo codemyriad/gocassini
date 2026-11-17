@@ -22,6 +22,7 @@ var buildArtifactFn = func(ctx context.Context, mkvPath, outputDir string, cfg t
 
 type buildOptions struct {
 	transcription string
+	diarize       string
 	inputPath     string
 	outDir        string
 	device        string
@@ -34,11 +35,13 @@ type buildOptions struct {
 }
 
 func runBuild(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	opts := buildOptions{device: "auto", transcription: transcribe.DefaultBuildConfig().TranscriptionMode}
+	defaults := transcribe.DefaultBuildConfig()
+	opts := buildOptions{device: "auto", transcription: defaults.TranscriptionMode, diarize: defaults.DiarizeMode}
 
 	fs := flag.NewFlagSet("cassini build", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.StringVar(&opts.transcription, "transcription", opts.transcription, "transcription: off or on (installed model required)")
+	fs.StringVar(&opts.diarize, "diarize", opts.diarize, "speaker diarization for a single-track recording: off, auto (when the model is installed), or on")
 	fs.StringVar(&opts.outDir, "out", "", "output .meeting bundle directory or portable .opus file")
 	fs.StringVar(&opts.device, "device", "auto", "transcriber device: auto, cpu, cuda")
 	fs.BoolVar(&opts.keepWork, "keep-work", false, "keep transcriber work files inside the meeting bundle")
@@ -196,6 +199,9 @@ func validateBuildOptions(opts buildOptions) error {
 	if !transcribe.ValidAudioEncodePolicy(opts.audioEncode) {
 		return fmt.Errorf("invalid --audio-encode %q (known: %s, %s)", opts.audioEncode, transcribe.AudioEncodeMatchSource, transcribe.AudioEncodeFixed64k)
 	}
+	if !transcribe.ValidDiarizeMode(opts.diarize) {
+		return fmt.Errorf("invalid --diarize %q (known: off, auto, on)", opts.diarize)
+	}
 	return nil
 }
 
@@ -285,6 +291,9 @@ func executeBuildIntoBundle(ctx context.Context, input buildInput, bundle Meetin
 		cfg.Device = opts.device
 	}
 	cfg.AudioEncodePolicy = strings.TrimSpace(opts.audioEncode)
+	if opts.diarize != "" {
+		cfg.DiarizeMode = transcribe.NormalizeDiarizeMode(opts.diarize)
+	}
 	if err := buildArtifactFn(ctx, input.RecordingPath, bundle.RootDir, cfg, stdout); err != nil {
 		_ = UpdateMeetingBundleStatus(bundle, bundleStateFailed, "build", err.Error())
 		return fmt.Errorf("build failed: %w", err)
