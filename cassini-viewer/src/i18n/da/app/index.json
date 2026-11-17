@@ -3,8 +3,6 @@
     "app": {
       "nav_label": "Cassini-visninger",
       "tab_browse": "Gennemse",
-      "recording_needs_action": "Opsætningen af optagelse kræver en administrators opmærksomhed.",
-      "open_recording_setup": "Åbn opsætning af optagelse",
       "retention_load_failed": "Kunne ikke indlæse indstillingerne for opbevaring.",
       "retention_dismiss_failed": "Kunne ikke lukke påmindelsen: {detail}"
     },
@@ -49,28 +47,21 @@
       "bundle_failed": "Kunne ikke forberede pakken (HTTP {status})."
     },
     "setup_notice": {
-      "checking": "Kontrollerer…",
-      "show_details": "Vis detaljer",
-      "details_heading": "Detaljer for administratorer",
-      "open_publish_pipeline": "Åbn {place}",
+      "open_doctor": "",
       "title_failing": "Cassini kan ikke gemme optagelser lige nu",
       "title_unchecked": "Cassini har ikke kontrolleret, at den kan gemme optagelser",
-      "summary_failing": "Du kan stadig gennemse optagelser. Opkald kører stadig, men deres optagelser mislykkes, indtil dette er rettet.",
-      "summary_unchecked": "Du kan stadig gennemse optagelser, men nye mislykkes, indtil denne kontrol er kørt.",
-      "share_label": "Send dette link til en administrator for at få vejledning i opsætningen.",
-      "step_open_settings": "Åbn {place} for at kontrollere optagelseskontoen",
-      "step_create_account": "Opret kontoen {user} i Nextcloud",
+      "reader_failing": "",
+      "reader_unchecked": "",
+      "copy_link": "",
+      "title_recording": "",
+      "reader_recording": "",
       "cause_unknown": "Cassini kunne ikke bekræfte sin opsætning af optagelser.",
       "cause": {
         "nextcloud_probe": "Nextcloud svarede ikke på kontrollen af optagelseskontoen.",
         "private_archive": "Cassini kunne ikke bekræfte, at dens mappe til optagelser er privat og skrivbar.",
         "sharing_api": "Nextclouds fildeling er ikke tilgængelig for Cassinis optagelseskonto.",
         "owner_account": "Cassinis optagelseskonto findes ikke."
-      },
-      "detail_state": "Operatøren rapporterede {state}.",
-      "detail_state_at_step": "Operatøren rapporterede {state} ved {step}.",
-      "note_occ": "{command} står for den måde, din installation kalder det på, for eksempel {example}.",
-      "reference": "Se {endpoint} for den fulde rapport om adgang til optagelser."
+      }
     },
     "sharing_notice": {
       "pending_title": "{count:number|num} {{optagelse venter|optagelser venter}} på dig",

@@ -3,8 +3,6 @@
     "app": {
       "nav_label": "Cassini površine",
       "tab_browse": "Pregledaj",
-      "recording_needs_action": "Postavljanje snimanja zahtijeva pažnju administratora.",
-      "open_recording_setup": "Otvori postavljanje snimanja",
       "retention_load_failed": "Nije moguće učitati postavke zadržavanja.",
       "retention_dismiss_failed": "Nije moguće odbaciti podsjetnik: {detail}"
     },
@@ -49,28 +47,21 @@
       "bundle_failed": "Nije moguće pripremiti paket (HTTP {status})."
     },
     "setup_notice": {
-      "checking": "Provjera…",
-      "show_details": "Prikaži pojedinosti",
-      "details_heading": "Pojedinosti za administratore",
-      "open_publish_pipeline": "Otvori {place}",
+      "open_doctor": "",
       "title_failing": "Cassini trenutno ne može spremati snimke",
       "title_unchecked": "Cassini još nije provjerio može li spremati snimke",
-      "summary_failing": "I dalje možeš pregledavati snimke. Pozivi će i dalje raditi, ali njihove snimke neće uspijevati dok se ovo ne popravi.",
-      "summary_unchecked": "I dalje možeš pregledavati snimke, ali nove neće uspijevati dok se ova provjera ne pokrene.",
-      "share_label": "Pošalji ovu poveznicu administratoru za upute za postavljanje.",
-      "step_open_settings": "Otvori {place} i provjeri račun za snimke",
-      "step_create_account": "Stvori račun {user} u Nextcloudu",
+      "reader_failing": "",
+      "reader_unchecked": "",
+      "copy_link": "",
+      "title_recording": "",
+      "reader_recording": "",
       "cause_unknown": "Cassini nije mogao potvrditi postavke snimanja.",
       "cause": {
         "nextcloud_probe": "Nextcloud nije odgovorio na provjeru računa za snimke.",
         "private_archive": "Cassini nije mogao potvrditi da je njegova mapa za snimke privatna i da se u nju može pisati.",
         "sharing_api": "Dijeljenje datoteka u Nextcloudu nije dostupno Cassinijevu računu za snimke.",
         "owner_account": "Cassinijev račun za snimke ne postoji."
-      },
-      "detail_state": "Operater je prijavio {state}.",
-      "detail_state_at_step": "Operater je prijavio {state} u koraku {step}.",
-      "note_occ": "{command} je onako kako ga tvoja instalacija poziva, na primjer {example}.",
-      "reference": "Potpuno izvješće o pristupu snimkama nalazi se na {endpoint}."
+      }
     },
     "sharing_notice": {
       "pending_title": "{count:number|num} {{|snimka te čeka||snimke te čekaju||snimki te čeka}}",

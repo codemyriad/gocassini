@@ -203,14 +203,6 @@ export type NamespaceAppTranslation = {
 			 */
 			tab_browse: string
 			/**
-			 * R​e​c​o​r​d​i​n​g​ ​s​e​t​u​p​ ​n​e​e​d​s​ ​a​n​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​’​s​ ​a​t​t​e​n​t​i​o​n​.
-			 */
-			recording_needs_action: string
-			/**
-			 * O​p​e​n​ ​r​e​c​o​r​d​i​n​g​ ​s​e​t​u​p
-			 */
-			open_recording_setup: string
-			/**
 			 * C​o​u​l​d​ ​n​o​t​ ​l​o​a​d​ ​r​e​t​e​n​t​i​o​n​ ​s​e​t​t​i​n​g​s​.
 			 */
 			retention_load_failed: string
@@ -357,24 +349,12 @@ export type NamespaceAppTranslation = {
 		}
 		setup_notice: {
 			/**
-			 * C​h​e​c​k​i​n​g​…
-			 */
-			checking: string
-			/**
-			 * S​h​o​w​ ​d​e​t​a​i​l​s
-			 */
-			show_details: string
-			/**
-			 * D​e​t​a​i​l​s​ ​f​o​r​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​s
-			 */
-			details_heading: string
-			/**
 			 * O​p​e​n​ ​{​p​l​a​c​e​}
 			 * @param {unknown} place
 			 */
-			open_publish_pipeline: RequiredParams<'place'>
+			open_doctor: RequiredParams<'place'>
 			/**
-			 * C​a​s​s​i​n​i​ ​c​a​n​'​t​ ​s​a​v​e​ ​r​e​c​o​r​d​i​n​g​s​ ​r​i​g​h​t​ ​n​o​w
+			 * N​e​w​ ​r​e​c​o​r​d​i​n​g​s​ ​c​a​n​'​t​ ​b​e​ ​s​a​v​e​d
 			 */
 			title_failing: string
 			/**
@@ -382,27 +362,25 @@ export type NamespaceAppTranslation = {
 			 */
 			title_unchecked: string
 			/**
-			 * Y​o​u​ ​c​a​n​ ​s​t​i​l​l​ ​b​r​o​w​s​e​ ​r​e​c​o​r​d​i​n​g​s​.​ ​N​e​w​ ​r​e​c​o​r​d​i​n​g​s​ ​m​a​y​ ​n​o​t​ ​b​e​ ​s​a​v​e​d​ ​u​n​t​i​l​ ​t​h​i​s​ ​i​s​ ​f​i​x​e​d​.
+			 * C​a​l​l​s​ ​s​t​i​l​l​ ​w​o​r​k​ ​a​n​d​ ​e​x​i​s​t​i​n​g​ ​r​e​c​o​r​d​i​n​g​s​ ​a​r​e​ ​s​t​i​l​l​ ​h​e​r​e​.​ ​A​s​k​ ​a​n​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​ ​t​o​ ​f​i​x​ ​t​h​i​s​.
 			 */
-			summary_failing: string
+			reader_failing: string
 			/**
-			 * Y​o​u​ ​c​a​n​ ​s​t​i​l​l​ ​b​r​o​w​s​e​ ​r​e​c​o​r​d​i​n​g​s​.​ ​C​a​s​s​i​n​i​ ​c​h​e​c​k​s​ ​a​g​a​i​n​ ​b​e​f​o​r​e​ ​i​t​ ​s​a​v​e​s​ ​a​ ​n​e​w​ ​r​e​c​o​r​d​i​n​g​.
+			 * E​x​i​s​t​i​n​g​ ​r​e​c​o​r​d​i​n​g​s​ ​a​r​e​ ​s​t​i​l​l​ ​h​e​r​e​.​ ​N​e​w​ ​o​n​e​s​ ​m​a​y​ ​n​o​t​ ​s​a​v​e​ ​u​n​t​i​l​ ​a​n​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​ ​c​h​e​c​k​s​ ​t​h​i​s​.
 			 */
-			summary_unchecked: string
+			reader_unchecked: string
 			/**
-			 * S​e​n​d​ ​t​h​i​s​ ​l​i​n​k​ ​t​o​ ​a​n​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​ ​f​o​r​ ​s​e​t​u​p​ ​i​n​s​t​r​u​c​t​i​o​n​s​.
+			 * C​o​p​y​ ​l​i​n​k​ ​f​o​r​ ​a​n​ ​a​d​m​i​n​i​s​t​r​a​t​o​r
 			 */
-			share_label: string
+			copy_link: string
 			/**
-			 * O​p​e​n​ ​{​p​l​a​c​e​}​ ​t​o​ ​c​h​e​c​k​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​s​ ​a​c​c​o​u​n​t
-			 * @param {unknown} place
+			 * R​e​c​o​r​d​i​n​g​ ​s​e​t​u​p​ ​i​s​n​'​t​ ​f​i​n​i​s​h​e​d
 			 */
-			step_open_settings: RequiredParams<'place'>
+			title_recording: string
 			/**
-			 * C​r​e​a​t​e​ ​t​h​e​ ​{​u​s​e​r​}​ ​a​c​c​o​u​n​t​ ​i​n​ ​N​e​x​t​c​l​o​u​d
-			 * @param {unknown} user
+			 * N​e​w​ ​c​a​l​l​s​ ​m​a​y​ ​n​o​t​ ​b​e​ ​r​e​c​o​r​d​e​d​ ​u​n​t​i​l​ ​a​n​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​ ​f​i​n​i​s​h​e​s​ ​i​t​.
 			 */
-			step_create_account: RequiredParams<'user'>
+			reader_recording: string
 			/**
 			 * C​a​s​s​i​n​i​ ​c​o​u​l​d​ ​n​o​t​ ​c​o​n​f​i​r​m​ ​i​t​s​ ​r​e​c​o​r​d​i​n​g​s​ ​s​e​t​u​p​.
 			 */
@@ -425,28 +403,6 @@ export type NamespaceAppTranslation = {
 				 */
 				owner_account: string
 			}
-			/**
-			 * T​h​e​ ​o​p​e​r​a​t​o​r​ ​r​e​p​o​r​t​e​d​ ​{​s​t​a​t​e​}​.
-			 * @param {unknown} state
-			 */
-			detail_state: RequiredParams<'state'>
-			/**
-			 * T​h​e​ ​o​p​e​r​a​t​o​r​ ​r​e​p​o​r​t​e​d​ ​{​s​t​a​t​e​}​ ​a​t​ ​{​s​t​e​p​}​.
-			 * @param {unknown} state
-			 * @param {unknown} step
-			 */
-			detail_state_at_step: RequiredParams<'state' | 'step'>
-			/**
-			 * {​c​o​m​m​a​n​d​}​ ​i​s​ ​h​o​w​e​v​e​r​ ​y​o​u​r​ ​d​e​p​l​o​y​m​e​n​t​ ​i​n​v​o​k​e​s​ ​i​t​,​ ​f​o​r​ ​e​x​a​m​p​l​e​ ​{​e​x​a​m​p​l​e​}​.
-			 * @param {unknown} command
-			 * @param {unknown} example
-			 */
-			note_occ: RequiredParams<'command' | 'example'>
-			/**
-			 * S​e​e​ ​{​e​n​d​p​o​i​n​t​}​ ​f​o​r​ ​t​h​e​ ​f​u​l​l​ ​r​e​c​o​r​d​i​n​g​s​ ​a​c​c​e​s​s​ ​r​e​p​o​r​t​.
-			 * @param {unknown} endpoint
-			 */
-			reference: RequiredParams<'endpoint'>
 		}
 		sharing_notice: {
 			/**
@@ -8932,14 +8888,6 @@ export type TranslationFunctions = {
 				 */
 				tab_browse: () => LocalizedString
 				/**
-				 * Recording setup needs an administrator’s attention.
-				 */
-				recording_needs_action: () => LocalizedString
-				/**
-				 * Open recording setup
-				 */
-				open_recording_setup: () => LocalizedString
-				/**
 				 * Could not load retention settings.
 				 */
 				retention_load_failed: () => LocalizedString
@@ -9080,23 +9028,11 @@ export type TranslationFunctions = {
 			}
 			setup_notice: {
 				/**
-				 * Checking…
-				 */
-				checking: () => LocalizedString
-				/**
-				 * Show details
-				 */
-				show_details: () => LocalizedString
-				/**
-				 * Details for administrators
-				 */
-				details_heading: () => LocalizedString
-				/**
 				 * Open {place}
 				 */
-				open_publish_pipeline: (arg: { place: unknown }) => LocalizedString
+				open_doctor: (arg: { place: unknown }) => LocalizedString
 				/**
-				 * Cassini can't save recordings right now
+				 * New recordings can't be saved
 				 */
 				title_failing: () => LocalizedString
 				/**
@@ -9104,25 +9040,25 @@ export type TranslationFunctions = {
 				 */
 				title_unchecked: () => LocalizedString
 				/**
-				 * You can still browse recordings. New recordings may not be saved until this is fixed.
+				 * Calls still work and existing recordings are still here. Ask an administrator to fix this.
 				 */
-				summary_failing: () => LocalizedString
+				reader_failing: () => LocalizedString
 				/**
-				 * You can still browse recordings. Cassini checks again before it saves a new recording.
+				 * Existing recordings are still here. New ones may not save until an administrator checks this.
 				 */
-				summary_unchecked: () => LocalizedString
+				reader_unchecked: () => LocalizedString
 				/**
-				 * Send this link to an administrator for setup instructions.
+				 * Copy link for an administrator
 				 */
-				share_label: () => LocalizedString
+				copy_link: () => LocalizedString
 				/**
-				 * Open {place} to check the recordings account
+				 * Recording setup isn't finished
 				 */
-				step_open_settings: (arg: { place: unknown }) => LocalizedString
+				title_recording: () => LocalizedString
 				/**
-				 * Create the {user} account in Nextcloud
+				 * New calls may not be recorded until an administrator finishes it.
 				 */
-				step_create_account: (arg: { user: unknown }) => LocalizedString
+				reader_recording: () => LocalizedString
 				/**
 				 * Cassini could not confirm its recordings setup.
 				 */
@@ -9145,22 +9081,6 @@ export type TranslationFunctions = {
 					 */
 					owner_account: () => LocalizedString
 				}
-				/**
-				 * The operator reported {state}.
-				 */
-				detail_state: (arg: { state: unknown }) => LocalizedString
-				/**
-				 * The operator reported {state} at {step}.
-				 */
-				detail_state_at_step: (arg: { state: unknown, step: unknown }) => LocalizedString
-				/**
-				 * {command} is however your deployment invokes it, for example {example}.
-				 */
-				note_occ: (arg: { command: unknown, example: unknown }) => LocalizedString
-				/**
-				 * See {endpoint} for the full recordings access report.
-				 */
-				reference: (arg: { endpoint: unknown }) => LocalizedString
 			}
 			sharing_notice: {
 				/**

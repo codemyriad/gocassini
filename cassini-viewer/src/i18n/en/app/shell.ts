@@ -8,8 +8,6 @@ const shell = {
     nav_label: "Cassini surfaces",
     // Tab: the meeting list and meetings.
     tab_browse: "Browse",
-    recording_needs_action: "Recording setup needs an administrator’s attention.",
-    open_recording_setup: "Open recording setup",
     retention_load_failed: "Could not load retention settings.",
     // Shown above the retention reminder. {detail} is the server's error, in English.
     retention_dismiss_failed: "Could not dismiss the reminder: {detail}",
@@ -68,38 +66,30 @@ const shell = {
   // SetupNotice.svelte and buildSetupNotice (operator/setupHealth.ts): the
   // strip above Browse's meeting list when recordings cannot be saved.
   setup_notice: {
-    checking: "Checking…",
-    show_details: "Show details",
-    details_heading: "Details for administrators",
-    // A link. {place} is the path to a settings page, "Operator › Publish pipeline".
-    open_publish_pipeline: "Open {place}",
-    title_failing: "Cassini can't save recordings right now",
+    // A button for administrators. {place} is the path to the checks, "Operator › Doctor".
+    open_doctor: "Open {place}",
+    title_failing: "New recordings can't be saved",
     title_unchecked: "Cassini hasn't checked that it can save recordings",
-    summary_failing: "You can still browse recordings. New recordings may not be saved until this is fixed.",
-    summary_unchecked: "You can still browse recordings. Cassini checks again before it saves a new recording.",
-    // Shown to someone who is not an administrator, above the app's address.
-    share_label: "Send this link to an administrator for setup instructions.",
-    // {place}: as open_publish_pipeline.
-    step_open_settings: "Open {place} to check the recordings account",
-    // {user}: the account name, "cassini".
-    step_create_account: "Create the {user} account in Nextcloud",
+    // After the title, for someone who is not an administrator.
+    reader_failing: "Calls still work and existing recordings are still here. Ask an administrator to fix this.",
+    reader_unchecked: "Existing recordings are still here. New ones may not save until an administrator checks this.",
+    // A button that copies this page's address, for the reader to send on.
+    copy_link: "Copy link for an administrator",
+    // The same strip when Doctor's recording checks fail (Talk's recording
+    // backend, its secret, or storage) rather than storage alone. An
+    // administrator sees the title and a button to Doctor.
+    title_recording: "Recording setup isn't finished",
+    // After title_recording, for someone who is not an administrator.
+    reader_recording: "New calls may not be recorded until an administrator finishes it.",
     cause_unknown: "Cassini could not confirm its recordings setup.",
     // Why recordings cannot be saved, by the check that failed. Shown to
-    // administrators after summary_failing.
+    // administrators after the title.
     cause: {
       nextcloud_probe: "Nextcloud did not answer the recordings account check.",
       private_archive: "Cassini could not confirm its recordings folder is private and writable.",
       sharing_api: "Nextcloud file sharing is unavailable to the Cassini recordings account.",
       owner_account: "The Cassini recordings account does not exist.",
     },
-    // {state} and {step}: the operator's internal names for the failing check,
-    // e.g. "unavailable" at "owner_account". Shown to administrators only.
-    detail_state: "The operator reported {state}.",
-    detail_state_at_step: "The operator reported {state} at {step}.",
-    // {command}: "occ". {example}: "sudo -u www-data php occ".
-    note_occ: "{command} is however your deployment invokes it, for example {example}.",
-    // {endpoint}: "GET /operator/status".
-    reference: "See {endpoint} for the full recordings access report.",
   },
   // SharingNotice.svelte and operator/sharingNotice.ts: what Browse says about
   // the reader's own recording shares, waiting for them to accept or refused

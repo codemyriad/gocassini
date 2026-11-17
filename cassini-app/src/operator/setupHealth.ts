@@ -1,5 +1,5 @@
 import { get } from "svelte/store";
-import { LL, operatorPlace } from "cassini-viewer/i18n";
+import { LL } from "cassini-viewer/i18n";
 import type { OperatorPanel } from "../surfaceRouting";
 
 export interface SetupFeatures { summaries: boolean; insights: boolean }
@@ -76,23 +76,21 @@ export interface RecordingsAccess {
   detail: string;
   cause: string;
 }
-export interface SetupNoticeStep {
-  label: string;
-  commands: string[];
-  action?: "settings";
-}
 export type SetupNoticeTone = "warning" | "neutral";
 export interface SetupNotice {
   tone: SetupNoticeTone;
+  // Which audience it is drawn for: an administrator gets a button to Doctor,
+  // everyone else a button that copies shareUrl.
+  admin: boolean;
   title: string;
+  // For someone who is not an administrator: what still works, and who can
+  // fix it. "" for an administrator, who gets the cause instead.
   summary: string;
+  // For an administrator: what failed, in one sentence. The steps to fix it
+  // are in Operator › Doctor, which the notice links to (#500).
   cause: string;
-  steps: SetupNoticeStep[];
-  detail: string;
-  note: string;
-  shareLabel: string;
+  // This page's address, for someone who is not an administrator to send on.
   shareUrl: string;
-  reference: string;
 }
 
 export async function fetchSetupHealth(operatorBasePath: string, fetchImpl: typeof fetch = fetch): Promise<SetupHealth | null> {
@@ -221,12 +219,6 @@ export function shareableAppUrl(href: string): string {
   catch { return href; }
 }
 
-// A function rather than a constant, so each notice is in the reader's language.
-const settingsOffer = (): SetupNoticeStep => ({
-  label: get(LL).app.shell.setup_notice.step_open_settings({ place: operatorPlace("publish_pipeline") }),
-  commands: [], action: "settings",
-});
-
 // What failed, by the operator's step (storage_causes.go, its administrator
 // wording); "" for a step not listed there.
 function stepCause(step: string): string {
@@ -255,36 +247,33 @@ export function buildSetupNotice(options: {
   // check can fail a reader's share scan too, and the list reports that itself.
   const t = get(LL).app.shell.setup_notice;
   const failing = verdict.state !== "unknown";
-  const summary = failing ? t.summary_failing() : t.summary_unchecked();
   const base: SetupNotice = {
     tone: failing ? "warning" : "neutral",
     title: failing ? t.title_failing() : t.title_unchecked(),
-    summary, cause: "", steps: [], detail: "", note: "", shareLabel: "", shareUrl: "", reference: "",
+    admin: isAdmin, summary: "", cause: "", shareUrl: "",
   };
   if (!isAdmin) {
-    return { ...base, shareLabel: t.share_label(), shareUrl: appUrl };
+    return { ...base, summary: failing ? t.reader_failing() : t.reader_unchecked(), shareUrl: appUrl };
   }
-  const step = access?.step ?? "";
-  // Try again on this notice runs the same check as enabling the app, so no
-  // step tells anyone to disable and enable it.
-  const steps: SetupNoticeStep[] = step === "owner_account"
-    ? [settingsOffer(), { label: t.step_create_account({ user: "cassini" }), commands: ["occ user:add cassini"] }]
-    : [settingsOffer()];
   return {
     ...base,
     // The cause is worded here from the failing step, in the reader's
     // language; for a step this app does not know, the operator's own
-    // sentence, in English. detail is the operator's raw state text, in
-    // English. /setup sends no step, so its cause (health.cause) stays the
-    // operator's sentence too.
+    // sentence, in English. /setup sends no step, so its cause (health.cause)
+    // stays the operator's sentence too.
     cause: stepCause(access?.step ?? "") || access?.cause || health?.cause || t.cause_unknown(),
-    steps,
-    detail: access?.detail || (step
-      ? t.detail_state_at_step({ state: verdict.state, step })
-      : t.detail_state({ state: verdict.state })),
-    note: steps.some((s) => s.commands.length > 0) ? t.note_occ({ command: "occ", example: "sudo -u www-data php occ" }) : "",
-    reference: t.reference({ endpoint: "GET /operator/status" }),
   };
+}
+
+// The recording warning (D-763): Doctor's recording checks failed. Same strip
+// as the setup notice, and held back while that notice shows, since storage is
+// one of the checks it summarises (#500). The operator's public route says only
+// that a check failed, so an administrator gets the title and Doctor's button.
+export function buildRecordingNotice(options: { isAdmin: boolean; appUrl: string }): SetupNotice {
+  const t = get(LL).app.shell.setup_notice;
+  return options.isAdmin
+    ? { tone: "warning", admin: true, title: t.title_recording(), summary: "", cause: "", shareUrl: "" }
+    : { tone: "warning", admin: false, title: t.title_recording(), summary: t.reader_recording(), cause: "", shareUrl: options.appUrl };
 }
 
 // --- The unconfigured states (D-722) ---

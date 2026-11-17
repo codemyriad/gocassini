@@ -3,8 +3,6 @@
     "app": {
       "nav_label": "Sekcje Cassini",
       "tab_browse": "Przeglądaj",
-      "recording_needs_action": "Konfiguracja nagrywania wymaga uwagi administratora.",
-      "open_recording_setup": "Otwórz konfigurację nagrywania",
       "retention_load_failed": "Nie udało się wczytać ustawień przechowywania.",
       "retention_dismiss_failed": "Nie udało się odrzucić przypomnienia: {detail}"
     },
@@ -49,28 +47,21 @@
       "bundle_failed": "Nie udało się przygotować pakietu (HTTP {status})."
     },
     "setup_notice": {
-      "checking": "Sprawdzanie…",
-      "show_details": "Pokaż szczegóły",
-      "details_heading": "Szczegóły dla administratorów",
-      "open_publish_pipeline": "Otwórz {place}",
+      "open_doctor": "",
       "title_failing": "Cassini nie może teraz zapisywać nagrań",
       "title_unchecked": "Cassini nie sprawdził jeszcze, czy może zapisywać nagrania",
-      "summary_failing": "Nadal możesz przeglądać nagrania. Połączenia będą działać, ale ich nagrania będą się nie udawać, dopóki problem nie zostanie rozwiązany.",
-      "summary_unchecked": "Nadal możesz przeglądać nagrania, ale nowe będą się nie udawać, dopóki ta kontrola nie zostanie wykonana.",
-      "share_label": "Wyślij ten link administratorowi, aby uzyskać instrukcje konfiguracji.",
-      "step_open_settings": "Otwórz {place}, aby sprawdzić konto nagrań",
-      "step_create_account": "Utwórz konto {user} w Nextcloud",
+      "reader_failing": "",
+      "reader_unchecked": "",
+      "copy_link": "",
+      "title_recording": "",
+      "reader_recording": "",
       "cause_unknown": "Cassini nie mógł potwierdzić konfiguracji nagrań.",
       "cause": {
         "nextcloud_probe": "Nextcloud nie odpowiedział na sprawdzenie konta nagrań.",
         "private_archive": "Cassini nie mógł potwierdzić, że jego katalog nagrań jest prywatny i zapisywalny.",
         "sharing_api": "Udostępnianie plików Nextcloud jest niedostępne dla konta nagrań Cassini.",
         "owner_account": "Konto nagrań Cassini nie istnieje."
-      },
-      "detail_state": "Operator zgłosił stan {state}.",
-      "detail_state_at_step": "Operator zgłosił stan {state} w kroku {step}.",
-      "note_occ": "{command} wywołuje się tak, jak przewiduje twoje wdrożenie, na przykład {example}.",
-      "reference": "Pełny raport dostępu do nagrań znajdziesz w {endpoint}."
+      }
     },
     "sharing_notice": {
       "pending_title": "{count:number|num} {{|nagranie czeka||nagrania czekają|nagrań czeka|nagrania czeka}} na ciebie",

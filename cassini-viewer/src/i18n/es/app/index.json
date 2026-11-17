@@ -3,8 +3,6 @@
     "app": {
       "nav_label": "Secciones de Cassini",
       "tab_browse": "Explorar",
-      "recording_needs_action": "La configuración de grabación requiere la atención de un administrador.",
-      "open_recording_setup": "Abrir la configuración de grabación",
       "retention_load_failed": "No se pudieron cargar los ajustes de conservación.",
       "retention_dismiss_failed": "No se pudo descartar el recordatorio: {detail}"
     },
@@ -49,28 +47,21 @@
       "bundle_failed": "No se pudo preparar el paquete (HTTP {status})."
     },
     "setup_notice": {
-      "checking": "Comprobando…",
-      "show_details": "Mostrar detalles",
-      "details_heading": "Detalles para administradores",
-      "open_publish_pipeline": "Abrir {place}",
+      "open_doctor": "",
       "title_failing": "Cassini no puede guardar grabaciones en este momento",
       "title_unchecked": "Cassini no ha comprobado que pueda guardar grabaciones",
-      "summary_failing": "Puedes seguir explorando las grabaciones. Las llamadas seguirán funcionando, pero sus grabaciones fallarán hasta que se solucione.",
-      "summary_unchecked": "Puedes seguir explorando las grabaciones, pero las nuevas fallarán hasta que se haga esta comprobación.",
-      "share_label": "Envía este enlace a un administrador para que tenga las instrucciones de configuración.",
-      "step_open_settings": "Abre {place} para comprobar la cuenta de grabaciones",
-      "step_create_account": "Crea la cuenta {user} en Nextcloud",
+      "reader_failing": "",
+      "reader_unchecked": "",
+      "copy_link": "",
+      "title_recording": "",
+      "reader_recording": "",
       "cause_unknown": "Cassini no pudo confirmar su configuración de grabación.",
       "cause": {
         "nextcloud_probe": "Nextcloud no respondió a la comprobación de la cuenta de grabaciones.",
         "private_archive": "Cassini no pudo confirmar que su carpeta de grabaciones sea privada y admita escritura.",
         "sharing_api": "El uso compartido de archivos de Nextcloud no está disponible para la cuenta de grabaciones de Cassini.",
         "owner_account": "La cuenta de grabaciones de Cassini no existe."
-      },
-      "detail_state": "El operador informó de {state}.",
-      "detail_state_at_step": "El operador informó de {state} en {step}.",
-      "note_occ": "{command} es como sea que tu instalación lo invoque, por ejemplo {example}.",
-      "reference": "Consulta {endpoint} para ver el informe completo de acceso a las grabaciones."
+      }
     },
     "sharing_notice": {
       "pending_title": "{count:number|num} {{grabación te está esperando|grabaciones te están esperando}}",

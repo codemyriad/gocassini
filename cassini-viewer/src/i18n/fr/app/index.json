@@ -3,8 +3,6 @@
     "app": {
       "nav_label": "Espaces Cassini",
       "tab_browse": "Parcourir",
-      "recording_needs_action": "La configuration de l’enregistrement demande l’intervention d’un administrateur.",
-      "open_recording_setup": "Ouvrir la configuration de l’enregistrement",
       "retention_load_failed": "Impossible de charger les paramètres de conservation.",
       "retention_dismiss_failed": "Impossible d’ignorer le rappel : {detail}"
     },
@@ -49,28 +47,21 @@
       "bundle_failed": "Impossible de préparer le lot (HTTP {status})."
     },
     "setup_notice": {
-      "checking": "Vérification…",
-      "show_details": "Afficher les détails",
-      "details_heading": "Détails pour les administrateurs",
-      "open_publish_pipeline": "Ouvrir {place}",
+      "open_doctor": "",
       "title_failing": "Cassini ne peut pas sauvegarder les enregistrements pour le moment",
       "title_unchecked": "Cassini n’a pas vérifié qu’il peut sauvegarder les enregistrements",
-      "summary_failing": "Vous pouvez toujours parcourir les enregistrements. Les appels fonctionneront, mais leurs enregistrements échoueront tant que ce problème n’est pas résolu.",
-      "summary_unchecked": "Vous pouvez toujours parcourir les enregistrements, mais les nouveaux échoueront tant que cette vérification n’a pas eu lieu.",
-      "share_label": "Envoyez ce lien à un administrateur pour obtenir les instructions de configuration.",
-      "step_open_settings": "Ouvrez {place} pour vérifier le compte des enregistrements",
-      "step_create_account": "Créez le compte {user} dans Nextcloud",
+      "reader_failing": "",
+      "reader_unchecked": "",
+      "copy_link": "",
+      "title_recording": "",
+      "reader_recording": "",
       "cause_unknown": "Cassini n’a pas pu confirmer la configuration de ses enregistrements.",
       "cause": {
         "nextcloud_probe": "Nextcloud n’a pas répondu à la vérification du compte des enregistrements.",
         "private_archive": "Cassini n’a pas pu confirmer que son dossier d’enregistrements est privé et accessible en écriture.",
         "sharing_api": "Le partage de fichiers de Nextcloud n’est pas disponible pour le compte des enregistrements de Cassini.",
         "owner_account": "Le compte des enregistrements de Cassini n’existe pas."
-      },
-      "detail_state": "L’Opérateur a signalé {state}.",
-      "detail_state_at_step": "L’Opérateur a signalé {state} à l’étape {step}.",
-      "note_occ": "{command} désigne la façon dont votre déploiement l’appelle, par exemple {example}.",
-      "reference": "Consultez {endpoint} pour le rapport complet d’accès aux enregistrements."
+      }
     },
     "sharing_notice": {
       "pending_title": "{count:number|num} {{count:|enregistrement vous attend|||enregistrements vous attendent|enregistrements vous attendent}}",
