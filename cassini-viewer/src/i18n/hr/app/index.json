@@ -58,10 +58,8 @@
       "summary_failing": "I dalje možeš pregledavati snimke. Pozivi će i dalje raditi, ali njihove snimke neće uspijevati dok se ovo ne popravi.",
       "summary_unchecked": "I dalje možeš pregledavati snimke, ali nove neće uspijevati dok se ova provjera ne pokrene.",
       "share_label": "Pošalji ovu poveznicu administratoru za upute za postavljanje.",
-      "step_rerun_setup": "Ponovno pokreni Cassinijevo postavljanje tako da onemogućiš i ponovno omogućiš aplikaciju",
       "step_open_settings": "Otvori {place} i provjeri račun za snimke",
       "step_create_account": "Stvori račun {user} u Nextcloudu",
-      "step_set_admin_user": "Postavi {variable} na Nextcloud administratora",
       "cause_unknown": "Cassini nije mogao potvrditi postavke snimanja.",
       "cause": {
         "nextcloud_probe": "Nextcloud nije odgovorio na provjeru računa za snimke.",

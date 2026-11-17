@@ -58,10 +58,8 @@
       "summary_failing": "Puoi ancora sfogliare le registrazioni. Le chiamate continueranno a funzionare, ma le loro registrazioni non riusciranno finché il problema non viene risolto.",
       "summary_unchecked": "Puoi ancora sfogliare le registrazioni, ma quelle nuove non riusciranno finché questo controllo non viene eseguito.",
       "share_label": "Invia questo link a un amministratore per le istruzioni di configurazione.",
-      "step_rerun_setup": "Esegui di nuovo la configurazione di Cassini disattivando e riattivando l’app",
       "step_open_settings": "Apri {place} per controllare l’account delle registrazioni",
       "step_create_account": "Crea l’account {user} in Nextcloud",
-      "step_set_admin_user": "Imposta {variable} su un amministratore di Nextcloud",
       "cause_unknown": "Cassini non ha potuto confermare la configurazione delle registrazioni.",
       "cause": {
         "nextcloud_probe": "Nextcloud non ha risposto al controllo dell’account delle registrazioni.",

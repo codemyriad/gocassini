@@ -58,10 +58,8 @@
       "summary_failing": "Je kunt nog steeds opnames bekijken. Gesprekken lopen gewoon door, maar hun opnames mislukken totdat dit is opgelost.",
       "summary_unchecked": "Je kunt nog steeds opnames bekijken, maar nieuwe mislukken totdat deze controle heeft gedraaid.",
       "share_label": "Stuur deze link naar een beheerder voor instructies om het in te stellen.",
-      "step_rerun_setup": "Voer de installatie van Cassini opnieuw uit door de app uit en weer aan te zetten",
       "step_open_settings": "Open {place} om het opname-account te controleren",
       "step_create_account": "Maak het account {user} aan in Nextcloud",
-      "step_set_admin_user": "Stel {variable} in op een Nextcloud-beheerder",
       "cause_unknown": "Cassini kon de opname-instellingen niet bevestigen.",
       "cause": {
         "nextcloud_probe": "Nextcloud heeft niet gereageerd op de controle van het opname-account.",

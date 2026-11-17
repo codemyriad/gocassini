@@ -58,10 +58,8 @@
       "summary_failing": "Nadal możesz przeglądać nagrania. Połączenia będą działać, ale ich nagrania będą się nie udawać, dopóki problem nie zostanie rozwiązany.",
       "summary_unchecked": "Nadal możesz przeglądać nagrania, ale nowe będą się nie udawać, dopóki ta kontrola nie zostanie wykonana.",
       "share_label": "Wyślij ten link administratorowi, aby uzyskać instrukcje konfiguracji.",
-      "step_rerun_setup": "Uruchom ponownie konfigurację Cassini, wyłączając i włączając aplikację",
       "step_open_settings": "Otwórz {place}, aby sprawdzić konto nagrań",
       "step_create_account": "Utwórz konto {user} w Nextcloud",
-      "step_set_admin_user": "Ustaw {variable} na administratora Nextcloud",
       "cause_unknown": "Cassini nie mógł potwierdzić konfiguracji nagrań.",
       "cause": {
         "nextcloud_probe": "Nextcloud nie odpowiedział na sprawdzenie konta nagrań.",

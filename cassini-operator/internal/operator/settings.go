@@ -901,8 +901,9 @@ func (rt *Runtime) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check the model only when this request would change what transcribes.
-	// Readiness is invalidated by every restart and upgrade, so re-checking an
-	// unchanged selection would refuse unrelated edits such as vocabulary.
+	// Readiness is invalidated by every upgrade or native-runtime change, so
+	// re-checking an unchanged selection would refuse unrelated edits such as
+	// vocabulary.
 	if updated.TranscriptionEnabled && (transcriptionSelectionChanged(current, updated) || (updated.SourceRetention == sourceDeleteAfterProcessing && current.SourceRetention != sourceDeleteAfterProcessing)) {
 		device, err := resolveDeviceForSettings(updated)
 		if err != nil {

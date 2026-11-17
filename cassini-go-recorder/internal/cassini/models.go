@@ -35,7 +35,7 @@ type modelView struct {
 // the sizes and is ready once it passed the runtime check on the device. A
 // diarizer always runs on the CPU, has nothing to pair with, and is ready when
 // it is installed and the runtime supports Nemotron: that is cheap to check
-// on every listing and, unlike a receipt, survives a reboot.
+// on every listing and, unlike a receipt, survives an upgrade.
 func listModelView(s *modelstore.Store, m modelstore.Model, device string) modelView {
 	var dl, installed int64
 	for _, c := range s.Components(m) {

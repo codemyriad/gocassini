@@ -11,20 +11,30 @@ import (
 
 const ncRecordingsOwnerDisplayName = "Cassini recordings"
 
-func (c ExAppConfig) ensureServiceAccountOnEnable(ctx context.Context, client *http.Client, probe *ncStorageProbe, logger *log.Logger) {
+// ensureServiceAccountOnEnable creates the recordings account when the probe
+// did not find it. It returns an error only when the confirming lookup got no
+// answer; a confirmed missing account is recorded on the probe instead.
+func (c ExAppConfig) ensureServiceAccountOnEnable(ctx context.Context, client *http.Client, probe *ncStorageProbe, logger *log.Logger) error {
 	if probe.ServiceAccount {
-		return
+		return nil
 	}
 	_, refusal := c.createRecordingsOwner(ctx, client)
 	exists, err := c.userExists(ctx, client, ncRecordingsOwner)
-	if err == nil && exists {
+	if err != nil {
+		if refusal != "" {
+			return fmt.Errorf("check recordings account after create refused (%s): %w", refusal, err)
+		}
+		return fmt.Errorf("check recordings account: %w", err)
+	}
+	if exists {
 		probe.ServiceAccount = true
-		return
+		return nil
 	}
 	probe.ServiceAccountAttempt = ownerAccountRefusedDetail(refusal)
 	if logger != nil {
 		logger.Printf("nc storage: %s", probe.ServiceAccountAttempt)
 	}
+	return nil
 }
 
 func ownerAccountRefusedDetail(refusal string) string {

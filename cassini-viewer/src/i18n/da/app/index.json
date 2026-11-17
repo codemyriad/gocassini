@@ -58,10 +58,8 @@
       "summary_failing": "Du kan stadig gennemse optagelser. Opkald kører stadig, men deres optagelser mislykkes, indtil dette er rettet.",
       "summary_unchecked": "Du kan stadig gennemse optagelser, men nye mislykkes, indtil denne kontrol er kørt.",
       "share_label": "Send dette link til en administrator for at få vejledning i opsætningen.",
-      "step_rerun_setup": "Kør Cassinis opsætning igen ved at deaktivere og aktivere appen",
       "step_open_settings": "Åbn {place} for at kontrollere optagelseskontoen",
       "step_create_account": "Opret kontoen {user} i Nextcloud",
-      "step_set_admin_user": "Sæt {variable} til en Nextcloud-administrator",
       "cause_unknown": "Cassini kunne ikke bekræfte sin opsætning af optagelser.",
       "cause": {
         "nextcloud_probe": "Nextcloud svarede ikke på kontrollen af optagelseskontoen.",

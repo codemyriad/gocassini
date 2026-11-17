@@ -221,12 +221,7 @@ export function shareableAppUrl(href: string): string {
   catch { return href; }
 }
 
-const APP_ID = "gocassini";
-// Functions rather than constants, so each notice is in the reader's language.
-const rerunSetup = (): SetupNoticeStep => ({
-  label: get(LL).app.shell.setup_notice.step_rerun_setup(),
-  commands: [`occ app_api:app:disable ${APP_ID}`, `occ app_api:app:enable ${APP_ID}`],
-});
+// A function rather than a constant, so each notice is in the reader's language.
 const settingsOffer = (): SetupNoticeStep => ({
   label: get(LL).app.shell.setup_notice.step_open_settings({ place: operatorPlace("publish_pipeline") }),
   commands: [], action: "settings",
@@ -270,11 +265,11 @@ export function buildSetupNotice(options: {
     return { ...base, shareLabel: t.share_label(), shareUrl: appUrl };
   }
   const step = access?.step ?? "";
+  // Try again on this notice runs the same check as enabling the app, so no
+  // step tells anyone to disable and enable it.
   const steps: SetupNoticeStep[] = step === "owner_account"
-    ? [settingsOffer(), { label: t.step_create_account({ user: "cassini" }), commands: ["occ user:add cassini"] }, rerunSetup()]
-    : step === "administrator"
-      ? [{ label: t.step_set_admin_user({ variable: "CASSINI_NC_ADMIN_USER" }), commands: [] }, rerunSetup()]
-      : [settingsOffer(), rerunSetup()];
+    ? [settingsOffer(), { label: t.step_create_account({ user: "cassini" }), commands: ["occ user:add cassini"] }]
+    : [settingsOffer()];
   return {
     ...base,
     // The cause is worded here from the failing step, in the reader's
@@ -287,7 +282,7 @@ export function buildSetupNotice(options: {
     detail: access?.detail || (step
       ? t.detail_state_at_step({ state: verdict.state, step })
       : t.detail_state({ state: verdict.state })),
-    note: t.note_occ({ command: "occ", example: "sudo -u www-data php occ" }),
+    note: steps.some((s) => s.commands.length > 0) ? t.note_occ({ command: "occ", example: "sudo -u www-data php occ" }) : "",
     reference: t.reference({ endpoint: "GET /operator/status" }),
   };
 }

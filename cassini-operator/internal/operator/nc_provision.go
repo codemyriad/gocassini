@@ -90,7 +90,11 @@ func (c ExAppConfig) userExists(ctx context.Context, client *http.Client, userID
 	// of the test. /ocs/v1.php answers 100 for OK and /ocs/v2.php answers 200 —
 	// requiring 100 made this always-false against a real v2 endpoint, which is
 	// how a service account that plainly existed was reported missing on the
-	// sandbox. An explicit not-found still short-circuits.
+	// sandbox. An explicit not-found still short-circuits. A server fault or a
+	// rate limit says nothing about the account, so it is an error, not "no".
+	if status >= 500 || status == http.StatusTooManyRequests {
+		return false, fmt.Errorf("look up account %q: HTTP %d", userID, status)
+	}
 	if status/100 != 2 {
 		return false, nil
 	}

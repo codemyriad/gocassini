@@ -720,6 +720,46 @@ func TestAMissingRoomIsForgottenSoTheNextCheckRemakesIt(t *testing.T) {
 	}
 }
 
+// Talk answers 404 for a disabled Talk app as well as for a deleted room, and
+// the boot check runs with nobody watching, often while Nextcloud is still
+// switching apps. So the boot run never forgets the saved test room; only an
+// administrator's Check again may.
+func TestTheBootCheckKeepsATestRoomThatAnswers404(t *testing.T) {
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	const room = "https://cloud.test/call/testroom"
+	putRecordingSetup(t, rt, `{"test_room_url":"`+room+`"}`, http.StatusOK)
+	rt.recordingSetup.probe = func(context.Context, string) ([]readinessCheck, error) {
+		return []readinessCheck{{ID: "talk.discovery", State: "needs_action", Code: "talk_or_room_unavailable"}}, nil
+	}
+	saved := func() string {
+		restarted := &Runtime{cfg: rt.cfg}
+		restarted.recordingSetup.mu.Lock()
+		defer restarted.recordingSetup.mu.Unlock()
+		restarted.loadRecordingSetupLocked()
+		return restarted.recordingSetup.state.TestRoomURL
+	}
+
+	rt.checkRecordingReadinessScoped(context.Background(), readinessScope{talk: true, keepTestRoom: true})
+	if got := rt.recordingSetup.state.TestRoomURL; got != room {
+		t.Fatalf("the boot run forgot the test room in memory: %q", got)
+	}
+	if got := saved(); got != room {
+		t.Fatalf("the boot run forgot the test room on disk: %q", got)
+	}
+	if !roomIsGone(rt.recordingSetup.checks) {
+		t.Fatalf("the boot run hid the 404 finding: %+v", rt.recordingSetup.checks)
+	}
+
+	rt.recordingSetup.mu.Lock()
+	rt.recordingSetup.probedAt = nil
+	rt.recordingSetup.mu.Unlock()
+	rt.checkRecordingReadinessScoped(context.Background(), readinessScope{talk: true})
+	if got := saved(); got != "" {
+		t.Fatalf("an administrator's check kept a room Talk says is gone: %q", got)
+	}
+}
+
 // The test recording is an invitation, not a finding, so an unproven
 // prerequisite must also hold it back. Observed on a stack with no High
 // Performance Backend: the talk probe had not yet produced its row, nothing was

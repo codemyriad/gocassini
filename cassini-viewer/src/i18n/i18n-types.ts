@@ -382,21 +382,17 @@ export type NamespaceAppTranslation = {
 			 */
 			title_unchecked: string
 			/**
-			 * Y​o​u​ ​c​a​n​ ​s​t​i​l​l​ ​b​r​o​w​s​e​ ​r​e​c​o​r​d​i​n​g​s​.​ ​C​a​l​l​s​ ​w​i​l​l​ ​s​t​i​l​l​ ​r​u​n​,​ ​b​u​t​ ​t​h​e​i​r​ ​r​e​c​o​r​d​i​n​g​s​ ​w​i​l​l​ ​f​a​i​l​ ​u​n​t​i​l​ ​t​h​i​s​ ​i​s​ ​f​i​x​e​d​.
+			 * Y​o​u​ ​c​a​n​ ​s​t​i​l​l​ ​b​r​o​w​s​e​ ​r​e​c​o​r​d​i​n​g​s​.​ ​N​e​w​ ​r​e​c​o​r​d​i​n​g​s​ ​m​a​y​ ​n​o​t​ ​b​e​ ​s​a​v​e​d​ ​u​n​t​i​l​ ​t​h​i​s​ ​i​s​ ​f​i​x​e​d​.
 			 */
 			summary_failing: string
 			/**
-			 * Y​o​u​ ​c​a​n​ ​s​t​i​l​l​ ​b​r​o​w​s​e​ ​r​e​c​o​r​d​i​n​g​s​,​ ​b​u​t​ ​n​e​w​ ​o​n​e​s​ ​w​i​l​l​ ​f​a​i​l​ ​u​n​t​i​l​ ​t​h​i​s​ ​c​h​e​c​k​ ​r​u​n​s​.
+			 * Y​o​u​ ​c​a​n​ ​s​t​i​l​l​ ​b​r​o​w​s​e​ ​r​e​c​o​r​d​i​n​g​s​.​ ​C​a​s​s​i​n​i​ ​c​h​e​c​k​s​ ​a​g​a​i​n​ ​b​e​f​o​r​e​ ​i​t​ ​s​a​v​e​s​ ​a​ ​n​e​w​ ​r​e​c​o​r​d​i​n​g​.
 			 */
 			summary_unchecked: string
 			/**
 			 * S​e​n​d​ ​t​h​i​s​ ​l​i​n​k​ ​t​o​ ​a​n​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​ ​f​o​r​ ​s​e​t​u​p​ ​i​n​s​t​r​u​c​t​i​o​n​s​.
 			 */
 			share_label: string
-			/**
-			 * R​e​-​r​u​n​ ​C​a​s​s​i​n​i​'​s​ ​s​e​t​u​p​ ​b​y​ ​d​i​s​a​b​l​i​n​g​ ​a​n​d​ ​e​n​a​b​l​i​n​g​ ​t​h​e​ ​a​p​p
-			 */
-			step_rerun_setup: string
 			/**
 			 * O​p​e​n​ ​{​p​l​a​c​e​}​ ​t​o​ ​c​h​e​c​k​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​s​ ​a​c​c​o​u​n​t
 			 * @param {unknown} place
@@ -407,11 +403,6 @@ export type NamespaceAppTranslation = {
 			 * @param {unknown} user
 			 */
 			step_create_account: RequiredParams<'user'>
-			/**
-			 * S​e​t​ ​{​v​a​r​i​a​b​l​e​}​ ​t​o​ ​a​ ​N​e​x​t​c​l​o​u​d​ ​a​d​m​i​n​i​s​t​r​a​t​o​r
-			 * @param {unknown} variable
-			 */
-			step_set_admin_user: RequiredParams<'variable'>
 			/**
 			 * C​a​s​s​i​n​i​ ​c​o​u​l​d​ ​n​o​t​ ​c​o​n​f​i​r​m​ ​i​t​s​ ​r​e​c​o​r​d​i​n​g​s​ ​s​e​t​u​p​.
 			 */
@@ -9113,21 +9104,17 @@ export type TranslationFunctions = {
 				 */
 				title_unchecked: () => LocalizedString
 				/**
-				 * You can still browse recordings. Calls will still run, but their recordings will fail until this is fixed.
+				 * You can still browse recordings. New recordings may not be saved until this is fixed.
 				 */
 				summary_failing: () => LocalizedString
 				/**
-				 * You can still browse recordings, but new ones will fail until this check runs.
+				 * You can still browse recordings. Cassini checks again before it saves a new recording.
 				 */
 				summary_unchecked: () => LocalizedString
 				/**
 				 * Send this link to an administrator for setup instructions.
 				 */
 				share_label: () => LocalizedString
-				/**
-				 * Re-run Cassini's setup by disabling and enabling the app
-				 */
-				step_rerun_setup: () => LocalizedString
 				/**
 				 * Open {place} to check the recordings account
 				 */
@@ -9136,10 +9123,6 @@ export type TranslationFunctions = {
 				 * Create the {user} account in Nextcloud
 				 */
 				step_create_account: (arg: { user: unknown }) => LocalizedString
-				/**
-				 * Set {variable} to a Nextcloud administrator
-				 */
-				step_set_admin_user: (arg: { variable: unknown }) => LocalizedString
 				/**
 				 * Cassini could not confirm its recordings setup.
 				 */

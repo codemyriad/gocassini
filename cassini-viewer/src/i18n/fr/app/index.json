@@ -58,10 +58,8 @@
       "summary_failing": "Vous pouvez toujours parcourir les enregistrements. Les appels fonctionneront, mais leurs enregistrements échoueront tant que ce problème n’est pas résolu.",
       "summary_unchecked": "Vous pouvez toujours parcourir les enregistrements, mais les nouveaux échoueront tant que cette vérification n’a pas eu lieu.",
       "share_label": "Envoyez ce lien à un administrateur pour obtenir les instructions de configuration.",
-      "step_rerun_setup": "Relancez la configuration de Cassini en désactivant puis en réactivant l’application",
       "step_open_settings": "Ouvrez {place} pour vérifier le compte des enregistrements",
       "step_create_account": "Créez le compte {user} dans Nextcloud",
-      "step_set_admin_user": "Définissez {variable} sur un administrateur Nextcloud",
       "cause_unknown": "Cassini n’a pas pu confirmer la configuration de ses enregistrements.",
       "cause": {
         "nextcloud_probe": "Nextcloud n’a pas répondu à la vérification du compte des enregistrements.",

@@ -58,10 +58,8 @@
       "summary_failing": "Du kannst weiterhin Aufnahmen durchsuchen. Anrufe laufen weiter, aber ihre Aufnahmen schlagen fehl, bis das behoben ist.",
       "summary_unchecked": "Du kannst weiterhin Aufnahmen durchsuchen, aber neue schlagen fehl, bis diese Prüfung läuft.",
       "share_label": "Schicke diesen Link an die Administration, um eine Anleitung zur Einrichtung zu erhalten.",
-      "step_rerun_setup": "Führe die Einrichtung von Cassini erneut aus, indem du die App deaktivierst und wieder aktivierst",
       "step_open_settings": "Öffne {place}, um das Aufnahmekonto zu prüfen",
       "step_create_account": "Erstelle das Konto {user} in Nextcloud",
-      "step_set_admin_user": "Setze {variable} auf ein Nextcloud-Administrationskonto",
       "cause_unknown": "Cassini konnte die Einrichtung der Aufnahmen nicht bestätigen.",
       "cause": {
         "nextcloud_probe": "Nextcloud hat auf die Prüfung des Aufnahmekontos nicht geantwortet.",

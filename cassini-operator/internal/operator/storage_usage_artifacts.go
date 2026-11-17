@@ -121,6 +121,12 @@ func (rt *Runtime) startDetailedStorageUsageRebuilder(c ExAppConfig) {
 				ctx, cancel := context.WithTimeout(rt.ctx, storageUsageTimeout)
 				rt.refreshDetailedStorageUsage(ctx, c)
 				cancel()
+				// A start before Nextcloud answers leaves storage "degraded"
+				// until something looks again. This tick already talks to
+				// Nextcloud, so it looks again, only in that one state.
+				recheckCtx, recheckCancel := context.WithTimeout(rt.ctx, ncProvisionTimeout)
+				c.recheckDegradedStorage(recheckCtx, rt.logger)
+				recheckCancel()
 				timer.Reset(time.Until(nextStorageUsageRebuild(time.Now())))
 			}
 		}

@@ -644,7 +644,7 @@ func (rt *Runtime) checkRecordingReadinessScoped(ctx context.Context, scope read
 		// panel went on offering a link to it, and arming re-armed the test
 		// against a conversation that no longer existed. Asking Talk directly
 		// costs one OCS read and does not care about signaling.
-		if !gone && rt.validTestRoom(room) {
+		if !gone && !scope.keepTestRoom && rt.validTestRoom(room) {
 			s.mu.Lock()
 			owner := s.state.TestRoomOwner
 			s.mu.Unlock()
@@ -654,7 +654,7 @@ func (rt *Runtime) checkRecordingReadinessScoped(ctx context.Context, scope read
 			}
 			gone = missing
 		}
-		if gone {
+		if gone && !scope.keepTestRoom {
 			s.mu.Lock()
 			next := s.state
 			next.TestRoomURL = ""

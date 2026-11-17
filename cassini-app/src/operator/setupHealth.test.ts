@@ -30,7 +30,7 @@ describe("direct share setup status", () => {
     const notice = buildSetupNotice({ health: { ...health, ok: false, state: "unknown" }, access: null, isAdmin: true, appUrl: "" });
     expect(notice?.tone).toBe("neutral");
     // Browsing, not a promise that every read succeeds (D-849).
-    expect(notice?.summary).toMatch(/^You can still browse recordings, but new ones will fail/);
+    expect(notice?.summary).toBe("You can still browse recordings. Cassini checks again before it saves a new recording.");
   });
   it("says browsing still works when the check fails, since only publishing stops (D-849)", () => {
     const notice = buildSetupNotice({ health: { ...health, ok: false, state: "unavailable" }, access: null, isAdmin: false, appUrl: "" });

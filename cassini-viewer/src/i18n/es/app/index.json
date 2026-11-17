@@ -58,10 +58,8 @@
       "summary_failing": "Puedes seguir explorando las grabaciones. Las llamadas seguirán funcionando, pero sus grabaciones fallarán hasta que se solucione.",
       "summary_unchecked": "Puedes seguir explorando las grabaciones, pero las nuevas fallarán hasta que se haga esta comprobación.",
       "share_label": "Envía este enlace a un administrador para que tenga las instrucciones de configuración.",
-      "step_rerun_setup": "Vuelve a ejecutar la configuración de Cassini desactivando y activando la aplicación",
       "step_open_settings": "Abre {place} para comprobar la cuenta de grabaciones",
       "step_create_account": "Crea la cuenta {user} en Nextcloud",
-      "step_set_admin_user": "Asigna a {variable} un administrador de Nextcloud",
       "cause_unknown": "Cassini no pudo confirmar su configuración de grabación.",
       "cause": {
         "nextcloud_probe": "Nextcloud no respondió a la comprobación de la cuenta de grabaciones.",

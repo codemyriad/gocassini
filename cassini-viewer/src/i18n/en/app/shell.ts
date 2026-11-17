@@ -75,17 +75,14 @@ const shell = {
     open_publish_pipeline: "Open {place}",
     title_failing: "Cassini can't save recordings right now",
     title_unchecked: "Cassini hasn't checked that it can save recordings",
-    summary_failing: "You can still browse recordings. Calls will still run, but their recordings will fail until this is fixed.",
-    summary_unchecked: "You can still browse recordings, but new ones will fail until this check runs.",
+    summary_failing: "You can still browse recordings. New recordings may not be saved until this is fixed.",
+    summary_unchecked: "You can still browse recordings. Cassini checks again before it saves a new recording.",
     // Shown to someone who is not an administrator, above the app's address.
     share_label: "Send this link to an administrator for setup instructions.",
-    step_rerun_setup: "Re-run Cassini's setup by disabling and enabling the app",
     // {place}: as open_publish_pipeline.
     step_open_settings: "Open {place} to check the recordings account",
     // {user}: the account name, "cassini".
     step_create_account: "Create the {user} account in Nextcloud",
-    // {variable}: an environment variable name, CASSINI_NC_ADMIN_USER.
-    step_set_admin_user: "Set {variable} to a Nextcloud administrator",
     cause_unknown: "Cassini could not confirm its recordings setup.",
     // Why recordings cannot be saved, by the check that failed. Shown to
     // administrators after summary_failing.

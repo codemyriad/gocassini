@@ -15,6 +15,28 @@ func (c ExAppConfig) preflightDirectShares(ctx context.Context, logger *log.Logg
 	}
 	provisionMu.Lock()
 	defer provisionMu.Unlock()
+	c.preflightDirectSharesLocked(ctx, logger)
+}
+
+// recheckDegradedStorage repeats the storage check when the last one ended
+// "degraded" because Nextcloud did not answer: the signature of a container
+// that started before Nextcloud did. It runs on the storage-usage timer, so it
+// never waits behind another check, and it leaves every other verdict alone:
+// a healthy install costs no request, and a real fault waits for a publish or
+// an administrator.
+func (c ExAppConfig) recheckDegradedStorage(ctx context.Context, logger *log.Logger) {
+	if !c.appAPIActive() || !provisionMu.TryLock() {
+		return
+	}
+	defer provisionMu.Unlock()
+	snap := ncAccessSubstrate.snapshot("")
+	if snap.State != string(ncSubstrateDegraded) || snap.Step != "nextcloud_probe" {
+		return
+	}
+	c.preflightDirectSharesLocked(ctx, logger)
+}
+
+func (c ExAppConfig) preflightDirectSharesLocked(ctx context.Context, logger *log.Logger) {
 	ncAccessSubstrate.beginRun()
 	client := &http.Client{Timeout: ncProvisionTimeout}
 	probe, err := c.probeNCStorage(ctx, client, logger)
@@ -23,7 +45,10 @@ func (c ExAppConfig) preflightDirectShares(ctx context.Context, logger *log.Logg
 		return
 	}
 	ncAccessSubstrate.setAdminUser(probe.AdminUser)
-	c.ensureServiceAccountOnEnable(ctx, client, &probe, logger)
+	if err := c.ensureServiceAccountOnEnable(ctx, client, &probe, logger); err != nil {
+		ncAccessSubstrate.degraded("nextcloud_probe", err)
+		return
+	}
 	if !probe.ServiceAccount {
 		ncAccessSubstrate.setProbe(probe)
 		ncAccessSubstrate.unavailable(storageStepServiceAccount, errors.New(probe.serviceAccountDetail()))
@@ -49,7 +74,16 @@ func (c ExAppConfig) preflightDirectShares(ctx context.Context, logger *log.Logg
 	ncAccessSubstrate.setProbe(probe)
 	if _, err := c.shareRequest(ctx, client, ncRecordingsOwner, http.MethodGet, c.shareAPIURL(), nil); err != nil {
 		c.supportShare(ctx, "share_list", "", "", err, 0)
-		ncAccessSubstrate.unavailable("sharing_api", err)
+		// Only Nextcloud's own refusal (the share API is off) blocks
+		// recording. A server fault, a proxy page, a rate limit or a timeout
+		// proves nothing, so it is degraded: recording continues and publish
+		// checks again.
+		var refused *ncShareError
+		if errors.As(err, &refused) && refused.HTTPStatus < 500 {
+			ncAccessSubstrate.unavailable("sharing_api", err)
+		} else {
+			ncAccessSubstrate.degraded("sharing_api", err)
+		}
 		// The most common reason the share API refuses is that it is turned
 		// off, and only the sharing settings say so. Read them here too, so the
 		// storage row can name the setting instead of a generic failure.

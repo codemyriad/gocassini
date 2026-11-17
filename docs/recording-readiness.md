@@ -136,7 +136,10 @@ Do not prepare another test while your intended test is already recording.
 Outbound Talk and nonblocking storage preflight results retain their last
 verdict and show when they were checked, even after five minutes. An older pass
 shows what worked at that time, not proof of the current connection. **Check
-again** refreshes these checks. Outbound Talk results live in memory and are
+again** refreshes these checks. One storage result also refreshes itself: when
+the storage check ended degraded because Nextcloud did not answer (for example,
+Cassini started before Nextcloud after a server reboot), Cassini repeats it
+every five minutes until Nextcloud answers. Outbound Talk results live in memory and are
 lost on ExApp restart; then the connection is **Not verified** until checked
 again. A local storage admission block is reported separately and stays
 actionable until cleared. A destination not covered by the Nextcloud preflight

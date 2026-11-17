@@ -490,7 +490,6 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 				exappCfg.preflightDirectShares(runtime.ctx, logger)
 			}
 		}
-		go exappCfg.preflightDirectShares(runtime.ctx, logger)
 	}
 	if interrupted > 0 {
 		// A restart mid-recording leaves spreed convinced the room is still
@@ -526,8 +525,11 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	defer listener.Close()
-	// One baseline check when the container boots. NOT a timer, and not the
-	// panel triggering work on load — both of those are still refused.
+	// One baseline check when the container boots. Not the panel triggering
+	// work on load, which is still refused. The only timed re-check is the
+	// storage-usage tick repeating a storage check that ended "degraded"
+	// because Nextcloud did not answer (recheckDegradedStorage); it runs
+	// nothing else and costs a healthy install no request.
 	//
 	// Removed earlier on the reading that checks should only run when asked, and
 	// restored because a cold operator cannot answer the question the panel
@@ -538,11 +540,23 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// probe result, and there was none. A first look was not merely uninformative
 	// but wrong.
 	//
-	// Provisioning is separate and always ran: preflightOnRestart above owns the
-	// restart-convergence path (D-541/D-669).
+	// Storage runs first and once, tracked, with the configured ExAppConfig,
+	// because the Talk probe acts as the administrator that check resolves
+	// (D-541/D-669). The readiness run then skips storage, and it keeps the
+	// saved test room: nobody is watching at boot, and Talk answers 404 for a
+	// disabled Talk app as well as for a deleted room. Only an administrator's
+	// Check again may forget it.
 	if exappCfg.Active {
+		bootCfg := exappCfg
 		runtime.workerWG.Add(1)
-		go func() { defer runtime.workerWG.Done(); runtime.checkRecordingReadiness(runtime.ctx) }()
+		go func() {
+			defer runtime.workerWG.Done()
+			bootCfg.preflightDirectShares(runtime.ctx, logger)
+			scope := allReadinessScopes()
+			scope.storage = false
+			scope.keepTestRoom = true
+			runtime.checkRecordingReadinessScoped(runtime.ctx, scope)
+		}()
 	}
 
 	fmt.Fprintf(stdout, "listening -> http://%s\n", listener.Addr().String())
