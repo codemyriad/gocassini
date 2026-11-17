@@ -135,18 +135,13 @@ describe("the shell after the Setup tab", () => {
     expect(appSource).not.toContain('on:navigate={() => selectSurface("operator")}');
   });
 
-  // "Try again" on the notice is the operator's own re-check (D-759), not
-  // another read of the verdict: the verdict is the last recorded outcome of a
-  // preflight, so re-reading it would render the same answer and teach an
-  // administrator that the button does nothing.
-  it("re-runs the operator's check when the notice asks, then re-reads the answer", () => {
-    expect(appSource).toContain("on:retry={retrySetupCheck}");
-    expect(appSource).toContain("await operatorClient?.recheckStorage();");
-    expect(appSource).toMatch(/async function retrySetupCheck[\s\S]{0,900}await readInstanceState\(\);/);
-    // The notice says which tone to draw itself in, and the shell says whether
-    // the request it asked for is still running.
+  // No Try again on the notice (#500): Doctor re-runs the same check, and
+  // what is fixed there re-reads the notice through the setup-changed signal.
+  it("leaves re-checking to Doctor", () => {
+    expect(appSource).not.toContain("retrySetupCheck");
+    expect(appSource).not.toContain("setupRetryBusy");
     expect(appSource).toContain("tone={setupNotice.tone}");
-    expect(appSource).toContain("busy={setupRetryBusy}");
+    expect(appSource).toContain("stopListeningForSetupChanges = onSetupChanged(");
   });
 
   it("gives every browse surface the audience the chip renders", () => {
@@ -174,7 +169,8 @@ describe("the shell after the Setup tab", () => {
     // A non-admin's every request to that surface 403s at the proxy, so the
     // button is admin-only — while the fact stays visible to everyone, because
     // it explains why their recordings are not appearing.
-    expect(appSource).toMatch(/\{#if recordingNeedsAction && !setupNotice\}[\s\S]{0,800}\{#if operatorAvailable\}/);
+    expect(appSource).toContain("buildRecordingNotice({ isAdmin: operatorAvailable, appUrl })");
+    expect(appSource).toMatch(/recordingNotice = \$LL && recordingNeedsAction && !setupNotice/);
     expect(appSource).toMatch(/function openDoctor\(\)[\s\S]{0,400}if \(!operatorAvailable\)/);
   });
 });
@@ -190,11 +186,12 @@ describe("the setup notice in the shell", () => {
     // recording behind a message about future ones.
     expect(appSource).not.toContain("blocking");
     expect(appSource).not.toContain("cassini-setup-surface");
-    // One notice, drawn only as a strip above the one viewer.
-    expect(markup.match(/<SetupNotice\b/g)).toHaveLength(1);
+    // The setup notice and the recording warning, both strips above the one
+    // viewer.
+    expect(markup.match(/<SetupNotice\b/g)).toHaveLength(2);
     // The nearest banner before the notice must be its own, not another
     // strip's (the retention reminder also sits above the list).
-    const notice = markup.indexOf("<SetupNotice");
+    const notice = markup.indexOf("<SetupNotice\n");
     const banner = markup.lastIndexOf("cassini-shell-banner", notice);
     expect(banner).toBeGreaterThan(-1);
     expect(markup.slice(banner, notice)).not.toContain("{/if}");
@@ -205,7 +202,7 @@ describe("the setup notice in the shell", () => {
     // Drawn above .cassini-shell, it pushed the viewer past the clipped frame
     // and cut off the bottom of the list (App.layout.browser.test.ts).
     expect(markup).toMatch(/<div class="cassini-app-content">\s*(<!--[\s\S]*?-->\s*)?<div class="cassini-shell">/);
-    const warning = markup.indexOf("recording_needs_action()");
+    const warning = markup.indexOf("<SetupNotice notice={recordingNotice}");
     const banner = markup.lastIndexOf("cassini-shell-banner", warning);
     expect(banner).toBeGreaterThan(-1);
     expect(markup.slice(banner, warning)).not.toContain("{/if}");

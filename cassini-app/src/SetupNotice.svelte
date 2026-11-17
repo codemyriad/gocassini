@@ -22,18 +22,13 @@
   // that says nothing gets the safe answer rather than a quiet failure.
   export let tone: SetupNoticeTone = "warning";
 
-  // True while the re-check the Try again button asked for is still running.
-  // The shell owns that request — it is the one holding the operator client —
-  // so it also owns saying when it is finished.
-  export let busy: boolean = false;
-
-  // The shell owns which surface is showing and the operator client, so both
-  // buttons ask rather than act.
-  const dispatch = createEventDispatcher<{ navigate: "doctor"; retry: void }>();
+  // The shell owns which surface is showing, so the button asks rather than
+  // acts. There is no Try again: Doctor re-runs the same check, and whatever
+  // is fixed there tells the shell to re-read this notice (setupSignal.ts).
+  const dispatch = createEventDispatcher<{ navigate: "doctor" }>();
 
   // Only an administrator's notice carries a cause, so it is also what says
-  // which audience this draws for. Everyone else gets no Try again: it would
-  // re-run a check whose answer they are not shown and could not act on.
+  // which audience this draws for.
   $: isAdmin = Boolean(notice.cause);
 
   // "copied" for a moment after copying; "failed" when the browser refused,
@@ -55,13 +50,13 @@
 
 <div class="px-3 py-2">
   <section
-    class="alert items-center gap-3 py-2 grid-cols-[auto_minmax(0,1fr)] {tone === 'warning' ? 'alert-warning' : ''}"
+    class="alert items-start gap-3 py-2 grid-cols-[auto_minmax(0,1fr)] {tone === 'warning' ? 'alert-warning' : ''}"
     role="status"
   >
     {#if tone === "warning"}
-      <TriangleAlert size={16} class="shrink-0" aria-hidden="true" />
+      <TriangleAlert size={16} class="mt-0.5 shrink-0" aria-hidden="true" />
     {:else}
-      <Info size={16} class="shrink-0 opacity-70" aria-hidden="true" />
+      <Info size={16} class="mt-0.5 shrink-0 opacity-70" aria-hidden="true" />
     {/if}
     <div class="flex w-full min-w-0 flex-col gap-1">
       <!-- The account on the left, the action on the right, wrapping under it
@@ -73,9 +68,6 @@
         </p>
         <div class="flex shrink-0 gap-2">
           {#if isAdmin}
-            <button class="btn btn-xs" type="button" disabled={busy} on:click={() => dispatch("retry")}>
-              {busy ? $LL.app.shell.setup_notice.checking() : $LL.common.action.try_again()}
-            </button>
             <button class="btn btn-xs" type="button" on:click={() => dispatch("navigate", "doctor")}>
               {$LL.app.shell.setup_notice.open_doctor({ place: operatorPlace("doctor") })}
             </button>

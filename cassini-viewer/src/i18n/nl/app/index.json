@@ -3,8 +3,6 @@
     "app": {
       "nav_label": "Cassini-onderdelen",
       "tab_browse": "Bladeren",
-      "recording_needs_action": "De opname-instellingen vragen de aandacht van een beheerder.",
-      "open_recording_setup": "Opname-instellingen openen",
       "retention_load_failed": "Kon de instellingen voor de bewaartermijn niet laden.",
       "retention_dismiss_failed": "Kon de herinnering niet verbergen: {detail}"
     },
@@ -49,13 +47,15 @@
       "bundle_failed": "Kon de bundel niet voorbereiden (HTTP {status})."
     },
     "setup_notice": {
-      "checking": "Controleren…",
       "open_doctor": "",
       "title_failing": "Cassini kan op dit moment geen opnames opslaan",
       "title_unchecked": "Cassini heeft nog niet gecontroleerd of het opnames kan opslaan",
       "reader_failing": "",
       "reader_unchecked": "",
       "copy_link": "",
+      "title_recording": "",
+      "cause_recording": "",
+      "reader_recording": "",
       "cause_unknown": "Cassini kon de opname-instellingen niet bevestigen.",
       "cause": {
         "nextcloud_probe": "Nextcloud heeft niet gereageerd op de controle van het opname-account.",

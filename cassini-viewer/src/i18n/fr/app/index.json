@@ -3,8 +3,6 @@
     "app": {
       "nav_label": "Espaces Cassini",
       "tab_browse": "Parcourir",
-      "recording_needs_action": "La configuration de l’enregistrement demande l’intervention d’un administrateur.",
-      "open_recording_setup": "Ouvrir la configuration de l’enregistrement",
       "retention_load_failed": "Impossible de charger les paramètres de conservation.",
       "retention_dismiss_failed": "Impossible d’ignorer le rappel : {detail}"
     },
@@ -49,13 +47,15 @@
       "bundle_failed": "Impossible de préparer le lot (HTTP {status})."
     },
     "setup_notice": {
-      "checking": "Vérification…",
       "open_doctor": "",
       "title_failing": "Cassini ne peut pas sauvegarder les enregistrements pour le moment",
       "title_unchecked": "Cassini n’a pas vérifié qu’il peut sauvegarder les enregistrements",
       "reader_failing": "",
       "reader_unchecked": "",
       "copy_link": "",
+      "title_recording": "",
+      "cause_recording": "",
+      "reader_recording": "",
       "cause_unknown": "Cassini n’a pas pu confirmer la configuration de ses enregistrements.",
       "cause": {
         "nextcloud_probe": "Nextcloud n’a pas répondu à la vérification du compte des enregistrements.",

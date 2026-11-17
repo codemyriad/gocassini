@@ -203,14 +203,6 @@ export type NamespaceAppTranslation = {
 			 */
 			tab_browse: string
 			/**
-			 * R​e​c​o​r​d​i​n​g​ ​s​e​t​u​p​ ​n​e​e​d​s​ ​a​n​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​’​s​ ​a​t​t​e​n​t​i​o​n​.
-			 */
-			recording_needs_action: string
-			/**
-			 * O​p​e​n​ ​r​e​c​o​r​d​i​n​g​ ​s​e​t​u​p
-			 */
-			open_recording_setup: string
-			/**
 			 * C​o​u​l​d​ ​n​o​t​ ​l​o​a​d​ ​r​e​t​e​n​t​i​o​n​ ​s​e​t​t​i​n​g​s​.
 			 */
 			retention_load_failed: string
@@ -357,10 +349,6 @@ export type NamespaceAppTranslation = {
 		}
 		setup_notice: {
 			/**
-			 * C​h​e​c​k​i​n​g​…
-			 */
-			checking: string
-			/**
 			 * O​p​e​n​ ​{​p​l​a​c​e​}
 			 * @param {unknown} place
 			 */
@@ -385,6 +373,18 @@ export type NamespaceAppTranslation = {
 			 * C​o​p​y​ ​l​i​n​k​ ​f​o​r​ ​a​n​ ​a​d​m​i​n​i​s​t​r​a​t​o​r
 			 */
 			copy_link: string
+			/**
+			 * C​a​l​l​s​ ​m​a​y​ ​n​o​t​ ​b​e​ ​r​e​c​o​r​d​e​d
+			 */
+			title_recording: string
+			/**
+			 * D​o​c​t​o​r​ ​s​h​o​w​s​ ​w​h​i​c​h​ ​c​h​e​c​k​ ​f​a​i​l​e​d​.
+			 */
+			cause_recording: string
+			/**
+			 * E​x​i​s​t​i​n​g​ ​r​e​c​o​r​d​i​n​g​s​ ​a​r​e​ ​s​t​i​l​l​ ​h​e​r​e​.​ ​A​s​k​ ​a​n​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​ ​t​o​ ​f​i​x​ ​t​h​i​s​.
+			 */
+			reader_recording: string
 			/**
 			 * C​a​s​s​i​n​i​ ​c​o​u​l​d​ ​n​o​t​ ​c​o​n​f​i​r​m​ ​i​t​s​ ​r​e​c​o​r​d​i​n​g​s​ ​s​e​t​u​p​.
 			 */
@@ -8892,14 +8892,6 @@ export type TranslationFunctions = {
 				 */
 				tab_browse: () => LocalizedString
 				/**
-				 * Recording setup needs an administrator’s attention.
-				 */
-				recording_needs_action: () => LocalizedString
-				/**
-				 * Open recording setup
-				 */
-				open_recording_setup: () => LocalizedString
-				/**
 				 * Could not load retention settings.
 				 */
 				retention_load_failed: () => LocalizedString
@@ -9040,10 +9032,6 @@ export type TranslationFunctions = {
 			}
 			setup_notice: {
 				/**
-				 * Checking…
-				 */
-				checking: () => LocalizedString
-				/**
 				 * Open {place}
 				 */
 				open_doctor: (arg: { place: unknown }) => LocalizedString
@@ -9067,6 +9055,18 @@ export type TranslationFunctions = {
 				 * Copy link for an administrator
 				 */
 				copy_link: () => LocalizedString
+				/**
+				 * Calls may not be recorded
+				 */
+				title_recording: () => LocalizedString
+				/**
+				 * Doctor shows which check failed.
+				 */
+				cause_recording: () => LocalizedString
+				/**
+				 * Existing recordings are still here. Ask an administrator to fix this.
+				 */
+				reader_recording: () => LocalizedString
 				/**
 				 * Cassini could not confirm its recordings setup.
 				 */

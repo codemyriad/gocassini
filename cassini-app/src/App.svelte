@@ -2,7 +2,6 @@
   import { onDestroy, onMount, tick } from "svelte";
   import ViewerApp from "cassini-viewer/App.svelte";
   import { LL } from "cassini-viewer/i18n";
-  import { TriangleAlert } from "@lucide/svelte";
   import { AppDataProvider } from "./appDataProvider";
   import GenerateCard from "./GenerateCard.svelte";
   import NeedsSetupCard from "./NeedsSetupCard.svelte";
@@ -21,6 +20,7 @@
   import { isLikelyAdminHint, probeOperatorFor } from "./operator/adminProbe";
   import {
     buildFeatureNotice,
+    buildRecordingNotice,
     buildSetupNotice,
     fetchSetupHealth,
     readRecordingsAccess,
@@ -93,11 +93,6 @@
   // Null (the normal case, and every case where the check itself could not be
   // made) leaves the shell exactly as it was.
   let setupNotice: SetupNoticeContent | null = null;
-
-  // True while the notice's own "Try again" is running (D-759). The button is
-  // in the notice; the operator client and the re-read are here, so the state
-  // that says whether the request is still in flight is here too.
-  let setupRetryBusy = false;
 
   // What this deployment's AI configuration allows (D-722), from the same
   // USER-level /setup call. Null until it answers, and null forever on an
@@ -203,6 +198,14 @@
   // not read absence as "not configured", the same three-state rule the
   // catalog's hasSummary follows.
   $: insightsReady = setupFeatures?.insights === true;
+
+  // The recording warning, drawn by the setup notice's component. Held back
+  // while the setup notice shows: storage is one of the checks it summarises,
+  // so the two would be one problem said twice (#500). $LL is read so a
+  // language change redraws it.
+  $: recordingNotice = $LL && recordingNeedsAction && !setupNotice
+    ? buildRecordingNotice({ isAdmin: operatorAvailable, appUrl })
+    : null;
 
   // Who can see recordings, for the audience chip in the meeting list (D-756).
   //
@@ -421,37 +424,6 @@
     }
   }
 
-  // "Try again" on the setup notice: the same check a restart runs, asked for
-  // by hand (D-759).
-  //
-  // It is deliberately the operator's OWN re-check rather than another read of
-  // /setup: the verdict the app reads is the last recorded outcome of a
-  // preflight, so re-reading it would re-render the same answer and teach an
-  // administrator that the button does nothing. recheckStorage makes the
-  // operator look at Nextcloud again; readInstanceState then re-reads
-  // everything that answer decides, exactly as the setup-changed signal does.
-  //
-  // A non-administrator has no operator client and no button, but the re-read
-  // is still the right fallback: it is what their notice is drawn from.
-  async function retrySetupCheck(): Promise<void> {
-    if (setupRetryBusy) {
-      return;
-    }
-    setupRetryBusy = true;
-    try {
-      await operatorClient?.recheckStorage();
-    } catch (error) {
-      // The re-read below still runs: a refused re-check is itself an answer,
-      // and the notice must not be left saying "Checking…" because of it.
-      console.warn("Cassini: the setup re-check failed.", error);
-    }
-    try {
-      await readInstanceState();
-    } finally {
-      setupRetryBusy = false;
-    }
-  }
-
   // Following an unconfigured state's link to the panel that fixes it. The card
   // built the address from the CURRENT fragment, so the viewer's meeting/tx/t
   // survive the trip and the back button returns to exactly the meeting that
@@ -634,28 +606,13 @@
     </nav>
   {/if}
 
-  <!-- D-763's warning, rehomed. It used to send people to a Setup tab; that tab
-       is gone (D-751) and `setup` is no longer a surface (D-756), so the checks
-       now live in Operator › Doctor. Only an administrator can act on this, so
-       the route is only offered to one — everyone else gets the fact, which is
-       still worth telling them, because it explains why their recordings are
-       not appearing.
-       Held back while the setup notice shows: storage is one of the checks
-       this summarises, so the two would be one problem said twice, and the
-       notice is the one that says what is wrong. -->
-  {#if recordingNeedsAction && !setupNotice}
+  <!-- D-763's warning: Doctor's recording checks failed. An administrator is
+       sent to Doctor; everyone else learns why recordings may be missing and
+       gets a link to pass on. -->
+  {#if recordingNotice}
     <div class="cassini-shell-banner" data-theme={themeMode}>
       <div class="cassini-root" data-theme={themeMode}>
-        <!-- Same strip as SetupNotice's warning tone, so the two read as one kind. -->
-        <div class="px-3 py-2">
-          <section class="alert alert-warning items-center gap-3 py-2" role="status">
-            <TriangleAlert size={16} class="shrink-0" aria-hidden="true" />
-            <p class="text-sm">{$LL.app.shell.app.recording_needs_action()}</p>
-            {#if operatorAvailable}
-              <button class="btn btn-xs" type="button" on:click={openDoctor}>{$LL.app.shell.app.open_recording_setup()}</button>
-            {/if}
-          </section>
-        </div>
+        <SetupNotice notice={recordingNotice} tone={recordingNotice.tone} on:navigate={openDoctor} />
       </div>
     </div>
   {/if}
@@ -678,8 +635,6 @@
         <SetupNotice
           notice={setupNotice}
           tone={setupNotice.tone}
-          busy={setupRetryBusy}
-          on:retry={retrySetupCheck}
           on:navigate={openDoctor}
         />
       </div>

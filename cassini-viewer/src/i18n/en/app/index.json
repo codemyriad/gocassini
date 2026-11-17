@@ -3,8 +3,6 @@
     "app": {
       "nav_label": "Cassini surfaces",
       "tab_browse": "Browse",
-      "recording_needs_action": "Recording setup needs an administrator’s attention.",
-      "open_recording_setup": "Open recording setup",
       "retention_load_failed": "Could not load retention settings.",
       "retention_dismiss_failed": "Could not dismiss the reminder: {detail}"
     },
@@ -49,13 +47,15 @@
       "bundle_failed": "Could not prepare the bundle (HTTP {status})."
     },
     "setup_notice": {
-      "checking": "Checking…",
       "open_doctor": "Open {place}",
       "title_failing": "New recordings can't be saved",
       "title_unchecked": "Cassini hasn't checked that it can save recordings",
       "reader_failing": "Calls still work and existing recordings are still here. Ask an administrator to fix this.",
       "reader_unchecked": "Existing recordings are still here. New ones may not save until an administrator checks this.",
       "copy_link": "Copy link for an administrator",
+      "title_recording": "Calls may not be recorded",
+      "cause_recording": "Doctor shows which check failed.",
+      "reader_recording": "Existing recordings are still here. Ask an administrator to fix this.",
       "cause_unknown": "Cassini could not confirm its recordings setup.",
       "cause": {
         "nextcloud_probe": "Nextcloud did not answer the recordings account check.",

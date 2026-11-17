@@ -2,11 +2,11 @@ import { mount, unmount } from "svelte";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { page } from "vitest/browser";
 import { get } from "svelte/store";
-import { LL } from "cassini-viewer/i18n";
+import { LL, operatorPlace } from "cassini-viewer/i18n";
 import App from "./App.svelte";
 import "./app.css";
 
-// #500: the "Recording setup needs an administrator's attention" banner sits
+// #500: the recording warning ("Calls may not be recorded") sits
 // above the browse surface. Whatever else the shell draws, the viewer must fit
 // in what is left — the frame clips overflow, so anything pushed below it (the
 // selection bar's "Prepare meeting for insight") cannot be reached at all.
@@ -64,7 +64,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-const recordingWarning = () => page.getByText(get(LL).app.shell.app.recording_needs_action());
+const recordingWarning = () => page.getByText(get(LL).app.shell.setup_notice.title_recording(), { exact: false });
 // Under a setup notice the recording warning is held back (storage is one of
 // the checks it summarises), so the strip on show is the notice itself.
 const strip = (setupOk: boolean) =>
@@ -100,7 +100,7 @@ for (const scenario of [
     while (painted && getComputedStyle(painted).backgroundColor === "rgba(0, 0, 0, 0)") painted = painted.parentElement;
     expect(painted && host.contains(painted)).toBe(true);
 
-    const openSetup = page.getByRole("button", { name: get(LL).app.shell.app.open_recording_setup() });
+    const openSetup = page.getByRole("button", { name: get(LL).app.shell.setup_notice.open_doctor({ place: operatorPlace("doctor") }) });
     if (!scenario.admin) {
       await expect.element(openSetup).not.toBeInTheDocument();
       return;

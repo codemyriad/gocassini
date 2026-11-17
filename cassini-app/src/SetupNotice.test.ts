@@ -20,17 +20,18 @@ describe("the setup notice", () => {
 
   it("is a strip with no recipe in it: the steps live in Doctor", () => {
     expect(noticeSource).not.toContain('class="card');
-    expect(noticeSource).toContain('class="alert items-center gap-3 py-2');
+    expect(noticeSource).toContain('class="alert items-start gap-3 py-2');
     expect(noticeSource).not.toMatch(/<details[\s>]/);
     expect(noticeSource).not.toContain("notice.steps");
     expect(noticeSource).not.toContain("<pre");
   });
 
-  it("offers an administrator Try again and Doctor", () => {
+  // One button: Doctor re-runs the same check Try again used to, and what is
+  // fixed there re-reads this notice (setupSignal.ts).
+  it("offers an administrator one way on: Doctor", () => {
     expect(noticeSource).toContain("$: isAdmin = Boolean(notice.cause);");
-    expect(noticeSource).toContain("{busy ? $LL.app.shell.setup_notice.checking() : $LL.common.action.try_again()}");
-    expect(noticeSource).toContain('dispatch("retry")');
-    expect(noticeSource).toContain("disabled={busy}");
+    expect(noticeSource).not.toContain("try_again");
+    expect(noticeSource).not.toContain('dispatch("retry")');
     expect(noticeSource).toContain('dispatch("navigate", "doctor")');
     expect(get(LL).app.shell.setup_notice.open_doctor({ place: operatorPlace("doctor") })).toBe("Open Operator › Doctor");
   });

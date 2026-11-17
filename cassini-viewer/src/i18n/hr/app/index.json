@@ -3,8 +3,6 @@
     "app": {
       "nav_label": "Cassini površine",
       "tab_browse": "Pregledaj",
-      "recording_needs_action": "Postavljanje snimanja zahtijeva pažnju administratora.",
-      "open_recording_setup": "Otvori postavljanje snimanja",
       "retention_load_failed": "Nije moguće učitati postavke zadržavanja.",
       "retention_dismiss_failed": "Nije moguće odbaciti podsjetnik: {detail}"
     },
@@ -49,13 +47,15 @@
       "bundle_failed": "Nije moguće pripremiti paket (HTTP {status})."
     },
     "setup_notice": {
-      "checking": "Provjera…",
       "open_doctor": "",
       "title_failing": "Cassini trenutno ne može spremati snimke",
       "title_unchecked": "Cassini još nije provjerio može li spremati snimke",
       "reader_failing": "",
       "reader_unchecked": "",
       "copy_link": "",
+      "title_recording": "",
+      "cause_recording": "",
+      "reader_recording": "",
       "cause_unknown": "Cassini nije mogao potvrditi postavke snimanja.",
       "cause": {
         "nextcloud_probe": "Nextcloud nije odgovorio na provjeru računa za snimke.",

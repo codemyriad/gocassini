@@ -262,6 +262,17 @@ export function buildSetupNotice(options: {
   };
 }
 
+// The recording warning (D-763): Doctor's recording checks failed. Same strip
+// as the setup notice, and held back while that notice shows, since storage is
+// one of the checks it summarises (#500). The operator's public route says only
+// that a check failed, so an administrator is sent to Doctor for which.
+export function buildRecordingNotice(options: { isAdmin: boolean; appUrl: string }): SetupNotice {
+  const t = get(LL).app.shell.setup_notice;
+  return options.isAdmin
+    ? { tone: "warning", title: t.title_recording(), summary: "", cause: t.cause_recording(), shareUrl: "" }
+    : { tone: "warning", title: t.title_recording(), summary: t.reader_recording(), cause: "", shareUrl: options.appUrl };
+}
+
 // --- The unconfigured states (D-722) ---
 //
 // Same discipline as buildSetupNotice above, and for the same reason: the copy

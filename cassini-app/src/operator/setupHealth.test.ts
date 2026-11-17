@@ -1,7 +1,7 @@
 import { get } from "svelte/store";
 import { describe, expect, it } from "vitest";
 import { LL } from "cassini-viewer/i18n";
-import { buildSetupNotice, readRecordingsAccess, readSetupHealth, readSharing, recordingAudience } from "./setupHealth";
+import { buildRecordingNotice, buildSetupNotice, readRecordingsAccess, readSetupHealth, readSharing, recordingAudience } from "./setupHealth";
 
 const health = { ok: true, state: "provisioned", mode: "direct_shares", audience: "participants", cause: "", features: null, sharing: null };
 
@@ -135,5 +135,20 @@ describe("the caller's recording shares on /setup", () => {
     // Without a job id an unpublished recording could be neither dismissed
     // nor matched once published.
     expect(read?.unpublished).toEqual([{ jobId: "J9", title: "", roomName: "", startedAt: "" }]);
+  });
+});
+
+// The recording warning in the setup notice's shape (#500): the same strip,
+// pointing an administrator at Doctor and everyone else at an administrator.
+describe("the recording warning", () => {
+  it("gives an administrator a cause, so the notice offers Doctor", () => {
+    expect(buildRecordingNotice({ isAdmin: true, appUrl: "https://example.test/app" })).toEqual({
+      tone: "warning", title: "Calls may not be recorded", summary: "", cause: "Doctor shows which check failed.", shareUrl: "",
+    });
+  });
+  it("gives everyone else what still works and the link to pass on", () => {
+    expect(buildRecordingNotice({ isAdmin: false, appUrl: "https://example.test/app" })).toEqual({
+      tone: "warning", title: "Calls may not be recorded", summary: "Existing recordings are still here. Ask an administrator to fix this.", cause: "", shareUrl: "https://example.test/app",
+    });
   });
 });

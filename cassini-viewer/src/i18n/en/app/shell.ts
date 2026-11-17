@@ -8,8 +8,6 @@ const shell = {
     nav_label: "Cassini surfaces",
     // Tab: the meeting list and meetings.
     tab_browse: "Browse",
-    recording_needs_action: "Recording setup needs an administrator’s attention.",
-    open_recording_setup: "Open recording setup",
     retention_load_failed: "Could not load retention settings.",
     // Shown above the retention reminder. {detail} is the server's error, in English.
     retention_dismiss_failed: "Could not dismiss the reminder: {detail}",
@@ -68,7 +66,6 @@ const shell = {
   // SetupNotice.svelte and buildSetupNotice (operator/setupHealth.ts): the
   // strip above Browse's meeting list when recordings cannot be saved.
   setup_notice: {
-    checking: "Checking…",
     // A button for administrators. {place} is the path to the checks, "Operator › Doctor".
     open_doctor: "Open {place}",
     title_failing: "New recordings can't be saved",
@@ -78,6 +75,13 @@ const shell = {
     reader_unchecked: "Existing recordings are still here. New ones may not save until an administrator checks this.",
     // A button that copies this page's address, for the reader to send on.
     copy_link: "Copy link for an administrator",
+    // The same strip when Doctor's recording checks fail (Talk's recording
+    // backend, its secret, or storage) rather than storage alone.
+    title_recording: "Calls may not be recorded",
+    // After title_recording, for an administrator.
+    cause_recording: "Doctor shows which check failed.",
+    // After title_recording, for someone who is not an administrator.
+    reader_recording: "Existing recordings are still here. Ask an administrator to fix this.",
     cause_unknown: "Cassini could not confirm its recordings setup.",
     // Why recordings cannot be saved, by the check that failed. Shown to
     // administrators after the title.
