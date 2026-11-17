@@ -24,24 +24,34 @@ Cassini meeting:
    build pipeline reads. The source codec is not preserved; it is losslessly
    transcoded to FLAC before the meeting's own Opus encode.
 4. `cassini build` runs with the deployment's transcription and summary
-   settings, exactly as it does for a Talk recording.
+   settings, under the same admission as a Talk recording's build: one build
+   at a time, the speech model check, the free-memory floor, and the device and
+   thread limits.
 5. The resulting portable meeting is delivered to the recordings archive,
    shared with the audience you chose, indexed for search, and adopted into
    retention. It is filed in the catalog under **Uploaded meetings**.
 
-A long upload waits for live recordings to go idle before it builds, so the
-alternate creation path cannot take resources from capture. The build is also
-bounded by the recording's length and can be canceled from the Import sheet.
+The build waits for live recordings to go idle, and stops and starts again if
+a recording begins while it runs, so transcription cannot take resources from
+capture. It also waits out a shortage of memory or GPU, as a Talk build does.
+The FLAC step in 3 runs before that wait. The build is bounded by the
+recording's length and can be canceled from the Import sheet, also while it
+waits.
 
 ## Requirements
 
 - Transcription uses the same local speech model as a recording. With no model
-  installed or transcription switched off, the upload still becomes a meeting
-  with audio, but has no transcript and therefore no summary.
+  installed, transcription switched off, or a transcriber that crashes, the
+  upload still becomes a meeting with audio, but has no transcript and
+  therefore no summary. The meeting says why.
 - A summary needs a configured summary model, as it does for recordings.
-- The uploaded file must have a readable audio stream. Common containers are
-  accepted (`.mp3`, `.m4a`, `.wav`, `.aac`, `.flac`, `.ogg`/`.opus`, `.webm`,
-  and others ffmpeg reads). Uploads are limited to 4 GiB.
+- The uploaded file must have a readable audio stream. The Import sheet takes
+  `.mp3`, `.m4a`, `.m4b`, `.wav`, `.aac`, `.flac`, `.ogg`/`.oga`/`.opus`,
+  `.webm`/`.weba`, `.aif`/`.aiff`, `.wma`, `.amr` and `.3gp`, and any other file
+  the browser reports as audio. Uploads are limited to 4 GiB.
+- An `.opus` or `.ogg` file that carries Cassini tags is a portable meeting. If
+  it cannot be read, it is refused; it is never re-transcribed as plain audio,
+  which would lose its transcript, speakers, tags, marks and summary.
 - Only the first audio stream is used. The file is treated as one microphone,
   not a multi-track Talk capture, so the transcript has a single speaker label.
   Cassini does not diarize an uploaded mix.
