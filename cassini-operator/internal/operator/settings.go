@@ -12,9 +12,9 @@ import (
 	"unicode/utf8"
 )
 
-// STTSettings is the operator-owned, persisted speech-to-text policy. The
-// operator detects the host hardware on first start and writes an auto default;
-// the admin UI can later pin a quality tier (and optional device/model
+// STTSettings is the operator-owned, persisted speech-to-text policy. Until
+// the first save the operator runs on an auto default derived from the host
+// hardware; the admin UI can later pin a quality tier (and optional device/model
 // overrides) which the operator injects into every record/build/doctor
 // subprocess. This is the authoritative source for STT policy: it overrides the
 // image's baked CASSINI_STT_* env (the deployed image pins
@@ -96,6 +96,12 @@ const (
 	// operator policy instead of inheriting a possibly stale shell value.
 	envDisallowModelDownload = "CASSINI_DISALLOW_MODEL_DOWNLOAD"
 
+	// Review rule for every settings limit (these, the source-retention rules
+	// and the LLM limits): never tighten one with a plain change. The loader
+	// rejects the whole settings.json when one value breaks a limit, so a
+	// lower limit would turn off transcription on every install that saved
+	// more. A PR that tightens a limit must make the loader trim or drop the
+	// offending value, with a log line, instead. See CONTRIBUTING.md.
 	maxTranscriptionTerms     = 100
 	maxTranscriptionTermRunes = 100
 
@@ -105,25 +111,26 @@ const (
 	maxSearchAliasVariants = 25
 )
 
-// SettingsMigration describes a persisted STT policy that names a device or
-// model this operator cannot execute. The loader clears only the unsupported
-// overrides and rewrites settings.json; the remaining user policy stays intact.
+// SettingsMigration describes a persisted STT policy that names a device this
+// operator cannot execute. The loader clears only the unsupported override, in
+// memory and (best effort) in settings.json; the remaining policy stays intact.
 //
-// Callers receive this value only after the healed file has been persisted, so
-// logging Message cannot claim a migration that failed to reach disk.
+// SaveError is set when the cleared policy could not be written: the running
+// policy is still the cleared one, and the next start clears it again.
 type SettingsMigration struct {
 	Path                   string
 	ClearedDeviceOverride  string
 	Quality                string
 	Source                 string
 	TranscriptionTermCount int
+	SaveError              string
 }
 
 // Message is suitable for the operator log. It explains both what changed and
 // how an administrator can restore an explicit, supported override without
 // logging the vocabulary itself.
 func (m SettingsMigration) Message() string {
-	return fmt.Sprintf(
+	msg := fmt.Sprintf(
 		"stt_settings migrated %s: cleared unsupported device_override=%q; preserved quality=%q, source=%q, and %d transcription terms; the policy now auto-selects the device, and Settings can still pin cpu or cuda",
 		m.Path,
 		m.ClearedDeviceOverride,
@@ -131,12 +138,16 @@ func (m SettingsMigration) Message() string {
 		m.Source,
 		m.TranscriptionTermCount,
 	)
+	if m.SaveError != "" {
+		msg += fmt.Sprintf("; the change could not be saved (%s), so the next start clears it again", m.SaveError)
+	}
+	return msg
 }
 
-// SettingsMigrationReporter is invoked after a legacy settings file has been
-// healed and successfully replaced. Keeping reporting as an injected callback lets
-// startup use the Runtime logger without coupling this persistence helper to a
-// process-global logger.
+// SettingsMigrationReporter is invoked after the loader healed a legacy settings
+// file, whether or not the healed file reached disk. Keeping reporting as an
+// injected callback lets startup use the Runtime logger without coupling this
+// persistence helper to a process-global logger.
 type SettingsMigrationReporter func(SettingsMigration)
 
 // normalizeTranscriptionTerms turns user-entered glossary rows into bounded
@@ -315,15 +326,16 @@ func detectSettings() STTSettings {
 	}
 }
 
-// LoadOrInitSettings loads settings.json, or — on first start (file missing) —
-// detects the hardware, writes an auto default, and returns it.
+// LoadOrInitSettings loads settings.json. A missing file gives the detected
+// defaults and is not created: settings.json is written only by a save (PUT
+// /settings, the retired-model migration), so its absence stays visible.
 //
-// On a non-first start the live hardware is re-fingerprinted. When the stored
-// source is "auto" and the hardware changed (e.g. a GPU was added or removed)
-// the auto default is re-derived and rewritten so it tracks the host. When the
-// source is "user" the user's Quality/overrides are never touched; only the
-// DetectedGPU/Cores/HardwareFingerprint display fields are refreshed (persisted
-// best-effort) so the UI shows the current host.
+// Loading refreshes the DetectedGPU/Cores/HardwareFingerprint display fields
+// in memory. When the stored source is "auto" the quality tier is derived from
+// the live host, in memory too, and the device override is kept; a cuda pin
+// the host cannot serve is ignored for this start only (the file keeps it, so
+// the next start with a working GPU uses it). When the source is "user" the
+// policy is never touched. A hardware change never writes the file.
 func LoadOrInitSettings(path string) (STTSettings, error) {
 	return LoadOrInitSettingsWithMigrationReporter(path, nil)
 }
@@ -334,11 +346,7 @@ func LoadOrInitSettingsWithMigrationReporter(path string, report SettingsMigrati
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			s := detectSettings()
-			if err := Save(path, s); err != nil {
-				return STTSettings{}, err
-			}
-			return s, nil
+			return detectSettings(), nil
 		}
 		return STTSettings{}, fmt.Errorf("read settings: %w", err)
 	}
@@ -372,7 +380,6 @@ func LoadOrInitSettingsWithMigrationReporter(path string, report SettingsMigrati
 	}
 
 	var migration SettingsMigration
-	needsRewrite := false
 	originalDeviceOverride := s.DeviceOverride
 	deviceOverride := strings.ToLower(strings.TrimSpace(originalDeviceOverride))
 	if deviceOverride == "auto" {
@@ -382,9 +389,6 @@ func LoadOrInitSettingsWithMigrationReporter(path string, report SettingsMigrati
 		migration.ClearedDeviceOverride = originalDeviceOverride
 		deviceOverride = ""
 	}
-	if deviceOverride != originalDeviceOverride {
-		needsRewrite = true
-	}
 	s.DeviceOverride = deviceOverride
 
 	s.Quality = normalizeQuality(s.Quality)
@@ -393,62 +397,26 @@ func LoadOrInitSettingsWithMigrationReporter(path string, report SettingsMigrati
 	}
 
 	gpu := detectGPU()
-	cores := runtime.NumCPU()
-	fingerprint := hardwareFingerprint(gpu, cores)
-
+	s.DetectedGPU = gpu
+	s.Cores = runtime.NumCPU()
+	s.HardwareFingerprint = hardwareFingerprint(gpu, s.Cores)
 	if s.Source == sttSourceAuto {
-		if fingerprint != s.HardwareFingerprint {
-			// Hardware changed under an auto default: re-derive and rewrite.
-			previous := s
-			terms := s.TranscriptionTerms
-			s = detectSettings()
-			s.TranscriptionEnabled, s.ActiveModel, s.ActiveRevision = previous.TranscriptionEnabled, previous.ActiveModel, previous.ActiveRevision
-			s.MeetingFormat = previous.MeetingFormat
-			s.ShareAudience = previous.ShareAudience
-			s.SourceRetention = previous.SourceRetention
-			s.SearchAliases = previous.SearchAliases
-			s.RetainVideo = previous.RetainVideo
-			// Vocabulary is independent of the hardware-derived quality tier.
-			// Preserve it when re-fingerprinting an auto policy.
-			s.TranscriptionTerms = terms
-			if err := Save(path, s); err != nil {
-				return STTSettings{}, err
-			}
-			if migration.ClearedDeviceOverride != "" {
-				reportSettingsMigration(report, path, migration, s)
-			}
-		} else if needsRewrite {
-			if err := Save(path, s); err != nil {
-				return STTSettings{}, err
-			}
-			if migration.ClearedDeviceOverride != "" {
-				reportSettingsMigration(report, path, migration, s)
-			}
+		cudaCapable := cudaCapableHost()
+		s.Quality = defaultQualityForHardware(cudaCapable)
+		if s.DeviceOverride == deviceCUDA && !cudaCapable {
+			// A GPU that is late or gone at this start: transcribe on the CPU
+			// for now. Memory only, so the next start with a GPU uses the pin.
+			s.DeviceOverride = ""
 		}
-		return s, nil
 	}
 
-	// Source == user: never change policy, only refresh display fields.
-	displayChanged := s.DetectedGPU != gpu || s.Cores != cores || s.HardwareFingerprint != fingerprint
-	if displayChanged {
-		s.DetectedGPU = gpu
-		s.Cores = cores
-		s.HardwareFingerprint = fingerprint
-	}
-	if needsRewrite {
-		// Clearing a no-longer-supported override is a required migration, not
-		// the best-effort display refresh below. Surface a write failure so the
-		// operator cannot claim a self-heal that will recur on every restart.
+	if migration.ClearedDeviceOverride != "" {
+		// An override no build can run on is cleared on disk too, best effort.
+		// A failed write keeps the parsed policy; the next start tries again.
 		if err := Save(path, s); err != nil {
-			return STTSettings{}, err
+			migration.SaveError = err.Error()
 		}
-		if migration.ClearedDeviceOverride != "" {
-			reportSettingsMigration(report, path, migration, s)
-		}
-	} else if displayChanged {
-		// Best-effort: a stale display field is harmless, so a write failure
-		// here must not block startup.
-		_ = Save(path, s)
+		reportSettingsMigration(report, path, migration, s)
 	}
 	return s, nil
 }
@@ -510,6 +478,7 @@ func Save(path string, s STTSettings) error {
 		return fmt.Errorf("marshal settings: %w", err)
 	}
 	data = append(data, '\n')
+	// Keep write-temp-then-rename: keepRejectedCopy's hard link relies on it.
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o644); err != nil {
 		return fmt.Errorf("write settings temp: %w", err)
@@ -780,19 +749,9 @@ func (rt *Runtime) settingsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (rt *Runtime) handleGetSettings(w http.ResponseWriter) {
-	// Re-read from disk so an out-of-band edit (or a peer process) is reflected,
-	// and refresh the in-memory copy used at job spawn time. Under the write
-	// lock, so a load taken before a concurrent save cannot replace it.
-	rt.settingsWriteMu.Lock()
-	s, err := LoadOrInitSettingsWithMigrationReporter(rt.settingsPath, rt.reportSettingsMigration)
-	if err != nil {
-		// Disk unreadable: fall back to the in-memory copy rather than 500, so
-		// the admin can still see and re-set the policy.
-		s = rt.currentSettings()
-	} else {
-		rt.setSettings(s)
-	}
-	rt.settingsWriteMu.Unlock()
+	// A read never writes: the file is loaded once at start and replaced only
+	// by a save (PUT, the retired-model migration), which updates memory too.
+	s := rt.currentSettings()
 	writeJSON(w, http.StatusOK, settingsResponse{STTSettings: s, Effective: rt.effectiveFor(s)})
 }
 

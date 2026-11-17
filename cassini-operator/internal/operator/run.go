@@ -290,9 +290,9 @@ type Runtime struct {
 	settings     STTSettings
 	settingsPath string
 	// settingsWriteMu serializes every read-modify-write of the STT policy
-	// (PUT /settings, the GET refresh from disk, the retired-model
-	// migration), so a writer never saves a copy older than another
-	// writer's. settingsMu only guards the in-memory copy.
+	// (PUT /settings, the retired-model migration), so a writer never saves a
+	// copy older than another writer's. settingsMu only guards the in-memory
+	// copy.
 	settingsWriteMu sync.Mutex
 	// LLM policy (D-696): persisted beside the STT policy, guarded the same way
 	// for job-spawn reads against PUT /settings/llm writes.
@@ -960,19 +960,26 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 		rt.annotations = annotationIndex
 	}
 
-	// Detect hardware on first start (or track it under an auto default) and
-	// load the persisted STT policy. A failure here must not take the operator
-	// down: fall back to an in-memory auto default so jobs still run (D-435).
+	// Load the persisted STT policy, once: after this, memory is the truth and
+	// only a save writes the file. A missing file gives the detected defaults.
+	// A failure here must not take the operator down: fall back to in-memory
+	// defaults so jobs still run (D-435), and keep the rejected file before a
+	// save can replace it.
 	if settings, err := LoadOrInitSettingsWithMigrationReporter(rt.settingsPath, rt.reportSettingsMigration); err != nil {
-		logger.Printf("stt_settings load failed (%v); using in-memory auto default", err)
-		rt.settings = detectSettings()
+		logger.Print(settingsLoadFailedMessage("stt_settings", rt.settingsPath, "running on defaults (transcription off, new recordings shared with attendees only)", "Settings", err))
+		fallback := detectSettings()
+		// The rejected file may have narrowed the audience; never widen who
+		// sees a recording because it could not be read. A fresh install
+		// (no file) keeps the room default.
+		fallback.ShareAudience = shareAudienceAttendees
+		rt.settings = fallback
 	} else {
 		rt.settings = settings
 	}
 	// Same for the LLM policy: seed from the deploy env on first start; on a
 	// load failure keep running on the deploy env rather than refusing to start.
 	if llm, err := LoadOrInitLLMSettings(rt.llmSettingsPath, os.Getenv); err != nil {
-		logger.Printf("llm_settings load failed (%v); using the deploy environment", err)
+		logger.Print(settingsLoadFailedMessage("llm_settings", rt.llmSettingsPath, "using the deploy environment", "AI providers", err))
 		rt.llm = SeedLLMSettings(os.Getenv)
 	} else {
 		rt.llm = llm

@@ -725,6 +725,17 @@ $APP_PERSISTENT_STORAGE/site/published           # legacy published site (see be
 No manual volume mounts are required — job history and recordings survive app
 updates and container recreates.
 
+`settings.json` is created by the first save in Settings; until then Cassini
+runs on defaults detected from the host. Cassini reads `settings.json` and
+`llm-settings.json` once, at start, so a hand edit of either file needs a
+restart. If `settings.json` cannot be loaded, Cassini runs on defaults
+(transcription off, new recordings shared with attendees only); if
+`llm-settings.json` cannot be loaded, Cassini uses the deploy environment.
+Either way the file is kept as `<name>.rejected-N` beside it, because the next
+save replaces the original. To restore it, move that copy back over the
+original and restart. Delete the `llm-settings.json` copy when you are done: it
+holds API keys.
+
 An installed app publishes into Nextcloud Files, so `site/published` is not
 written and not served: it holds only what an older, pre-Nextcloud-Files version
 left behind. See [Updating from a pre-Nextcloud-Files
