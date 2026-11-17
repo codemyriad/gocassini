@@ -118,8 +118,11 @@ passes. The provisioning example below is for a new standalone HaRP service.
 **AIO:** check the installed version's available components and registered
 daemon. Start integrated HaRP where provided and run Test deploy. Older/custom
 versions may need migration or separate provisioning. Reuse a working integrated
-service rather than launching a second HaRP. Enable AIO's Talk component for HPB. See [AIO restart persistence](recording-readiness.md#aio-restart-persistence)
-before handing recording over to Cassini.
+service rather than launching a second HaRP. Enable AIO's Talk component for HPB. Set
+`NEXTCLOUD_KEEP_DISABLED_APPS=true` and turn off AIO's Talk Recording-server;
+otherwise AIO's current startup script resets Talk's recording backend, and can
+disable AppAPI, on every start. See
+[AIO restart persistence](recording-readiness.md#aio-restart-persistence).
 
 
 Use a **HaRP** daemon for this installation guide, following
@@ -572,8 +575,7 @@ operator's ADMIN-only provisioning endpoint returns the ready-to-apply
 `recording_servers` value (including the self-generated secret), so you never
 copy a secret by hand.
 
-**Back up the current backend first**, then switch. Operator → Publish pipeline → Connect Talk generates
-these commands for your instance. AIO users must also follow the
+**Back up the current backend first**, then switch. AIO users must also follow the
 [restart persistence instructions](recording-readiness.md#aio-restart-persistence).
 
 ```bash
@@ -617,6 +619,9 @@ occ config:app:set spreed recording_servers --value="$(cat /root/recording_serve
 # or, if there was no recording backend before:
 occ config:app:delete spreed recording_servers
 ```
+
+The handoff also enables `call_recording`. If it was disabled before, restore
+that choice through Talk's administration settings.
 
 Keep the previous backend running until your test recording passes.
 
@@ -710,19 +715,30 @@ must both succeed inside the LXC before you register the daemon.
 
 AppAPI's docker deploy creates a named volume (`nc_app_gocassini_data`),
 mounts it in the container at `/nc_app_gocassini_data`, and exposes that
-path as `APP_PERSISTENT_STORAGE`. The operator stores all durable data
-under it:
+path as `APP_PERSISTENT_STORAGE`. No manual volume mounts are required.
 
-```
-$APP_PERSISTENT_STORAGE/operator/jobs.sqlite3    # SQLite job DB
-$APP_PERSISTENT_STORAGE/operator/jobs            # per-attempt artifacts (raw recordings)
-$APP_PERSISTENT_STORAGE/operator/models          # verified models/VAD and resumable downloads
-$APP_PERSISTENT_STORAGE/operator/settings.json   # transcription policy and active revision
-$APP_PERSISTENT_STORAGE/site/published           # legacy published site (see below)
-```
+The whole AppAPI volume (`nc_app_<appid>_data`) is one unit: job database,
+settings, AI provider keys, the Talk recording secret, models and recordings.
+The operator keeps them under `$APP_PERSISTENT_STORAGE/operator/`; older
+published content is under `$APP_PERSISTENT_STORAGE/site/`.
 
-No manual volume mounts are required — job history and recordings survive app
-updates and container recreates.
+**Backup and restore.** Back up and restore the whole volume together.
+Restoring only `jobs.sqlite3` brings back job history but not settings, and
+Cassini then generates a new Talk recording secret: press **Connect Talk**
+again. Stop the Cassini container, or shut the server down, when nothing is
+recording or processing. The backup holds credentials; protect it. Check
+whether your backup tool includes the AppAPI volume. Talk's `recording_servers`
+is stored in Nextcloud, not on this volume. `talk-provisioning.json` exists only
+when `CASSINI_TALK_RECORDING_SECRET` is not set.
+
+**What survives what.** Data on the volume survives container restarts, host
+reboots, app updates and container recreates. Container-layer (overlay) data
+survives a container restart, and a host reboot only when the same container is
+started again. It is lost when the container is recreated: `docker compose
+down`/`up` or `docker run --rm` (also when a boot script does this), an app
+update or a reinstall. tmpfs loses its data at every stop or reboot. The image
+has no `VOLUME` line on purpose: an anonymous volume does not survive a
+recreate.
 
 `settings.json` is created by the first save in Settings; until then Cassini
 runs on defaults detected from the host. Cassini reads `settings.json` and
@@ -731,9 +747,10 @@ restart. If `settings.json` cannot be loaded, Cassini runs on defaults
 (transcription off, new recordings shared with attendees only); if
 `llm-settings.json` cannot be loaded, Cassini uses the deploy environment.
 Either way the file is kept as `<name>.rejected-N` beside it, because the next
-save replaces the original. To restore it, move that copy back over the
-original and restart. Delete the `llm-settings.json` copy when you are done: it
-holds API keys.
+save replaces the original. A `*.rejected-N` file is a copy of a file Cassini
+could not load: to restore it, move that copy back over the original and
+restart. Delete the `llm-settings.json` copy when you are done: it holds API
+keys.
 
 An installed app publishes into Nextcloud Files, so `site/published` is not
 written and not served: it holds only what an older, pre-Nextcloud-Files version
@@ -749,6 +766,8 @@ filesystem (overlay or tmpfs).
 Outside AppAPI (plain `docker run` without `APP_PERSISTENT_STORAGE`) the
 image defaults apply: `/var/lib/cassini-operator` for the DB + work root and
 `/srv/cassini-site/published` for the site — mount volumes there yourself.
+To back up such an install, copy the directory that holds `jobs.sqlite3`, plus
+any work, model or template directory you configured elsewhere.
 
 ## Updating from an earlier recording archive
 

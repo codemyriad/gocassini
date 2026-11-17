@@ -229,7 +229,7 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
       set(blocked("test", "talk.discovery"));
       break;
     case "recording-handoff":
-      set({ id: "talk.discovery", state: "needs_action", code: "recording_auth_rejected", message: "Talk refused Cassini. Cassini is not set up as Talk's recording backend yet, or the recording secret Talk has does not match Cassini's.", action: "connect_talk", checked_at });
+      set({ id: "talk.discovery", state: "needs_action", code: "recording_auth_rejected", message: "Talk refused Cassini. Cassini is not set up as Talk's recording backend yet, or the recording secret Talk has does not match Cassini's. If this comes back after every Nextcloud restart, update or backup, something in Nextcloud's startup is resetting Talk's recording backend. Nextcloud All-in-One does this by default.", action: "connect_talk", checked_at });
       set(blocked("talk.hpb", "talk.discovery"));
       break;
     case "secret-missing":

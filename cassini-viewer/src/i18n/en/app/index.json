@@ -563,7 +563,7 @@
       },
       "backend": {
         "title": "Use Cassini as Talk’s recording backend",
-        "intro": "Talk needs Cassini's recording-server URL and its recording secret. Cassini generates the secret itself but cannot write Talk's configuration, so the values have to be given to Talk.",
+        "intro": "Talk needs Cassini's recording-server URL and its recording secret. Cassini generates the secret itself but cannot write Talk's configuration, so the values have to be given to Talk. On Nextcloud All-in-One, also turn off AIO's Talk Recording-server and set NEXTCLOUD_KEEP_DISABLED_APPS=true, or AIO removes these values every time Nextcloud starts. That setting also stops AIO removing other apps you disable later; see AIO restart persistence in Cassini's install guide.",
         "show_values": "Show both values"
       },
       "test": {
@@ -841,7 +841,7 @@
       "nextcloud_unexpected_response": "Something answered at the Nextcloud address, but not with Talk's settings.",
       "nextcloud_unreachable": "Could not read Talk settings. Check Nextcloud connectivity and TLS, then try again.",
       "probe_failed": "The connection check did not finish. Check the recorder installation and connectivity, then retry.",
-      "recording_auth_rejected": "Talk refused Cassini. Cassini is not set up as Talk's recording backend yet, or the recording secret Talk has does not match Cassini's.",
+      "recording_auth_rejected": "Talk refused Cassini. Cassini is not set up as Talk's recording backend yet, or the recording secret Talk has does not match Cassini's. If this comes back after every Nextcloud restart, update or backup, something in Nextcloud's startup is resetting Talk's recording backend. Nextcloud All-in-One does this by default.",
       "recording_auth_verified": "Talk accepted Cassini's recording credential.",
       "recording_secret_missing": "Cassini has no recording secret. It creates one when it starts and keeps it on its data volume, and that did not succeed.",
       "recording_secret_missing_connection": "Configure Cassini's recording credential and connect Talk first.",

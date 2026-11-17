@@ -1,5 +1,21 @@
 # Reboot resilience: "settings reset at reboot", diagnosed, with a removal-first change set
 
+**Status: implemented on branch `fix/startup-simplification` (PR #502), slices A–E.** Decisions O1–O4, O6 and O7 were approved with their recommendation; O5 is out of scope and not implemented. The rest of this document is the proposal as approved. Where the implementation differs, it is listed here.
+
+Deviations from the text below:
+
+- **A1/A3/A4.** The UI's A1 sentence points to "AIO restart persistence in Cassini's install guide", but that section is in `docs/recording-readiness.md` and the microsite install page had no AIO text. The microsite install page now has a short "AIO restart persistence" section with the A4 sentence and a link to the full steps. A3 also fixed the runbook's repair snippet and its "generated commands" line, which named the removed backup file and generator. The "Environment-aware repair guidance" heading became "Eligibility and network findings", to keep the pre-install pointer and the network-findings paragraph under a heading. The microsite install page also gets the `call_recording` rollback note.
+- **B2.** A 429 already arrives as a rate-limit error, not as an `*ncShareError`, so it gives `degraded`. When a create was refused and the confirming lookup errors, the error carries the refusal text.
+- **B3/O3.** The boot run uses a new `readinessScope.keepTestRoom` flag. With it, the run skips both the forget-and-save and the extra OCS read that only decides whether to forget. The 404 finding is still shown.
+- **B4.** With `rerunSetup()` gone, the "occ is however your deployment invokes it" note shows only when a step has commands.
+- **B6.** The `nextcloud_probe` gate also covers some lasting faults (no administrator resolved, a lookup that keeps answering 5xx). Such an install repeats the probe every 5 minutes. A healthy install still makes no extra request.
+- **C2/O2.** The in-memory clearing of a `cuda` pin applies only to an automatic policy; a user-source policy keeps its pin. Normalising `auto` and lower-casing the override happen in memory only. The D-684 save is best effort and the migration message says when it failed.
+- **C4.** The copy name uses the file's mtime in nanoseconds (still `<name>.rejected-N`), so two rejected files in the same second do not collide. It skips anything that is not a regular file.
+- **D1/D2.** `NewRuntime` now takes the journal. After C3, the "settings.json was not found" line repeats at every start until someone saves Settings. No reason table was added for scrubbed bundles.
+- **D4.** The removed `mkdir -p` in `exapp-start.sh` leaves one residual: on the first start of a local-sink install, a separately overridden site root that does not exist yet is not checked.
+- **E1.** `recording-setup.json` and the retention file stay 0600; error prefixes are simpler. The directory sync also runs for the writers that already used `writeFileAtomic`.
+- **E2/E3.** `app-state.json` was also removed from the harness backup list. `cassini speakers` uses the same model-root helper, so `docs/speaker-separation.md` changed too.
+
 Baseline: `a541980f` (equal to `origin/main`). All `file:line` citations are at that commit.
 Terms used below:
 

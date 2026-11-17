@@ -371,6 +371,14 @@ If you supplied `CASSINI_TALK_RECORDING_SECRET` yourself in Step 1, you can set
 `recording_servers` directly with that secret and the `recording_backend_url`
 from the status endpoint.
 
+### AIO restart persistence
+
+On Nextcloud All-in-One, set `NEXTCLOUD_KEEP_DISABLED_APPS=true` and turn off
+AIO's Talk Recording-server; otherwise AIO's current startup script resets
+Talk's recording backend, and can disable AppAPI, on every start. The full steps
+are in
+[`docs/recording-readiness.md`](https://github.com/codemyriad/gocassini/blob/main/docs/recording-readiness.md#aio-restart-persistence).
+
 ### Rollback
 
 Restore the saved value and Talk records through the previous backend again; the
@@ -381,6 +389,9 @@ occ config:app:set spreed recording_servers --value="$(cat /root/recording_serve
 # or, if there was no recording backend before:
 occ config:app:delete spreed recording_servers
 ```
+
+The handoff also enables `call_recording`. If it was disabled before, restore
+that choice through Talk's administration settings.
 
 Keep the previous backend running until your test recording passes.
 
@@ -439,16 +450,39 @@ Choosing between the two, and what changes in the transcript, is in
 
 AppAPI's docker deploy creates a named volume (`nc_app_gocassini_data`), mounts
 it at `/nc_app_gocassini_data`, and exposes that path as
-`APP_PERSISTENT_STORAGE`. The operator stores all durable data under it:
+`APP_PERSISTENT_STORAGE`. No manual volume mounts are required.
 
-```text
-$APP_PERSISTENT_STORAGE/operator/jobs.sqlite3    # SQLite job DB
-$APP_PERSISTENT_STORAGE/operator/jobs            # per-attempt artifacts
-```
+The whole AppAPI volume (`nc_app_<appid>_data`) is one unit: job database,
+settings, AI provider keys, the Talk recording secret, models and recordings.
 
-No manual volume mounts are required — job history and recordings survive app
-updates and container recreates. The container logs a warning at startup when an
-effective data path sits on an ephemeral filesystem.
+**Backup and restore.** Back up and restore the whole volume together.
+Restoring only `jobs.sqlite3` brings back job history but not settings, and
+Cassini then generates a new Talk recording secret: press **Connect Talk**
+again. Stop the Cassini container, or shut the server down, when nothing is
+recording or processing. The backup holds credentials; protect it. Check
+whether your backup tool includes the AppAPI volume. Talk's `recording_servers`
+is stored in Nextcloud, not on this volume. `talk-provisioning.json` exists only
+when `CASSINI_TALK_RECORDING_SECRET` is not set.
+
+**What survives what.** Data on the volume survives container restarts, host
+reboots, app updates and container recreates. Container-layer (overlay) data
+survives a container restart, and a host reboot only when the same container is
+started again. It is lost when the container is recreated: `docker compose
+down`/`up` or `docker run --rm` (also when a boot script does this), an app
+update or a reinstall. tmpfs loses its data at every stop or reboot. The image
+has no `VOLUME` line on purpose: an anonymous volume does not survive a
+recreate. The container logs a warning at startup when a data path sits on
+such a filesystem.
+
+**Settings files.** `settings.json` is created by the first save in Settings;
+until then Cassini runs on defaults detected from the host. Cassini reads
+`settings.json` and `llm-settings.json` once, at start, so a hand edit of either
+file needs a restart. A `*.rejected-N` file beside them is a copy of a file
+Cassini could not load: move it back over the original and restart. Delete the
+`llm-settings.json` copy when you are done: it holds API keys.
+
+Outside AppAPI, back up the directory that holds `jobs.sqlite3`, plus any work,
+model or template directory you configured elsewhere.
 
 ## Uninstall
 

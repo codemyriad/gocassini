@@ -24,10 +24,11 @@ import (
 // first start and persists it, and it derives + publishes exactly what to
 // register in Talk.
 //
-// What it CANNOT do: write spreed's recording_servers itself. That config is
-// admin-only and has no OCS API an ExApp may call (AppAPI's app-config write is
-// hard-scoped to the ExApp's own app id; spreed writes recording_servers only
-// from its admin settings / occ). So the registration stays a single admin
+// What it does NOT do: write spreed's recording_servers itself. Cassini
+// deliberately does not write it: Talk's recorder choice belongs to the admin,
+// another recorder may be in use, and AIO rewrites it at startup. (AppAPI's
+// app-config write is also hard-scoped to the ExApp's own app id; spreed writes
+// recording_servers only from its admin settings / occ.) So the registration stays a single admin
 // action — but a secret-free one: the host reads the generated secret + backend
 // URL from the ADMIN-only provisioning endpoint and sets recording_servers in
 // one idempotent step. See docs/exapp-install.md and sandbox/wire-cassini.sh.
