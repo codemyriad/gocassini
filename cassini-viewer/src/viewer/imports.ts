@@ -100,31 +100,60 @@ export interface ImportPreview {
 // same contract the operator re-checks server-side — so a file that previews
 // here can still be refused there, but not the other way around.
 export async function parseImportPreview(file: File): Promise<ImportPreview> {
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  if (bytes.length === 0) {
+  // Classify from the head of the file first. A raw recording can be hundreds
+  // of megabytes, and nothing about it is read in the browser, so it is never
+  // loaded whole just to be recognised.
+  const head = new Uint8Array(await file.slice(0, SNIFF_BYTES).arrayBuffer());
+  if (head.length === 0) {
     throw new Error(get(LL).viewer.browse.import.file_empty());
   }
-  if (bytes[0] === 0x4f && bytes[1] === 0x67 && bytes[2] === 0x67 && bytes[3] === 0x53) {
-    try {
-      const { manifest } = await extractPortableManifestFromArrayBuffer(bytes);
-      return describePortableManifest(manifest, "opus");
-    } catch (error) {
-      // A raw Ogg/Opus recording is not a portable meeting, but it is still a
-      // meeting source: the operator transcribes it. The file name is the only
-      // thing the browser can say about it without decoding the whole upload.
-      if (looksLikeAudio(file)) return describeAudioUpload(file);
-      throw error;
-    }
+  if (head[0] === 0x4f && head[1] === 0x67 && head[2] === 0x67 && head[3] === 0x53) {
+    // An Ogg file with no Cassini tag at all is a plain recording to build. One
+    // that carries Cassini tags is a portable meeting, and if it does not parse
+    // the refusal stands: building it from its audio would silently drop its
+    // transcript, speakers, tags, marks and summary.
+    if (looksLikeAudio(file) && !carriesCassiniTags(head)) return describeAudioUpload(file);
+    const bytes = head.length < SNIFF_BYTES ? head : new Uint8Array(await file.arrayBuffer());
+    const { manifest } = await extractPortableManifestFromArrayBuffer(bytes);
+    return describePortableManifest(manifest, "opus");
   }
+  if (!startsLikeJSON(head) && looksLikeAudio(file)) return describeAudioUpload(file);
+  const bytes = head.length < SNIFF_BYTES ? head : new Uint8Array(await file.arrayBuffer());
   let parsed: unknown;
   try {
     parsed = JSON.parse(stripUTF8BOM(new TextDecoder().decode(bytes)));
   } catch {
-    if (looksLikeAudio(file)) return describeAudioUpload(file);
     throw new Error(get(LL).viewer.browse.import.not_portable());
   }
   const { manifest } = await extractTranscriptionDocument(parsed);
   return describePortableManifest(manifest, "json");
+}
+
+// SNIFF_BYTES is how much of a file classification reads. The Opus comment
+// header, where a portable meeting's Cassini tags start, sits in the first
+// pages of the stream.
+const SNIFF_BYTES = 1 << 20;
+
+// carriesCassiniTags looks for any Cassini comment key in the head of an Ogg
+// stream. It does not parse the comment header, so a damaged or newer portable
+// file still counts as one and is refused, never re-transcribed.
+function carriesCassiniTags(head: Uint8Array): boolean {
+  const needle = [0x43, 0x41, 0x53, 0x53, 0x49, 0x4e, 0x49, 0x5f]; // "CASSINI_"
+  outer: for (let i = 0; i + needle.length <= head.length; i += 1) {
+    for (let j = 0; j < needle.length; j += 1) {
+      if ((head[i + j] & 0xdf) !== needle[j]) continue outer; // & 0xdf folds a-z to A-Z
+    }
+    return true;
+  }
+  return false;
+}
+
+// startsLikeJSON says whether the first non-blank character, after an optional
+// byte order mark, opens a JSON object or array.
+function startsLikeJSON(head: Uint8Array): boolean {
+  let i = head[0] === 0xef && head[1] === 0xbb && head[2] === 0xbf ? 3 : 0;
+  while (i < head.length && (head[i] === 0x20 || head[i] === 0x09 || head[i] === 0x0a || head[i] === 0x0d)) i += 1;
+  return head[i] === 0x7b || head[i] === 0x5b;
 }
 
 // looksLikeAudio is a filename/MIME hint only. It exists to keep a clearly

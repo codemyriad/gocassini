@@ -32,6 +32,31 @@ describe("parseImportPreview", () => {
     await expect(parseImportPreview(fileOf("renamed.json", bytes))).rejects.toThrow();
   });
 
+  it("takes an Ogg recording without Cassini tags as audio", async () => {
+    const bytes = new TextEncoder().encode("OggS\u0000\u0002OpusHead....OpusTags plain recorder");
+    const preview = await parseImportPreview(fileOf("Standup.opus", bytes));
+    expect(preview.format).toBe("audio");
+    expect(preview.title).toBe("Standup");
+  });
+
+  it("refuses a damaged portable meeting instead of re-transcribing its audio", async () => {
+    const bytes = new TextEncoder().encode("OggS\u0000\u0002OpusHead....OpusTags CASSINI_FORMAT=org.cassini.portable-meeting/9");
+    await expect(parseImportPreview(fileOf("Standup.opus", bytes))).rejects.toThrow();
+  });
+
+  it("recognises an audio file from its head, without reading it whole", async () => {
+    class HugeFile extends File {
+      override arrayBuffer(): Promise<ArrayBuffer> {
+        throw new Error("read the whole file");
+      }
+      override slice(start?: number, end?: number): Blob {
+        return new Blob([new Uint8Array(Math.min(end ?? 0, 1 << 20) - (start ?? 0))]);
+      }
+    }
+    const preview = await parseImportPreview(new HugeFile([], "Offsite.wav", { type: "audio/wav" }));
+    expect(preview.format).toBe("audio");
+  });
+
   it("routes JSON content to the transcription parser even under a BOM and an .opus name", async () => {
     // Content decides the parser; the transcription reader then refuses the
     // wrong kind with its own sentence.
