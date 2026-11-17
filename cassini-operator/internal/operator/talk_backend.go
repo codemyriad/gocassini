@@ -144,6 +144,10 @@ type talkRoomState struct {
 	Status            int
 	StartActor        *talkActorData
 	StopActor         *talkActorData
+	// ShareWithStarter freezes whether the starter is always added to the
+	// audience. Nil is a recording from before the option existed; it keeps the
+	// historical always-include behaviour.
+	ShareWithStarter *bool
 }
 
 func (rt *Runtime) talkWelcomeHandler(w http.ResponseWriter, r *http.Request) {
@@ -260,13 +264,15 @@ func (rt *Runtime) handleTalkStart(w http.ResponseWriter, r *http.Request, auth 
 		return
 	}
 
+	shareWithStarter := rt.currentSettings().SharesWithStarter()
 	state := &talkRoomState{
-		RoomKey:    roomKey,
-		BackendURL: operatorBaseURL,
-		RoomToken:  token,
-		Owner:      strings.TrimSpace(payload.Start.Owner),
-		Status:     payload.Start.Status,
-		StartActor: payload.Start.Actor,
+		RoomKey:          roomKey,
+		BackendURL:       operatorBaseURL,
+		RoomToken:        token,
+		Owner:            strings.TrimSpace(payload.Start.Owner),
+		Status:           payload.Start.Status,
+		StartActor:       payload.Start.Actor,
+		ShareWithStarter: boolPointer(shareWithStarter),
 	}
 	// Claim the room key in the same critical section as the duplicate check
 	// so concurrent duplicate starts cannot both pass the lookup (D-364).
@@ -692,6 +698,7 @@ type talkJobBinding struct {
 	TitleParticipants []talkTitleParticipant `json:"title_participants,omitempty"`
 	Status            int                    `json:"status,omitempty"`
 	StartActor        *talkActorData         `json:"start_actor,omitempty"`
+	ShareWithStarter  *bool                  `json:"share_with_starter,omitempty"`
 }
 
 func encodeTalkBinding(state *talkRoomState) (string, error) {
@@ -705,6 +712,7 @@ func encodeTalkBinding(state *talkRoomState) (string, error) {
 		TitleParticipants: state.TitleParticipants,
 		Status:            state.Status,
 		StartActor:        state.StartActor,
+		ShareWithStarter:  state.ShareWithStarter,
 	})
 	if err != nil {
 		return "", fmt.Errorf("encode talk binding: %w", err)
@@ -730,6 +738,7 @@ func decodeTalkBinding(raw string) (talkRoomState, error) {
 		TitleParticipants: binding.TitleParticipants,
 		Status:            binding.Status,
 		StartActor:        binding.StartActor,
+		ShareWithStarter:  binding.ShareWithStarter,
 	}, nil
 }
 

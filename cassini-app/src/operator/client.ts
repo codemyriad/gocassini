@@ -449,6 +449,9 @@ function normalizeSettings(raw: unknown): Settings {
     // save, of any setting, would send that and widen later recordings.
     share_audience:
       value.share_audience === "attendees" || value.share_audience === "moderators" ? value.share_audience : "room",
+    // A missing field is an older operator and the historical always-share
+    // behaviour; only an explicit false opts out.
+    share_with_starter: value.share_with_starter !== false,
     active_model: asString(value.active_model),
     active_revision: asString(value.active_revision),
     quality: normalizeQuality(value.quality),

@@ -4668,10 +4668,6 @@ export type NamespaceAppTranslation = {
 			 */
 			audience_moderators_description: string
 			/**
-			 * T​h​e​ ​p​e​r​s​o​n​ ​w​h​o​ ​s​t​a​r​t​e​d​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​ ​a​l​w​a​y​s​ ​r​e​c​e​i​v​e​s​ ​i​t​.
-			 */
-			audience_moderators_starter: string
-			/**
 			 * I​n​ ​a​ ​o​n​e​-​t​o​-​o​n​e​ ​c​o​n​v​e​r​s​a​t​i​o​n​,​ ​b​o​t​h​ ​p​e​o​p​l​e​ ​r​e​c​e​i​v​e​ ​i​t​.
 			 */
 			audience_moderators_one_to_one: string
@@ -4687,6 +4683,22 @@ export type NamespaceAppTranslation = {
 			 * N​o​ ​m​e​s​s​a​g​e​ ​i​s​ ​p​o​s​t​e​d​ ​i​n​ ​t​h​e​ ​T​a​l​k​ ​r​o​o​m​'​s​ ​c​h​a​t​,​ ​b​e​c​a​u​s​e​ ​t​h​e​ ​w​h​o​l​e​ ​r​o​o​m​ ​w​o​u​l​d​ ​s​e​e​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​'​s​ ​t​i​t​l​e​ ​a​n​d​ ​l​i​n​k​.
 			 */
 			audience_chat_skipped: string
+			/**
+			 * A​l​w​a​y​s​ ​i​n​c​l​u​d​e​ ​t​h​e​ ​p​e​r​s​o​n​ ​w​h​o​ ​s​t​a​r​t​e​d​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g
+			 */
+			always_include_starter_label: string
+			/**
+			 * T​h​e​ ​r​o​o​m​ ​o​w​n​e​r​ ​i​s​ ​t​h​e​ ​s​t​a​r​t​e​r​ ​f​o​r​ ​a​u​t​o​m​a​t​i​c​ ​r​e​c​o​r​d​i​n​g​s​.​ ​W​h​e​n​ ​o​f​f​,​ ​a​ ​r​e​c​o​r​d​i​n​g​ ​g​o​e​s​ ​o​n​l​y​ ​t​o​ ​t​h​e​ ​c​h​o​s​e​n​ ​a​u​d​i​e​n​c​e​;​ ​t​h​e​ ​s​t​a​r​t​e​r​ ​s​t​i​l​l​ ​r​e​c​e​i​v​e​s​ ​i​t​ ​w​h​e​n​ ​C​a​s​s​i​n​i​ ​c​a​p​t​u​r​e​d​ ​n​o​ ​a​u​d​i​e​n​c​e​.
+			 */
+			always_include_starter_description: string
+			/**
+			 * T​h​e​ ​p​e​r​s​o​n​ ​w​h​o​ ​s​t​a​r​t​e​d​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​ ​a​l​w​a​y​s​ ​r​e​c​e​i​v​e​s​ ​i​t​.
+			 */
+			starter_included: string
+			/**
+			 * T​h​e​ ​p​e​r​s​o​n​ ​w​h​o​ ​s​t​a​r​t​e​d​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​ ​r​e​c​e​i​v​e​s​ ​i​t​ ​o​n​l​y​ ​i​f​ ​t​h​e​ ​c​a​p​t​u​r​e​d​ ​a​u​d​i​e​n​c​e​ ​i​n​c​l​u​d​e​s​ ​t​h​e​m​,​ ​o​r​ ​i​f​ ​C​a​s​s​i​n​i​ ​c​a​p​t​u​r​e​d​ ​n​o​ ​a​u​d​i​e​n​c​e​ ​a​t​ ​a​l​l​.
+			 */
+			starter_not_included: string
 			/**
 			 * A​p​p​l​i​e​s​ ​t​o​ ​r​e​c​o​r​d​i​n​g​s​ ​t​h​a​t​ ​s​t​a​r​t​ ​a​f​t​e​r​ ​y​o​u​ ​s​a​v​e​.​ ​R​e​c​o​r​d​i​n​g​s​ ​i​n​ ​p​r​o​g​r​e​s​s​ ​o​r​ ​a​l​r​e​a​d​y​ ​p​u​b​l​i​s​h​e​d​ ​k​e​e​p​ ​t​h​e​ ​a​u​d​i​e​n​c​e​ ​t​h​e​y​ ​h​a​d​.
 			 */
@@ -13107,10 +13119,6 @@ export type TranslationFunctions = {
 				 */
 				audience_moderators_description: () => LocalizedString
 				/**
-				 * The person who started the recording always receives it.
-				 */
-				audience_moderators_starter: () => LocalizedString
-				/**
 				 * In a one-to-one conversation, both people receive it.
 				 */
 				audience_moderators_one_to_one: () => LocalizedString
@@ -13126,6 +13134,22 @@ export type TranslationFunctions = {
 				 * No message is posted in the Talk room's chat, because the whole room would see the recording's title and link.
 				 */
 				audience_chat_skipped: () => LocalizedString
+				/**
+				 * Always include the person who started the recording
+				 */
+				always_include_starter_label: () => LocalizedString
+				/**
+				 * The room owner is the starter for automatic recordings. When off, a recording goes only to the chosen audience; the starter still receives it when Cassini captured no audience.
+				 */
+				always_include_starter_description: () => LocalizedString
+				/**
+				 * The person who started the recording always receives it.
+				 */
+				starter_included: () => LocalizedString
+				/**
+				 * The person who started the recording receives it only if the captured audience includes them, or if Cassini captured no audience at all.
+				 */
+				starter_not_included: () => LocalizedString
 				/**
 				 * Applies to recordings that start after you save. Recordings in progress or already published keep the audience they had.
 				 */

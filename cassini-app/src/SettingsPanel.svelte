@@ -119,6 +119,8 @@
   let retainVideo = false;
   let shareAudience: ShareAudience = "room";
   let savedShareAudience: ShareAudience = "room";
+  let shareWithStarter = true;
+  let savedShareWithStarter = true;
   let sourceRetention: "storage-policy" | "delete-after-processing" = "storage-policy";
   let savedSourceRetention = "storage-policy";
   let savedRetainVideo = false;
@@ -359,6 +361,8 @@
     retainVideo = next.retain_video === true;
     shareAudience = next.share_audience === "attendees" || next.share_audience === "moderators" ? next.share_audience : "room";
     savedShareAudience = shareAudience;
+    shareWithStarter = next.share_with_starter !== false;
+    savedShareWithStarter = shareWithStarter;
     sourceRetention = next.source_retention ?? "storage-policy";
     savedSourceRetention = sourceRetention;
     savedRetainVideo = retainVideo;
@@ -425,6 +429,7 @@
             transcription_enabled: transcriptionEnabled,
             retain_video: retainVideo,
             share_audience: shareAudience,
+            share_with_starter: shareWithStarter,
             active_model: activeModel,
             active_revision: activeRevision,
             ...(quality !== savedQuality ? { quality } : {}),
@@ -693,6 +698,7 @@
     settings !== null &&
     (sourceRetention !== savedSourceRetention || retainVideo !== savedRetainVideo || JSON.stringify([transcriptionEnabled,activeModel,activeRevision]) !== savedTranscription ||
       shareAudience !== savedShareAudience ||
+      shareWithStarter !== savedShareWithStarter ||
       meetingFormat !== savedMeetingFormat ||
       quality !== savedQuality ||
       deviceOverride !== savedDeviceOverride ||
@@ -774,7 +780,7 @@
      component untouched and keeps the cross-link a property of the layout that
      places the two sections, which is where it belongs. -->
 <div id="recording-storage">
-  <DirectShareAccessPanel {operatorClient} {shareAudience} onShareAudienceChange={(value) => { shareAudience = value; }} disabled={saving} settingsLoaded={settings !== null} />
+  <DirectShareAccessPanel {operatorClient} {shareAudience} {shareWithStarter} onShareAudienceChange={(value) => { shareAudience = value; }} onShareWithStarterChange={(value) => { shareWithStarter = value; }} disabled={saving} settingsLoaded={settings !== null} />
 </div>
 
   {#if loadError}

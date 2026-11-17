@@ -260,3 +260,83 @@ func TestTalkNotificationSkippedInModeratorMode(t *testing.T) {
 		t.Fatalf("state = %q, want succeeded", job.State)
 	}
 }
+
+// The always-include-the-starter rule is now an option. With it off, an
+// attendee recording goes only to the captured attendees.
+func TestAttendeeAudienceCanExcludeTheStarter(t *testing.T) {
+	f := newDirectPublishFixture(t, []sharePrincipal{{Type: "user", ID: "olga"}})
+	ctx := context.Background()
+	if _, err := f.rt.store.db.Exec(`UPDATE jobs SET audience_mode = 'attendees' WHERE id = ?`, directPublishJob); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.rt.store.SetJobTalkBinding(ctx, directPublishJob, `{"backend_url":"https://talk.example","room_token":"room1","owner":"alice","room_public":false,"share_with_starter":false}`); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := f.sink.audienceForJob(ctx, directPublishJob); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.deliver(); err != nil {
+		t.Fatalf("Deliver() error = %v", err)
+	}
+	if f.shared("0/alice") {
+		t.Fatalf("starter shared though the option is off: %v", f.posted)
+	}
+	if !f.shared("0/olga") {
+		t.Fatalf("attendee not shared: %v", f.posted)
+	}
+}
+
+// With the option on (the historical default), the starter is still added.
+func TestAttendeeAudienceStillIncludesTheStarterByDefault(t *testing.T) {
+	f := newDirectPublishFixture(t, []sharePrincipal{{Type: "user", ID: "olga"}})
+	if _, err := f.rt.store.db.Exec(`UPDATE jobs SET audience_mode = 'attendees' WHERE id = ?`, directPublishJob); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.deliver(); err != nil {
+		t.Fatalf("Deliver() error = %v", err)
+	}
+	if !f.shared("0/alice") || !f.shared("0/olga") {
+		t.Fatalf("audience = %v, want starter and attendee", f.posted)
+	}
+}
+
+// A recording with no captured roster must still land somewhere: the starter
+// receives it even when the option is off.
+func TestStarterIsTheFallbackWhenNoAudienceWasCaptured(t *testing.T) {
+	f := newDirectPublishFixture(t, nil)
+	if _, err := f.rt.store.db.Exec(`UPDATE jobs SET room_audience = NULL, room_audience_at = NULL, audience_mode = 'attendees' WHERE id = ?`, directPublishJob); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.rt.store.SetJobTalkBinding(context.Background(), directPublishJob, `{"backend_url":"https://talk.example","room_token":"room1","owner":"alice","room_public":false,"share_with_starter":false}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.deliver(); err != nil {
+		t.Fatalf("Deliver() error = %v", err)
+	}
+	if !f.shared("0/alice") || len(f.posted) != 1 {
+		t.Fatalf("posted = %v, want only the starter", f.posted)
+	}
+}
+
+// The job's binding freezes the option at start: changing the setting while
+// the recording runs must not widen an audience later.
+func TestAudienceUsesTheStarterOptionFrozenOnTheJob(t *testing.T) {
+	f := newDirectPublishFixture(t, []sharePrincipal{{Type: "user", ID: "olga"}})
+	ctx := context.Background()
+	if _, err := f.rt.store.db.Exec(`UPDATE jobs SET audience_mode = 'attendees' WHERE id = ?`, directPublishJob); err != nil {
+		t.Fatal(err)
+	}
+	// The recording started with the option off.
+	if err := f.rt.store.SetJobTalkBinding(ctx, directPublishJob, `{"backend_url":"https://talk.example","room_token":"room1","owner":"alice","room_public":false,"share_with_starter":false}`); err != nil {
+		t.Fatal(err)
+	}
+	// The administrator turns it back on, but this recording keeps its choice.
+	f.rt.settings = STTSettings{ShareWithStarter: boolPointer(true)}
+	audience, _, err := f.sink.audienceForJob(ctx, directPublishJob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(audience) != 1 || audience[0].ID != "olga" {
+		t.Fatalf("audience = %+v, want only the captured attendee", audience)
+	}
+}
