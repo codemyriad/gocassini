@@ -9,13 +9,21 @@ import (
 	"strings"
 )
 
-// Import jobs (D-828): one durable row per uploaded portable meeting file.
+// Import jobs (D-828): one durable row per file added to the archive — a
+// portable meeting, or a raw audio recording Cassini builds into one.
 //
 // The row is both the work queue entry and, once done, the permanent import
 // record: who brought the meeting in, when, from which source file, and which
 // delivered name it became. Done rows are the second retention-provenance
 // source beside recording jobs (see retentionInventory), so they are never
 // deleted — "clear completed" in the viewer is a display action only.
+
+// Import kinds. A portable meeting arrives complete; an audio recording is
+// built into one here first, which is the alternate way to create a meeting.
+const (
+	importKindMeeting = "meeting"
+	importKindAudio   = "audio"
+)
 
 const (
 	importStateUploading    = "uploading"
@@ -57,20 +65,23 @@ type importPrincipal struct {
 const importCLIRecovery = "This import uses a local CLI file. Run import-meeting again with the source file, or upload it as a new import."
 
 type ImportJob struct {
-	Origin        string         `json:"origin"`
-	ExpectedBytes int64          `json:"expectedBytes,omitempty"`
-	StagingState  string         `json:"stagingState,omitempty"`
-	ClearedAt     string         `json:"clearedAt,omitempty"`
-	ID            string         `json:"id"`
-	BatchID       string         `json:"batchId"`
-	CreatedBy     string         `json:"createdBy"`
-	SourceName    string         `json:"sourceName"`
-	StagedPath    string         `json:"stagedPath"`
-	Format        string         `json:"format,omitempty"`
-	State         string         `json:"state"`
-	Phase         string         `json:"phase,omitempty"`
-	Error         string         `json:"error,omitempty"`
-	Sharing       importAudience `json:"sharing"`
+	Origin        string `json:"origin"`
+	ExpectedBytes int64  `json:"expectedBytes,omitempty"`
+	StagingState  string `json:"stagingState,omitempty"`
+	ClearedAt     string `json:"clearedAt,omitempty"`
+	ID            string `json:"id"`
+	BatchID       string `json:"batchId"`
+	CreatedBy     string `json:"createdBy"`
+	SourceName    string `json:"sourceName"`
+	StagedPath    string `json:"stagedPath"`
+	// Kind is "meeting" for a portable Cassini file, or "audio" for a raw
+	// recording Cassini transcribes and summarises before delivery.
+	Kind    string         `json:"kind"`
+	Format  string         `json:"format,omitempty"`
+	State   string         `json:"state"`
+	Phase   string         `json:"phase,omitempty"`
+	Error   string         `json:"error,omitempty"`
+	Sharing importAudience `json:"sharing"`
 	// Provenance read from the file at validation.
 	ContentID              string `json:"contentId,omitempty"`
 	SourceRoomID           string `json:"sourceRoomId,omitempty"`
@@ -88,12 +99,12 @@ type ImportJob struct {
 // database field that could disagree with the source path.
 func (j ImportJob) isCLI() bool { return strings.HasPrefix(j.StagedPath, "local:") }
 
-const importJobColumns = `id,batch_id,created_by,source_name,staged_path,format,state,phase,error,audience_json,content_id,source_room_id,meeting_created_at_utc,meeting_recorded_at_local,delivered_name,file_id,imported_at,created_at,updated_at,expected_bytes,staging_state,cleared_at`
+const importJobColumns = `id,batch_id,created_by,source_name,staged_path,kind,format,state,phase,error,audience_json,content_id,source_room_id,meeting_created_at_utc,meeting_recorded_at_local,delivered_name,file_id,imported_at,created_at,updated_at,expected_bytes,staging_state,cleared_at`
 
 func scanImportJob(scan func(dest ...any) error) (ImportJob, error) {
 	var j ImportJob
 	var audience string
-	err := scan(&j.ID, &j.BatchID, &j.CreatedBy, &j.SourceName, &j.StagedPath, &j.Format, &j.State, &j.Phase, &j.Error, &audience,
+	err := scan(&j.ID, &j.BatchID, &j.CreatedBy, &j.SourceName, &j.StagedPath, &j.Kind, &j.Format, &j.State, &j.Phase, &j.Error, &audience,
 		&j.ContentID, &j.SourceRoomID, &j.MeetingCreatedAtUTC, &j.MeetingRecordedAtLocal,
 		&j.DeliveredName, &j.FileID, &j.ImportedAt, &j.CreatedAt, &j.UpdatedAt, &j.ExpectedBytes, &j.StagingState, &j.ClearedAt)
 	if err != nil {
@@ -101,6 +112,9 @@ func scanImportJob(scan func(dest ...any) error) (ImportJob, error) {
 	}
 	if err := json.Unmarshal([]byte(audience), &j.Sharing); err != nil {
 		return ImportJob{}, fmt.Errorf("import job %s: decode sharing: %w", j.ID, err)
+	}
+	if j.Kind == "" {
+		j.Kind = importKindMeeting
 	}
 	j.Origin = "upload"
 	if j.isCLI() {
@@ -130,14 +144,21 @@ func (s *Store) CreateImportJobs(ctx context.Context, jobs []ImportJob) error {
 		if j.State == importStateUploading {
 			state = j.State
 		}
+		kind := j.Kind
+		if kind == "" {
+			kind = importKindMeeting
+		}
+		if kind != importKindMeeting && kind != importKindAudio {
+			return fmt.Errorf("invalid import kind %q", kind)
+		}
 		audience, err := json.Marshal(j.Sharing)
 		if err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO import_jobs(id,batch_id,created_by,source_name,staged_path,state,audience_json,created_at,updated_at,expected_bytes,staging_state)
-			 VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
-			j.ID, j.BatchID, j.CreatedBy, j.SourceName, j.StagedPath, state, string(audience), now, now, j.ExpectedBytes, j.StagingState); err != nil {
+			`INSERT INTO import_jobs(id,batch_id,created_by,source_name,staged_path,kind,state,audience_json,created_at,updated_at,expected_bytes,staging_state)
+			 VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+			j.ID, j.BatchID, j.CreatedBy, j.SourceName, j.StagedPath, kind, state, string(audience), now, now, j.ExpectedBytes, j.StagingState); err != nil {
 			return err
 		}
 	}

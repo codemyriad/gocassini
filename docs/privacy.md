@@ -4,9 +4,10 @@ This page is the single reference for an administrator deciding whether Cassini
 is acceptable for their instance: what data Cassini stores, where it lives,
 what (if anything) leaves your infrastructure, and what happens on deletion.
 
-Cassini records Nextcloud Talk meetings, transcribes them, optionally summarizes
-them, and publishes a readable archive. Recording and transcription happen
-entirely within your own infrastructure. The only steps that send data to a third
+Cassini records Nextcloud Talk meetings — or builds one from an audio recording
+you upload — transcribes them, optionally summarizes them, and publishes a
+readable archive. Recording, upload, and transcription happen entirely within
+your own infrastructure. The only steps that send data to a third
 party are the ones that call a language model — the automatic meeting summary,
 the same summary written again after somebody edits a meeting's speakers, and an
 insight somebody asks for in the app. All are optional, all are off until you
@@ -17,6 +18,7 @@ configure an LLM endpoint, and all send text, never audio.
 | Step                           | Where it runs                                             | Data leaves your infrastructure? |
 | ------------------------------ | --------------------------------------------------------- | -------------------------------- |
 | Recording the call             | Local (the Cassini container)                             | No                               |
+| Uploading a recording          | Local (browser → your Nextcloud Files → the Cassini container) | No                          |
 | Transcription (speech-to-text) | Local (Parakeet / Silero VAD models)                      | No                               |
 | Speaker labels                 | Local (from Talk signaling, not audio analysis)           | No                               |
 | Separating voices on a shared device | Local, only when someone asks for one participant (Nemotron diarization) | No                   |

@@ -5706,6 +5706,30 @@ export type NamespaceViewerTranslation = {
 			 * I​m​p​o​r​t​e​d
 			 */
 			imported_badge: string
+			/**
+			 * U​p​l​o​a​d​e​d​ ​b​y​ ​{​n​a​m​e​}​ ​o​n​ ​{​d​a​t​e​}
+			 * @param {unknown} date
+			 * @param {unknown} name
+			 */
+			uploaded_by_on: RequiredParams<'date' | 'name'>
+			/**
+			 * U​p​l​o​a​d​e​d​ ​b​y​ ​{​n​a​m​e​}
+			 * @param {unknown} name
+			 */
+			uploaded_by: RequiredParams<'name'>
+			/**
+			 * U​p​l​o​a​d​e​d​ ​o​n​ ​{​d​a​t​e​}
+			 * @param {unknown} date
+			 */
+			uploaded_on: RequiredParams<'date'>
+			/**
+			 * U​p​l​o​a​d​e​d​ ​i​n​t​o​ ​t​h​i​s​ ​a​r​c​h​i​v​e
+			 */
+			uploaded_here: string
+			/**
+			 * U​p​l​o​a​d​e​d
+			 */
+			uploaded_badge: string
 			search_label: {
 				meetings: {
 					/**
@@ -6443,7 +6467,7 @@ export type NamespaceViewerTranslation = {
 			 */
 			close: string
 			/**
-			 * A​d​d​ ​m​e​e​t​i​n​g​s​ ​d​o​w​n​l​o​a​d​e​d​ ​f​r​o​m​ ​C​a​s​s​i​n​i​,​ ​h​e​r​e​ ​o​r​ ​o​n​ ​a​n​o​t​h​e​r​ ​N​e​x​t​c​l​o​u​d​:​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​ ​(​.​o​p​u​s​)​,​ ​o​r​ ​j​u​s​t​ ​i​t​s​ ​t​r​a​n​s​c​r​i​p​t​ ​(​.​j​s​o​n​)​.
+			 * A​d​d​ ​a​ ​m​e​e​t​i​n​g​ ​d​o​w​n​l​o​a​d​e​d​ ​f​r​o​m​ ​C​a​s​s​i​n​i​ ​—​ ​i​t​s​ ​r​e​c​o​r​d​i​n​g​ ​(​.​o​p​u​s​)​ ​o​r​ ​j​u​s​t​ ​i​t​s​ ​t​r​a​n​s​c​r​i​p​t​ ​(​.​j​s​o​n​)​ ​—​ ​o​r​ ​u​p​l​o​a​d​ ​a​n​ ​a​u​d​i​o​ ​r​e​c​o​r​d​i​n​g​ ​a​n​d​ ​l​e​t​ ​C​a​s​s​i​n​i​ ​t​r​a​n​s​c​r​i​b​e​ ​a​n​d​ ​s​u​m​m​a​r​i​s​e​ ​i​t​.
 			 */
 			intro: string
 			/**
@@ -6451,7 +6475,7 @@ export type NamespaceViewerTranslation = {
 			 */
 			drop_label: string
 			/**
-			 * D​r​o​p​ ​f​i​l​e​s​ ​h​e​r​e
+			 * D​r​o​p​ ​m​e​e​t​i​n​g​s​ ​o​r​ ​a​u​d​i​o​ ​h​e​r​e
 			 */
 			drop_here: string
 			/**
@@ -6463,7 +6487,7 @@ export type NamespaceViewerTranslation = {
 			 */
 			choose_files: string
 			/**
-			 * S​p​e​a​k​e​r​ ​n​a​m​e​s​,​ ​t​a​g​s​ ​a​n​d​ ​t​h​e​ ​s​u​m​m​a​r​y​ ​c​o​m​e​ ​w​i​t​h​ ​t​h​e​ ​f​i​l​e​.​ ​Y​o​u​ ​c​h​o​o​s​e​ ​w​h​o​ ​c​a​n​ ​s​e​e​ ​e​a​c​h​ ​m​e​e​t​i​n​g​ ​b​e​f​o​r​e​ ​i​t​ ​i​s​ ​a​d​d​e​d​.
+			 * S​p​e​a​k​e​r​ ​n​a​m​e​s​,​ ​t​a​g​s​ ​a​n​d​ ​t​h​e​ ​s​u​m​m​a​r​y​ ​c​o​m​e​ ​w​i​t​h​ ​a​ ​C​a​s​s​i​n​i​ ​f​i​l​e​.​ ​A​u​d​i​o​ ​i​s​ ​t​r​a​n​s​c​r​i​b​e​d​ ​a​n​d​ ​s​u​m​m​a​r​i​s​e​d​ ​h​e​r​e​,​ ​o​n​c​e​ ​a​ ​m​o​d​e​l​ ​i​s​ ​c​o​n​f​i​g​u​r​e​d​.​ ​Y​o​u​ ​c​h​o​o​s​e​ ​w​h​o​ ​c​a​n​ ​s​e​e​ ​e​a​c​h​ ​m​e​e​t​i​n​g​ ​b​e​f​o​r​e​ ​i​t​ ​i​s​ ​a​d​d​e​d​.
 			 */
 			note: string
 			/**
@@ -6479,7 +6503,7 @@ export type NamespaceViewerTranslation = {
 			 */
 			files_label: string
 			/**
-			 * N​o​t​ ​a​ ​m​e​e​t​i​n​g​ ​f​i​l​e​ ​f​r​o​m​ ​C​a​s​s​i​n​i​,​ ​s​o​ ​i​t​ ​w​a​s​ ​s​k​i​p​p​e​d​.
+			 * N​o​t​ ​a​ ​C​a​s​s​i​n​i​ ​m​e​e​t​i​n​g​ ​f​i​l​e​ ​o​r​ ​a​ ​r​e​a​d​a​b​l​e​ ​a​u​d​i​o​ ​r​e​c​o​r​d​i​n​g​,​ ​s​o​ ​i​t​ ​w​a​s​ ​s​k​i​p​p​e​d​.
 			 */
 			not_a_meeting: string
 			/**
@@ -6590,6 +6614,10 @@ export type NamespaceViewerTranslation = {
 			 */
 			running_adding: string
 			/**
+			 * T​r​a​n​s​c​r​i​b​i​n​g​…
+			 */
+			running_transcribing: string
+			/**
 			 * U​p​l​o​a​d​ ​d​i​d​n​'​t​ ​f​i​n​i​s​h
 			 */
 			settled_upload_failed: string
@@ -6614,9 +6642,17 @@ export type NamespaceViewerTranslation = {
 			 */
 			settled_imported: string
 			/**
+			 * M​e​e​t​i​n​g​ ​c​r​e​a​t​e​d
+			 */
+			settled_created: string
+			/**
 			 * T​r​a​n​s​c​r​i​p​t​ ​o​n​l​y
 			 */
 			preview_transcript_only: string
+			/**
+			 * A​u​d​i​o​ ​r​e​c​o​r​d​i​n​g
+			 */
+			preview_audio: string
 			/**
 			 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​s​p​e​a​k​e​r​|​s​p​e​a​k​e​r​s​}​}
 			 * @param {number} count
@@ -14040,6 +14076,26 @@ export type TranslationFunctions = {
 				 * Imported
 				 */
 				imported_badge: () => LocalizedString
+				/**
+				 * Uploaded by {name} on {date}
+				 */
+				uploaded_by_on: (arg: { date: unknown, name: unknown }) => LocalizedString
+				/**
+				 * Uploaded by {name}
+				 */
+				uploaded_by: (arg: { name: unknown }) => LocalizedString
+				/**
+				 * Uploaded on {date}
+				 */
+				uploaded_on: (arg: { date: unknown }) => LocalizedString
+				/**
+				 * Uploaded into this archive
+				 */
+				uploaded_here: () => LocalizedString
+				/**
+				 * Uploaded
+				 */
+				uploaded_badge: () => LocalizedString
 				search_label: {
 					meetings: {
 						/**
@@ -14725,7 +14781,7 @@ export type TranslationFunctions = {
 				 */
 				close: () => LocalizedString
 				/**
-				 * Add meetings downloaded from Cassini, here or on another Nextcloud: the recording (.opus), or just its transcript (.json).
+				 * Add a meeting downloaded from Cassini — its recording (.opus) or just its transcript (.json) — or upload an audio recording and let Cassini transcribe and summarise it.
 				 */
 				intro: () => LocalizedString
 				/**
@@ -14733,7 +14789,7 @@ export type TranslationFunctions = {
 				 */
 				drop_label: () => LocalizedString
 				/**
-				 * Drop files here
+				 * Drop meetings or audio here
 				 */
 				drop_here: () => LocalizedString
 				/**
@@ -14745,7 +14801,7 @@ export type TranslationFunctions = {
 				 */
 				choose_files: () => LocalizedString
 				/**
-				 * Speaker names, tags and the summary come with the file. You choose who can see each meeting before it is added.
+				 * Speaker names, tags and the summary come with a Cassini file. Audio is transcribed and summarised here, once a model is configured. You choose who can see each meeting before it is added.
 				 */
 				note: () => LocalizedString
 				/**
@@ -14761,7 +14817,7 @@ export type TranslationFunctions = {
 				 */
 				files_label: () => LocalizedString
 				/**
-				 * Not a meeting file from Cassini, so it was skipped.
+				 * Not a Cassini meeting file or a readable audio recording, so it was skipped.
 				 */
 				not_a_meeting: () => LocalizedString
 				/**
@@ -14865,6 +14921,10 @@ export type TranslationFunctions = {
 				 */
 				running_adding: () => LocalizedString
 				/**
+				 * Transcribing…
+				 */
+				running_transcribing: () => LocalizedString
+				/**
 				 * Upload didn't finish
 				 */
 				settled_upload_failed: () => LocalizedString
@@ -14889,9 +14949,17 @@ export type TranslationFunctions = {
 				 */
 				settled_imported: () => LocalizedString
 				/**
+				 * Meeting created
+				 */
+				settled_created: () => LocalizedString
+				/**
 				 * Transcript only
 				 */
 				preview_transcript_only: () => LocalizedString
+				/**
+				 * Audio recording
+				 */
+				preview_audio: () => LocalizedString
 				/**
 				 * {count|num} {{speaker|speakers}}
 				 */

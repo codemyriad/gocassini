@@ -55,7 +55,16 @@ type meetingImportRequest struct {
 	ImportID  string
 	CreatedBy string
 	LocalPath string
+	Title     string
 	Audience  []sharePrincipal
+	// RoomID and RoomName file the delivered meeting in the catalog. Empty
+	// means the historical "Imported meetings" bucket.
+	RoomID   string
+	RoomName string
+	// Provenance names the catalog stamp field: "imported" for a portable file
+	// brought from elsewhere, "uploaded" for audio Cassini built here. Empty
+	// means imported.
+	Provenance string
 }
 
 // meetingImportResult is what the ingest settled.
@@ -227,7 +236,8 @@ func (imp *meetingImporter) run(ctx context.Context, req meetingImportRequest, r
 	result.ImportedAtUTC = nowUTCString()
 
 	if s.rt.meetingMetadata != nil {
-		stamped, err := stampImportedEntry(entry, req.CreatedBy, result.ImportedAtUTC)
+		roomID, roomName := importRoom(req)
+		stamped, err := stampImportedEntry(entry, req.CreatedBy, result.ImportedAtUTC, roomID, roomName, importProvenance(req))
 		if err != nil {
 			return result, err
 		}
@@ -362,8 +372,15 @@ func (imp *meetingImporter) runCassini(ctx context.Context, args []string) error
 // for Opus input); and an environment without the operator's own credentials,
 // since any logged-in caller can make the operator run this (D-700).
 func cassiniCommand(ctx context.Context, bin string, args ...string) *exec.Cmd {
+	return cassiniCommandEnv(ctx, bin, contextChildEnv(os.Environ()), args)
+}
+
+// cassiniCommandEnv is cassiniCommand with an explicit environment, for the
+// audio build that must receive the operator's configured speech and summary
+// settings. Everything else about the child is identical.
+func cassiniCommandEnv(ctx context.Context, bin string, env []string, args []string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, bin, args...)
-	cmd.Env = contextChildEnv(os.Environ())
+	cmd.Env = env
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return killProcessGroup(cmd.Process) }
 	return cmd
@@ -411,12 +428,36 @@ const (
 	importedRoomName = "Imported meetings"
 )
 
+// importRoom names the catalog bucket an import lands in. The default is the
+// historical Imported meetings room; the audio path passes its own.
+func importRoom(req meetingImportRequest) (string, string) {
+	roomID, roomName := strings.TrimSpace(req.RoomID), strings.TrimSpace(req.RoomName)
+	if roomID == "" {
+		roomID = importedRoomID
+	}
+	if roomName == "" {
+		roomName = importedRoomName
+	}
+	return roomID, roomName
+}
+
+// importProvenance chooses the catalog stamp field. It is separate from the
+// room: one says who added the meeting, the other says where it is filed.
+func importProvenance(req meetingImportRequest) string {
+	switch strings.TrimSpace(req.Provenance) {
+	case "uploaded":
+		return "uploaded"
+	default:
+		return "imported"
+	}
+}
+
 // stampImportedEntry records the local-only provenance on the catalog entry:
-// who brought the meeting in and when, and files it under the Imported
-// meetings room in place of the source room. Everything else the entry
-// carries came out of the file. Visible to everyone the meeting is shared with
-// — it is attribution, the same way marks carry their authors.
-func stampImportedEntry(entry json.RawMessage, importedBy, importedAtUTC string) (json.RawMessage, error) {
+// who brought the meeting in and when, and files it under the chosen room in
+// place of the source room. Everything else the entry carries came out of the
+// file. Visible to everyone the meeting is shared with — it is attribution,
+// the same way marks carry their authors.
+func stampImportedEntry(entry json.RawMessage, importedBy, importedAtUTC, roomID, roomName, provenance string) (json.RawMessage, error) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(entry, &fields); err != nil {
 		return nil, err
@@ -425,17 +466,17 @@ func stampImportedEntry(entry json.RawMessage, importedBy, importedAtUTC string)
 	if err != nil {
 		return nil, err
 	}
-	fields["imported"] = stamp
-	roomID, err := json.Marshal(importedRoomID)
+	fields[provenance] = stamp
+	encodedRoomID, err := json.Marshal(roomID)
 	if err != nil {
 		return nil, err
 	}
-	roomName, err := json.Marshal(importedRoomName)
+	encodedRoomName, err := json.Marshal(roomName)
 	if err != nil {
 		return nil, err
 	}
-	fields["roomId"] = roomID
-	fields["roomName"] = roomName
+	fields["roomId"] = encodedRoomID
+	fields["roomName"] = encodedRoomName
 	return json.Marshal(fields)
 }
 

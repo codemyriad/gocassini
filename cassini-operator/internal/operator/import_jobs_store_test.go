@@ -181,7 +181,7 @@ func TestStampImportedEntry(t *testing.T) {
 		`{"id":"01X","title":"Retro","roomId":"rm_abc","roomName":"Design"}`,
 		`{"id":"01X","title":"Retro"}`,
 	} {
-		stamped, err := stampImportedEntry(json.RawMessage(entry), "alice", "2026-10-15T10:00:00Z")
+		stamped, err := stampImportedEntry(json.RawMessage(entry), "alice", "2026-10-15T10:00:00Z", importedRoomID, importedRoomName, "imported")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -202,6 +202,32 @@ func TestStampImportedEntry(t *testing.T) {
 			fields.Imported.By != "alice" || fields.Imported.AtUTC != "2026-10-15T10:00:00Z" {
 			t.Fatalf("stamp of %s: %+v", entry, fields)
 		}
+	}
+}
+
+// Audio-built meetings carry the uploaded stamp, not the imported one: the
+// badge and tooltip say how the meeting got here.
+func TestStampUploadedEntryUsesUploadedProvenance(t *testing.T) {
+	stamped, err := stampImportedEntry(json.RawMessage(`{"id":"01X","title":"Standup"}`), "alice", "2026-10-15T10:00:00Z", uploadedRoomID, uploadedRoomName, "uploaded")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields struct {
+		RoomID   string `json:"roomId"`
+		RoomName string `json:"roomName"`
+		Uploaded struct {
+			By    string `json:"by"`
+			AtUTC string `json:"atUtc"`
+		} `json:"uploaded"`
+		Imported json.RawMessage `json:"imported"`
+	}
+	if err := json.Unmarshal(stamped, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if fields.RoomID != uploadedRoomID || fields.RoomName != uploadedRoomName ||
+		fields.Uploaded.By != "alice" || fields.Uploaded.AtUTC != "2026-10-15T10:00:00Z" ||
+		len(fields.Imported) != 0 {
+		t.Fatalf("uploaded stamp: %+v", fields)
 	}
 }
 

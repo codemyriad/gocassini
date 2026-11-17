@@ -94,6 +94,10 @@ export interface MeetingCatalogEntry {
   // provenance — and is visible to everyone the meeting is shared with, the
   // same way marks travel with their authors. Absent on recordings made here.
   imported?: { by?: string; atUtc?: string };
+  // Stamped for a meeting Cassini built from an uploaded audio recording.
+  // Same attribution shape as `imported`, different act: the meeting was
+  // created here, not brought in from another archive.
+  uploaded?: { by?: string; atUtc?: string };
 }
 
 export interface MeetingCatalog {

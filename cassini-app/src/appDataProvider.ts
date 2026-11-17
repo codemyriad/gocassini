@@ -253,8 +253,13 @@ export class AppDataProvider extends StaticCatalogProvider {
   // writes into the caller's own Nextcloud Files and the jobs run on the
   // operator, neither of which a standalone export has, so the Import tab is
   // absent everywhere else rather than present and failing.
-  stageImportUpload(file: File, onProgress?: (sentBytes: number, totalBytes: number) => void, sharing?: ImportSharingRequest): Promise<string> {
-    return davStageImportUpload(file, onProgress, sharing);
+  stageImportUpload(
+    file: File,
+    onProgress?: (sentBytes: number, totalBytes: number) => void,
+    sharing?: ImportSharingRequest,
+    kind?: "meeting" | "audio",
+  ): Promise<string> {
+    return davStageImportUpload(file, onProgress, sharing, kind);
   }
 
   startImports(files: ImportFileRequest[]): Promise<ImportJobRecord[]> {

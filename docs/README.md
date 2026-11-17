@@ -64,6 +64,7 @@ Start here if you are about to work with Cassini.
 - **[Mental model](./mental-model.md)** — the smallest useful system picture and the file-driven pipeline.
 - **[System architecture](./architecture.md)** — the modules, the language each is in, and the data contracts between them.
 - **[Core pipeline](./core-pipeline.md)** — the stage-by-stage flow: **record → remux → transcribe → optional LLM summary → publish → view**.
+- **[Create a meeting from audio](./audio-meeting-upload.md)** — upload a recording and let Cassini transcribe, summarise and publish it.
 - **[Portable meeting format](./portable-meeting-format.md)** — the single self-contained `.opus` meeting file (audio + embedded transcript, integrity-hashed).
 - **[Audio & media glossary](./audio-glossary.md)** — containers, codecs, RTP, VAD/STT, timestamps, integrity.
 

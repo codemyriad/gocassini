@@ -112,12 +112,13 @@ export async function stageImportUpload(
   file: File,
   onProgress?: (sentBytes: number, totalBytes: number) => void,
   sharing: ImportSharingRequest = { share: false, audience: [] },
+  kind: "meeting" | "audio" = "meeting",
 ): Promise<string> {
   const name = stagedName(file.name);
   const stagedPath = `${STAGING_DIR}/${name}`;
   const prepared = await importsRequest<{ imports: ImportJobRecord[] }>("", {
     prepare: true,
-    files: [{ stagedPath, sourceName: file.name, expectedBytes: file.size, ...sharing }],
+    files: [{ stagedPath, sourceName: file.name, expectedBytes: file.size, kind, ...sharing }],
   });
   const job = prepared.imports[0];
   if (!job) throw new Error(get(LL).app.shell.imports_client.register_failed());
