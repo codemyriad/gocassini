@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -404,16 +405,23 @@ func TestReplacedModelIsRemovedOnlyUnderTheInferenceLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	refused := make(chan struct{})
+	var once sync.Once
+	ctx := transcribe.WithInferenceLockBusy(context.Background(), func() { once.Do(func() { close(refused) }) })
 	done := make(chan int, 1)
 	var stderr bytes.Buffer
 	go func() {
 		var stdout bytes.Buffer
-		done <- runModels(context.Background(), []string{"probe", "fluid-speech-pro-0.6b-int8", "--cache-root", root}, &stdout, &stderr)
+		done <- runModels(ctx, []string{"probe", "fluid-speech-pro-0.6b-int8", "--cache-root", root}, &stdout, &stderr)
 	}()
+	// Wait until the probe has passed and been refused the inference lock:
+	// from then on, until unlock, it must not remove anything.
 	select {
+	case <-refused:
 	case code := <-done:
-		t.Fatalf("probe finished (%d) while a build held the inference lock: %s", code, stderr.String())
-	case <-time.After(300 * time.Millisecond):
+		t.Fatalf("probe finished (%d) without waiting for the inference lock a build held: %s", code, stderr.String())
+	case <-time.After(10 * time.Second):
+		t.Fatal("the probe never reached the inference lock")
 	}
 	for _, m := range []modelstore.Model{v2, v1, v3} {
 		if _, err := os.Stat(modelstore.New(root).Dir(m)); err != nil {
