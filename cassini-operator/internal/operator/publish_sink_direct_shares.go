@@ -270,8 +270,31 @@ func (s *directSharesPublishSink) audienceForJob(ctx context.Context, jobID stri
 		}
 	}
 	// The starter is a known local account even if Talk's roster omits them.
-	audience = append([]sharePrincipal{{Type: "user", ID: binding.Owner}}, audience...)
+	// Operators can turn this always-on rule off; a recording with no captured
+	// audience still falls back to the starter, so it is never left unshared.
+	// A recording made before this option existed keeps the historical
+	// always-include behaviour; every recording made since freezes its choice.
+	includeStarter := true
+	if binding.ShareWithStarter != nil {
+		includeStarter = *binding.ShareWithStarter
+	}
+	if includeStarter || len(audience) == 0 {
+		if !containsSharePrincipal(audience, sharePrincipal{Type: "user", ID: binding.Owner}) {
+			audience = append([]sharePrincipal{{Type: "user", ID: binding.Owner}}, audience...)
+		}
+	}
 	// A public room's recipients may pass the recording on. Not in moderator
 	// mode: the point of it is that the room does not receive the recording.
 	return audience, binding.Public && mode != shareAudienceModerators, nil
+}
+
+// containsSharePrincipal reports whether a recipient is already in an audience,
+// so the starter is not added twice when Talk's roster named them.
+func containsSharePrincipal(audience []sharePrincipal, want sharePrincipal) bool {
+	for _, principal := range audience {
+		if principal == want {
+			return true
+		}
+	}
+	return false
 }

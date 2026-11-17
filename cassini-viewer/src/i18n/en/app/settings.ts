@@ -279,13 +279,18 @@ const settings = {
     audience_moderators_label: "Only the room's moderators",
     audience_moderators_description:
       "The room's owner and moderators, whether or not they were on the call. Other members of the room do not receive it.",
-    audience_moderators_starter: "The person who started the recording always receives it.",
     audience_moderators_one_to_one: "In a one-to-one conversation, both people receive it.",
     // Heading above the list of what the selected choice does.
     audience_effects_heading: "With this setting",
     audience_late_joiners: "People who join late or leave early are included.",
     audience_chat_skipped:
       "No message is posted in the Talk room's chat, because the whole room would see the recording's title and link.",
+    // The checkbox under the audience choices.
+    always_include_starter_label: "Always include the person who started the recording",
+    always_include_starter_description:
+      "The room owner is the starter for automatic recordings. When off, a recording goes only to the chosen audience; the starter still receives it when Cassini captured no audience.",
+    starter_included: "The person who started the recording always receives it.",
+    starter_not_included: "The person who started the recording receives it only if the captured audience includes them, or if Cassini captured no audience at all.",
     audience_applies:
       "Applies to recordings that start after you save. Recordings in progress or already published keep the audience they had.",
     checking: "Checking recordings setup…",

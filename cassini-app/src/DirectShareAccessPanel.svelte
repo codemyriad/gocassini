@@ -15,8 +15,10 @@
   // The parent owns the saved settings and Save button; this panel edits only
   // its draft. settingsLoaded keeps the radios inert until the draft exists.
   export let shareAudience: ShareAudience = "room";
+  export let shareWithStarter = true;
   export let settingsLoaded = true;
   export let onShareAudienceChange: (value: ShareAudience) => void = () => {};
+  export let onShareWithStarterChange: (value: boolean) => void = () => {};
   let error = "";
   // Confirms a fix made from this panel; a healthy setup otherwise says nothing.
   let fixed = false;
@@ -83,6 +85,13 @@
         </span>
       </label>
     </div>
+    <label class="audience-option starter-option">
+      <input type="checkbox" checked={shareWithStarter} on:change={(event) => onShareWithStarterChange(event.currentTarget.checked)} disabled={disabled || !settingsLoaded} />
+      <span>
+        <strong>{$LL.app.settings.direct_share.always_include_starter_label()}</strong>
+        <span class="audience-description">{$LL.app.settings.direct_share.always_include_starter_description()}</span>
+      </span>
+    </label>
     <div class="audience-effects" role="note">
       <p class="audience-effects-heading">{$LL.app.settings.direct_share.audience_effects_heading()}</p>
       <ul class="access-points">
@@ -92,12 +101,12 @@
           <li>{$LL.app.settings.direct_share.audience_chat_skipped()}</li>
         {:else if shareAudience === "moderators"}
           <li>{$LL.common.audience.point_moderators()}</li>
-          <li>{$LL.app.settings.direct_share.audience_moderators_starter()}</li>
           <li>{$LL.app.settings.direct_share.audience_moderators_one_to_one()}</li>
           <li>{$LL.app.settings.direct_share.audience_chat_skipped()}</li>
         {:else}
           <li>{$LL.common.audience.point_participants()}</li>
         {/if}
+        <li>{shareWithStarter ? $LL.app.settings.direct_share.starter_included() : $LL.app.settings.direct_share.starter_not_included()}</li>
         <li>{$LL.common.audience.point_guests()}</li>
         {#if shareAudience === "moderators"}
           <li>{$LL.common.audience.point_no_reshare()}</li>
