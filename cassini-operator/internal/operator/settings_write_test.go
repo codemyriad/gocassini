@@ -59,7 +59,7 @@ type migrationResult struct {
 func startRetiredPinMigration(t *testing.T, rt *Runtime) <-chan migrationResult {
 	t.Helper()
 	cpuOnly(t)
-	setUltraInt8(t, rt, false, false)
+	setFluidInt8(t, rt, false, false)
 	pinned := STTSettings{TranscriptionEnabled: true, ActiveModel: v3Int8, ActiveRevision: retiredV3Rev, Quality: sttQualityBalanced, DeviceOverride: deviceCPU, Source: sttSourceUser}
 	if err := Save(rt.settingsPath, pinned); err != nil {
 		t.Fatal(err)
@@ -100,7 +100,7 @@ func TestRetiredPinMigrationKeepsAConcurrentSettingsChange(t *testing.T) {
 		if s.TranscriptionEnabled || !slices.Equal(s.TranscriptionTerms, []string{"Cassini"}) {
 			t.Fatalf("%s: the migration overwrote the concurrent change: %+v", name, s)
 		}
-		if s.ActiveModel != modelParakeetUltraInt8 || s.ActiveRevision != ultraInt8Rev {
+		if s.ActiveModel != modelFluidSpeechProInt8 || s.ActiveRevision != fluidInt8Rev {
 			t.Fatalf("%s: pin not moved: %+v", name, s)
 		}
 	}

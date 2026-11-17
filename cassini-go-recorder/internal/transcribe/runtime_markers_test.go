@@ -30,7 +30,7 @@ func TestLinkedCassiniRuntimeRunsParakeetUltra(t *testing.T) {
 	if !strings.Contains(version, "+cassini") {
 		t.Skipf("stock sherpa runtime %q (no Cassini build on this platform)", version)
 	}
-	for _, id := range []ModelID{ModelParakeetUltra, ModelParakeetUltraInt8, ModelParakeet110M} {
+	for _, id := range []ModelID{ModelParakeetUltra, ModelFluidSpeechProInt8, ModelParakeetUltraInt8, ModelParakeet110M} {
 		if err := CheckNativeRuntime(id, version); err != nil {
 			t.Fatalf("Cassini runtime cannot run %s: %v", id, err)
 		}
@@ -65,7 +65,8 @@ func TestRuntimeBase(t *testing.T) {
 	}
 }
 
-// Ultra loads only where the joiner-size TDT detection is; every model needs
+// Ultra loads only where the joiner-size TDT detection is; Fluid Speech Pro,
+// whose encoder url names parakeet-tdt, does not need it. Every model needs
 // the 2.0.1 C API. The boundary policy and its frontend come with the runtime.
 func TestNativeRuntimeGates(t *testing.T) {
 	cases := []struct {
@@ -75,12 +76,15 @@ func TestNativeRuntimeGates(t *testing.T) {
 	}{
 		{ModelParakeetUltra, cassiniRuntimeVersion, ""},
 		{ModelParakeetUltraInt8, cassiniRuntimeVersion, ""},
+		{ModelFluidSpeechProInt8, cassiniRuntimeVersion, ""},
 		{ModelParakeet110M, cassiniRuntimeVersion, ""},
 		{ModelParakeetUltra, stockRuntimeVersion, parakeetTDTJoinerRuntimeMarker},
 		{ModelParakeetUltraInt8, stockRuntimeVersion, parakeetTDTJoinerRuntimeMarker},
+		{ModelFluidSpeechProInt8, stockRuntimeVersion, ""},
 		{ModelParakeet110M, stockRuntimeVersion, ""},
 		{ModelParakeetUltra, legacyCassiniRuntimeVersion, "1.13.7 Cassini runtime"},
 		{ModelParakeetUltraInt8, legacyCassiniRuntimeVersion, "older than the sherpa-onnx 2.0.1 C API"},
+		{ModelFluidSpeechProInt8, legacyCassiniRuntimeVersion, "older than the sherpa-onnx 2.0.1 C API"},
 		{ModelParakeet110M, legacyCassiniRuntimeVersion, "older than the sherpa-onnx 2.0.1 C API"},
 		{ModelParakeet110M, stockLegacyRuntimeVersion, "older than the sherpa-onnx 2.0.1 C API"},
 	}
@@ -93,7 +97,7 @@ func TestNativeRuntimeGates(t *testing.T) {
 			t.Errorf("%s on %q: refusal %v, want one naming %q", c.id, c.version, err, c.refuse)
 		}
 	}
-	for _, id := range []ModelID{ModelParakeetUltra, ModelParakeetUltraInt8} {
+	for _, id := range []ModelID{ModelParakeetUltra, ModelFluidSpeechProInt8, ModelParakeetUltraInt8} {
 		policy, frontend := effectiveVADPolicy(id, cassiniRuntimeVersion, true)
 		if frontend != NativeFrontendNeMoLogGuard || policy != vadDecodePolicyForModel(id) {
 			t.Fatalf("%s on %q: frontend=%q policy=%+v", id, cassiniRuntimeVersion, frontend, policy)

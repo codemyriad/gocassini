@@ -11,7 +11,7 @@ import (
 
 const (
 	v3Int8          = "parakeet-tdt-0.6b-v3-int8"
-	ultraInt8Rev    = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	fluidInt8Rev    = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	retiredV3Rev    = "9999999999999999999999999999999999999999999999999999999999999999"
 	ultraFp32Rev    = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 	installJobTable = "model_install_jobs"
@@ -23,13 +23,13 @@ func cpuOnly(t *testing.T) {
 	stubNVIDIADevice(t, false)
 }
 
-// setUltraInt8 rewrites the inventory with Ultra int8 installed and ready (or
+// setFluidInt8 rewrites the inventory with Fluid Speech Pro int8 installed and ready (or
 // not), as `cassini models list` reports it after (or before) the install.
-func setUltraInt8(t *testing.T, rt *Runtime, installed, ready bool) {
+func setFluidInt8(t *testing.T, rt *Runtime, installed, ready bool) {
 	t.Helper()
 	models := []modelInfo{
 		{ID: modelParakeet110M, Revision: strings.Repeat("a", 64), Device: deviceCPU, Kind: "speech", Installed: true, Ready: true},
-		{ID: modelParakeetUltraInt8, Revision: ultraInt8Rev, Device: deviceCPU, Kind: "speech", Installed: installed, Ready: ready, Replaces: []string{modelParakeetUltraInt8V1, v3Int8}},
+		{ID: modelFluidSpeechProInt8, Revision: fluidInt8Rev, Device: deviceCPU, Kind: "speech", Installed: installed, Ready: ready, Replaces: []string{modelParakeetUltraInt8, modelParakeetUltraInt8V1, v3Int8}},
 		{ID: modelParakeetUltraFp32, Revision: ultraFp32Rev, Device: deviceCPU, Kind: "speech", Replaces: []string{"parakeet-tdt-0.6b-v3"}},
 	}
 	b, _ := json.Marshal(models)
@@ -54,7 +54,7 @@ func onlyModelJob(t *testing.T, rt *Runtime) modelJob {
 func TestRetiredPinMigrationQueuesTheInstallBeforeSavingThePin(t *testing.T) {
 	rt := modelTestRuntime(t)
 	cpuOnly(t)
-	setUltraInt8(t, rt, false, false)
+	setFluidInt8(t, rt, false, false)
 	pinned := STTSettings{TranscriptionEnabled: true, ActiveModel: v3Int8, ActiveRevision: retiredV3Rev, Quality: sttQualityBalanced, Source: sttSourceUser}
 	if err := Save(rt.settingsPath, pinned); err != nil {
 		t.Fatal(err)
@@ -84,10 +84,10 @@ func TestRetiredPinMigrationQueuesTheInstallBeforeSavingThePin(t *testing.T) {
 	if !migrated || err != nil {
 		t.Fatalf("retry migrated=%v err=%v", migrated, err)
 	}
-	if got := rt.currentSettings(); got.ActiveModel != modelParakeetUltraInt8 || got.ActiveRevision != ultraInt8Rev {
+	if got := rt.currentSettings(); got.ActiveModel != modelFluidSpeechProInt8 || got.ActiveRevision != fluidInt8Rev {
 		t.Fatalf("settings %+v", got)
 	}
-	if j := onlyModelJob(t, rt); j.Model != modelParakeetUltraInt8 || j.Revision != ultraInt8Rev || j.State != "queued" {
+	if j := onlyModelJob(t, rt); j.Model != modelFluidSpeechProInt8 || j.Revision != fluidInt8Rev || j.State != "queued" {
 		t.Fatalf("job %+v", j)
 	}
 }
@@ -98,12 +98,12 @@ func TestRetiredPinMigrationQueuesTheInstallBeforeSavingThePin(t *testing.T) {
 // active model of enabled transcription when it is not installed and no
 // install is running, and runs a finished job of it again.
 func TestStartupQueuesAMissingActiveModel(t *testing.T) {
-	saved := STTSettings{TranscriptionEnabled: true, ActiveModel: modelParakeetUltraInt8, ActiveRevision: ultraInt8Rev, Quality: sttQualityBalanced, Source: sttSourceUser}
+	saved := STTSettings{TranscriptionEnabled: true, ActiveModel: modelFluidSpeechProInt8, ActiveRevision: fluidInt8Rev, Quality: sttQualityBalanced, Source: sttSourceUser}
 
 	t.Run("saved pin, no job", func(t *testing.T) {
 		rt := modelTestRuntime(t)
 		cpuOnly(t)
-		setUltraInt8(t, rt, false, false)
+		setFluidInt8(t, rt, false, false)
 		rt.setSettings(saved)
 		if migrated, err := rt.migrateRetiredSpeechModel(rt.ctx); migrated || err != nil {
 			t.Fatalf("already-moved pin: migrated=%v err=%v", migrated, err)
@@ -111,7 +111,7 @@ func TestStartupQueuesAMissingActiveModel(t *testing.T) {
 		if err := rt.recoverActiveSpeechModel(rt.ctx); err != nil {
 			t.Fatal(err)
 		}
-		if j := onlyModelJob(t, rt); j.Model != modelParakeetUltraInt8 || j.Revision != ultraInt8Rev || j.Device != deviceCPU || j.State != "queued" {
+		if j := onlyModelJob(t, rt); j.Model != modelFluidSpeechProInt8 || j.Revision != fluidInt8Rev || j.Device != deviceCPU || j.State != "queued" {
 			t.Fatalf("job %+v", j)
 		}
 		// Idempotent while that job is queued.
@@ -124,9 +124,9 @@ func TestStartupQueuesAMissingActiveModel(t *testing.T) {
 	t.Run("failed job runs again", func(t *testing.T) {
 		rt := modelTestRuntime(t)
 		cpuOnly(t)
-		setUltraInt8(t, rt, false, false)
+		setFluidInt8(t, rt, false, false)
 		rt.setSettings(saved)
-		job, err := rt.enqueueModel(rt.ctx, modelInfo{ID: modelParakeetUltraInt8, Revision: ultraInt8Rev}, deviceCPU)
+		job, err := rt.enqueueModel(rt.ctx, modelInfo{ID: modelFluidSpeechProInt8, Revision: fluidInt8Rev}, deviceCPU)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -145,7 +145,7 @@ func TestStartupQueuesAMissingActiveModel(t *testing.T) {
 	t.Run("downloads disabled, transcription off", func(t *testing.T) {
 		rt := modelTestRuntime(t)
 		cpuOnly(t)
-		setUltraInt8(t, rt, false, false)
+		setFluidInt8(t, rt, false, false)
 		rt.cfg.DisallowModelDownload = true
 		rt.setSettings(saved)
 		if err := rt.recoverActiveSpeechModel(rt.ctx); err != nil {
@@ -179,14 +179,14 @@ func TestStartupQueuesAMissingActiveModel(t *testing.T) {
 		if jobs, _ := rt.modelJobs(rt.ctx); len(jobs) != 0 {
 			t.Fatalf("queued without an inventory: %+v", jobs)
 		}
-		setUltraInt8(t, rt, false, false)
+		setFluidInt8(t, rt, false, false)
 		deadline := time.Now().Add(30 * time.Second)
 		for {
 			jobs, err := rt.modelJobs(rt.ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(jobs) == 1 && jobs[0].Model == modelParakeetUltraInt8 {
+			if len(jobs) == 1 && jobs[0].Model == modelFluidSpeechProInt8 {
 				break
 			}
 			if time.Now().After(deadline) {

@@ -33,9 +33,10 @@ type modelInfo struct {
 	Kind string `json:"kind"`
 	// RuntimeSupported is set for diarizers: whether the runtime can run one.
 	RuntimeSupported *bool `json:"runtime_supported,omitempty"`
-	// Replaces lists retired model ids this model supersedes (Parakeet Ultra
-	// int8 v1 and Parakeet v3). Settings pinned to one of them move to the
-	// model their tier now uses; see migrateRetiredSpeechModel.
+	// Replaces lists retired model ids this model supersedes (Fluid Speech Pro
+	// int8 replaces Parakeet Ultra int8 v2 and v1 and Parakeet v3 int8), in the
+	// order a build prefers them as a stand-in. Settings pinned to one of them
+	// move to the model their tier now uses; see migrateRetiredSpeechModel.
 	Replaces []string `json:"replaces,omitempty"`
 	// ReplacedBy marks a retired model whose files are still installed: the
 	// model that replaced it, which a build may let it stand in for until that

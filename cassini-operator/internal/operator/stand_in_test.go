@@ -55,7 +55,7 @@ esac
 `
 
 // standInRuntime is a model test runtime on the CPU whose inventory has
-// Ultra int8 in the given state and, unless v3Installed is false, the retired
+// Fluid Speech Pro int8 (and Ultra fp32) in the given state and, unless v3Installed is false, the retired
 // v3 int8 files an upgraded install still has.
 func standInRuntime(t *testing.T, ultraInstalled, ultraReady, v3Installed, v3Ready bool) *Runtime {
 	t.Helper()
@@ -72,12 +72,12 @@ func writeStandInInventory(t *testing.T, rt *Runtime, device string, ultraInstal
 	t.Helper()
 	models := []modelInfo{
 		{ID: modelParakeet110M, Revision: strings.Repeat("a", 64), Device: device, Kind: "speech", Installed: true, Ready: true},
-		{ID: modelParakeetUltraInt8, Revision: ultraInt8Rev, Device: device, Kind: "speech", Installed: ultraInstalled, Ready: ultraReady, Replaces: []string{modelParakeetUltraInt8V1, v3Int8}},
+		{ID: modelFluidSpeechProInt8, Revision: fluidInt8Rev, Device: device, Kind: "speech", Installed: ultraInstalled, Ready: ultraReady, Replaces: []string{modelParakeetUltraInt8, modelParakeetUltraInt8V1, v3Int8}},
 		{ID: modelParakeetUltraFp32, Revision: ultraFp32Rev, Device: device, Kind: "speech", Installed: ultraInstalled, Ready: ultraReady, Replaces: []string{modelParakeetV3Fp32}},
 	}
 	if v3Installed {
 		if device == deviceCPU {
-			models = append(models, modelInfo{ID: v3Int8, Revision: v3Int8Rev, Device: device, Kind: "speech", Installed: true, Ready: v3Ready, ReplacedBy: modelParakeetUltraInt8})
+			models = append(models, modelInfo{ID: v3Int8, Revision: v3Int8Rev, Device: device, Kind: "speech", Installed: true, Ready: v3Ready, ReplacedBy: modelFluidSpeechProInt8})
 		}
 		models = append(models, modelInfo{ID: modelParakeetV3Fp32, Revision: v3Fp32Rev, Device: device, Kind: "speech", Installed: true, Ready: v3Ready, ReplacedBy: modelParakeetUltraFp32})
 	}
@@ -100,8 +100,8 @@ func probesRun(t *testing.T, rt *Runtime) []string {
 	return strings.Fields(string(raw))
 }
 
-func ultraInt8Settings() STTSettings {
-	return STTSettings{TranscriptionEnabled: true, ActiveModel: modelParakeetUltraInt8, ActiveRevision: ultraInt8Rev, Quality: sttQualityBalanced, DeviceOverride: deviceCPU, Source: sttSourceUser}
+func fluidInt8Settings() STTSettings {
+	return STTSettings{TranscriptionEnabled: true, ActiveModel: modelFluidSpeechProInt8, ActiveRevision: fluidInt8Rev, Quality: sttQualityBalanced, DeviceOverride: deviceCPU, Source: sttSourceUser}
 }
 
 // A retired model is only ever a stand-in: nothing selects it, installs it,
@@ -166,16 +166,16 @@ func TestSettingsNamesTheStandIn(t *testing.T) {
 		return byID
 	}
 	models := listed()
-	if models[modelParakeetUltraInt8].StandIn != v3Int8 || models[modelParakeetUltraFp32].StandIn != modelParakeetV3Fp32 || models[modelParakeet110M].StandIn != "" {
+	if models[modelFluidSpeechProInt8].StandIn != v3Int8 || models[modelParakeetUltraFp32].StandIn != modelParakeetV3Fp32 || models[modelParakeet110M].StandIn != "" {
 		t.Fatalf("listed %+v", models)
 	}
 	// Not one whose check failed.
 	rt.standInCheckFailed = map[string]bool{standInKey(modelInfo{ID: v3Int8, Revision: v3Int8Rev}, deviceCPU): true}
-	if m := listed()[modelParakeetUltraInt8]; m.StandIn != "" {
+	if m := listed()[modelFluidSpeechProInt8]; m.StandIn != "" {
 		t.Fatalf("a failed stand-in is named: %+v", m)
 	}
 	rt = standInRuntime(t, true, true, true, true)
-	if m := listed()[modelParakeetUltraInt8]; m.StandIn != "" {
+	if m := listed()[modelFluidSpeechProInt8]; m.StandIn != "" {
 		t.Fatalf("a ready model names a stand-in: %+v", m)
 	}
 }
@@ -198,7 +198,7 @@ func TestSettingsNamesTheStandInForAnInstalledModelOnlyAfterItsCheckFailed(t *te
 			t.Fatalf("GET models = %d %s", rec.Code, rec.Body.String())
 		}
 		for _, m := range body.Models {
-			if m.ID == modelParakeetUltraInt8 {
+			if m.ID == modelFluidSpeechProInt8 {
 				return m.StandIn
 			}
 		}
@@ -215,17 +215,17 @@ func TestSettingsNamesTheStandInForAnInstalledModelOnlyAfterItsCheckFailed(t *te
 		t.Fatalf("unchecked Ultra names stand-in %q", got)
 	}
 	// Its check passes: the build uses Ultra, as Settings said.
-	_, admitted, err := rt.admitTranscription(rt.ctx, ultraInt8Settings(), resourceLimitsFromEnv(), false)
-	if err != nil || admitted.ActiveModel != modelParakeetUltraInt8 || admitted.StandInFor != "" {
+	_, admitted, err := rt.admitTranscription(rt.ctx, fluidInt8Settings(), resourceLimitsFromEnv(), false)
+	if err != nil || admitted.ActiveModel != modelFluidSpeechProInt8 || admitted.StandInFor != "" {
 		t.Fatalf("admission: %+v %v", admitted, err)
 	}
 
 	// Refused for memory, by a build and by the install job: still not named.
-	touch("short-probe-" + modelParakeetUltraInt8)
-	if _, _, err := rt.admitTranscription(rt.ctx, ultraInt8Settings(), resourceLimitsFromEnv(), false); !transientResourceError(err) {
+	touch("short-probe-" + modelFluidSpeechProInt8)
+	if _, _, err := rt.admitTranscription(rt.ctx, fluidInt8Settings(), resourceLimitsFromEnv(), false); !transientResourceError(err) {
 		t.Fatalf("admission short of memory: %v", err)
 	}
-	job, err := rt.enqueueModel(rt.ctx, modelInfo{ID: modelParakeetUltraInt8, Revision: ultraInt8Rev}, deviceCPU)
+	job, err := rt.enqueueModel(rt.ctx, modelInfo{ID: modelFluidSpeechProInt8, Revision: fluidInt8Rev}, deviceCPU)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,24 +236,24 @@ func TestSettingsNamesTheStandInForAnInstalledModelOnlyAfterItsCheckFailed(t *te
 	if got := standIn(); got != "" {
 		t.Fatalf("a check refused for memory names stand-in %q", got)
 	}
-	if err := os.Remove(filepath.Join(root, "short-probe-"+modelParakeetUltraInt8)); err != nil {
+	if err := os.Remove(filepath.Join(root, "short-probe-"+modelFluidSpeechProInt8)); err != nil {
 		t.Fatal(err)
 	}
 
 	// It fails: v3 transcribes, and Settings says so.
-	touch("fail-probe-" + modelParakeetUltraInt8)
-	_, admitted, err = rt.admitTranscription(rt.ctx, ultraInt8Settings(), resourceLimitsFromEnv(), false)
-	if err != nil || admitted.ActiveModel != v3Int8 || admitted.StandInFor != modelParakeetUltraInt8 {
+	touch("fail-probe-" + modelFluidSpeechProInt8)
+	_, admitted, err = rt.admitTranscription(rt.ctx, fluidInt8Settings(), resourceLimitsFromEnv(), false)
+	if err != nil || admitted.ActiveModel != v3Int8 || admitted.StandInFor != modelFluidSpeechProInt8 {
 		t.Fatalf("admission after a failed check: %+v %v", admitted, err)
 	}
 	if got := standIn(); got != v3Int8 {
 		t.Fatalf("failed Ultra names stand-in %q", got)
 	}
 	// It passes again: Ultra transcribes, and v3 is no longer named.
-	if err := os.Remove(filepath.Join(root, "fail-probe-"+modelParakeetUltraInt8)); err != nil {
+	if err := os.Remove(filepath.Join(root, "fail-probe-"+modelFluidSpeechProInt8)); err != nil {
 		t.Fatal(err)
 	}
-	if _, admitted, err := rt.admitTranscription(rt.ctx, ultraInt8Settings(), resourceLimitsFromEnv(), false); err != nil || admitted.ActiveModel != modelParakeetUltraInt8 {
+	if _, admitted, err := rt.admitTranscription(rt.ctx, fluidInt8Settings(), resourceLimitsFromEnv(), false); err != nil || admitted.ActiveModel != modelFluidSpeechProInt8 {
 		t.Fatalf("admission after a passing check: %+v %v", admitted, err)
 	}
 	if got := standIn(); got != "" {
@@ -273,10 +273,10 @@ func TestRetiredPinMigratesWhileV3IsStillInstalled(t *testing.T) {
 	if migrated, err := rt.migrateRetiredSpeechModel(rt.ctx); !migrated || err != nil {
 		t.Fatalf("migrated=%v err=%v", migrated, err)
 	}
-	if got := rt.currentSettings(); got.ActiveModel != modelParakeetUltraInt8 || got.ActiveRevision != ultraInt8Rev {
+	if got := rt.currentSettings(); got.ActiveModel != modelFluidSpeechProInt8 || got.ActiveRevision != fluidInt8Rev {
 		t.Fatalf("settings %+v", got)
 	}
-	if j := onlyModelJob(t, rt); j.Model != modelParakeetUltraInt8 || j.State != "queued" {
+	if j := onlyModelJob(t, rt); j.Model != modelFluidSpeechProInt8 || j.State != "queued" {
 		t.Fatalf("install job %+v", j)
 	}
 	// recoverActiveSpeechModel looks at Ultra only and does not touch v3.
@@ -299,7 +299,7 @@ func TestBuildTranscribesWithV3WhileUltraDownloads(t *testing.T) {
 		reason, detail, job string
 	}{
 		{name: "downloading", reason: "installing", detail: "being installed (downloading, 40%)", job: "downloading", setup: func(t *testing.T, rt *Runtime) {
-			j, err := rt.enqueueModel(rt.ctx, modelInfo{ID: modelParakeetUltraInt8, Revision: ultraInt8Rev}, deviceCPU)
+			j, err := rt.enqueueModel(rt.ctx, modelInfo{ID: modelFluidSpeechProInt8, Revision: fluidInt8Rev}, deviceCPU)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -309,7 +309,7 @@ func TestBuildTranscribesWithV3WhileUltraDownloads(t *testing.T) {
 			}
 		}},
 		{name: "install failed", reason: "install_failed", detail: "its install failed; it can be retried in Settings", job: "failed", setup: func(t *testing.T, rt *Runtime) {
-			j, err := rt.enqueueModel(rt.ctx, modelInfo{ID: modelParakeetUltraInt8, Revision: ultraInt8Rev}, deviceCPU)
+			j, err := rt.enqueueModel(rt.ctx, modelInfo{ID: modelFluidSpeechProInt8, Revision: fluidInt8Rev}, deviceCPU)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -323,7 +323,7 @@ func TestBuildTranscribesWithV3WhileUltraDownloads(t *testing.T) {
 		}},
 		// Nothing can retry the failed install while downloads are disabled.
 		{name: "downloads disabled after a failed install", reason: "downloads_disabled", detail: "model downloads are disabled", job: "failed", setup: func(t *testing.T, rt *Runtime) {
-			j, err := rt.enqueueModel(rt.ctx, modelInfo{ID: modelParakeetUltraInt8, Revision: ultraInt8Rev}, deviceCPU)
+			j, err := rt.enqueueModel(rt.ctx, modelInfo{ID: modelFluidSpeechProInt8, Revision: fluidInt8Rev}, deviceCPU)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -334,7 +334,7 @@ func TestBuildTranscribesWithV3WhileUltraDownloads(t *testing.T) {
 			rt.cfg.DisallowModelDownload = true
 		}},
 		{name: "runtime check failed", ultraInstalled: true, reason: "runtime_check_failed", detail: "failed its runtime check on cpu", setup: func(t *testing.T, rt *Runtime) {
-			if err := os.WriteFile(filepath.Join(rt.cfg.ModelCacheRoot, "fail-probe-"+modelParakeetUltraInt8), nil, 0o644); err != nil {
+			if err := os.WriteFile(filepath.Join(rt.cfg.ModelCacheRoot, "fail-probe-"+modelFluidSpeechProInt8), nil, 0o644); err != nil {
 				t.Fatal(err)
 			}
 		}},
@@ -345,18 +345,18 @@ func TestBuildTranscribesWithV3WhileUltraDownloads(t *testing.T) {
 			c.setup(t, rt)
 			before, _ := rt.modelJobs(rt.ctx)
 
-			device, admitted, err := rt.admitTranscription(rt.ctx, ultraInt8Settings(), resourceLimitsFromEnv(), false)
+			device, admitted, err := rt.admitTranscription(rt.ctx, fluidInt8Settings(), resourceLimitsFromEnv(), false)
 			if err != nil || device != deviceCPU {
 				t.Fatalf("admission: %s %v", device, err)
 			}
-			if admitted.ActiveModel != v3Int8 || admitted.ActiveRevision != v3Int8Rev || admitted.StandInFor != modelParakeetUltraInt8 || admitted.StandInReason != c.reason || !strings.HasPrefix(admitted.StandInDetail, c.detail) {
+			if admitted.ActiveModel != v3Int8 || admitted.ActiveRevision != v3Int8Rev || admitted.StandInFor != modelFluidSpeechProInt8 || admitted.StandInReason != c.reason || !strings.HasPrefix(admitted.StandInDetail, c.detail) {
 				t.Fatalf("admitted %s/%s for %q (%s: %s)", admitted.ActiveModel, admitted.ActiveRevision, admitted.StandInFor, admitted.StandInReason, admitted.StandInDetail)
 			}
 			env, err := resourceLimitsFromEnv().applyToEnv(admitted.ChildEnv(nil), device, admitted.ActiveModel)
 			if err != nil {
 				t.Fatal(err)
 			}
-			for key, want := range map[string]string{envSTTModel: v3Int8, "CASSINI_STT_REVISION": v3Int8Rev, envSTTStandInFor: modelParakeetUltraInt8, envSTTStandInReason: c.reason} {
+			for key, want := range map[string]string{envSTTModel: v3Int8, "CASSINI_STT_REVISION": v3Int8Rev, envSTTStandInFor: modelFluidSpeechProInt8, envSTTStandInReason: c.reason} {
 				if got, _ := envValue(env, key); got != want {
 					t.Fatalf("child %s=%q, want %q", key, got, want)
 				}
@@ -384,11 +384,11 @@ func TestBuildTranscribesWithV3WhileUltraDownloads(t *testing.T) {
 // install whose Ultra is ready runs Ultra.
 func TestNoStandInWithoutRetiredFiles(t *testing.T) {
 	rt := standInRuntime(t, false, false, false, false)
-	_, _, err := rt.admitTranscription(rt.ctx, ultraInt8Settings(), resourceLimitsFromEnv(), false)
-	if err == nil || transientResourceError(err) || err.Error() != "speech model "+modelParakeetUltraInt8+" "+ultraInt8Rev+" is not installed" {
+	_, _, err := rt.admitTranscription(rt.ctx, fluidInt8Settings(), resourceLimitsFromEnv(), false)
+	if err == nil || transientResourceError(err) || err.Error() != "speech model "+modelFluidSpeechProInt8+" "+fluidInt8Rev+" is not installed" {
 		t.Fatalf("fresh install, ordinary job: %v", err)
 	}
-	job, err := rt.enqueueModel(rt.ctx, modelInfo{ID: modelParakeetUltraInt8, Revision: ultraInt8Rev}, deviceCPU)
+	job, err := rt.enqueueModel(rt.ctx, modelInfo{ID: modelFluidSpeechProInt8, Revision: fluidInt8Rev}, deviceCPU)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -397,7 +397,7 @@ func TestNoStandInWithoutRetiredFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	var wait *resourceUnavailableError
-	if _, _, err := rt.admitTranscription(rt.ctx, ultraInt8Settings(), resourceLimitsFromEnv(), true); !errors.As(err, &wait) || !wait.awaitsModel {
+	if _, _, err := rt.admitTranscription(rt.ctx, fluidInt8Settings(), resourceLimitsFromEnv(), true); !errors.As(err, &wait) || !wait.awaitsModel {
 		t.Fatalf("fresh install, disposal job: %v", err)
 	}
 
@@ -409,7 +409,7 @@ func TestNoStandInWithoutRetiredFiles(t *testing.T) {
 	}
 
 	rt = standInRuntime(t, true, true, true, true)
-	if _, admitted, err := rt.admitTranscription(rt.ctx, ultraInt8Settings(), resourceLimitsFromEnv(), false); err != nil || admitted.ActiveModel != modelParakeetUltraInt8 || admitted.StandInFor != "" {
+	if _, admitted, err := rt.admitTranscription(rt.ctx, fluidInt8Settings(), resourceLimitsFromEnv(), false); err != nil || admitted.ActiveModel != modelFluidSpeechProInt8 || admitted.StandInFor != "" {
 		t.Fatalf("Ultra ready: %+v %v", admitted, err)
 	}
 	if probes := probesRun(t, rt); len(probes) != 0 {
@@ -438,12 +438,12 @@ func TestDisposalJobUsesV3StandInAndStillQueuesUltra(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"CASSINI_STT_MODEL=" + v3Int8, "CASSINI_STT_REVISION=" + v3Int8Rev, "CASSINI_STT_STAND_IN_FOR=" + modelParakeetUltraInt8, "CASSINI_STT_STAND_IN_REASON=installing"} {
+	for _, want := range []string{"CASSINI_STT_MODEL=" + v3Int8, "CASSINI_STT_REVISION=" + v3Int8Rev, "CASSINI_STT_STAND_IN_FOR=" + modelFluidSpeechProInt8, "CASSINI_STT_STAND_IN_REASON=installing"} {
 		if !strings.Contains(string(raw), want+"\n") {
 			t.Fatalf("build env lacks %s:\n%s", want, raw)
 		}
 	}
-	if j := onlyModelJob(t, rt); j.Model != modelParakeetUltraInt8 || j.Revision != ultraInt8Rev || j.State != "queued" {
+	if j := onlyModelJob(t, rt); j.Model != modelFluidSpeechProInt8 || j.Revision != fluidInt8Rev || j.State != "queued" {
 		t.Fatalf("install job %+v", j)
 	}
 	if _, err := os.Stat(run); err != nil {
@@ -456,7 +456,7 @@ func TestDisposalJobUsesV3StandInAndStillQueuesUltra(t *testing.T) {
 // would have been without a stand-in, and is not checked again.
 func TestStandInRunsV3RuntimeCheckOnce(t *testing.T) {
 	rt := standInRuntime(t, false, false, true, false)
-	device, admitted, err := rt.admitTranscription(rt.ctx, ultraInt8Settings(), resourceLimitsFromEnv(), true)
+	device, admitted, err := rt.admitTranscription(rt.ctx, fluidInt8Settings(), resourceLimitsFromEnv(), true)
 	if err != nil || device != deviceCPU || admitted.ActiveModel != v3Int8 {
 		t.Fatalf("admission: %+v %v", admitted, err)
 	}
@@ -469,21 +469,21 @@ func TestStandInRunsV3RuntimeCheckOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	var wait *resourceUnavailableError
-	_, admitted, err = rt.admitTranscription(rt.ctx, ultraInt8Settings(), resourceLimitsFromEnv(), true)
-	if !errors.As(err, &wait) || !wait.awaitsModel || wait.permanent || admitted.StandInFor != "" || admitted.ActiveModel != modelParakeetUltraInt8 {
+	_, admitted, err = rt.admitTranscription(rt.ctx, fluidInt8Settings(), resourceLimitsFromEnv(), true)
+	if !errors.As(err, &wait) || !wait.awaitsModel || wait.permanent || admitted.StandInFor != "" || admitted.ActiveModel != modelFluidSpeechProInt8 {
 		t.Fatalf("failed stand-in check: %+v %v", admitted, err)
 	}
-	if !strings.Contains(err.Error(), "speech model "+modelParakeetUltraInt8+" unavailable: is not installed; being installed (queued)") {
+	if !strings.Contains(err.Error(), "speech model "+modelFluidSpeechProInt8+" unavailable: is not installed; being installed (queued)") {
 		t.Fatalf("not the wait it would have been: %v", err)
 	}
-	if _, _, err := rt.admitTranscription(rt.ctx, ultraInt8Settings(), resourceLimitsFromEnv(), true); !errors.As(err, &wait) {
+	if _, _, err := rt.admitTranscription(rt.ctx, fluidInt8Settings(), resourceLimitsFromEnv(), true); !errors.As(err, &wait) {
 		t.Fatalf("second admission: %v", err)
 	}
 	if probes := probesRun(t, rt); len(probes) != 1 {
 		t.Fatalf("the failed stand-in was checked again: %v", probes)
 	}
 	// Readiness no longer sizes builds for it either.
-	if model, err := rt.admitModelForDevice(ultraInt8Settings(), deviceCPU); model != "" || err == nil {
+	if model, err := rt.admitModelForDevice(fluidInt8Settings(), deviceCPU); model != "" || err == nil {
 		t.Fatalf("readiness: %q %v", model, err)
 	}
 }
@@ -535,19 +535,21 @@ func TestStandInOnCUDAIsFp32Only(t *testing.T) {
 // A CPU stand-in build is charged its own measured peak.
 func TestMinFreeMemForRetiredModels(t *testing.T) {
 	limits := resourceLimits{cpuMemHeadroomMB: 1024, minFreeMemMB: 6144}
-	for model, want := range map[string]int{modelParakeetUltraInt8V1: 3072, v3Int8: 3072, modelParakeetV3Fp32: 4608} {
+	for model, want := range map[string]int{modelParakeetUltraInt8: 3072, modelParakeetUltraInt8V1: 3072, v3Int8: 3072, modelParakeetV3Fp32: 4608} {
 		if got := limits.minFreeMemForBuild(deviceCPU, model); got != want {
 			t.Errorf("%s: %d MiB, want %d", model, got, want)
 		}
 	}
-	if !modelSupportsCUDA(modelParakeetV3Fp32) || modelSupportsCUDA(v3Int8) || modelSupportsCUDA(modelParakeetUltraInt8V1) {
+	if !modelSupportsCUDA(modelParakeetV3Fp32) || modelSupportsCUDA(v3Int8) || modelSupportsCUDA(modelParakeetUltraInt8) || modelSupportsCUDA(modelParakeetUltraInt8V1) {
 		t.Fatal("only v3 fp32 runs on CUDA")
 	}
 	if modelNeedsRuntimeMarkers(v3Int8) || modelNeedsRuntimeMarkers(modelParakeetV3Fp32) || modelDownloadMB(v3Int8) != 0 {
 		t.Fatal("v3 needs a runtime marker, or has a download")
 	}
-	if !modelNeedsRuntimeMarkers(modelParakeetUltraInt8V1) || modelDownloadMB(modelParakeetUltraInt8V1) != 0 {
-		t.Fatal("retired Ultra int8 v1 must require runtime markers and have no download")
+	for _, m := range []string{modelParakeetUltraInt8, modelParakeetUltraInt8V1} {
+		if !modelNeedsRuntimeMarkers(m) || modelDownloadMB(m) != 0 {
+			t.Fatalf("retired %s must require runtime markers and have no download", m)
+		}
 	}
 }
 
@@ -555,26 +557,27 @@ func TestMinFreeMemForRetiredModels(t *testing.T) {
 // its stand-in, which would have to wait as well.
 func TestStandInNeedsNoLessMemory(t *testing.T) {
 	limits := resourceLimits{cpuMemHeadroomMB: 1024, minFreeMemMB: 6144}
-	for retired, replacement := range map[string]string{modelParakeetUltraInt8V1: modelParakeetUltraInt8, v3Int8: modelParakeetUltraInt8, modelParakeetV3Fp32: modelParakeetUltraFp32} {
+	for retired, replacement := range map[string]string{modelParakeetUltraInt8: modelFluidSpeechProInt8, modelParakeetUltraInt8V1: modelFluidSpeechProInt8, v3Int8: modelFluidSpeechProInt8, modelParakeetV3Fp32: modelParakeetUltraFp32} {
 		if r, u := limits.minFreeMemForBuild(deviceCPU, retired), limits.minFreeMemForBuild(deviceCPU, replacement); r < u {
 			t.Errorf("%s needs %d MiB, less than the %d MiB of %s", retired, r, u, replacement)
 		}
 	}
 }
 
-// An install upgraded from Ultra int8 v1 stands in with v1 while v2 downloads,
-// and prefers v1 over v3 int8 when both retired directories are still on disk,
-// following selected.Replaces regardless of inventory order or an older v3 pin.
+// An install upgraded from Ultra int8 v1 stands in with v1 while Fluid Speech
+// Pro downloads, and prefers v1 over v3 int8 when both retired directories are
+// still on disk, following selected.Replaces regardless of inventory order or
+// an older v3 pin.
 func TestStandInPrefersUltraInt8V1OverV3(t *testing.T) {
 	const v1Rev = "18cb623004dd6c15999b93cb70b14d8a1f6e8f3a2a97ff733f104bfc3494f6a9"
 	rt := standInRuntime(t, false, false, false, false)
 	models := []modelInfo{
 		{ID: modelParakeet110M, Revision: strings.Repeat("a", 64), Device: deviceCPU, Kind: "speech", Installed: true, Ready: true},
-		{ID: modelParakeetUltraInt8, Revision: ultraInt8Rev, Device: deviceCPU, Kind: "speech", Replaces: []string{modelParakeetUltraInt8V1, v3Int8}},
+		{ID: modelFluidSpeechProInt8, Revision: fluidInt8Rev, Device: deviceCPU, Kind: "speech", Replaces: []string{modelParakeetUltraInt8, modelParakeetUltraInt8V1, v3Int8}},
 		// List v3 ahead of v1 in the raw inventory so standInCandidates has to
 		// sort by selected.Replaces rather than rely on listing order.
-		{ID: v3Int8, Revision: v3Int8Rev, Device: deviceCPU, Kind: "speech", Installed: true, Ready: true, ReplacedBy: modelParakeetUltraInt8},
-		{ID: modelParakeetUltraInt8V1, Revision: v1Rev, Device: deviceCPU, Kind: "speech", Installed: true, Ready: true, ReplacedBy: modelParakeetUltraInt8},
+		{ID: v3Int8, Revision: v3Int8Rev, Device: deviceCPU, Kind: "speech", Installed: true, Ready: true, ReplacedBy: modelFluidSpeechProInt8},
+		{ID: modelParakeetUltraInt8V1, Revision: v1Rev, Device: deviceCPU, Kind: "speech", Installed: true, Ready: true, ReplacedBy: modelFluidSpeechProInt8},
 	}
 	b, _ := json.Marshal(models)
 	if err := os.WriteFile(filepath.Join(rt.cfg.ModelCacheRoot, "inventory.json"), b, 0o644); err != nil {
@@ -582,7 +585,7 @@ func TestStandInPrefersUltraInt8V1OverV3(t *testing.T) {
 	}
 	rt.invalidateModelInventory()
 
-	j, err := rt.enqueueModel(rt.ctx, modelInfo{ID: modelParakeetUltraInt8, Revision: ultraInt8Rev}, deviceCPU)
+	j, err := rt.enqueueModel(rt.ctx, modelInfo{ID: modelFluidSpeechProInt8, Revision: fluidInt8Rev}, deviceCPU)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -599,19 +602,133 @@ func TestStandInPrefersUltraInt8V1OverV3(t *testing.T) {
 		t.Fatalf("GET models = %d %s", rec.Code, rec.Body.String())
 	}
 	for _, m := range body.Models {
-		if m.ID == modelParakeetUltraInt8 && m.StandIn != modelParakeetUltraInt8V1 {
+		if m.ID == modelFluidSpeechProInt8 && m.StandIn != modelParakeetUltraInt8V1 {
 			t.Fatalf("Settings stand-in = %q, want %q", m.StandIn, modelParakeetUltraInt8V1)
 		}
 	}
 
 	for _, settings := range []STTSettings{
-		ultraInt8Settings(),
+		fluidInt8Settings(),
 		{TranscriptionEnabled: true, ActiveModel: v3Int8, ActiveRevision: v3Int8Rev, Quality: sttQualityBalanced, DeviceOverride: deviceCPU, Source: sttSourceUser},
 	} {
 		device, admitted, err := rt.admitTranscription(rt.ctx, settings, resourceLimitsFromEnv(), false)
-		if err != nil || device != deviceCPU || admitted.ActiveModel != modelParakeetUltraInt8V1 || admitted.ActiveRevision != v1Rev || admitted.StandInFor != modelParakeetUltraInt8 {
+		if err != nil || device != deviceCPU || admitted.ActiveModel != modelParakeetUltraInt8V1 || admitted.ActiveRevision != v1Rev || admitted.StandInFor != modelFluidSpeechProInt8 {
 			t.Fatalf("admission (%s): %s %+v %v", settings.ActiveModel, device, admitted, err)
 		}
+	}
+}
+
+// ultraInt8V2Rev is the revision of retired Parakeet Ultra int8 v2.
+const ultraInt8V2Rev = "50c15b94ea9cb1c2f8dbcdcbc0f15b450169154deeb206923cb5388f60892366"
+
+// writeUltraInt8V2Inventory lists Fluid Speech Pro int8 in the given state
+// and, when retiredInstalled is set, the retired Ultra int8 v2, Ultra int8 v1
+// and v3 int8 files an upgraded install still has, v3 first and v2 last so
+// standInCandidates has to sort by selected.Replaces rather than rely on
+// listing order.
+func writeUltraInt8V2Inventory(t *testing.T, rt *Runtime, name string, fluidInstalled, fluidReady, retiredInstalled bool) {
+	t.Helper()
+	const v1Rev = "18cb623004dd6c15999b93cb70b14d8a1f6e8f3a2a97ff733f104bfc3494f6a9"
+	models := []modelInfo{
+		{ID: modelParakeet110M, Revision: strings.Repeat("a", 64), Device: deviceCPU, Kind: "speech", Installed: true, Ready: true},
+		{ID: modelFluidSpeechProInt8, Revision: fluidInt8Rev, Device: deviceCPU, Kind: "speech", Installed: fluidInstalled, Ready: fluidReady, Replaces: []string{modelParakeetUltraInt8, modelParakeetUltraInt8V1, v3Int8}},
+	}
+	if retiredInstalled {
+		models = append(models,
+			modelInfo{ID: v3Int8, Revision: v3Int8Rev, Device: deviceCPU, Kind: "speech", Installed: true, Ready: true, ReplacedBy: modelFluidSpeechProInt8},
+			modelInfo{ID: modelParakeetUltraInt8V1, Revision: v1Rev, Device: deviceCPU, Kind: "speech", Installed: true, Ready: true, ReplacedBy: modelFluidSpeechProInt8},
+			modelInfo{ID: modelParakeetUltraInt8, Revision: ultraInt8V2Rev, Device: deviceCPU, Kind: "speech", Installed: true, Ready: true, ReplacedBy: modelFluidSpeechProInt8},
+		)
+	}
+	b, _ := json.Marshal(models)
+	if err := os.WriteFile(filepath.Join(rt.cfg.ModelCacheRoot, name), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rt.invalidateModelInventory()
+}
+
+// An install upgraded from Ultra int8 v2 (D-1092) stands in with v2 while
+// Fluid Speech Pro downloads, preferring it over Ultra int8 v1 and v3 int8 by
+// selected.Replaces order, whatever the job's own pin. Fluid's install job
+// checks it only once no build holds the inference gate, and that check is
+// what removes v2's files: from then on builds run Fluid.
+func TestUltraInt8V2StandsInUntilFluidPassesItsCheck(t *testing.T) {
+	rt := standInRuntime(t, false, false, false, false)
+	writeUltraInt8V2Inventory(t, rt, "inventory.json", false, false, true)
+
+	j, err := rt.enqueueModel(rt.ctx, modelInfo{ID: modelFluidSpeechProInt8, Revision: fluidInt8Rev}, deviceCPU)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rec := modelRequest(rt, http.MethodGet, "/settings/models?device=cpu", "")
+	var body struct {
+		Models []modelInfo `json:"models"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || rec.Code != http.StatusOK {
+		t.Fatalf("GET models = %d %s", rec.Code, rec.Body.String())
+	}
+	named := false
+	for _, m := range body.Models {
+		if m.ReplacedBy != "" {
+			t.Fatalf("Settings lists retired %s", m.ID)
+		}
+		if m.ID == modelFluidSpeechProInt8 {
+			if m.StandIn != modelParakeetUltraInt8 {
+				t.Fatalf("Settings stand-in = %q, want %q", m.StandIn, modelParakeetUltraInt8)
+			}
+			named = true
+		}
+	}
+	if !named {
+		t.Fatalf("Settings does not list %s: %+v", modelFluidSpeechProInt8, body.Models)
+	}
+
+	for _, settings := range []STTSettings{
+		fluidInt8Settings(),
+		{TranscriptionEnabled: true, ActiveModel: modelParakeetUltraInt8, ActiveRevision: ultraInt8V2Rev, Quality: sttQualityBalanced, DeviceOverride: deviceCPU, Source: sttSourceUser},
+		{TranscriptionEnabled: true, ActiveModel: v3Int8, ActiveRevision: v3Int8Rev, Quality: sttQualityBalanced, DeviceOverride: deviceCPU, Source: sttSourceUser},
+	} {
+		device, admitted, err := rt.admitTranscription(rt.ctx, settings, resourceLimitsFromEnv(), false)
+		if err != nil || device != deviceCPU || admitted.ActiveModel != modelParakeetUltraInt8 || admitted.ActiveRevision != ultraInt8V2Rev || admitted.StandInFor != modelFluidSpeechProInt8 || admitted.StandInReason != "installing" {
+			t.Fatalf("admission (%s): %s %+v %v", settings.ActiveModel, device, admitted, err)
+		}
+		env, err := resourceLimitsFromEnv().applyToEnv(admitted.ChildEnv(nil), device, admitted.ActiveModel)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for key, want := range map[string]string{envSTTModel: modelParakeetUltraInt8, "CASSINI_STT_REVISION": ultraInt8V2Rev, envSTTStandInFor: modelFluidSpeechProInt8} {
+			if got, _ := envValue(env, key); got != want {
+				t.Fatalf("child %s=%q, want %q", key, got, want)
+			}
+		}
+	}
+
+	// Fluid's check removes the retired files, as `cassini models probe` does
+	// once Fluid has passed it; it waits for a build standing in with v2.
+	writeUltraInt8V2Inventory(t, rt, "inventory-during-probe-"+modelFluidSpeechProInt8+".json", true, true, false)
+	rt.buildExecutionMu.Lock()
+	done := make(chan struct{})
+	go func() { rt.runModelJob(j); close(done) }()
+	awaitModelState(t, rt, "downloading")
+	time.Sleep(300 * time.Millisecond)
+	if probes := probesRun(t, rt); len(probes) != 0 {
+		t.Fatalf("probe ran during a build: %v", probes)
+	}
+	if _, err := os.Stat(filepath.Join(rt.cfg.ModelCacheRoot, "inventory-during-probe-"+modelFluidSpeechProInt8+".json")); err != nil {
+		t.Fatalf("v2's files went before Fluid's check: %v", err)
+	}
+	rt.buildExecutionMu.Unlock()
+	<-done
+	if probes := probesRun(t, rt); len(probes) != 1 || probes[0] != modelFluidSpeechProInt8 {
+		t.Fatalf("probes %v", probes)
+	}
+	if j := onlyModelJob(t, rt); j.State != "ready" {
+		t.Fatalf("install job %+v", j)
+	}
+	device, admitted, err := rt.admitTranscription(rt.ctx, fluidInt8Settings(), resourceLimitsFromEnv(), false)
+	if err != nil || device != deviceCPU || admitted.ActiveModel != modelFluidSpeechProInt8 || admitted.ActiveRevision != fluidInt8Rev || admitted.StandInFor != "" {
+		t.Fatalf("admission after Fluid's check: %s %+v %v", device, admitted, err)
 	}
 }
 
@@ -620,14 +737,14 @@ func TestStandInPrefersUltraInt8V1OverV3(t *testing.T) {
 // and runs it when it passes.
 func TestReadinessSizesBuildsForTheStandIn(t *testing.T) {
 	rt := standInRuntime(t, false, false, true, true)
-	if model, err := rt.admitModelForDevice(ultraInt8Settings(), deviceCPU); err != nil || model != v3Int8 {
+	if model, err := rt.admitModelForDevice(fluidInt8Settings(), deviceCPU); err != nil || model != v3Int8 {
 		t.Fatalf("readiness: %q %v", model, err)
 	}
 	rt = standInRuntime(t, true, false, true, true)
-	if model, err := rt.admitModelForDevice(ultraInt8Settings(), deviceCPU); err != nil || model != modelParakeetUltraInt8 {
+	if model, err := rt.admitModelForDevice(fluidInt8Settings(), deviceCPU); err != nil || model != modelFluidSpeechProInt8 {
 		t.Fatalf("readiness with Ultra unchecked: %q %v", model, err)
 	}
-	if _, admitted, err := rt.admitTranscription(rt.ctx, ultraInt8Settings(), resourceLimitsFromEnv(), false); err != nil || admitted.ActiveModel != modelParakeetUltraInt8 {
+	if _, admitted, err := rt.admitTranscription(rt.ctx, fluidInt8Settings(), resourceLimitsFromEnv(), false); err != nil || admitted.ActiveModel != modelFluidSpeechProInt8 {
 		t.Fatalf("build with Ultra unchecked: %+v %v", admitted, err)
 	}
 }
@@ -650,7 +767,7 @@ func TestStandInCheckThatMustWaitDefersTheBuild(t *testing.T) {
 			}
 		}},
 		{name: "Ultra check failed, v3 check refused for memory", ultraInstalled: true, dispose: true, setup: func(t *testing.T, rt *Runtime) {
-			for _, f := range []string{"fail-probe-" + modelParakeetUltraInt8, "short-probe-" + v3Int8} {
+			for _, f := range []string{"fail-probe-" + modelFluidSpeechProInt8, "short-probe-" + v3Int8} {
 				if err := os.WriteFile(filepath.Join(rt.cfg.ModelCacheRoot, f), nil, 0o644); err != nil {
 					t.Fatal(err)
 				}
@@ -661,7 +778,7 @@ func TestStandInCheckThatMustWaitDefersTheBuild(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			rt := standInRuntime(t, c.ultraInstalled, false, true, false)
 			c.setup(t, rt)
-			_, admitted, err := rt.admitTranscription(rt.ctx, ultraInt8Settings(), resourceLimitsFromEnv(), c.dispose)
+			_, admitted, err := rt.admitTranscription(rt.ctx, fluidInt8Settings(), resourceLimitsFromEnv(), c.dispose)
 			if !transientResourceError(err) || admitted.StandInFor != "" {
 				t.Fatalf("admission: %+v %v", admitted, err)
 			}
@@ -669,7 +786,7 @@ func TestStandInCheckThatMustWaitDefersTheBuild(t *testing.T) {
 			if err := os.Remove(filepath.Join(rt.cfg.ModelCacheRoot, "short-probe-"+v3Int8)); err != nil {
 				t.Fatal(err)
 			}
-			if _, admitted, err := rt.admitTranscription(rt.ctx, ultraInt8Settings(), resourceLimitsFromEnv(), c.dispose); err != nil || admitted.ActiveModel != v3Int8 {
+			if _, admitted, err := rt.admitTranscription(rt.ctx, fluidInt8Settings(), resourceLimitsFromEnv(), c.dispose); err != nil || admitted.ActiveModel != v3Int8 {
 				t.Fatalf("next attempt: %+v %v", admitted, err)
 			}
 		})
@@ -683,7 +800,7 @@ func TestStandInCheckThatMustWaitDefersTheBuild(t *testing.T) {
 	t.Cleanup(func() { probeAvailableMem = orig })
 	limits := resourceLimitsFromEnv()
 	limits.memWaitMax = 0
-	if _, _, err := rt.admitTranscription(rt.ctx, ultraInt8Settings(), limits, false); !transientResourceError(err) || !strings.Contains(err.Error(), "host memory") {
+	if _, _, err := rt.admitTranscription(rt.ctx, fluidInt8Settings(), limits, false); !transientResourceError(err) || !strings.Contains(err.Error(), "host memory") {
 		t.Fatalf("admission short of memory: %v", err)
 	}
 	if probes := probesRun(t, rt); len(probes) != 0 {
@@ -694,8 +811,8 @@ func TestStandInCheckThatMustWaitDefersTheBuild(t *testing.T) {
 // The stand-in is set for one build by admission: an inherited value never
 // reaches a child.
 func TestChildEnvStripsInheritedStandIn(t *testing.T) {
-	base := []string{envSTTStandInFor + "=" + modelParakeetUltraInt8, envSTTStandInReason + "=installing", envSTTStandInDetail + "=x", "KEEP=1"}
-	env := ultraInt8Settings().ChildEnv(base)
+	base := []string{envSTTStandInFor + "=" + modelFluidSpeechProInt8, envSTTStandInReason + "=installing", envSTTStandInDetail + "=x", "KEEP=1"}
+	env := fluidInt8Settings().ChildEnv(base)
 	for _, key := range []string{envSTTStandInFor, envSTTStandInReason, envSTTStandInDetail} {
 		if v, ok := envValue(env, key); ok {
 			t.Fatalf("inherited %s=%s", key, v)
@@ -711,7 +828,7 @@ func TestChildEnvStripsInheritedStandIn(t *testing.T) {
 // waits for it, so it never removes them under a build standing in.
 func TestModelJobProbeWaitsForARunningBuild(t *testing.T) {
 	rt := standInRuntime(t, false, false, true, true)
-	job, err := rt.enqueueModel(rt.ctx, modelInfo{ID: modelParakeetUltraInt8, Revision: ultraInt8Rev}, deviceCPU)
+	job, err := rt.enqueueModel(rt.ctx, modelInfo{ID: modelFluidSpeechProInt8, Revision: fluidInt8Rev}, deviceCPU)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -725,7 +842,7 @@ func TestModelJobProbeWaitsForARunningBuild(t *testing.T) {
 	}
 	rt.buildExecutionMu.Unlock()
 	<-done
-	if probes := probesRun(t, rt); len(probes) != 1 || probes[0] != modelParakeetUltraInt8 {
+	if probes := probesRun(t, rt); len(probes) != 1 || probes[0] != modelFluidSpeechProInt8 {
 		t.Fatalf("probes %v", probes)
 	}
 }
@@ -745,8 +862,8 @@ func TestStandInGoneBecauseUltraBecameReadyUsesUltra(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "fail-probe-"+v3Int8), nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	device, admitted, err := rt.admitTranscription(rt.ctx, ultraInt8Settings(), resourceLimitsFromEnv(), false)
-	if err != nil || device != deviceCPU || admitted.ActiveModel != modelParakeetUltraInt8 || admitted.ActiveRevision != ultraInt8Rev || admitted.StandInFor != "" {
+	device, admitted, err := rt.admitTranscription(rt.ctx, fluidInt8Settings(), resourceLimitsFromEnv(), false)
+	if err != nil || device != deviceCPU || admitted.ActiveModel != modelFluidSpeechProInt8 || admitted.ActiveRevision != fluidInt8Rev || admitted.StandInFor != "" {
 		t.Fatalf("admission: %q %+v %v", device, admitted, err)
 	}
 	if probes := probesRun(t, rt); len(probes) != 1 || probes[0] != v3Int8 {
@@ -767,8 +884,8 @@ func TestNoStandInBecauseUltraBecameReadyDuringListUsesUltra(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeStandInInventory(t, rt, deviceCPU, false, false, false, false)
-	device, admitted, err := rt.admitTranscription(rt.ctx, ultraInt8Settings(), resourceLimitsFromEnv(), false)
-	if err != nil || device != deviceCPU || admitted.ActiveModel != modelParakeetUltraInt8 || admitted.ActiveRevision != ultraInt8Rev || admitted.StandInFor != "" {
+	device, admitted, err := rt.admitTranscription(rt.ctx, fluidInt8Settings(), resourceLimitsFromEnv(), false)
+	if err != nil || device != deviceCPU || admitted.ActiveModel != modelFluidSpeechProInt8 || admitted.ActiveRevision != fluidInt8Rev || admitted.StandInFor != "" {
 		t.Fatalf("admission: %q %+v %v", device, admitted, err)
 	}
 	if probes := probesRun(t, rt); len(probes) != 0 {

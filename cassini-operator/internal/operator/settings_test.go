@@ -858,10 +858,10 @@ func TestPutSettingsRejectsUnboundedAliases(t *testing.T) {
 func TestPutSettingsChecksTheModelOnlyWhenTheSelectionChanges(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
-	rt.cfg.CassiniBin = fakeModelCassini(t, `[{"id":"parakeet-ultra-0.6b-int8-v2","revision":"r1","installed":true,"ready":false,"device":"cpu"}]`)
+	rt.cfg.CassiniBin = fakeModelCassini(t, `[{"id":"fluid-speech-pro-0.6b-int8","revision":"r1","installed":true,"ready":false,"device":"cpu"}]`)
 	rt.cfg.ModelCacheRoot = t.TempDir()
 	rt.setSettings(STTSettings{
-		TranscriptionEnabled: true, ActiveModel: modelParakeetUltraInt8, ActiveRevision: "r1",
+		TranscriptionEnabled: true, ActiveModel: modelFluidSpeechProInt8, ActiveRevision: "r1",
 		Quality: sttQualityBalanced, DeviceOverride: deviceCPU, Source: sttSourceUser,
 	})
 	put := func(body string) int {
@@ -875,7 +875,7 @@ func TestPutSettingsChecksTheModelOnlyWhenTheSelectionChanges(t *testing.T) {
 	if code := put(`{"quality":"best","transcription_enabled":true}`); code != http.StatusConflict {
 		t.Fatalf("switching quality to an unprepared model = %d, want 409", code)
 	}
-	rt.setSettings(STTSettings{ActiveModel: modelParakeetUltraInt8, ActiveRevision: "r1", Quality: sttQualityBalanced, DeviceOverride: deviceCPU})
+	rt.setSettings(STTSettings{ActiveModel: modelFluidSpeechProInt8, ActiveRevision: "r1", Quality: sttQualityBalanced, DeviceOverride: deviceCPU})
 	if code := put(`{"quality":"balanced","transcription_enabled":true}`); code != http.StatusConflict {
 		t.Fatalf("enabling an unchecked model = %d, want 409", code)
 	}

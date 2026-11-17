@@ -168,16 +168,17 @@ that is not a boolean keeps hints off. Only an explicit false (`0`, `false`,
 `no`, `off`) turns them back on, for research; the rest of this section
 describes that mode.
 
-Parakeet Ultra (FP32 and INT8, Moondream's post-training of Parakeet v3) runs
-on sherpa-onnx 2.0.1's NeMo frontend with upstream's log guard (provenance
-`nativeFrontend: "nemo-log-guard"`), which replaced Cassini's reference
-frontend of the 1.13.7 runtimes. With hints re-enabled, FP32 uses modified beam
-search and vocabulary hints on participant tracks. The INT8 bundle is
-published without `bpe.vocab` and decodes greedily either way: it cannot encode
-hints, and unbiased beam search lost more speech than greedy in recorded tests
-(as it did for v3 INT8), at more CPU and about twice the peak memory. Its
-detected speech spans retain 30 ms of surrounding recorded audio, remain whole
-within VAD resource limits, and receive no synthetic decoder tail. Normal
+Parakeet Ultra (FP32, Moondream's post-training of Parakeet v3) and Fluid
+Speech Pro (INT8, FluidVoice's fine-tune of Parakeet Ultra, the CPU balanced
+tier) run on sherpa-onnx 2.0.1's NeMo frontend with upstream's log guard
+(provenance `nativeFrontend: "nemo-log-guard"`), which replaced Cassini's
+reference frontend of the 1.13.7 runtimes. With hints re-enabled, FP32 uses
+modified beam search and vocabulary hints on participant tracks. The INT8
+bundle is published without `bpe.vocab` and decodes greedily either way: it
+cannot encode hints, and on Ultra INT8 unbiased beam search lost more speech
+than greedy in recorded tests (as it did for v3 INT8), at more CPU and about
+twice the peak memory. Their detected speech spans retain 30 ms of surrounding
+recorded audio, remain whole within VAD resource limits, and receive no synthetic decoder tail. Normal
 CPU/CUDA builds and the developer CLI include the required patched native
 runtime.
 

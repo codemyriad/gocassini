@@ -87,7 +87,7 @@ read_env() {
 }
 
 CACHE_ROOT=$(read_env CASSINI_CACHE_ROOT)
-MODEL_ID=parakeet-ultra-0.6b-int8-v2
+MODEL_ID=fluid-speech-pro-0.6b-int8
 DEVICE=$(read_env CASSINI_STT_DEVICE)
 
 : "${DEVICE:=cpu}"

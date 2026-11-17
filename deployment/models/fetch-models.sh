@@ -1,8 +1,8 @@
 #!/bin/sh
 # Download and unpack the sherpa-onnx model bundles an image ships with.
 # The 110M model comes from its sherpa-onnx release archive. Parakeet Ultra
-# (fp32 and int8) has no upstream archive: it comes file by file from the
-# seekable Zstandard objects on dist.gocassini.com, pinned in
+# (fp32) and Fluid Speech Pro (int8) have no upstream archive: they come file
+# by file from the seekable Zstandard objects on dist.gocassini.com, pinned in
 # cassini-go-recorder/internal/modelstore/catalogue.json.
 #
 #   fetch-models.sh <out-dir> <model-id>...
@@ -38,7 +38,7 @@ model_url() {
   case "$1" in
     parakeet-tdt-ctc-110m-en-int8)
       echo "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet_tdt_ctc_110m-en-36000-int8.tar.bz2" ;;
-    parakeet-ultra-0.6b|parakeet-ultra-0.6b-int8-v2)
+    parakeet-ultra-0.6b|fluid-speech-pro-0.6b-int8)
       echo "https://dist.gocassini.com/manifest.json" ;;
     *) return 1 ;;
   esac
@@ -60,10 +60,10 @@ dist_artifacts() {
       echo "bpe.vocab models/files/4e074536b073a7d18ca034e3be779868696d67784765e4ac18511e8f607d4193/bpe.vocab.zst 41d5e71b3591642eff088151efd7acd4e750124cc0054c8ba9fa3245187a4804"
       ;;
     # Published without bpe.vocab, so it decodes greedily.
-    parakeet-ultra-0.6b-int8-v2)
-      echo "encoder.int8.onnx models/files/44060ee9be2ac23ace05d6ea1271dd4cdbb353ac4d822f36c51ce733142d31a0/encoder.int8.onnx.zst f9a8af14deb2e5237eebb9dfb25126180614feaf835a03f307e4077eab247015"
-      echo "decoder.int8.onnx models/files/69e2e91d01225bc552f8b0113630562fc52622cb2a3c61ef4445ee779f06b295/decoder.int8.onnx.zst 1fab98fe6c12aded87d2da66272cc9e148d0a0044ce3850a12fe56302ec4a922"
-      echo "joiner.int8.onnx models/files/639fda62a71242a8d7cefb6647f2094eb8ac783925ce91cbd047a0de6988f396/joiner.int8.onnx.zst 8a71aaccfdba3d451775507a889afd2257d2e754463fd81095a8c8f290f924c2"
+    fluid-speech-pro-0.6b-int8)
+      echo "encoder.int8.onnx models/files/e671ec2f0779b6cd1fc87bdb83c5775b874f15bb1c60691151f3fe73d83977b8/encoder.int8.onnx.zst 3a71f56725b5025dcd1499506456e7b56d05b7d7414a3c49042562daf59f3d54"
+      echo "decoder.int8.onnx models/files/8378ebb404b9e97035c6c75e6af69859dc306da7a667c7d6cafdc1c0757fbb30/decoder.int8.onnx.zst 09e73f5ef2f6e7829972e8a6ad16f64133eec22fb4130be92df4830921188967"
+      echo "joiner.int8.onnx models/files/d5ca62dc89f2e6af4b821de19042d68f3d2a7d94fbdf56ae71735f2fb64396ce/joiner.int8.onnx.zst 231442707e1850d53a7d66dea6a4b5264ae9f38d2468980cfe8ee8b7847097ab"
       echo "tokens.txt models/files/5b3811f0c23fefc86835981f0a23ecfb817999df272ad744c597e5b669ea1b4a/tokens.txt.zst d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d"
       ;;
     *) return 1 ;;
@@ -92,7 +92,7 @@ fetch_dist() {
 model_files() {
   case "$1" in
     parakeet-tdt-ctc-110m-en-int8) echo "model.int8.onnx tokens.txt" ;;
-    parakeet-ultra-0.6b-int8-v2)   echo "encoder.int8.onnx decoder.int8.onnx joiner.int8.onnx tokens.txt" ;;
+    fluid-speech-pro-0.6b-int8)    echo "encoder.int8.onnx decoder.int8.onnx joiner.int8.onnx tokens.txt" ;;
     # encoder.weights is external-data for encoder.onnx: sherpa cannot load the
     # encoder without it, so it is required, not a sidecar to copy if present.
     # A missing one must fail this build rather than bake a model that only
@@ -106,15 +106,17 @@ model_title() {
   case "$1" in
     parakeet-tdt-ctc-110m-en-int8) echo "NeMo Parakeet TDT CTC 110M en int8 (sherpa-onnx repack)" ;;
     parakeet-ultra-0.6b)           echo "Moondream Parakeet Ultra 0.6B fp32 (Cassini ONNX export)" ;;
-    parakeet-ultra-0.6b-int8-v2)   echo "Moondream Parakeet Ultra 0.6B int8 v2 (Cassini ONNX export, dynamic int8 quantization with fp32 convolutions)" ;;
+    fluid-speech-pro-0.6b-int8)    echo "FluidVoice Fluid Speech Pro 0.6B int8 (FluidVoice ONNX export, Cassini dynamic int8 quantization with fp32 convolutions)" ;;
     *) return 1 ;;
   esac
 }
 
 model_license() {
   case "$1" in
-    parakeet-ultra-0.6b|parakeet-ultra-0.6b-int8-v2)
+    parakeet-ultra-0.6b)
       echo "License: cc-by-4.0 (Moondream Parakeet Ultra, https://huggingface.co/moondream/parakeet-ultra, post-trained from NVIDIA Parakeet, https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3)" ;;
+    fluid-speech-pro-0.6b-int8)
+      echo "License: cc-by-4.0 (Fluid Speech Pro by FluidVoice, https://huggingface.co/FluidVoice-Labs/fluid-speech-pro. Built on NVIDIA Parakeet TDT 0.6B v3, https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3, and Moondream Parakeet Ultra, https://huggingface.co/moondream/parakeet-ultra)" ;;
     *)
       echo "License: cc-by-4.0 (NVIDIA Parakeet, https://huggingface.co/nvidia/parakeet-tdt_ctc-110m)" ;;
   esac

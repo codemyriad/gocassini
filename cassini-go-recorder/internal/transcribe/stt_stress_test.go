@@ -13,7 +13,7 @@ package transcribe
 //
 //	CASSINI_STRESS_WAV=/tmp/rotated_mix_75s.wav \
 //	CASSINI_STRESS_REF=/path/reference.txt \
-//	CASSINI_STRESS_MODEL_DIR=$HOME/.cache/cassini/models/parakeet-ultra-0.6b-int8-v2 \
+//	CASSINI_STRESS_MODEL_DIR=$HOME/.cache/cassini/models/fluid-speech-pro-0.6b-int8 \
 //	CASSINI_STRESS_VAD=$HOME/.cache/cassini/vad/silero_vad.onnx \
 //	CASSINI_STRESS_N=20 \
 //	scripts/build-cassini-bin.sh --test -tags stressmodel -run TestStressNonVADFallback -v ./internal/transcribe/
@@ -43,7 +43,7 @@ func TestStressNonVADFallback(t *testing.T) {
 	}
 
 	paths := ModelPaths{
-		ModelID:     ModelParakeetUltraInt8,
+		ModelID:     ModelFluidSpeechProInt8,
 		EncoderFile: filepath.Join(modelDir, "encoder.int8.onnx"),
 		DecoderFile: filepath.Join(modelDir, "decoder.int8.onnx"),
 		JoinerFile:  filepath.Join(modelDir, "joiner.int8.onnx"),

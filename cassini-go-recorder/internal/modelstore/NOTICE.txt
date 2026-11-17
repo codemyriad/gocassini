@@ -50,6 +50,35 @@ Changes from the original model:
   decompressed contents are the exported files.
 No endorsement by Moondream, NVIDIA or sherpa-onnx is implied.
 
+Fluid Speech Pro 0.6B
+=====================
+Fluid Speech Pro by FluidVoice. Built on NVIDIA Parakeet TDT 0.6B v3 and
+Moondream Parakeet Ultra.
+Licensed under Creative Commons Attribution 4.0 International (CC BY 4.0):
+https://huggingface.co/FluidVoice-Labs/fluid-speech-pro
+https://creativecommons.org/licenses/by/4.0/
+https://creativecommons.org/licenses/by/4.0/legalcode.en
+
+It is a fine-tuned version of Moondream Parakeet Ultra
+(https://huggingface.co/moondream/parakeet-ultra), itself a post-trained
+version of NVIDIA's Parakeet TDT 0.6B v3
+(https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3), both licensed under
+CC BY 4.0.
+
+Changes from the original model:
+- Fine-tuned by FluidVoice from Moondream Parakeet Ultra (FluidVoice's
+  change).
+- ONNX export by FluidVoice:
+  https://huggingface.co/FluidVoice-Labs/fluid-speech-pro-onnx
+  (revision fa588e9f). Its tokens.txt is byte for byte Parakeet Ultra's.
+- int8 variant by Cassini: FluidVoice's fp32 encoder, decoder and joiner
+  quantized with onnxruntime's dynamic quantization, as for
+  parakeet-ultra-0.6b-int8-v2, keeping the encoder's 24 depthwise and 6
+  /pre_encode/ subsampling Conv nodes in fp32 (k2-fsa/sherpa-onnx#4179).
+- Each model file is compressed independently using seekable Zstandard;
+  decompressed contents are the exported and quantized files.
+No endorsement by FluidVoice, Moondream, NVIDIA or sherpa-onnx is implied.
+
 Nemotron 3 Diarization
 ======================
 Original model by NVIDIA, licensed under the OpenMDW License Agreement,

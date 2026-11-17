@@ -22,42 +22,52 @@ const (
 )
 
 // Parakeet Ultra replaced v3 on every tier: fp32 on every CUDA tier and the
-// CPU best tier, int8 on the CPU balanced tier. The 110M model stays fast.
+// CPU best tier. Fluid Speech Pro int8, a fine-tune of Ultra, is the CPU
+// balanced tier (D-1092). The 110M model stays fast.
 func TestModelForQualityUsesUltraEverywhere(t *testing.T) {
 	for _, q := range []string{sttQualityFast, sttQualityBalanced, sttQualityBest} {
 		if got := modelForQuality(q, deviceCUDA); got != modelParakeetUltraFp32 {
 			t.Errorf("%s on cuda = %q, want %q", q, got, modelParakeetUltraFp32)
 		}
 	}
-	for q, want := range map[string]string{sttQualityFast: modelParakeet110M, sttQualityBalanced: modelParakeetUltraInt8, sttQualityBest: modelParakeetUltraFp32} {
+	for q, want := range map[string]string{sttQualityFast: modelParakeet110M, sttQualityBalanced: modelFluidSpeechProInt8, sttQualityBest: modelParakeetUltraFp32} {
 		if got := modelForQuality(q, deviceCPU); got != want {
 			t.Errorf("%s on cpu = %q, want %q", q, got, want)
 		}
 	}
 }
 
-// Both Ultra precisions need the TDT joiner marker; only fp32 runs on CUDA.
-// The int8 build is sized from Ultra int8 v1's measured 1,893 MiB peak.
+// Ultra fp32 and both retired Ultra int8 quantizations need the TDT joiner
+// marker; Fluid Speech Pro, whose encoder url names parakeet-tdt, needs only
+// the 2.0.1 base. Only fp32 runs on CUDA. The int8 builds are sized from Ultra
+// int8 v1's measured 1,893 MiB peak.
 func TestParakeetUltraTreatment(t *testing.T) {
-	if got := modelBuildPeakMB(modelParakeetUltraInt8); got < 1893 || got%512 != 0 {
-		t.Fatalf("Ultra int8 peak %d MiB, below the measured 1,893 or off the table's 512 MiB grain", got)
+	for _, m := range []string{modelFluidSpeechProInt8, modelParakeetUltraInt8, modelParakeetUltraInt8V1} {
+		if got := modelBuildPeakMB(m); got < 1893 || got%512 != 0 {
+			t.Fatalf("%s peak %d MiB, below the measured 1,893 or off the table's 512 MiB grain", m, got)
+		}
 	}
 	if modelBuildPeakMB(modelParakeetUltraFp32) != 3584 {
 		t.Fatalf("Ultra fp32 peak %d", modelBuildPeakMB(modelParakeetUltraFp32))
 	}
-	for _, m := range []string{modelParakeetUltraFp32, modelParakeetUltraInt8} {
+	for _, m := range []string{modelParakeetUltraFp32, modelFluidSpeechProInt8} {
 		if modelDownloadMB(m) <= 0 {
 			t.Fatalf("%s has no download size; the panel would not say how long the wait is", m)
 		}
-		if !modelNeedsRuntimeMarkers(m) {
-			t.Fatalf("%s does not check the runtime", m)
-		}
 	}
-	if !modelSupportsCUDA(modelParakeetUltraFp32) || modelSupportsCUDA(modelParakeetUltraInt8) || modelSupportsCUDA(modelParakeetUltraInt8V1) || modelSupportsCUDA(modelParakeet110M) || modelSupportsCUDA(modelParakeetV3Int8) {
+	if !modelNeedsRuntimeMarkers(modelParakeetUltraFp32) {
+		t.Fatalf("%s does not check the runtime", modelParakeetUltraFp32)
+	}
+	if modelNeedsRuntimeMarkers(modelFluidSpeechProInt8) {
+		t.Fatal("Fluid Speech Pro needs runtime markers")
+	}
+	if !modelSupportsCUDA(modelParakeetUltraFp32) || modelSupportsCUDA(modelFluidSpeechProInt8) || modelSupportsCUDA(modelParakeetUltraInt8) || modelSupportsCUDA(modelParakeetUltraInt8V1) || modelSupportsCUDA(modelParakeet110M) || modelSupportsCUDA(modelParakeetV3Int8) {
 		t.Fatal("only fp32 runs on CUDA")
 	}
-	if !modelNeedsRuntimeMarkers(modelParakeetUltraInt8V1) || modelDownloadMB(modelParakeetUltraInt8V1) != 0 {
-		t.Fatal("retired Ultra int8 v1 must require the TDT joiner marker and have no download")
+	for _, m := range []string{modelParakeetUltraInt8, modelParakeetUltraInt8V1} {
+		if !modelNeedsRuntimeMarkers(m) || modelDownloadMB(m) != 0 {
+			t.Fatalf("retired %s must require the TDT joiner marker and have no download", m)
+		}
 	}
 	if modelNeedsRuntimeMarkers(modelParakeet110M) {
 		t.Fatal("the 110M model needs runtime markers")
@@ -66,6 +76,10 @@ func TestParakeetUltraTreatment(t *testing.T) {
 		model, version string
 		want           bool
 	}{
+		{modelFluidSpeechProInt8, cassiniRuntime, true},
+		{modelFluidSpeechProInt8, stock201Runtime, true},
+		{modelFluidSpeechProInt8, cassini8Runtime, false},
+		{modelFluidSpeechProInt8, "sherpa=1.13.7", false},
 		{modelParakeetUltraInt8, cassiniRuntime, true},
 		{modelParakeetUltraInt8, cassini8Runtime, false},
 		{modelParakeetUltraInt8, stock201Runtime, false},
@@ -99,7 +113,7 @@ func TestParakeetUltraTreatment(t *testing.T) {
 func TestModelServesOnlyItsTier(t *testing.T) {
 	for _, q := range []string{sttQualityFast, sttQualityBalanced, sttQualityBest} {
 		for _, device := range []string{deviceCPU, deviceCUDA} {
-			for _, m := range []string{modelParakeetUltraFp32, modelParakeetUltraInt8, modelParakeet110M, "parakeet-tdt-0.6b-v3"} {
+			for _, m := range []string{modelParakeetUltraFp32, modelFluidSpeechProInt8, modelParakeet110M, "parakeet-tdt-0.6b-v3"} {
 				if got, want := modelServesQuality(q, device, m), m == modelForQuality(q, device); got != want {
 					t.Errorf("%s on %s serves %s = %v, want %v", q, device, m, got, want)
 				}
@@ -113,22 +127,23 @@ func TestPutSettingsRefusesAnotherTiersModelOnCUDA(t *testing.T) {
 	defer cleanup()
 	t.Setenv(envSTTCUDACapable, "1")
 	stubNVIDIADevice(t, true)
-	rt.cfg.CassiniBin = fakeModelCassini(t, `[{"id":"parakeet-ultra-0.6b-int8-v2","revision":"r1","installed":true,"ready":true,"device":"cuda"}]`)
+	rt.cfg.CassiniBin = fakeModelCassini(t, `[{"id":"fluid-speech-pro-0.6b-int8","revision":"r1","installed":true,"ready":true,"device":"cuda"}]`)
 	rt.cfg.ModelCacheRoot = t.TempDir()
 	rec := httptest.NewRecorder()
-	rt.settingsHandler(rec, httptest.NewRequest(http.MethodPut, "/settings", strings.NewReader(`{"quality":"best","transcription_enabled":true,"active_model":"parakeet-ultra-0.6b-int8-v2","active_revision":"r1","device_override":"cuda"}`)))
+	rt.settingsHandler(rec, httptest.NewRequest(http.MethodPut, "/settings", strings.NewReader(`{"quality":"best","transcription_enabled":true,"active_model":"fluid-speech-pro-0.6b-int8","active_revision":"r1","device_override":"cuda"}`)))
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("int8 on cuda = %d %s, want 409", rec.Code, rec.Body.String())
 	}
 }
 
-// retiredInventory is a `cassini models list` answer of this version: Ultra
-// replaces Ultra int8 v1 and v3 at each precision, and no retired id is listed.
+// retiredInventory is a `cassini models list` answer of this version: Fluid
+// Speech Pro int8 replaces Ultra int8 v2 and v1 and v3 int8, Ultra fp32
+// replaces v3 fp32, and no retired id is listed.
 func retiredInventory(t *testing.T, rt *Runtime, ultraInstalled bool) {
 	t.Helper()
 	models := []modelInfo{
 		{ID: modelParakeet110M, Revision: strings.Repeat("a", 64), Device: deviceCPU, Kind: "speech"},
-		{ID: modelParakeetUltraInt8, Revision: strings.Repeat("b", 64), Device: deviceCPU, Kind: "speech", Installed: ultraInstalled, Replaces: []string{modelParakeetUltraInt8V1, "parakeet-tdt-0.6b-v3-int8"}},
+		{ID: modelFluidSpeechProInt8, Revision: strings.Repeat("b", 64), Device: deviceCPU, Kind: "speech", Installed: ultraInstalled, Replaces: []string{modelParakeetUltraInt8, modelParakeetUltraInt8V1, "parakeet-tdt-0.6b-v3-int8"}},
 		{ID: modelParakeetUltraFp32, Revision: strings.Repeat("c", 64), Device: deviceCPU, Kind: "speech", Installed: ultraInstalled, Replaces: []string{"parakeet-tdt-0.6b-v3"}},
 	}
 	b, _ := json.Marshal(models)
@@ -137,10 +152,10 @@ func retiredInventory(t *testing.T, rt *Runtime, ultraInstalled bool) {
 	}
 }
 
-// An install upgraded from a version that shipped Ultra int8 v1 or Parakeet v3
-// moves to the Ultra model its tier now uses on its device, persists that, and
-// queues the download through the ordinary install job (download, then runtime
-// check).
+// An install upgraded from a version that shipped Ultra int8 v2 or v1 or
+// Parakeet v3 moves to the model its tier now uses on its device, persists
+// that, and queues the download through the ordinary install job (download,
+// then runtime check).
 func TestRetiredPinMovesToReplacementAndDownloads(t *testing.T) {
 	cases := []struct {
 		name            string
@@ -149,8 +164,9 @@ func TestRetiredPinMovesToReplacementAndDownloads(t *testing.T) {
 		want            string
 		revision        string
 	}{
-		{"Ultra int8 v1 on the CPU", modelParakeetUltraInt8V1, sttQualityBalanced, false, modelParakeetUltraInt8, strings.Repeat("b", 64)},
-		{"v3 int8 on the CPU", "parakeet-tdt-0.6b-v3-int8", sttQualityBalanced, false, modelParakeetUltraInt8, strings.Repeat("b", 64)},
+		{"Ultra int8 v2 on the CPU", modelParakeetUltraInt8, sttQualityBalanced, false, modelFluidSpeechProInt8, strings.Repeat("b", 64)},
+		{"Ultra int8 v1 on the CPU", modelParakeetUltraInt8V1, sttQualityBalanced, false, modelFluidSpeechProInt8, strings.Repeat("b", 64)},
+		{"v3 int8 on the CPU", "parakeet-tdt-0.6b-v3-int8", sttQualityBalanced, false, modelFluidSpeechProInt8, strings.Repeat("b", 64)},
 		{"v3 fp32 on CUDA", "parakeet-tdt-0.6b-v3", sttQualityBalanced, true, modelParakeetUltraFp32, strings.Repeat("c", 64)},
 		{"v3 fp32 on the CPU best tier", "parakeet-tdt-0.6b-v3", sttQualityBest, false, modelParakeetUltraFp32, strings.Repeat("c", 64)},
 	}
@@ -225,7 +241,7 @@ func TestModelWorkerInstallsTheReplacementOnStart(t *testing.T) {
 			t.Fatal(err)
 		}
 		if len(jobs) == 1 && jobs[0].State != "queued" {
-			if jobs[0].Model != modelParakeetUltraInt8 || jobs[0].Progress.Completed == 0 && jobs[0].Progress.Phase == "" {
+			if jobs[0].Model != modelFluidSpeechProInt8 || jobs[0].Progress.Completed == 0 && jobs[0].Progress.Phase == "" {
 				t.Fatalf("job %+v", jobs[0])
 			}
 			break
@@ -235,7 +251,7 @@ func TestModelWorkerInstallsTheReplacementOnStart(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if got := rt.currentSettings().ActiveModel; got != modelParakeetUltraInt8 {
+	if got := rt.currentSettings().ActiveModel; got != modelFluidSpeechProInt8 {
 		t.Fatalf("active model %s", got)
 	}
 }
@@ -254,7 +270,7 @@ func TestRetiredPinWithTranscriptionOffAndUnknownPin(t *testing.T) {
 	if migrated, err := rt.migrateRetiredSpeechModel(rt.ctx); !migrated || err != nil {
 		t.Fatalf("migrated=%v err=%v", migrated, err)
 	}
-	if got := rt.currentSettings().ActiveModel; got != modelParakeetUltraInt8 {
+	if got := rt.currentSettings().ActiveModel; got != modelFluidSpeechProInt8 {
 		t.Fatalf("active model %s", got)
 	}
 	if jobs, _ := rt.modelJobs(rt.ctx); len(jobs) != 0 {
@@ -286,7 +302,7 @@ func TestBuildWaitsForAModelBeingInstalled(t *testing.T) {
 	t.Setenv(envSTTCUDACapable, "0")
 	stubNVIDIADevice(t, false)
 	retiredInventory(t, rt, false)
-	settings := STTSettings{TranscriptionEnabled: true, ActiveModel: modelParakeetUltraInt8, ActiveRevision: strings.Repeat("b", 64), Quality: sttQualityBalanced, DeviceOverride: deviceCPU, Source: sttSourceUser}
+	settings := STTSettings{TranscriptionEnabled: true, ActiveModel: modelFluidSpeechProInt8, ActiveRevision: strings.Repeat("b", 64), Quality: sttQualityBalanced, DeviceOverride: deviceCPU, Source: sttSourceUser}
 	rt.setSettings(settings)
 
 	_, _, err := rt.admitTranscription(rt.ctx, settings, resourceLimitsFromEnv(), false)
@@ -294,7 +310,7 @@ func TestBuildWaitsForAModelBeingInstalled(t *testing.T) {
 		t.Fatalf("missing model with no install running: %v (transient=%v)", err, transientResourceError(err))
 	}
 
-	job, err := rt.enqueueModel(rt.ctx, modelInfo{ID: modelParakeetUltraInt8, Revision: strings.Repeat("b", 64)}, deviceCPU)
+	job, err := rt.enqueueModel(rt.ctx, modelInfo{ID: modelFluidSpeechProInt8, Revision: strings.Repeat("b", 64)}, deviceCPU)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -364,7 +380,7 @@ func TestStatusReportsRuntimeForModelsWithoutMarkers(t *testing.T) {
 	rt.speechRuntimeProbe = nil
 	t.Setenv(envSTTCUDACapable, "0")
 	stubNVIDIADevice(t, false)
-	for _, model := range []string{modelParakeet110M, modelParakeetV3Int8} {
+	for _, model := range []string{modelParakeet110M, modelParakeetV3Int8, modelFluidSpeechProInt8} {
 		rt.setSettings(STTSettings{TranscriptionEnabled: true, ActiveModel: model, Quality: sttQualityBalanced, Source: sttSourceUser})
 		for _, c := range []struct {
 			version string

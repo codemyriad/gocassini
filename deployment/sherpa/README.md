@@ -23,7 +23,9 @@ Nemotron diarization through Sortformer. The macOS arm64 library is cross-built 
 fork's CASSINI.md). Standard `go build`, `go run` and
 `go test` work without compiling sherpa-onnx. Linux arm32 uses the stock 2.0.1
 library: it has upstream's quiet-audio fix, but cannot load Parakeet Ultra or
-diarize, so there only the fast tier's 110M model transcribes.
+diarize. The version check does not refuse Fluid Speech Pro there (its encoder
+url names `tdt`, see patch 2), but it has not been tested on arm32; the fast
+tier's 110M model is the one known to transcribe there.
 
 The native source is the
 [`v2.0.1-cassini-2` tag](https://github.com/codemyriad/sherpa-onnx/tree/v2.0.1-cassini-2)
@@ -46,6 +48,8 @@ patches:
    Ultra exports keep `https://huggingface.co/moondream/parakeet-ultra` and
    stock 2.0.1 exits the process while loading them. With the patch a joiner
    whose output is larger than the vocabulary is TDT. Not yet proposed upstream.
+   FluidVoice's Fluid Speech Pro export names `parakeet-tdt` in its encoder
+   url, so stock 2.0.1 selects TDT for it without the patch.
 3. **Markers.** `GetVersion()` reports
    `2.0.1+cassini.parakeet-tdt-joiner-v1.nemotron-diarization-v2`.
 4. **A `cudaGetDeviceProperties` cache, Linux x86_64 CUDA builds only.** ONNX
@@ -74,18 +78,19 @@ frontend (`+cassini-parakeet-v3-reference-v1`, 1.13.7 runtimes up to
 the same (MAI WER 9.18 vs 9.24, not significant); on Ultra fp32 (CUDA) 7.31 vs
 7.92, also not significant, all of it from one passage of one meeting. About
 4-5% of words in a transcript differ. The recorder keeps its whole-utterance
-recorder keeps its whole-utterance boundary policy for Parakeet Ultra (whole
-VAD spans, 30 ms of recorded context, no synthetic padding) and records the
-frontend as `nativeFrontend: "nemo-log-guard"` in provenance. Doctor and the
-operator's `/status` (`stt.runtime_supports_model`) report whether the runtime
-can run the selected model.
+boundary policy for Parakeet Ultra and Fluid Speech Pro (whole VAD spans,
+30 ms of recorded context, no synthetic padding) and records the frontend as
+`nativeFrontend: "nemo-log-guard"` in provenance. Doctor and the operator's
+`/status` (`stt.runtime_supports_model`) report whether the runtime can run the
+selected model.
 
 What the recorder reads from the version string:
 
 | Check | Needs | Without it |
 |---|---|---|
 | Any model | base version 2.0.1 or later: the C API this build links (VAD segment start is `int64`; the diarization config gained the Sortformer member) | the recognizer refuses to start; a 1.13.7 library on the library path would be handed structures it lays out differently |
-| Parakeet Ultra (both precisions) | `.parakeet-tdt-joiner-v1` | refused before loading (stock sherpa would exit) |
+| Parakeet Ultra (fp32, and the retired int8 stand-ins) | `.parakeet-tdt-joiner-v1` | refused before loading (stock sherpa would exit) |
+| Fluid Speech Pro int8 (the CPU balanced tier) | nothing beyond 2.0.1 | — |
 | Nemotron diarization | `.nemotron-diarization-v2` on 2.0.1 or later | `runtime_supported: false`, diarize exits 3 |
 
 CUDA still requires native compilation. `build.sh` downloads the immutable

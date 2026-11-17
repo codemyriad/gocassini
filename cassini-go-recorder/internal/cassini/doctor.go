@@ -196,8 +196,9 @@ func nativeRuntimeCheck(modelID transcribe.ModelID) doctorCheck {
 
 // nativeRuntimeCheckForVersion asks the model's own spec what the runtime must
 // carry: every model needs the 2.0.1 C API this binary links, and Parakeet
-// Ultra needs the joiner-size TDT detection on top. warn means a build with
-// this model will fail to transcribe; ok means it runs as specified.
+// Ultra needs the joiner-size TDT detection on top (Fluid Speech Pro does
+// not). warn means a build with this model will fail to transcribe; ok means
+// it runs as specified.
 func nativeRuntimeCheckForVersion(modelID transcribe.ModelID, ver string) doctorCheck {
 	if err := transcribe.CheckNativeRuntime(modelID, ver); err != nil {
 		return doctorCheck{
