@@ -454,6 +454,9 @@ func (rt *Runtime) runModelJob(job modelJob) {
 		// one replaces, so holding the gate is also what keeps it from
 		// removing them under a build standing in with them.
 		for !rt.buildExecutionMu.TryLock() {
+			if rt.modelGateBusy != nil {
+				rt.modelGateBusy()
+			}
 			select {
 			case <-ctx.Done():
 				return ctx.Err()

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -707,11 +708,11 @@ func TestUltraInt8V2StandsInUntilFluidPassesItsCheck(t *testing.T) {
 	// Fluid's check removes the retired files, as `cassini models probe` does
 	// once Fluid has passed it; it waits for a build standing in with v2.
 	writeUltraInt8V2Inventory(t, rt, "inventory-during-probe-"+modelFluidSpeechProInt8+".json", true, true, false)
+	gateRefused := watchModelGate(rt)
 	rt.buildExecutionMu.Lock()
 	done := make(chan struct{})
 	go func() { rt.runModelJob(j); close(done) }()
-	awaitModelState(t, rt, "downloading")
-	time.Sleep(300 * time.Millisecond)
+	awaitModelGateRefused(t, gateRefused)
 	if probes := probesRun(t, rt); len(probes) != 0 {
 		t.Fatalf("probe ran during a build: %v", probes)
 	}
@@ -832,11 +833,11 @@ func TestModelJobProbeWaitsForARunningBuild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	gateRefused := watchModelGate(rt)
 	rt.buildExecutionMu.Lock()
 	done := make(chan struct{})
 	go func() { rt.runModelJob(job); close(done) }()
-	awaitModelState(t, rt, "downloading")
-	time.Sleep(300 * time.Millisecond)
+	awaitModelGateRefused(t, gateRefused)
 	if probes := probesRun(t, rt); len(probes) != 0 {
 		t.Fatalf("probe ran during a build: %v", probes)
 	}
@@ -890,5 +891,26 @@ func TestNoStandInBecauseUltraBecameReadyDuringListUsesUltra(t *testing.T) {
 	}
 	if probes := probesRun(t, rt); len(probes) != 0 {
 		t.Fatalf("checks %v", probes)
+	}
+}
+
+// watchModelGate returns a channel closed the first time a model job's probe
+// finds buildExecutionMu held. Set it before the job starts.
+func watchModelGate(rt *Runtime) <-chan struct{} {
+	refused := make(chan struct{})
+	var once sync.Once
+	rt.modelGateBusy = func() { once.Do(func() { close(refused) }) }
+	return refused
+}
+
+// awaitModelGateRefused waits until the install job has reached the probe and
+// been refused the inference gate: from then on, nothing it does before the
+// gate is released may run.
+func awaitModelGateRefused(t *testing.T, refused <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-refused:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the install job never reached the inference gate")
 	}
 }
