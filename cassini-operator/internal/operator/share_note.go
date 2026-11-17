@@ -38,16 +38,27 @@ func oneLineTitle(title string) string {
 //
 //	Cassini meeting recording — Weekly sync, Friday 30 October 2026, 10:00 UTC (42 min). Open it in Cassini.
 //	Imported Cassini meeting — Weekly sync, Friday 30 October 2026, 10:00 UTC (42 min). Open it in Cassini.
+//	Uploaded Cassini meeting — Weekly sync, Friday 30 October 2026, 10:00 UTC (42 min). Open it in Cassini.
 //
 // The clock time says it is UTC: Browse shows the same start in the reader's
 // own zone, and the two must not look like different meetings. A missing
 // title or date is left out rather than written as a blank.
 func (f meetingFacts) shareNote(imported bool) string {
+	if imported {
+		return f.shareNoteForProvenance("imported")
+	}
+	return f.shareNoteForProvenance("")
+}
+
+func (f meetingFacts) shareNoteForProvenance(provenance string) string {
 	title := oneLineTitle(f.Title)
 	var b strings.Builder
-	if imported {
+	switch provenance {
+	case "imported":
 		b.WriteString("Imported Cassini meeting")
-	} else {
+	case "uploaded":
+		b.WriteString("Uploaded Cassini meeting")
+	default:
 		b.WriteString("Cassini meeting recording")
 	}
 	if title != "" {

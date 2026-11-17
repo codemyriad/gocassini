@@ -37,6 +37,10 @@ func TestShareNoteWording(t *testing.T) {
 	if got := formatMeetingDuration(42*time.Minute + 40*time.Second); got != "43 min" {
 		t.Fatalf("duration = %q", got)
 	}
+	uploaded := meetingFacts{Title: "Weekly sync", StartedAt: start, Duration: 42 * time.Minute}.shareNoteForProvenance("uploaded")
+	if want := "Uploaded Cassini meeting — Weekly sync, Friday 30 October 2026, 10:00 UTC (42 min). Open it in Cassini."; uploaded != want {
+		t.Fatalf("uploaded note\n got: %s\nwant: %s", uploaded, want)
+	}
 }
 
 // Every share a publication makes carries the note, built from what the

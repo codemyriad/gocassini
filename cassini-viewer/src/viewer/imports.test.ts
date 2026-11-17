@@ -122,6 +122,9 @@ describe("parseImportPreview", () => {
     }
     const preview = await parseImportPreview(new HugeFile([], "Offsite.wav", { type: "audio/wav" }));
     expect(preview.format).toBe("audio");
+    await expect(parseImportPreview(new HugeFile([], "Video.mp4", { type: "video/mp4" }))).rejects.toThrow(
+      /not a portable meeting/i,
+    );
   });
 
   it("routes JSON content to the transcription parser even under a BOM and an .opus name", async () => {

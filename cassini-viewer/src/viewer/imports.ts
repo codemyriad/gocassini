@@ -118,7 +118,10 @@ export async function parseImportPreview(file: File): Promise<ImportPreview> {
     const { manifest } = await extractPortableManifestFromArrayBuffer(bytes);
     return describePortableManifest(manifest, "opus");
   }
-  if (!startsLikeJSON(head) && looksLikeAudio(file)) return describeAudioUpload(file);
+  if (!startsLikeJSON(head)) {
+    if (looksLikeAudio(file)) return describeAudioUpload(file);
+    throw new Error(get(LL).viewer.browse.import.not_portable());
+  }
   const bytes = head.length < SNIFF_BYTES ? head : new Uint8Array(await file.arrayBuffer());
   let parsed: unknown;
   try {
@@ -132,8 +135,10 @@ export async function parseImportPreview(file: File): Promise<ImportPreview> {
 
 // SNIFF_BYTES is how much of a file classification reads. The Opus comment
 // header, where a portable meeting's Cassini tags start, sits in the first
-// pages of the stream.
+// pages of the stream. MAX_COMMENT_SNIFF_BYTES bounds how far into a malformed
+// or non-Opus Ogg stream we read before falling back to a head scan.
 const SNIFF_BYTES = 1 << 20;
+const MAX_COMMENT_SNIFF_BYTES = 64 << 20;
 
 // oggCarriesCassiniTags says whether an Ogg stream's comment header has any
 // Cassini key. It reads only as far as that header ends, which can be past the
@@ -143,13 +148,14 @@ const SNIFF_BYTES = 1 << 20;
 async function oggCarriesCassiniTags(file: File, head: Uint8Array): Promise<boolean> {
   let bytes = head;
   for (;;) {
-    const complete = bytes.length < SNIFF_BYTES || bytes.length >= file.size;
+    const complete = bytes.length < SNIFF_BYTES || bytes.length >= file.size || bytes.length >= MAX_COMMENT_SNIFF_BYTES;
     const keys = opusCommentKeys(bytes, complete);
     if (keys === "more") {
-      bytes = new Uint8Array(await file.slice(0, bytes.length * 4).arrayBuffer());
+      const nextEnd = Math.min(bytes.length * 4, MAX_COMMENT_SNIFF_BYTES);
+      bytes = new Uint8Array(await file.slice(0, nextEnd).arrayBuffer());
       continue;
     }
-    if (keys === null) return mentionsCassini(head);
+    if (keys === null) return mentionsCassini(bytes);
     return keys.some((key) => key.startsWith("CASSINI_"));
   }
 }
