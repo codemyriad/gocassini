@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -174,8 +175,17 @@ func TestStartupQueuesAMissingActiveModel(t *testing.T) {
 			t.Fatal(err)
 		}
 		rt.setSettings(saved)
+		failed := make(chan struct{})
+		var once sync.Once
+		rt.speechModelCheckFailed = func(error) { once.Do(func() { close(failed) }) }
 		rt.startModelWorker()
-		time.Sleep(100 * time.Millisecond)
+		// Restore the inventory only once a check has failed, so queueing the
+		// install below takes a retry.
+		select {
+		case <-failed:
+		case <-time.After(10 * time.Second):
+			t.Fatal("the worker's speech model check never failed without an inventory")
+		}
 		if jobs, _ := rt.modelJobs(rt.ctx); len(jobs) != 0 {
 			t.Fatalf("queued without an inventory: %+v", jobs)
 		}

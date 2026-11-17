@@ -393,9 +393,15 @@ func (rt *Runtime) startModelWorker() {
 			}
 			return nil
 		}
+		reportCheckErr := func(err error) {
+			rt.logger.Printf("stt_settings: %v", err)
+			if rt.speechModelCheckFailed != nil {
+				rt.speechModelCheckFailed(err)
+			}
+		}
 		checkErr := checkSpeechModel()
 		if checkErr != nil {
-			rt.logger.Printf("stt_settings: %v", checkErr)
+			reportCheckErr(checkErr)
 		}
 		lastCheck := time.Now()
 		tick := time.NewTicker(time.Second)
@@ -408,7 +414,7 @@ func (rt *Runtime) startModelWorker() {
 				checkErr = checkSpeechModel()
 				lastCheck = time.Now()
 				if checkErr != nil {
-					rt.logger.Printf("stt_settings: %v", checkErr)
+					reportCheckErr(checkErr)
 				}
 			}
 			jobs, err := rt.modelJobs(rt.ctx)
