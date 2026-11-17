@@ -39,9 +39,21 @@ func (rt *Runtime) recordingIdleLocked() bool {
 // Wait before claiming the durable job. Intentional waiting is neither a
 // running build nor a resource failure and must not consume retry attempts.
 func (rt *Runtime) beginBackgroundBuild() (context.Context, func(), error) {
+	return rt.beginBackgroundBuildUntil(nil)
+}
+
+// beginBackgroundBuildUntil is beginBackgroundBuild for a caller whose own
+// wait can be abandoned, such as an import the person cancels. A nil done
+// waits only on the operator's lifetime.
+func (rt *Runtime) beginBackgroundBuildUntil(done <-chan struct{}) (context.Context, func(), error) {
 	for {
 		if rt.ctx.Err() != nil {
 			return nil, nil, rt.ctx.Err()
+		}
+		select {
+		case <-done:
+			return nil, nil, context.Canceled
+		default:
 		}
 		rt.priorityMu.Lock()
 		if rt.processingPolicy() == policyConcurrent || rt.recordingIdleLocked() || (rt.processingPolicy() == policyAuto && rt.autoFreshLocked() && rt.autoCanStart) {
@@ -59,6 +71,8 @@ func (rt *Runtime) beginBackgroundBuild() (context.Context, func(), error) {
 		select {
 		case <-rt.ctx.Done():
 			return nil, nil, rt.ctx.Err()
+		case <-done:
+			return nil, nil, context.Canceled
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
