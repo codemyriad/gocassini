@@ -50,29 +50,19 @@
     },
     "setup_notice": {
       "checking": "Wird geprüft…",
-      "show_details": "Details anzeigen",
-      "details_heading": "Details für die Administration",
-      "open_publish_pipeline": "{place} öffnen",
+      "open_doctor": "",
       "title_failing": "Cassini kann gerade keine Aufnahmen speichern",
       "title_unchecked": "Cassini hat noch nicht geprüft, ob es Aufnahmen speichern kann",
-      "summary_failing": "Sie können weiterhin Aufnahmen durchsuchen. Anrufe laufen weiter, aber ihre Aufnahmen schlagen fehl, bis das behoben ist.",
-      "summary_unchecked": "Sie können weiterhin Aufnahmen durchsuchen, aber neue schlagen fehl, bis diese Prüfung läuft.",
-      "share_label": "Schicken Sie diesen Link an die Administration, um eine Anleitung zur Einrichtung zu erhalten.",
-      "step_rerun_setup": "Führen Sie die Einrichtung von Cassini erneut aus, indem Sie die App deaktivieren und wieder aktivieren",
-      "step_open_settings": "Öffnen Sie {place}, um das Aufnahmekonto zu prüfen",
-      "step_create_account": "Erstellen Sie das Konto {user} in Nextcloud",
-      "step_set_admin_user": "Setzen Sie {variable} auf ein Nextcloud-Administrationskonto",
+      "reader_failing": "",
+      "reader_unchecked": "",
+      "copy_link": "",
       "cause_unknown": "Cassini konnte die Einrichtung der Aufnahmen nicht bestätigen.",
       "cause": {
         "nextcloud_probe": "Nextcloud hat auf die Prüfung des Aufnahmekontos nicht geantwortet.",
         "private_archive": "Cassini konnte nicht bestätigen, dass sein Aufnahmeordner privat und beschreibbar ist.",
         "sharing_api": "Die Dateifreigabe von Nextcloud ist für das Cassini-Aufnahmekonto nicht verfügbar.",
         "owner_account": "Das Cassini-Aufnahmekonto existiert nicht."
-      },
-      "detail_state": "Der Operator meldete {state}.",
-      "detail_state_at_step": "Der Operator meldete {state} bei {step}.",
-      "note_occ": "{command} ist so aufzurufen, wie es Ihre Installation vorsieht, zum Beispiel {example}.",
-      "reference": "Den vollständigen Bericht zum Zugriff auf Aufnahmen finden Sie unter {endpoint}."
+      }
     },
     "sharing_notice": {
       "pending_title": "{count:number|num} {{Aufnahme wartet|Aufnahmen warten}} auf Sie",

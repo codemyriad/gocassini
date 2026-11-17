@@ -50,29 +50,19 @@
     },
     "setup_notice": {
       "checking": "Controleren…",
-      "show_details": "Details tonen",
-      "details_heading": "Details voor beheerders",
-      "open_publish_pipeline": "{place} openen",
+      "open_doctor": "",
       "title_failing": "Cassini kan op dit moment geen opnames opslaan",
       "title_unchecked": "Cassini heeft nog niet gecontroleerd of het opnames kan opslaan",
-      "summary_failing": "Je kunt nog steeds opnames bekijken. Gesprekken lopen gewoon door, maar hun opnames mislukken totdat dit is opgelost.",
-      "summary_unchecked": "Je kunt nog steeds opnames bekijken, maar nieuwe mislukken totdat deze controle heeft gedraaid.",
-      "share_label": "Stuur deze link naar een beheerder voor instructies om het in te stellen.",
-      "step_rerun_setup": "Voer de installatie van Cassini opnieuw uit door de app uit en weer aan te zetten",
-      "step_open_settings": "Open {place} om het opname-account te controleren",
-      "step_create_account": "Maak het account {user} aan in Nextcloud",
-      "step_set_admin_user": "Stel {variable} in op een Nextcloud-beheerder",
+      "reader_failing": "",
+      "reader_unchecked": "",
+      "copy_link": "",
       "cause_unknown": "Cassini kon de opname-instellingen niet bevestigen.",
       "cause": {
         "nextcloud_probe": "Nextcloud heeft niet gereageerd op de controle van het opname-account.",
         "private_archive": "Cassini kon niet bevestigen dat zijn opnamemap privé en beschrijfbaar is.",
         "sharing_api": "Bestanden delen in Nextcloud is niet beschikbaar voor het opname-account van Cassini.",
         "owner_account": "Het opname-account van Cassini bestaat niet."
-      },
-      "detail_state": "De operator meldde {state}.",
-      "detail_state_at_step": "De operator meldde {state} bij {step}.",
-      "note_occ": "{command} is hoe jouw installatie het ook aanroept, bijvoorbeeld {example}.",
-      "reference": "Zie {endpoint} voor het volledige rapport over toegang tot opnames."
+      }
     },
     "sharing_notice": {
       "pending_title": "{count:number|num} {{opname wacht|opnames wachten}} op je",

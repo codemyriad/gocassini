@@ -50,29 +50,19 @@
     },
     "setup_notice": {
       "checking": "Controllo…",
-      "show_details": "Mostra i dettagli",
-      "details_heading": "Dettagli per gli amministratori",
-      "open_publish_pipeline": "Apri {place}",
+      "open_doctor": "",
       "title_failing": "Al momento Cassini non può salvare le registrazioni",
       "title_unchecked": "Cassini non ha verificato di poter salvare le registrazioni",
-      "summary_failing": "Puoi ancora sfogliare le registrazioni. Le chiamate continueranno a funzionare, ma le loro registrazioni non riusciranno finché il problema non viene risolto.",
-      "summary_unchecked": "Puoi ancora sfogliare le registrazioni, ma quelle nuove non riusciranno finché questo controllo non viene eseguito.",
-      "share_label": "Invia questo link a un amministratore per le istruzioni di configurazione.",
-      "step_rerun_setup": "Esegui di nuovo la configurazione di Cassini disattivando e riattivando l’app",
-      "step_open_settings": "Apri {place} per controllare l’account delle registrazioni",
-      "step_create_account": "Crea l’account {user} in Nextcloud",
-      "step_set_admin_user": "Imposta {variable} su un amministratore di Nextcloud",
+      "reader_failing": "",
+      "reader_unchecked": "",
+      "copy_link": "",
       "cause_unknown": "Cassini non ha potuto confermare la configurazione delle registrazioni.",
       "cause": {
         "nextcloud_probe": "Nextcloud non ha risposto al controllo dell’account delle registrazioni.",
         "private_archive": "Cassini non ha potuto confermare che la sua cartella delle registrazioni sia privata e scrivibile.",
         "sharing_api": "La condivisione dei file di Nextcloud non è disponibile per l’account delle registrazioni di Cassini.",
         "owner_account": "L’account delle registrazioni di Cassini non esiste."
-      },
-      "detail_state": "L’operatore ha segnalato {state}.",
-      "detail_state_at_step": "L’operatore ha segnalato {state} in {step}.",
-      "note_occ": "{command} va invocato nel modo previsto dalla tua installazione, per esempio {example}.",
-      "reference": "Vedi {endpoint} per il rapporto completo sull’accesso alle registrazioni."
+      }
     },
     "sharing_notice": {
       "pending_title": "{count:number|num} {{|registrazione ti aspetta|||registrazioni ti aspettano|registrazioni ti aspettano}}",

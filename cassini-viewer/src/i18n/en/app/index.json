@@ -50,29 +50,19 @@
     },
     "setup_notice": {
       "checking": "Checking…",
-      "show_details": "Show details",
-      "details_heading": "Details for administrators",
-      "open_publish_pipeline": "Open {place}",
-      "title_failing": "Cassini can't save recordings right now",
+      "open_doctor": "Open {place}",
+      "title_failing": "New recordings can't be saved",
       "title_unchecked": "Cassini hasn't checked that it can save recordings",
-      "summary_failing": "You can still browse recordings. Calls will still run, but their recordings will fail until this is fixed.",
-      "summary_unchecked": "You can still browse recordings, but new ones will fail until this check runs.",
-      "share_label": "Send this link to an administrator for setup instructions.",
-      "step_rerun_setup": "Re-run Cassini's setup by disabling and enabling the app",
-      "step_open_settings": "Open {place} to check the recordings account",
-      "step_create_account": "Create the {user} account in Nextcloud",
-      "step_set_admin_user": "Set {variable} to a Nextcloud administrator",
+      "reader_failing": "Calls still work and existing recordings are still here. Ask an administrator to fix this.",
+      "reader_unchecked": "Existing recordings are still here. New ones may not save until an administrator checks this.",
+      "copy_link": "Copy link for an administrator",
       "cause_unknown": "Cassini could not confirm its recordings setup.",
       "cause": {
         "nextcloud_probe": "Nextcloud did not answer the recordings account check.",
         "private_archive": "Cassini could not confirm its recordings folder is private and writable.",
         "sharing_api": "Nextcloud file sharing is unavailable to the Cassini recordings account.",
         "owner_account": "The Cassini recordings account does not exist."
-      },
-      "detail_state": "The operator reported {state}.",
-      "detail_state_at_step": "The operator reported {state} at {step}.",
-      "note_occ": "{command} is however your deployment invokes it, for example {example}.",
-      "reference": "See {endpoint} for the full recordings access report."
+      }
     },
     "sharing_notice": {
       "pending_title": "{count:number|num} {{recording is|recordings are}} waiting for you",

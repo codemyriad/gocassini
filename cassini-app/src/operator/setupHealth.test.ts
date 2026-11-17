@@ -23,20 +23,20 @@ describe("direct share setup status", () => {
     expect(readSetupHealth(health)).toEqual(health);
     expect(readRecordingsAccess({ recordings_access: { ok: false, state: "unavailable", step: "owner_account", detail: "private detail" } })?.detail).toBe("private detail");
     const notice = buildSetupNotice({ health: { ...health, ok: false, state: "unavailable" }, access: null, isAdmin: false, appUrl: "https://example.test/app" });
-    expect(notice?.detail).toBe("");
+    expect(notice?.cause).toBe("");
     expect(notice?.shareUrl).toBe("https://example.test/app");
   });
   it("keeps existing reads visible while setup is unverified", () => {
-    const notice = buildSetupNotice({ health: { ...health, ok: false, state: "unknown" }, access: null, isAdmin: true, appUrl: "" });
+    const notice = buildSetupNotice({ health: { ...health, ok: false, state: "unknown" }, access: null, isAdmin: false, appUrl: "" });
     expect(notice?.tone).toBe("neutral");
-    // Browsing, not a promise that every read succeeds (D-849).
-    expect(notice?.summary).toMatch(/^You can still browse recordings, but new ones will fail/);
+    // Existing recordings, not a promise that every read succeeds (D-849).
+    expect(notice?.summary).toMatch(/^Existing recordings are still here\. New ones may not save/);
   });
   it("says browsing still works when the check fails, since only publishing stops (D-849)", () => {
     const notice = buildSetupNotice({ health: { ...health, ok: false, state: "unavailable" }, access: null, isAdmin: false, appUrl: "" });
     expect(notice?.tone).toBe("warning");
-    expect(notice?.title).toBe("Cassini can't save recordings right now");
-    expect(notice?.summary).toMatch(/^You can still browse recordings\./);
+    expect(notice?.title).toBe("New recordings can't be saved");
+    expect(notice?.summary).toMatch(/^Calls still work and existing recordings are still here\./);
     expect(notice).not.toHaveProperty("blocking");
   });
 });
@@ -54,8 +54,6 @@ describe("the setup notice's cause", () => {
     expect(cause("private_archive")).toBe(t.private_archive());
     expect(cause("sharing_api")).toBe(t.sharing_api());
     expect(cause("owner_account")).toBe("The Cassini recordings account does not exist.");
-    // The raw state text stays as the operator sent it.
-    expect(buildSetupNotice({ health: failing, access: { ok: false, state: "unavailable", step: "owner_account", detail: "raw", cause: "" }, isAdmin: true, appUrl: "" })?.detail).toBe("raw");
   });
 
   it("falls back to the operator's sentence for a step it does not know, then /setup's, then its own", () => {
@@ -66,6 +64,10 @@ describe("the setup notice's cause", () => {
 
   it("is not shown to someone who is not an administrator", () => {
     expect(cause("owner_account", "x", false)).toBe("");
+  });
+
+  it("takes the place of the reader's summary for an administrator", () => {
+    expect(buildSetupNotice({ health: failing, access: null, isAdmin: true, appUrl: "https://example.test/app" })).toMatchObject({ summary: "", shareUrl: "" });
   });
 });
 

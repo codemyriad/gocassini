@@ -6,73 +6,42 @@ import noticeSource from "./SetupNotice.svelte?raw";
 
 // Source-level assertions, the convention this repo follows for .svelte files:
 // the suite runs in node with no DOM harness. What the notice SAYS is decided in
-// operator/setupHealth.ts and tested there; what is asserted here is the shape
-// the rewrite gave it (D-759), and the two things a refactor could quietly lose:
-// the tone, and the fact that everything technical is behind a disclosure.
+// operator/setupHealth.ts and tested there; what is asserted here is its shape:
+// one row, the tone, and one way on for each audience (#500).
 
 describe("the setup notice", () => {
   it("takes its tone rather than assuming the loud one", () => {
     expect(noticeSource).toContain('export let tone: SetupNoticeTone = "warning";');
-    // The strip branches on it. It used to be an `alert alert-warning`
-    // whatever it was saying, which is how a notice about a check that has not
-    // run yet came to look like a fault.
+    // A notice about a check that has not run yet must not look like a fault.
     expect(noticeSource).toContain("{tone === 'warning' ? 'alert-warning' : ''}");
-    const triangles = noticeSource.match(/<TriangleAlert/g) ?? [];
-    const infos = noticeSource.match(/<Info/g) ?? [];
-    expect(triangles).toHaveLength(1);
-    expect(infos).toHaveLength(1);
+    expect(noticeSource.match(/<TriangleAlert/g) ?? []).toHaveLength(1);
+    expect(noticeSource.match(/<Info/g) ?? []).toHaveLength(1);
   });
 
-  it("puts the technical account behind one collapsed disclosure", () => {
-    // One control (#500): there used to be a "Show details" button and a
-    // <details> triangle under it, two rows of chrome for the same thing.
+  it("is a strip with no recipe in it: the steps live in Doctor", () => {
+    expect(noticeSource).not.toContain('class="card');
+    expect(noticeSource).toContain('class="alert items-center gap-3 py-2');
     expect(noticeSource).not.toMatch(/<details[\s>]/);
-    expect(noticeSource).not.toMatch(/<summary[\s>]/);
-    expect(noticeSource).toContain("let detailsOpen = false;");
-    expect(noticeSource).toContain("{#if hasDetails && detailsOpen}");
-    expect(noticeSource).toContain("aria-expanded={detailsOpen}");
-    expect(noticeSource).toContain("aria-controls={detailsId}");
+    expect(noticeSource).not.toContain("notice.steps");
+    expect(noticeSource).not.toContain("<pre");
   });
 
-  it("offers the two actions from the mock, as buttons", () => {
-    const showDetails = noticeSource.match(/\n\s*\{\$LL\.app\.shell\.setup_notice\.show_details\(\)\}\n\s*<ChevronDown[^\n]*\n\s*<\/button>/g) ?? [];
-    expect(showDetails).toHaveLength(1);
+  it("offers an administrator Try again and Doctor", () => {
+    expect(noticeSource).toContain("$: isAdmin = Boolean(notice.cause);");
     expect(noticeSource).toContain("{busy ? $LL.app.shell.setup_notice.checking() : $LL.common.action.try_again()}");
-    expect(get(LL).common.action.try_again()).toBe("Try again");
-    // Try again is a request to the operator, which the shell owns; the
-    // component asks for it and does nothing itself.
     expect(noticeSource).toContain('dispatch("retry")');
     expect(noticeSource).toContain("disabled={busy}");
+    expect(noticeSource).toContain('dispatch("navigate", "doctor")');
+    expect(get(LL).app.shell.setup_notice.open_doctor({ place: operatorPlace("doctor") })).toBe("Open Operator › Doctor");
   });
 
-  it("sends the step that is a navigation to the settings section", () => {
-    // The Setup tab is gone (D-756) and the storage controls are a section of
-    // Operator › Publish pipeline (D-757).
-    expect(noticeSource).toContain("$LL.app.shell.setup_notice.open_publish_pipeline({ place: operatorPlace(\"publish_pipeline\") })");
-    expect(get(LL).app.shell.setup_notice.open_publish_pipeline({ place: operatorPlace("publish_pipeline") })).toBe("Open Operator › Publish pipeline");
-    expect(noticeSource).not.toContain("Open the Setup tab");
-    expect(noticeSource).toContain('dispatch("navigate", "settings")');
-  });
-
-  // A failed check refuses publishing only; it never stands in for the list
-  // of recordings, which still open (D-849). There is no card layout left to
-  // take the list's place.
-  it("is a strip, and shows the cause under the consequence", () => {
-    expect(noticeSource).not.toContain("notice.blocking");
-    expect(noticeSource).not.toContain('class="card');
-    expect(noticeSource).toContain('class="alert items-start gap-3 py-2');
-    expect(noticeSource).toContain("{#if notice.cause}");
-    expect(noticeSource.indexOf("{notice.summary}")).toBeLessThan(noticeSource.indexOf("{notice.cause}"));
-  });
-
-  // Everyone who is not an administrator gets a sentence and the link to hand
-  // on. No buttons: Try again would re-run a check whose answer they are not
-  // shown, and there is nothing behind "Show details" for them.
-  it("draws no buttons when there is no diagnosis to show", () => {
-    expect(noticeSource).toContain("{#if hasDetails}");
-    expect(noticeSource).toContain(
-      "notice.detail || notice.note || notice.reference || notice.steps.length > 0",
-    );
-    expect(noticeSource).toContain("{#if notice.shareUrl}");
+  // Everyone else: what still works, and the page's address to pass on, copied
+  // rather than printed. No Try again: it would re-run a check whose answer
+  // they are not shown.
+  it("gives everyone else a copy button, and the address only if copying fails", () => {
+    expect(noticeSource).toContain("navigator.clipboard.writeText(notice.shareUrl)");
+    expect(noticeSource).toContain("{:else if notice.shareUrl}");
+    expect(noticeSource).toContain('{#if copyState === "failed"}');
+    expect(get(LL).app.shell.setup_notice.copy_link()).toBe("Copy link for an administrator");
   });
 });

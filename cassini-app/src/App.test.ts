@@ -128,11 +128,10 @@ describe("the shell after the Setup tab", () => {
   });
 
   it("sends the setup notice's own button somewhere that exists", () => {
-    // The broken-install branches carry a step with `action: "settings"` since
-    // D-759. It opens Operator › Publish pipeline, where "Who can see
-    // recordings" and the service-account controls live (D-757), rather than
-    // the operator's default Recordings panel.
-    expect(appSource).toContain("on:navigate={openPublishPipeline}");
+    // Doctor, where the storage check names the failing step and links on to
+    // the recordings account controls (#500), rather than the operator's
+    // default Recordings panel.
+    expect(appSource).toContain("on:navigate={openDoctor}");
     expect(appSource).not.toContain('on:navigate={() => selectSurface("operator")}');
   });
 
@@ -160,7 +159,7 @@ describe("the shell after the Setup tab", () => {
   // D-763's warning, rehomed. Its old destination (#surface=setup) is gone
   // (D-756), and a warning that navigates nowhere teaches people to ignore it.
   it("sends the recording warning to where the checks now live", () => {
-    expect(appSource).toContain("function openRecordingSetup()");
+    expect(appSource).toContain("function openDoctor()");
     // Both hops: the surface alone opens the default panel (Recordings) and
     // leaves the reader hunting for the checks.
     expect(appSource).toContain('applyPanel(applySurface(window.location.hash, "operator"), "doctor")');
@@ -176,7 +175,7 @@ describe("the shell after the Setup tab", () => {
     // button is admin-only — while the fact stays visible to everyone, because
     // it explains why their recordings are not appearing.
     expect(appSource).toMatch(/\{#if recordingNeedsAction && !setupNotice\}[\s\S]{0,800}\{#if operatorAvailable\}/);
-    expect(appSource).toMatch(/function openRecordingSetup\(\)[\s\S]{0,400}if \(!operatorAvailable\)/);
+    expect(appSource).toMatch(/function openDoctor\(\)[\s\S]{0,400}if \(!operatorAvailable\)/);
   });
 });
 

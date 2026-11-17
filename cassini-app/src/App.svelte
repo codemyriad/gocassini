@@ -204,10 +204,6 @@
   // catalog's hasSummary follows.
   $: insightsReady = setupFeatures?.insights === true;
 
-  // Where "Who can see recordings" lives: a section at the top of the settings
-  // panel the operator's nav calls "Publish pipeline" (SettingsPanel.svelte).
-  const RECORDING_ACCESS_PANEL: OperatorPanel = "pipeline";
-
   // Who can see recordings, for the audience chip in the meeting list (D-756).
   //
   // It comes from the USER-level /setup call, so a non-admin gets it too — the
@@ -341,7 +337,7 @@
   // handleOpenPanel does it: the surface, the operator's panel nav and the
   // viewer each read the fragment through popstate, so a silent pushState
   // would leave three readers disagreeing about where we are.
-  function openRecordingSetup(): void {
+  function openDoctor(): void {
     // Second guard. The button is only offered to an administrator, but the
     // cost of being wrong is a surface whose every request 403s at the proxy.
     if (!operatorAvailable) {
@@ -475,30 +471,12 @@
     window.dispatchEvent(new PopStateEvent("popstate"));
   }
 
-  // The setup notice's "Open Operator › Publish pipeline" button. The audience
-  // control is a SECTION of a settings panel, not the operator's front page, and
-  // the operator's default panel is the run console — so selecting the surface
-  // alone would land an administrator on a list of jobs, one click short of the
-  // thing the button they pressed named.
-  //
-  // Same mechanism as handleOpenPanel: push the fragment, then announce it once,
-  // so the surface, the operator's panel nav and the viewer all read the same
-  // address instead of three updates that can disagree about where we are.
   // Help's "Open Operator › Help" link, for an administrator in Browse (D-910).
   function openOperatorHelp(): void {
     if (!operatorAvailable) {
       return;
     }
     const hash = applyPanel(applySurface(window.location.hash, "operator"), "help");
-    window.history.pushState({}, "", locationWithHash(hash));
-    window.dispatchEvent(new PopStateEvent("popstate"));
-  }
-
-  function openPublishPipeline(): void {
-    if (!operatorAvailable) {
-      return;
-    }
-    const hash = applyPanel(applySurface(window.location.hash, "operator"), RECORDING_ACCESS_PANEL);
     window.history.pushState({}, "", locationWithHash(hash));
     window.dispatchEvent(new PopStateEvent("popstate"));
   }
@@ -674,7 +652,7 @@
             <TriangleAlert size={16} class="shrink-0" aria-hidden="true" />
             <p class="text-sm">{$LL.app.shell.app.recording_needs_action()}</p>
             {#if operatorAvailable}
-              <button class="btn btn-xs" type="button" on:click={openRecordingSetup}>{$LL.app.shell.app.open_recording_setup()}</button>
+              <button class="btn btn-xs" type="button" on:click={openDoctor}>{$LL.app.shell.app.open_recording_setup()}</button>
             {/if}
           </section>
         </div>
@@ -702,7 +680,7 @@
           tone={setupNotice.tone}
           busy={setupRetryBusy}
           on:retry={retrySetupCheck}
-          on:navigate={openPublishPipeline}
+          on:navigate={openDoctor}
         />
       </div>
     </div>
