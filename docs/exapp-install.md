@@ -715,7 +715,6 @@ under it:
 
 ```
 $APP_PERSISTENT_STORAGE/operator/jobs.sqlite3    # SQLite job DB
-$APP_PERSISTENT_STORAGE/operator/app-state.json  # AppAPI lifecycle state
 $APP_PERSISTENT_STORAGE/operator/jobs            # per-attempt artifacts (raw recordings)
 $APP_PERSISTENT_STORAGE/operator/models          # verified models/VAD and resumable downloads
 $APP_PERSISTENT_STORAGE/operator/settings.json   # transcription policy and active revision

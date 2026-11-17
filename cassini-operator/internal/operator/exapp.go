@@ -290,12 +290,8 @@ func (c ExAppConfig) applyToBindAddr(existing string) string {
 // installRoutes attaches lifecycle handlers and static prefixes to the given
 // root mux. Call BEFORE mounting the operator API mux under BasePath so the
 // lifecycle endpoints take precedence at the root.
-//
-// stateDir is where the lifecycle state JSON file lives (typically the parent
-// directory of the operator DB).
-func (c ExAppConfig) installRoutes(root *http.ServeMux, stateDir string, logger *log.Logger, search searchDeps) {
+func (c ExAppConfig) installRoutes(root *http.ServeMux, logger *log.Logger, search searchDeps) {
 	lifecycle := &LifecycleHandlers{
-		Store:                NewFileLifecycleStore(filepath.Join(stateDir, "app-state.json")),
 		Logger:               logger,
 		InitProgressReporter: c.initProgressReporter(logger),
 		UIRegistrar:          c.uiRegistrar(logger),

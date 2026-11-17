@@ -115,8 +115,8 @@ func (s *talkSecretStore) loadOrGenerate() (secret string, generated bool, err e
 	return fresh, true, nil
 }
 
-// save writes the provisioning state atomically (temp file + rename) with 0600
-// perms so a crash mid-write cannot truncate the persisted secret.
+// save writes the provisioning state atomically with 0600 perms so a crash
+// mid-write cannot truncate the persisted secret.
 func (s *talkSecretStore) save(st talkProvisioningState) error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
 		return fmt.Errorf("mkdir provisioning dir: %w", err)
@@ -125,14 +125,8 @@ func (s *talkSecretStore) save(st talkProvisioningState) error {
 	if err != nil {
 		return fmt.Errorf("marshal provisioning state: %w", err)
 	}
-	data = append(data, '\n')
-	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return fmt.Errorf("write provisioning temp: %w", err)
-	}
-	if err := os.Rename(tmp, s.path); err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("rename provisioning state: %w", err)
+	if err := writeFileAtomic(s.path, append(data, '\n'), 0o600); err != nil {
+		return fmt.Errorf("write provisioning state: %w", err)
 	}
 	return nil
 }

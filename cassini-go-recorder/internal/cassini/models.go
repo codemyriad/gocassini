@@ -71,7 +71,7 @@ func runModels(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	command := args[0]
 	fs := flag.NewFlagSet("cassini models "+command, flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	root := fs.String("cache-root", defaultCassiniCacheRoot(), "persistent operator model cache root")
+	root := fs.String("cache-root", transcribe.DefaultCacheDir(), "persistent operator model cache root")
 	revision := fs.String("revision", "", "pinned model revision (models list --json)")
 	modelID := fs.String("model", "", "model ID, required for raw-file import")
 	device := fs.String("device", "cpu", "target device: cpu or cuda")

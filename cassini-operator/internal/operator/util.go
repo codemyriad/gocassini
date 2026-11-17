@@ -8,6 +8,9 @@ import (
 
 // writeFileAtomic replaces path with a complete, synced file. Each writer uses
 // its own temporary file in the destination directory; the last rename wins.
+// The directory is synced after the rename so the new name survives a power
+// loss; a filesystem that refuses a directory sync is not an error, because
+// the file itself is already complete. Callers create the directory.
 func writeFileAtomic(path string, body []byte, mode os.FileMode) error {
 	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"-*.tmp")
 	if err != nil {
@@ -28,7 +31,14 @@ func writeFileAtomic(path string, body []byte, mode os.FileMode) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(f.Name(), path)
+	if err := os.Rename(f.Name(), path); err != nil {
+		return err
+	}
+	if dir, err := os.Open(filepath.Dir(path)); err == nil {
+		_ = dir.Sync()
+		_ = dir.Close()
+	}
+	return nil
 }
 
 func validateExecutable(path string) error {

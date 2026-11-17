@@ -272,13 +272,8 @@ func SaveLLMSettings(path string, s LLMSettings) error {
 	}
 	data = append(data, '\n')
 	// Keep write-temp-then-rename: keepRejectedCopy's hard link relies on it.
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return fmt.Errorf("write llm settings temp: %w", err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("rename llm settings: %w", err)
+	if err := writeFileAtomic(path, data, 0o600); err != nil {
+		return fmt.Errorf("write llm settings: %w", err)
 	}
 	return nil
 }

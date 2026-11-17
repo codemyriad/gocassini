@@ -183,23 +183,7 @@ func (rt *Runtime) saveRecordingSetupLocked(next recordingSetupState) error {
 	if err != nil {
 		return err
 	}
-	file, err := os.CreateTemp(filepath.Dir(path), ".recording-setup-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(file.Name())
-	if _, err = file.Write(raw); err != nil {
-		file.Close()
-		return err
-	}
-	if err = file.Sync(); err != nil {
-		file.Close()
-		return err
-	}
-	if err = file.Close(); err != nil {
-		return err
-	}
-	if err = os.Rename(file.Name(), path); err != nil {
+	if err := writeFileAtomic(path, raw, 0o600); err != nil {
 		return err
 	}
 	rt.recordingSetup.state = next

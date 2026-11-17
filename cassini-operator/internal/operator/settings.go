@@ -479,13 +479,8 @@ func Save(path string, s STTSettings) error {
 	}
 	data = append(data, '\n')
 	// Keep write-temp-then-rename: keepRejectedCopy's hard link relies on it.
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return fmt.Errorf("write settings temp: %w", err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("rename settings: %w", err)
+	if err := writeFileAtomic(path, data, 0o644); err != nil {
+		return fmt.Errorf("write settings: %w", err)
 	}
 	return nil
 }

@@ -443,7 +443,6 @@ it at `/nc_app_gocassini_data`, and exposes that path as
 
 ```text
 $APP_PERSISTENT_STORAGE/operator/jobs.sqlite3    # SQLite job DB
-$APP_PERSISTENT_STORAGE/operator/app-state.json  # AppAPI lifecycle state
 $APP_PERSISTENT_STORAGE/operator/jobs            # per-attempt artifacts
 ```
 

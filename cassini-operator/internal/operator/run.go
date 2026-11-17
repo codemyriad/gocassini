@@ -1220,7 +1220,7 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 		search.importAnnotations = annotations.importListedDocuments
 	}
 	// ExApp lifecycle + static prefixes (no-op when their env paths are unset).
-	exappCfg.installRoutes(root, filepath.Dir(rt.cfg.DBPath), logger, search)
+	exappCfg.installRoutes(root, logger, search)
 	// Insights (D-700): their own top-level prefix, mounted on the ROOT mux
 	// beside /published/ rather than under BasePath, because that is where
 	// appinfo/info.xml declares them — `^insights\/…`, USER, and the app's first
