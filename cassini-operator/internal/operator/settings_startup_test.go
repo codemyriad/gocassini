@@ -33,7 +33,7 @@ func startRuntimeIn(t *testing.T, dir string, logger *log.Logger) *Runtime {
 		MaxRecordWorkers: 1,
 		MaxBuildWorkers:  1,
 		TalkSharedSecret: "test-recording-secret",
-	}, logger, ioDiscard{}, ioDiscard{})
+	}, newSupportJournal(filepath.Join(dir, "jobs")), logger, ioDiscard{}, ioDiscard{})
 	t.Cleanup(func() { cleanupTestRuntime(t, rt, store) })
 	return rt
 }

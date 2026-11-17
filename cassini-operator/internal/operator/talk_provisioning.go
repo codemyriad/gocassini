@@ -175,7 +175,7 @@ func resolveTalkProvisioning(dataDir, explicitSecret, nextcloudURL, appID string
 	prov.Secret = secret
 	prov.SecretSource = talkSecretSourceGenerated
 	if generated {
-		logger.Printf("talk provisioning: generated a Talk recording secret (persisted to %s); register it in spreed via the operator provisioning endpoint or wire-cassini.sh", filepath.Join(dataDir, talkProvisioningFile))
+		logger.Printf("talk provisioning: generated a Talk recording secret (persisted to %s); if Talk already used Cassini for recording, Talk still holds the old secret: press Connect Talk again", filepath.Join(dataDir, talkProvisioningFile))
 	}
 	return prov
 }

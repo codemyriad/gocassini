@@ -88,6 +88,10 @@ type Config struct {
 }
 
 type Runtime struct {
+	// dataOnEphemeralStorage is set once by Run before it listens: the job
+	// database, work root or a local site root is on overlay or tmpfs.
+	dataOnEphemeralStorage bool
+
 	supportJournal *supportJournal
 	supportGate    supportGate
 	// requestLog is the operator logger without the support journal tee.
@@ -381,8 +385,6 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	logger := log.New(stderr, "cassini-operator: ", log.LstdFlags)
-
 	cfg, exitCode, err := loadConfig(args, stderr)
 	if err != nil {
 		if exitCode == 0 {
@@ -399,6 +401,21 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	cfg.BindAddr = exappCfg.applyToBindAddr(cfg.BindAddr)
 
+	// Take the work-root lock before anything writes to the volume, so a second
+	// operator on the same root exits before it can generate a Talk secret.
+	unlockRoot, err := lockWorkRoot(cfg.WorkRoot)
+	if err != nil {
+		fmt.Fprintf(stderr, "work root: %v\n", err)
+		return 1
+	}
+	defer unlockRoot()
+	// Then start the support journal, so every startup line below reaches
+	// support bundles. requestLog stays stderr-only: NewRuntime gets the plain
+	// logger and tees its own operator logger into this journal.
+	journal := newSupportJournal(cfg.WorkRoot)
+	stderrLog := log.New(stderr, "cassini-operator: ", log.LstdFlags)
+	logger := log.New(io.MultiWriter(stderr, journal), stderrLog.Prefix(), stderrLog.Flags())
+
 	// Zero-config Talk recording (D-447): generate + persist a recording secret
 	// when none was supplied, and derive the backend URL to register in spreed.
 	// An explicit CASSINI_TALK_RECORDING_SECRET still wins. The persisted secret
@@ -408,29 +425,23 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	cfg.TalkSecretSource = prov.SecretSource
 	cfg.TalkRecordingBackendURL = prov.BackendURL
 
-	unlockRoot, err := lockWorkRoot(cfg.WorkRoot)
-	if err != nil {
-		fmt.Fprintf(stderr, "work root: %v\n", err)
-		return 1
-	}
-	defer unlockRoot()
 	store, err := OpenStore(cfg.DBPath)
 	if err != nil {
-		fmt.Fprintf(stderr, "open store: %v\n", err)
+		logger.Printf("open store: %v", err)
 		return 1
 	}
 	defer store.Close()
 	interruptedAt := nowUTCString()
 	interrupted, err := store.MarkIncompleteJobsInterrupted(context.Background(), interruptedAt)
 	if err != nil {
-		fmt.Fprintf(stderr, "mark interrupted jobs: %v\n", err)
+		logger.Printf("mark interrupted jobs: %v", err)
 		return 1
 	}
 	if interrupted > 0 {
 		logger.Printf("startup interrupted_jobs -> %d", interrupted)
 	}
 
-	runtime := NewRuntime(ctx, store, cfg, logger, stdout, stderr)
+	runtime := NewRuntime(ctx, store, cfg, journal, stderrLog, stdout, stderr)
 	logger = runtime.logger
 	if interrupted > 0 {
 		runtime.emitInterruptedAtStartup(interruptedAt)
@@ -512,7 +523,11 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// started after the ExApp configuration is complete because the index may
 	// read Nextcloud Files as well as local artifacts.
 	runtime.startDetailedStorageUsageRebuilder(exappCfg)
-	warnIfEphemeral(logger, filepath.Dir(cfg.DBPath), cfg.SiteRoot)
+	// The site root counts for support bundles only when it is the publish
+	// destination; with Nextcloud Files it holds only legacy content.
+	dataEphemeral := warnIfEphemeral(logger, filepath.Dir(cfg.DBPath), cfg.WorkRoot)
+	siteEphemeral := warnIfEphemeral(logger, cfg.SiteRoot)
+	runtime.dataOnEphemeralStorage = dataEphemeral || (siteEphemeral && sink.Name() == publishSinkLocal)
 
 	server := &http.Server{
 		Handler:           newHTTPHandler(logger, runtime, exappCfg),
@@ -886,9 +901,10 @@ func normalizeBasePath(value string) (string, error) {
 	return normalized, nil
 }
 
-func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logger, stdout, stderr io.Writer) *Runtime {
+// NewRuntime tees logger into journal for operator output. logger itself must
+// write to stderr only: it becomes requestLog, which the journal never sees.
+func NewRuntime(ctx context.Context, store *Store, cfg Config, journal *supportJournal, logger *log.Logger, stdout, stderr io.Writer) *Runtime {
 	cleanupSupportTemps(os.TempDir(), time.Now())
-	journal := newSupportJournal(cfg.WorkRoot)
 	requestLog := logger
 	logger = log.New(io.MultiWriter(logger.Writer(), journal), logger.Prefix(), logger.Flags())
 	queueCapacity := cfg.MaxBuildWorkers * 16
@@ -964,7 +980,9 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 	// only a save writes the file. A missing file gives the detected defaults.
 	// A failure here must not take the operator down: fall back to in-memory
 	// defaults so jobs still run (D-435), and keep the rejected file before a
-	// save can replace it.
+	// save can replace it. An absent file is logged: boot is the only place
+	// that state arises, and support needs to see it.
+	settingsExisted := fileExists(rt.settingsPath)
 	if settings, err := LoadOrInitSettingsWithMigrationReporter(rt.settingsPath, rt.reportSettingsMigration); err != nil {
 		logger.Print(settingsLoadFailedMessage("stt_settings", rt.settingsPath, "running on defaults (transcription off, new recordings shared with attendees only)", "Settings", err))
 		fallback := detectSettings()
@@ -975,14 +993,21 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 		rt.settings = fallback
 	} else {
 		rt.settings = settings
+		if !settingsExisted {
+			logger.Printf("%s was not found; using detected defaults (transcription off) until an administrator saves Settings", filepath.Base(rt.settingsPath))
+		}
 	}
 	// Same for the LLM policy: seed from the deploy env on first start; on a
 	// load failure keep running on the deploy env rather than refusing to start.
+	llmExisted := fileExists(rt.llmSettingsPath)
 	if llm, err := LoadOrInitLLMSettings(rt.llmSettingsPath, os.Getenv); err != nil {
 		logger.Print(settingsLoadFailedMessage("llm_settings", rt.llmSettingsPath, "using the deploy environment", "AI providers", err))
 		rt.llm = SeedLLMSettings(os.Getenv)
 	} else {
 		rt.llm = llm
+		if !llmExisted {
+			logger.Printf("llm_settings created from the deploy environment (%s was not found)", filepath.Base(rt.llmSettingsPath))
+		}
 	}
 	store.SetStateChangePublisher(rt.publishStateChangeEvent)
 	rt.startEventWebhook()

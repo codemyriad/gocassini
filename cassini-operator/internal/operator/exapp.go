@@ -5,7 +5,6 @@ import (
 	_ "embed"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -15,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"cassini-operator/internal/operator/appapi"
@@ -150,8 +150,7 @@ var topMenuEntries = []uiTopMenuRegistration{
 // Data paths baked as ENV defaults in deployment/Dockerfile.exapp{,.cuda}.
 // exAppDataPathDefault treats an env value equal to one of these as "not
 // explicitly configured" so it can redirect the path under the AppAPI
-// persistent volume. Keep in sync with the Dockerfiles (and with the
-// effective_data_path mirror in deployment/exapp-start.sh).
+// persistent volume. Keep in sync with the Dockerfiles.
 const (
 	imageDefaultDBPath   = "/var/lib/cassini-operator/jobs.sqlite3"
 	imageDefaultWorkRoot = "/var/lib/cassini-operator/jobs"
@@ -784,54 +783,44 @@ func publishedHandler(dir, urlPrefix string, logger *log.Logger, ncProxy ncFiles
 	})
 }
 
-// warnIfEphemeral logs a warning when a path looks like it's on an ephemeral
-// filesystem (overlay, tmpfs). Best-effort; failure to detect is fine.
-func warnIfEphemeral(logger *log.Logger, paths ...string) {
-	for _, p := range paths {
-		fsType, err := filesystemType(p)
-		if err != nil {
-			continue
-		}
-		switch fsType {
-		case "overlayfs", "overlay", "tmpfs":
-			logger.Printf("WARNING: %s is on %s — mount a persistent volume or data will be lost on restart", p, fsType)
-		}
+// Filesystem magic numbers from statfs(2).
+const (
+	overlayFSMagic = 0x794c7630
+	tmpfsMagic     = 0x01021994
+)
+
+// ephemeralFSType names the filesystem of path when its data does not outlive
+// the container: "overlay" (the container layer) or "tmpfs" (memory). It gives
+// "" otherwise, and for a path it cannot stat. statfs follows symlinks and
+// needs no mount-table parsing.
+func ephemeralFSType(path string) string {
+	var st syscall.Statfs_t
+	if path == "" || syscall.Statfs(path, &st) != nil {
+		return ""
 	}
+	switch int64(st.Type) {
+	case overlayFSMagic:
+		return "overlay"
+	case tmpfsMagic:
+		return "tmpfs"
+	}
+	return ""
 }
 
-func filesystemType(path string) (string, error) {
-	// Linux: parse /proc/mounts for the longest matching mount point.
-	if _, err := os.Stat(path); err != nil {
-		return "", err
-	}
-	f, err := os.Open("/proc/mounts")
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-	raw, err := io.ReadAll(f)
-	if err != nil {
-		return "", err
-	}
-	best := ""
-	bestType := ""
-	for _, line := range strings.Split(string(raw), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 3 {
+// warnIfEphemeral logs a warning for each path on overlay or tmpfs and reports
+// whether any was. Best effort: a path that does not exist yet is skipped.
+func warnIfEphemeral(logger *log.Logger, paths ...string) bool {
+	found := false
+	for _, p := range paths {
+		switch ephemeralFSType(p) {
+		case "overlay":
+			logger.Printf("WARNING: %s is on the container layer (overlay): it is lost when the container is recreated or the app is updated; mount a persistent volume", p)
+		case "tmpfs":
+			logger.Printf("WARNING: %s is on tmpfs: it is lost at every container stop and host reboot; mount a persistent volume", p)
+		default:
 			continue
 		}
-		mp := fields[1]
-		fsType := fields[2]
-		if !strings.HasPrefix(path, mp) {
-			continue
-		}
-		if len(mp) > len(best) {
-			best = mp
-			bestType = fsType
-		}
+		found = true
 	}
-	if bestType == "" {
-		return "", errors.New("no matching mount")
-	}
-	return bestType, nil
+	return found
 }

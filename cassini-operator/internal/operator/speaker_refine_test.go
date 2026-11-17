@@ -582,7 +582,7 @@ func newProductionBuildRuntime(t *testing.T, bin string) *Runtime {
 		MaxRecordWorkers: 1,
 		MaxBuildWorkers:  1,
 		TalkSharedSecret: "test-recording-secret",
-	}, log.New(ioDiscard{}, "", 0), ioDiscard{}, ioDiscard{})
+	}, newSupportJournal(filepath.Join(tmp, "jobs")), log.New(ioDiscard{}, "", 0), ioDiscard{}, ioDiscard{})
 	rt.sealJobFn = writeSealedOpusFixture(rt)
 	rt.publishJobFn = func(ctx context.Context, task publishTask) (string, error) {
 		sitePath := attemptSitePath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber)

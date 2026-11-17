@@ -540,7 +540,7 @@ func (rt *Runtime) collectSupportHealth(ctx context.Context, b *supportBundle) {
 	if _, known := speechModelSpecs[e.Model]; known {
 		model = e.Model
 	}
-	configuration := map[string]any{"app_version": supportVersion(os.Getenv(envAppVersion)), "vcs_revision": supportRevision(buildVCSRevision()), "go_version": runtime.Version(), "os": runtime.GOOS, "architecture": runtime.GOARCH, "publish_sink": supportEnum(rt.resolvedPublishSinkName(), "local", "nextcloud-files"), "transcription_enabled": s.TranscriptionEnabled, "quality": supportEnum(e.Quality, "fast", "balanced", "best"), "device": supportEnum(e.Device, "cpu", "cuda"), "model": model, "recording_secret_configured": rt.cfg.TalkSharedSecret != "", "signalling_secret_configured": rt.signalingInternalSecretConfigured(), "model_downloads_allowed": !rt.cfg.DisallowModelDownload}
+	configuration := map[string]any{"app_version": supportVersion(os.Getenv(envAppVersion)), "vcs_revision": supportRevision(buildVCSRevision()), "go_version": runtime.Version(), "os": runtime.GOOS, "architecture": runtime.GOARCH, "publish_sink": supportEnum(rt.resolvedPublishSinkName(), "local", "nextcloud-files"), "transcription_enabled": s.TranscriptionEnabled, "quality": supportEnum(e.Quality, "fast", "balanced", "best"), "device": supportEnum(e.Device, "cpu", "cuda"), "model": model, "recording_secret_configured": rt.cfg.TalkSharedSecret != "", "signalling_secret_configured": rt.signalingInternalSecretConfigured(), "model_downloads_allowed": !rt.cfg.DisallowModelDownload, "data_on_ephemeral_storage": rt.dataOnEphemeralStorage}
 	if !b.scrubbed() {
 		configuration["app_version"] = os.Getenv(envAppVersion)
 		configuration["model"] = e.Model
