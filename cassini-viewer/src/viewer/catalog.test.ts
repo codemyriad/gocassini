@@ -217,6 +217,53 @@ describe("validateMeetingCatalog", () => {
     expect(catalog.meetings[0]?.wordCount).toBe(3468);
   });
 
+  it("carries imported and uploaded provenance stamps across catalog validation", () => {
+    const catalog = validateMeetingCatalog({
+      version: "cassini.viewer.catalog.v1",
+      meetings: [
+        {
+          id: "01M7N8V9VV7BDVNJE7CGEDTFMH",
+          meetingPath: "./meetings/01M7N8V9VV7BDVNJE7CGEDTFMH.opus",
+          title: "Q4 Roadmap Sync",
+          dateLabel: "2026-11-17 17:28",
+          roomId: "imported",
+          roomName: "Imported meetings",
+          imported: { by: "admin", atUtc: "2026-11-17T17:28:35.620769884Z" },
+        },
+        {
+          id: "01M7N8VET45NXQZW594VDZPBS1",
+          meetingPath: "./meetings/01M7N8VET45NXQZW594VDZPBS1.opus",
+          title: "Lantern Festival Booth Run-through",
+          dateLabel: "2026-11-17 17:28",
+          roomId: "uploaded",
+          roomName: "Uploaded meetings",
+          uploaded: { by: "admin", atUtc: "2026-11-17T17:28:43.023706360Z" },
+        },
+        {
+          id: "01CLI000000000000000000000",
+          meetingPath: "./meetings/01CLI000000000000000000000.opus",
+          title: "CLI Import Without Author",
+          dateLabel: "2026-11-17 17:29",
+          imported: { by: "", atUtc: "" },
+          uploaded: null,
+        },
+      ],
+    });
+
+    expect(catalog.meetings[0]?.imported).toEqual({
+      by: "admin",
+      atUtc: "2026-11-17T17:28:35.620769884Z",
+    });
+    expect(catalog.meetings[0]?.uploaded).toBeUndefined();
+    expect(catalog.meetings[1]?.uploaded).toEqual({
+      by: "admin",
+      atUtc: "2026-11-17T17:28:43.023706360Z",
+    });
+    expect(catalog.meetings[1]?.imported).toBeUndefined();
+    expect(catalog.meetings[2]?.imported).toEqual({});
+    expect(catalog.meetings[2]?.uploaded).toBeUndefined();
+  });
+
   it("keeps 'no summary' and 'no words' distinct from 'we do not know'", () => {
     // The whole point of the pair. An archive published before these fields
     // existed carries neither, and the browse list must show that as unknown

@@ -324,7 +324,25 @@ function validateMeetingCatalogEntry(
     // is not there (D-716).
     hasSummary: optionalBoolean(value.hasSummary),
     wordCount: optionalWordCount(value.wordCount),
+    ...optionalAttributionField("imported", value.imported),
+    ...optionalAttributionField("uploaded", value.uploaded),
   };
+}
+
+function optionalAttributionField<K extends "imported" | "uploaded">(
+  key: K,
+  value: unknown,
+): Partial<Pick<MeetingCatalogEntry, K>> {
+  if (!isRecord(value) || Array.isArray(value)) {
+    return {};
+  }
+  const by = optionalRoomString(value.by);
+  const atUtc = parseRecordedAtUtc(value.atUtc) ?? optionalRoomString(value.atUtc);
+  const stamp: { by?: string; atUtc?: string } = {
+    ...(by !== undefined ? { by } : {}),
+    ...(atUtc !== undefined ? { atUtc } : {}),
+  };
+  return { [key]: stamp } as Partial<Pick<MeetingCatalogEntry, K>>;
 }
 
 function optionalRecordedAtUtc(value: unknown): { recordedAtUtc?: string } {
