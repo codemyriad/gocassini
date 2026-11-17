@@ -19,7 +19,11 @@
   function onKeydown(event: KeyboardEvent) {
     if (event.key === "Escape") {
       event.stopPropagation();
-      dispatch("cancel");
+      // While the action is in flight there is nothing left to cancel: closing
+      // the dialog would read as "backed out" while the request carries on.
+      if (!busy) {
+        dispatch("cancel");
+      }
     }
   }
 </script>
@@ -29,7 +33,11 @@
   class="confirm-scrim"
   tabindex="-1"
   aria-label={cancelLabel || $LL.viewer.browse.ui.confirm_cancel()}
-  on:click={() => dispatch("cancel")}
+  on:click={() => {
+    if (!busy) {
+      dispatch("cancel");
+    }
+  }}
 ></button>
 <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
 <div

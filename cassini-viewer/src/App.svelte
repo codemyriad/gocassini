@@ -210,7 +210,7 @@
   // a screen reader wanders into a page the reader cannot see for the drawer
   // over it. Prepare and Connect an agent share a level: each is opened from a
   // control the other makes inert, so they are never open together.
-  $: topLayer = deleteConfirm ? 5 : tagManagerOpen ? 4 : railOpen ? 3 : prepareOpen || agentOpen || supportOpen ? 2 : selectedInsight || selectedMeetingId ? 1 : 0;
+  $: topLayer = deleteConfirm || insightDeleteConfirm ? 5 : tagManagerOpen ? 4 : railOpen ? 3 : prepareOpen || agentOpen || supportOpen ? 2 : selectedInsight || selectedMeetingId ? 1 : 0;
   $: dispatch("overlay", overlayOpen);
   $: if (prepareOpen) {
     dispatch("prepareOpen");
@@ -1498,9 +1498,14 @@
   $: insightSourceCounts = new Map(
     [...insightSources].map(([id, sources]) => [id, sources.length]),
   );
-  $: insightMissingSourceCounts = new Map(
-    insights.map((record) => [record.id, missingInsightSources(record, insightSources.get(record.id) ?? [])]),
-  );
+  // Only against a catalog that has actually arrived: before one has (or when
+  // the first fetch failed) every source would read as gone, and every card
+  // would say so.
+  $: insightMissingSourceCounts = catalogMode
+    ? new Map(
+        insights.map((record) => [record.id, missingInsightSources(record, insightSources.get(record.id) ?? [])]),
+      )
+    : new Map<string, number>();
   // An insight carries no tags, so a tag filter leaves none of them.
   $: roomInsights = activeTagIds.length > 0 ? [] : filterInsightsByRoom(insights, selectedRoomKey);
   // Called from a reactive statement rather than being one, for the reason

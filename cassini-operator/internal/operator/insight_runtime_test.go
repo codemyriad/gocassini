@@ -68,9 +68,10 @@ type insightDAV struct {
 	raced map[string]bool
 	// fileIDs is the Nextcloud file id PROPFIND reports for a held document;
 	// deleted records each DELETE, and failDelete answers it 500.
-	fileIDs    map[string]int64
-	deleted    []string
-	failDelete bool
+	fileIDs      map[string]int64
+	deleted      []string
+	failDelete   bool
+	failPropfind bool
 }
 
 type insightPut struct {
@@ -99,6 +100,11 @@ func newInsightDAV(t *testing.T, catalog string, visible ...string) *insightDAV 
 			_, _ = w.Write([]byte(catalog))
 		case r.Method == "PROPFIND" && strings.HasSuffix(base, ".md"):
 			dav.mu.Lock()
+			if dav.failPropfind {
+				dav.mu.Unlock()
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
 			_, held := dav.documents[rel]
 			fileID := dav.fileIDs[rel]
 			dav.mu.Unlock()

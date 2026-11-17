@@ -996,3 +996,56 @@ func TestDeleteInsightIsAPost(t *testing.T) {
 		t.Errorf("code = %d, want 405", w.Code)
 	}
 }
+
+// Where Nextcloud cannot say which file sits at the document's path — no file
+// id, or the PROPFIND failed — the insight stays listed and nothing is deleted:
+// dropping the row would leave the document behind with nothing pointing at it.
+func TestDeleteInsightKeepsTheRunWhenTheDocumentCannotBeIdentified(t *testing.T) {
+	cases := map[string]func(*insightDAV){
+		"no file id":      func(d *insightDAV) {},
+		"PROPFIND failed": func(d *insightDAV) { d.failPropfind = true },
+	}
+	for name, breakIt := range cases {
+		t.Run(name, func(t *testing.T) {
+			harness := newInsightHandlerHarness(t,
+				InsightRun{
+					ID: "ins_00000000000000a1", CreatedBy: "alice", Status: insightStatusSucceeded,
+					MeetingIDs: []string{"MEETING1"}, DocumentPath: deleteTestDocPath, DocumentFileID: "4001",
+				},
+			)
+			harness.dav.holdDocument("alice/"+deleteTestDocPath, "# Themes\n")
+			breakIt(harness.dav)
+
+			w := harness.do(t, http.MethodPost, "/insights/ins_00000000000000a1/delete", "alice", "")
+			if w.Code != http.StatusBadGateway {
+				t.Fatalf("code = %d, want 502 (%s)", w.Code, w.Body.String())
+			}
+			if got := harness.dav.deletes(); len(got) != 0 {
+				t.Errorf("deletes = %v, want nothing deleted", got)
+			}
+			if _, still := harness.store.runs["ins_00000000000000a1"]; !still {
+				t.Error("the run was deleted although its document may still be in Files")
+			}
+		})
+	}
+}
+
+// The operator only delivers into its own folder; a row naming a path outside
+// it is not trusted to delete there.
+func TestDeleteInsightRefusesADocumentPathOutsideTheInsightsFolder(t *testing.T) {
+	harness := newInsightHandlerHarness(t,
+		InsightRun{
+			ID: "ins_00000000000000a1", CreatedBy: "alice", Status: insightStatusSucceeded,
+			MeetingIDs: []string{"MEETING1"}, DocumentPath: "Documents/taxes.md",
+		},
+	)
+	harness.dav.holdDocument("alice/Documents/taxes.md", "private\n")
+
+	w := harness.do(t, http.MethodPost, "/insights/ins_00000000000000a1/delete", "alice", "")
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("code = %d, want 502 (%s)", w.Code, w.Body.String())
+	}
+	if got := harness.dav.deletes(); len(got) != 0 {
+		t.Errorf("deletes = %v, want nothing outside the insights folder deleted", got)
+	}
+}

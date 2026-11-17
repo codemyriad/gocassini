@@ -30,7 +30,7 @@ describe("the shell's meeting delete", () => {
     expect(appSource).toContain("deleteConfirm = entries;");
     expect(appSource).toContain("on:confirm={confirmDeleteMeetings}");
     // The dialog is the topmost layer: everything under it goes inert.
-    expect(appSource).toContain("$: topLayer = deleteConfirm ? 5 :");
+    expect(appSource).toContain("$: topLayer = deleteConfirm || insightDeleteConfirm ? 5 :");
   });
 
   it("removes optimistically and keeps the poll from flashing the row back", () => {

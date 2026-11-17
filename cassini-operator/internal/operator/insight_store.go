@@ -352,7 +352,7 @@ func (s *insightStore) DeleteRun(ctx context.Context, id string) error {
 	if err != nil {
 		return fmt.Errorf("begin delete insight run: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	var status string
 	if err := tx.QueryRowContext(ctx, `SELECT status FROM insight_runs WHERE id = ?`, id).Scan(&status); err != nil {
 		return err

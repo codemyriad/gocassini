@@ -737,6 +737,11 @@ func (s *insightService) deleteInsightDocument(ctx context.Context, run InsightR
 	if relPath == "" {
 		return nil
 	}
+	// The operator only ever delivers into its own folder (see deliver). A path
+	// outside it is not one this run wrote, whatever the row says.
+	if !strings.HasPrefix(relPath, ncInsightsRoot+"/") {
+		return fmt.Errorf("document path %q is outside %s", relPath, ncInsightsRoot)
+	}
 	if wantID := strings.TrimSpace(run.DocumentFileID); wantID != "" {
 		leaf, err := s.exapp.davPropfindLeafState(ctx, s.client, run.CreatedBy, relPath)
 		if err != nil {
@@ -744,6 +749,13 @@ func (s *insightService) deleteInsightDocument(ctx context.Context, run InsightR
 		}
 		if !leaf.Exists {
 			return nil
+		}
+		if leaf.FileID == 0 {
+			// Nextcloud did not say which file this is, so it cannot be told
+			// apart from somebody else's. Refusing keeps the insight listed and
+			// the delete retryable, rather than dropping the row and leaving the
+			// document behind with nothing pointing at it.
+			return fmt.Errorf("PROPFIND %s returned no file id", relPath)
 		}
 		if strconv.FormatInt(leaf.FileID, 10) != wantID {
 			s.logf("insights: run=%s document path %s now holds a different file (id %d, run wrote %s); leaving it in caller=%s's files", run.ID, relPath, leaf.FileID, wantID, run.CreatedBy)

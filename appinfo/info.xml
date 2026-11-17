@@ -496,7 +496,7 @@ Summaries and questions use whichever language model you connect, so their ratin
 
         The id pattern must not swallow the retry path: `[^\/]+` cannot cross a
         `/`, so `^insights\/[^\/]+\/?$` matches `insights/ins_0123…` and leaves
-        `insights/ins_0123…/retry` and `…/name` to the routes below it. See
+        `insights/ins_0123…/retry`, `…/name` and `…/delete` to the routes below it. See
         docs/exapp-update-constraints.md §5a for the command that checks a
         pattern against the paths it must and must not match — and for why a
         release that changes this block must bump <version>.
