@@ -7,7 +7,7 @@ Deviations from the text below:
 - **A1/A3/A4.** The UI's A1 sentence points to "AIO restart persistence in Cassini's install guide", but that section is in `docs/recording-readiness.md` and the microsite install page had no AIO text. The microsite install page now has a short "AIO restart persistence" section with the A4 sentence and a link to the full steps. A3 also fixed the runbook's repair snippet and its "generated commands" line, which named the removed backup file and generator. The "Environment-aware repair guidance" heading became "Eligibility and network findings", to keep the pre-install pointer and the network-findings paragraph under a heading. The microsite install page also gets the `call_recording` rollback note.
 - **B2.** A 429 already arrives as a rate-limit error, not as an `*ncShareError`, so it gives `degraded`. When a create was refused and the confirming lookup errors, the error carries the refusal text.
 - **B3/O3.** The boot run uses a new `readinessScope.keepTestRoom` flag. With it, the run skips both the forget-and-save and the extra OCS read that only decides whether to forget. The 404 finding is still shown.
-- **B4.** With `rerunSetup()` gone, the "occ is however your deployment invokes it" note shows only when a step has commands.
+- **B4.** Superseded by #500, which merged to `main` first. It removed `rerunSetup()`, the `"administrator"` branch, the occ note and both summaries, and sends administrators to Operator › Doctor. This branch keeps main's notice. Only the `status.go` comments and the troubleshooting row changed; the row says "then press **Check again**", because the notice has no Try again.
 - **B6.** The `nextcloud_probe` gate also covers some lasting faults (no administrator resolved, a lookup that keeps answering 5xx). Such an install repeats the probe every 5 minutes. A healthy install still makes no extra request.
 - **C2/O2.** The in-memory clearing of a `cuda` pin applies only to an automatic policy; a user-source policy keeps its pin. Normalising `auto` and lower-casing the override happen in memory only. The D-684 save is best effort and the migration message says when it failed.
 - **C4.** The copy name uses the file's mtime in nanoseconds (still `<name>.rejected-N`), so two rejected files in the same second do not collide. It skips anything that is not a regular file.
@@ -16,7 +16,7 @@ Deviations from the text below:
 - **E1.** `recording-setup.json` and the retention file stay 0600; error prefixes are simpler. The directory sync also runs for the writers that already used `writeFileAtomic`.
 - **E2/E3.** `app-state.json` was also removed from the harness backup list. `cassini speakers` uses the same model-root helper, so `docs/speaker-separation.md` changed too.
 
-Baseline: `a541980f` (equal to `origin/main`). All `file:line` citations are at that commit.
+Baseline: `a541980f` (equal to `origin/main` when this was written; the branch later merged `origin/main` at `be40ec49`). All `file:line` citations are at `a541980f`.
 Terms used below:
 
 - **AIO**: Nextcloud All-in-One, a Nextcloud distribution whose startup script reconfigures apps on every start.

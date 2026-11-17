@@ -150,8 +150,8 @@ func TestStorageCheckRefusesRecordingOnlyForADefiniteAnswer(t *testing.T) {
 }
 
 // After a server reboot Cassini often starts before Nextcloud answers, and
-// the one boot check leaves storage "degraded" with a banner telling everyone
-// setup needs an administrator. The storage-usage tick looks again, but only
+// the one boot check leaves storage "degraded" with a notice telling everyone
+// new recordings can't be saved. The storage-usage tick looks again, but only
 // in that state: a healthy install costs no request, and a real fault is not
 // retried on a timer.
 func TestRecheckDegradedStorageOnlyRetriesANextcloudThatDidNotAnswer(t *testing.T) {
