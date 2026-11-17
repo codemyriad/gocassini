@@ -374,15 +374,11 @@ export type NamespaceAppTranslation = {
 			 */
 			copy_link: string
 			/**
-			 * C​a​l​l​s​ ​m​a​y​ ​n​o​t​ ​b​e​ ​r​e​c​o​r​d​e​d
+			 * R​e​c​o​r​d​i​n​g​ ​s​e​t​u​p​ ​i​s​n​'​t​ ​f​i​n​i​s​h​e​d
 			 */
 			title_recording: string
 			/**
-			 * D​o​c​t​o​r​ ​s​h​o​w​s​ ​w​h​i​c​h​ ​c​h​e​c​k​ ​f​a​i​l​e​d​.
-			 */
-			cause_recording: string
-			/**
-			 * E​x​i​s​t​i​n​g​ ​r​e​c​o​r​d​i​n​g​s​ ​a​r​e​ ​s​t​i​l​l​ ​h​e​r​e​.​ ​A​s​k​ ​a​n​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​ ​t​o​ ​f​i​x​ ​t​h​i​s​.
+			 * N​e​w​ ​c​a​l​l​s​ ​m​a​y​ ​n​o​t​ ​b​e​ ​r​e​c​o​r​d​e​d​ ​u​n​t​i​l​ ​a​n​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​ ​f​i​n​i​s​h​e​s​ ​i​t​.
 			 */
 			reader_recording: string
 			/**
@@ -9056,15 +9052,11 @@ export type TranslationFunctions = {
 				 */
 				copy_link: () => LocalizedString
 				/**
-				 * Calls may not be recorded
+				 * Recording setup isn't finished
 				 */
 				title_recording: () => LocalizedString
 				/**
-				 * Doctor shows which check failed.
-				 */
-				cause_recording: () => LocalizedString
-				/**
-				 * Existing recordings are still here. Ask an administrator to fix this.
+				 * New calls may not be recorded until an administrator finishes it.
 				 */
 				reader_recording: () => LocalizedString
 				/**

@@ -76,12 +76,11 @@ const shell = {
     // A button that copies this page's address, for the reader to send on.
     copy_link: "Copy link for an administrator",
     // The same strip when Doctor's recording checks fail (Talk's recording
-    // backend, its secret, or storage) rather than storage alone.
-    title_recording: "Calls may not be recorded",
-    // After title_recording, for an administrator.
-    cause_recording: "Doctor shows which check failed.",
+    // backend, its secret, or storage) rather than storage alone. An
+    // administrator sees the title and a button to Doctor.
+    title_recording: "Recording setup isn't finished",
     // After title_recording, for someone who is not an administrator.
-    reader_recording: "Existing recordings are still here. Ask an administrator to fix this.",
+    reader_recording: "New calls may not be recorded until an administrator finishes it.",
     cause_unknown: "Cassini could not confirm its recordings setup.",
     // Why recordings cannot be saved, by the check that failed. Shown to
     // administrators after the title.

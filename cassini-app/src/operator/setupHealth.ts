@@ -79,6 +79,9 @@ export interface RecordingsAccess {
 export type SetupNoticeTone = "warning" | "neutral";
 export interface SetupNotice {
   tone: SetupNoticeTone;
+  // Which audience it is drawn for: an administrator gets a button to Doctor,
+  // everyone else a button that copies shareUrl.
+  admin: boolean;
   title: string;
   // For someone who is not an administrator: what still works, and who can
   // fix it. "" for an administrator, who gets the cause instead.
@@ -247,7 +250,7 @@ export function buildSetupNotice(options: {
   const base: SetupNotice = {
     tone: failing ? "warning" : "neutral",
     title: failing ? t.title_failing() : t.title_unchecked(),
-    summary: "", cause: "", shareUrl: "",
+    admin: isAdmin, summary: "", cause: "", shareUrl: "",
   };
   if (!isAdmin) {
     return { ...base, summary: failing ? t.reader_failing() : t.reader_unchecked(), shareUrl: appUrl };
@@ -265,12 +268,12 @@ export function buildSetupNotice(options: {
 // The recording warning (D-763): Doctor's recording checks failed. Same strip
 // as the setup notice, and held back while that notice shows, since storage is
 // one of the checks it summarises (#500). The operator's public route says only
-// that a check failed, so an administrator is sent to Doctor for which.
+// that a check failed, so an administrator gets the title and Doctor's button.
 export function buildRecordingNotice(options: { isAdmin: boolean; appUrl: string }): SetupNotice {
   const t = get(LL).app.shell.setup_notice;
   return options.isAdmin
-    ? { tone: "warning", title: t.title_recording(), summary: "", cause: t.cause_recording(), shareUrl: "" }
-    : { tone: "warning", title: t.title_recording(), summary: t.reader_recording(), cause: "", shareUrl: options.appUrl };
+    ? { tone: "warning", admin: true, title: t.title_recording(), summary: "", cause: "", shareUrl: "" }
+    : { tone: "warning", admin: false, title: t.title_recording(), summary: t.reader_recording(), cause: "", shareUrl: options.appUrl };
 }
 
 // --- The unconfigured states (D-722) ---

@@ -23,6 +23,7 @@ describe("direct share setup status", () => {
     expect(readSetupHealth(health)).toEqual(health);
     expect(readRecordingsAccess({ recordings_access: { ok: false, state: "unavailable", step: "owner_account", detail: "private detail" } })?.detail).toBe("private detail");
     const notice = buildSetupNotice({ health: { ...health, ok: false, state: "unavailable" }, access: null, isAdmin: false, appUrl: "https://example.test/app" });
+    expect(notice?.admin).toBe(false);
     expect(notice?.cause).toBe("");
     expect(notice?.shareUrl).toBe("https://example.test/app");
   });
@@ -141,14 +142,15 @@ describe("the caller's recording shares on /setup", () => {
 // The recording warning in the setup notice's shape (#500): the same strip,
 // pointing an administrator at Doctor and everyone else at an administrator.
 describe("the recording warning", () => {
-  it("gives an administrator a cause, so the notice offers Doctor", () => {
+  it("gives an administrator the title and Doctor's button, nothing to read", () => {
     expect(buildRecordingNotice({ isAdmin: true, appUrl: "https://example.test/app" })).toEqual({
-      tone: "warning", title: "Calls may not be recorded", summary: "", cause: "Doctor shows which check failed.", shareUrl: "",
+      tone: "warning", admin: true, title: "Recording setup isn't finished", summary: "", cause: "", shareUrl: "",
     });
   });
-  it("gives everyone else what still works and the link to pass on", () => {
+  it("gives everyone else the consequence and the link to pass on", () => {
     expect(buildRecordingNotice({ isAdmin: false, appUrl: "https://example.test/app" })).toEqual({
-      tone: "warning", title: "Calls may not be recorded", summary: "Existing recordings are still here. Ask an administrator to fix this.", cause: "", shareUrl: "https://example.test/app",
+      tone: "warning", admin: false, title: "Recording setup isn't finished",
+      summary: "New calls may not be recorded until an administrator finishes it.", cause: "", shareUrl: "https://example.test/app",
     });
   });
 });

@@ -29,7 +29,7 @@ describe("the setup notice", () => {
   // One button: Doctor re-runs the same check Try again used to, and what is
   // fixed there re-reads this notice (setupSignal.ts).
   it("offers an administrator one way on: Doctor", () => {
-    expect(noticeSource).toContain("$: isAdmin = Boolean(notice.cause);");
+    expect(noticeSource).toContain("$: isAdmin = notice.admin;");
     expect(noticeSource).not.toContain("try_again");
     expect(noticeSource).not.toContain('dispatch("retry")');
     expect(noticeSource).toContain('dispatch("navigate", "doctor")');

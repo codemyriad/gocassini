@@ -27,9 +27,7 @@
   // is fixed there tells the shell to re-read this notice (setupSignal.ts).
   const dispatch = createEventDispatcher<{ navigate: "doctor" }>();
 
-  // Only an administrator's notice carries a cause, so it is also what says
-  // which audience this draws for.
-  $: isAdmin = Boolean(notice.cause);
+  $: isAdmin = notice.admin;
 
   // "copied" for a moment after copying; "failed" when the browser refused,
   // and then the address is shown to copy by hand.
