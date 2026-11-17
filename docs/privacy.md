@@ -20,8 +20,8 @@ configure an LLM endpoint, and all send text, never audio.
 | Recording the call             | Local (the Cassini container)                             | No                               |
 | Uploading a recording          | Local (browser → your Nextcloud Files → the Cassini container) | No                          |
 | Transcription (speech-to-text) | Local (Parakeet / Silero VAD models)                      | No                               |
-| Speaker labels                 | Local (from Talk signaling, not audio analysis)           | No                               |
-| Separating voices on a shared device | Local, only when someone asks for one participant (Nemotron diarization) | No                   |
+| Speaker labels                 | Local (from Talk signaling on recorded calls; anonymous `Speaker 1`, `Speaker 2`, … on uploaded audio) | No |
+| Separating voices (diarization) | Local (Nemotron diarization: on demand for one shared Talk device, or during an audio upload build when the model is installed) | No |
 | Meeting summary                | LLM endpoint — **only if one is configured**              | **Only if the endpoint is external** |
 | Summary rewritten after a speaker edit (separating, merging or naming voices) | LLM endpoint — **only if one is configured**, and only when somebody saves an edit | **Only if the endpoint is external** |
 | Insight (a workflow run over selected meetings) | LLM endpoint — **only if one is configured**, and only when somebody asks | **Only if the endpoint is external** |
@@ -314,17 +314,20 @@ could not use.
 - **Transcription is 100% local.** Speech-to-text runs in-process using local
   Parakeet models and Silero VAD (ONNX Runtime). No audio and no transcript
   leaves your infrastructure for transcription.
-- **Speaker labels come from Talk, not from audio.** Each participant's label
-  comes from Talk's signaling server (participant join events). Cassini never
-  analyses voices on its own initiative and builds no voiceprints.
-- **Voice separation is on demand, local, and keeps no voice data.** When
-  somebody says several people shared one participant's device, Cassini runs a
-  local diarization model over that one participant's own audio track, on the
-  Cassini server. It stores only the resulting turn timestamps, never audio
-  features or embeddings, so it cannot recognise a voice in another meeting.
-  Names typed for the separated voices are saved in the recording's speaker
-  list, where everyone who can open the recording sees them, and reach the
-  summary endpoint when the summary is written again (see above).
+- **Speaker labels on Talk calls come from Talk, not from audio.** Each
+  participant's label comes from Talk's signaling server (participant join
+  events). Cassini never builds voiceprints or recognises people across
+  meetings.
+- **Voice separation is local and keeps no voice data.** When somebody says
+  several people shared one participant's Talk device — or when an audio
+  recording is uploaded and the optional diarization model is installed —
+  Cassini runs the local Nemotron diarizer on the Cassini server to assign
+  anonymous speaker turns (`Speaker 1`, `Speaker 2`, …). It stores only turn
+  timestamps and counts, never audio features or biometric embeddings, so it
+  cannot recognise a voice in another meeting. Names typed for separated voices
+  on a Talk recording are saved in the recording's speaker list, where everyone
+  who can open the recording sees them, and reach the summary endpoint when the
+  summary is written again (see above).
 - **No telemetry or analytics.** Cassini does not phone home — it reports nothing
   about you or your meetings.
 

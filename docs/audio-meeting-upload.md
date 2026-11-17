@@ -26,7 +26,9 @@ Cassini meeting:
 4. `cassini build` runs with the deployment's transcription and summary
    settings, under the same admission as a Talk recording's build: one build
    at a time, the speech model check, the free-memory floor, and the device and
-   thread limits.
+   thread limits. When the optional voice separation model
+   (`nemotron-3-diarization-int8`) is installed, it separates voices on the
+   recording before writing the summary.
 5. The resulting portable meeting is delivered to the recordings archive,
    shared with the audience you chose, indexed for search, and adopted into
    retention. It is filed in the catalog under **Uploaded meetings**.
@@ -52,9 +54,14 @@ waits.
 - An `.opus` or `.ogg` file that carries Cassini tags is a portable meeting. If
   it cannot be read, it is refused; it is never re-transcribed as plain audio,
   which would lose its transcript, speakers, tags, marks and summary.
-- Only the first audio stream is used. The file is treated as one microphone,
-  not a multi-track Talk capture, so the transcript has a single speaker label.
-  Cassini does not diarize an uploaded mix.
+- Only the first audio stream is used. Because an uploaded file has one mixed
+  track rather than per-participant Talk tracks, Cassini separates voices
+  automatically when the optional voice separation model
+  (`nemotron-3-diarization-int8`, up to four speakers; see
+  [Separating voices on a shared device](speaker-separation.md)) is installed,
+  labelling them `Speaker 1`, `Speaker 2`, and so on in order of first spoken
+  word. Without that model installed — or when only one voice speaks — the
+  transcript has a single `Speaker 1` label.
 
 ## Privacy
 
