@@ -73,8 +73,8 @@
 
   // Browse is always available; the operator surface is added only when the
   // boundary probe confirms admin access. The tab bar renders only when it is
-  // available, so a non-admin sees exactly today's browse-only experience — no
-  // shell chrome, byte-identical output.
+  // available, so a non-admin sees the browse surface with no tabs — only the
+  // banners that concern them.
   let operatorAvailable = false;
   let surface: Surface = "browse";
   // Whether a surface below has something open over it — the rooms drawer, a
@@ -614,22 +614,12 @@
 
 <div class="cassini-app-frame" bind:this={appFrame}>
 <div class="cassini-app-content">
-<!-- D-763's warning, rehomed. It used to send people to a Setup tab; that tab is
-     gone (D-751) and `setup` is no longer a surface (D-756), so the checks now
-     live in Operator › Publish pipeline, above the recording-access section.
-     Only an administrator can act on this, so the route is only offered to one —
-     everyone else gets the fact, which is still worth telling them, because it
-     explains why their recordings are not appearing. -->
-{#if recordingNeedsAction}
-  <div class="m-3 rounded-box border border-base-300 bg-base-100 p-3 text-sm" role="status">
-    {$LL.app.shell.app.recording_needs_action()}
-    {#if operatorAvailable}
-      <button class="btn btn-sm ml-2" on:click={openRecordingSetup}>{$LL.app.shell.app.open_recording_setup()}</button>
-    {/if}
-  </div>
-{/if}
-{#if operatorAvailable}
-  <div class="cassini-shell">
+<!-- One shell for every reader (#500). The nav and the operator surface are an
+     administrator's; each banner is shown to whoever it concerns; the browse
+     surface is everyone's and is mounted once, so every reader gets the same
+     slots and a probe that changes its mind does not remount the viewer. -->
+<div class="cassini-shell">
+  {#if operatorAvailable}
     {#if overlayOpen}
       <button
         type="button"
@@ -663,96 +653,40 @@
         {$LL.common.place.operator()}
       </button>
     </nav>
+  {/if}
 
-    {#if operatorClient && (retentionSettings?.revision === 0 || retentionError)}
-      <div class="cassini-shell-banner" inert={overlayOpen} data-theme={themeMode}>
-        <div class="cassini-root" data-theme={themeMode}>
-          <RetentionReminder settings={retentionSettings} error={retentionError} loading={retentionLoading}
-            dirty={$unsavedChanges} busy={$retentionMutationBusy} dismissing={dismissingRetention}
-            on:review={openStorage} on:retry={() => void refreshRetention()} on:ignore={() => void ignoreRetention()} />
+  <!-- D-763's warning, rehomed. It used to send people to a Setup tab; that tab
+       is gone (D-751) and `setup` is no longer a surface (D-756), so the checks
+       now live in Operator › Doctor. Only an administrator can act on this, so
+       the route is only offered to one — everyone else gets the fact, which is
+       still worth telling them, because it explains why their recordings are
+       not appearing. -->
+  {#if recordingNeedsAction}
+    <div class="cassini-shell-banner" data-theme={themeMode}>
+      <div class="cassini-root" data-theme={themeMode}>
+        <div class="m-3 rounded-box border border-base-300 bg-base-100 p-3 text-sm" role="status">
+          {$LL.app.shell.app.recording_needs_action()}
+          {#if operatorAvailable}
+            <button class="btn btn-sm ml-2" on:click={openRecordingSetup}>{$LL.app.shell.app.open_recording_setup()}</button>
+          {/if}
         </div>
       </div>
-    {/if}
-    {#if setupNotice}
-      <!-- Kept beside the nav rather than inside the browse slot so it stays
-           put while an administrator works on the operator surface — publishing
-           is refused there too. -->
-      <div class="cassini-shell-banner" data-theme={themeMode}>
-        <div class="cassini-root" data-theme={themeMode}>
-          <SetupNotice
-            notice={setupNotice}
-            tone={setupNotice.tone}
-            busy={setupRetryBusy}
-            on:retry={retrySetupCheck}
-            on:navigate={openPublishPipeline}
-          />
-        </div>
-      </div>
-    {/if}
-    <!-- Browse stays mounted (preserves list/meeting/playback state) and is
-         hidden while an admin surface is active; those mount only when active
-         so the operator's SSE stream + polling don't run in the background. -->
-    <div class="cassini-shell-surface" class:cassini-shell-hidden={surface !== "browse"}>
-      <ViewerApp {ncMode} {dataProvider} {audience} supportOffered listEmptyFilled={sharingNews} notFoundFilledFor={explainedIds} bind:this={viewerApp} on:prepareOpen={() => void refreshSetupFeatures()} on:overlay={(event) => (overlayOpen = event.detail)}>
-        <NeedsSetupCard slot="prepare-readiness" notice={insightsNotice} on:open={handleOpenPanel} />
-        <!-- Its opposite, driven by the same bit (D-700): the readiness card
-             says a question cannot be asked here, this one asks it. The Prepare
-             panel hands down the meetings it is describing; whether there is an
-             endpoint to ask, and whether this reader may pick a template, are
-             the shell's to know and neither is a fact the viewing layer has. -->
-        <svelte:fragment slot="prepare-generate" let:entries let:onInsightCreated>
-          {#if insightsReady}
-            <GenerateCard
-              {entries}
-              {operatorClient}
-              on:open={handleOpenPanel}
-              on:created={(event) => onInsightCreated(event.detail)}
-            />
-          {/if}
-        </svelte:fragment>
-        <!-- The reader's own shares, in the list's empty state and above a list
-             that has meetings (D-885). The same component in both, drawing
-             nothing when there is no news; `refresh` is the viewer's catalog
-             re-read and `meetings` what it lists, handed down as slot props. -->
-        <svelte:fragment slot="list-empty" let:refresh let:meetings>
-          <SharingNotice {sharing} variant="card" {appUrl} {meetings} accept={acceptRecordingShares} dismiss={dismissRecordingNotices} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} on:dismissed={(event) => handleNoticesDismissed(event.detail)} />
-        </svelte:fragment>
-        <svelte:fragment slot="list-notice" let:refresh let:meetings>
-          <SharingNotice {sharing} variant="strip" {appUrl} {meetings} accept={acceptRecordingShares} dismiss={dismissRecordingNotices} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} on:dismissed={(event) => handleNoticesDismissed(event.detail)} />
-        </svelte:fragment>
-        <svelte:fragment slot="meeting-not-found" let:meetingId let:refresh>
-          {@const access = meetingAccess(setupHealth?.sharing, meetingId)}
-          {#if access}
-            <MeetingAccessNotice {access} {appUrl} accept={acceptRecordingShares} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} />
-          {/if}
-        </svelte:fragment>
-        <!-- Help (D-910): everyone downloads their own bundle here; an
-             administrator is pointed at Operator › Help for the installation one. -->
-        <SupportBundle slot="support" let:close openOperatorHelp={operatorAvailable ? () => { close(); openOperatorHelp(); } : null} />
-      </ViewerApp>
     </div>
-    {#if surface === "operator" && operatorClient}
-      <!-- Scroll pane (bounded flex child) is kept SEPARATE from the themed
-           .cassini-root: putting .cassini-root's height:100% on the flex/scroll
-           element fought the flex sizing. Here the outer div is a clean bounded
-           scroller (flex:1 + overflow-y:auto); the operator was authored to
-           scroll at the page level (min-h-screen), which the fixed-height shell
-           removes. The inner .cassini-root + data-theme give it the daisyUI
-           theme in the shadow build (tokens aren't on :host) and the NC-colour
-           overrides, exactly like the viewer's browse surface. -->
-      <div class="cassini-shell-surface cassini-shell-scroll scroll-stable" data-theme={themeMode}>
-        <div class="cassini-root" data-theme={themeMode}>
-          <Operator />
-        </div>
+  {/if}
+  {#if operatorClient && (retentionSettings?.revision === 0 || retentionError)}
+    <div class="cassini-shell-banner" inert={overlayOpen} data-theme={themeMode}>
+      <div class="cassini-root" data-theme={themeMode}>
+        <RetentionReminder settings={retentionSettings} error={retentionError} loading={retentionLoading}
+          dirty={$unsavedChanges} busy={$retentionMutationBusy} dismissing={dismissingRetention}
+          on:review={openStorage} on:retry={() => void refreshRetention()} on:ignore={() => void ignoreRetention()} />
       </div>
-    {/if}
-  </div>
-{:else if setupNotice}
-  <!-- The notice with no operator tab: a strip above the meeting list, as
-       everywhere. .cassini-shell is reused verbatim: it is already the "fixed
-       chrome above a full-height viewer" geometry the nav relies on, which is
-       the same problem. -->
-  <div class="cassini-shell">
+    </div>
+  {/if}
+  {#if setupNotice}
+    <!-- A strip above the meeting list, never in its place (D-849). Kept beside
+         the nav rather than inside the browse slot so it stays put while an
+         administrator works on the operator surface — publishing is refused
+         there too. -->
     <div class="cassini-shell-banner" data-theme={themeMode}>
       <div class="cassini-root" data-theme={themeMode}>
         <SetupNotice
@@ -764,71 +698,65 @@
         />
       </div>
     </div>
-    <div class="cassini-shell-surface">
-      <ViewerApp {ncMode} {dataProvider} {audience} supportOffered listEmptyFilled={sharingNews} notFoundFilledFor={explainedIds} on:prepareOpen={() => void refreshSetupFeatures()}>
-        <NeedsSetupCard slot="prepare-readiness" notice={insightsNotice} on:open={handleOpenPanel} />
-        <svelte:fragment slot="prepare-generate" let:entries let:onInsightCreated>
-          {#if insightsReady}
-            <GenerateCard
-              {entries}
-              {operatorClient}
-              on:open={handleOpenPanel}
-              on:created={(event) => onInsightCreated(event.detail)}
-            />
-          {/if}
-        </svelte:fragment>
-        <!-- The reader's own shares, in the list's empty state and above a list
-             that has meetings (D-885). The same component in both, drawing
-             nothing when there is no news; `refresh` is the viewer's catalog
-             re-read and `meetings` what it lists, handed down as slot props. -->
-        <svelte:fragment slot="list-empty" let:refresh let:meetings>
-          <SharingNotice {sharing} variant="card" {appUrl} {meetings} accept={acceptRecordingShares} dismiss={dismissRecordingNotices} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} on:dismissed={(event) => handleNoticesDismissed(event.detail)} />
-        </svelte:fragment>
-        <svelte:fragment slot="list-notice" let:refresh let:meetings>
-          <SharingNotice {sharing} variant="strip" {appUrl} {meetings} accept={acceptRecordingShares} dismiss={dismissRecordingNotices} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} on:dismissed={(event) => handleNoticesDismissed(event.detail)} />
-        </svelte:fragment>
-        <svelte:fragment slot="meeting-not-found" let:meetingId let:refresh>
-          {@const access = meetingAccess(setupHealth?.sharing, meetingId)}
-          {#if access}
-            <MeetingAccessNotice {access} {appUrl} accept={acceptRecordingShares} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} />
-          {/if}
-        </svelte:fragment>
-        <SupportBundle slot="support" />
-      </ViewerApp>
-    </div>
+  {/if}
+  <!-- Browse stays mounted (preserves list/meeting/playback state) and is
+       hidden while an admin surface is active; those mount only when active
+       so the operator's SSE stream + polling don't run in the background. -->
+  <div class="cassini-shell-surface" class:cassini-shell-hidden={surface !== "browse"}>
+    <ViewerApp {ncMode} {dataProvider} {audience} supportOffered listEmptyFilled={sharingNews} notFoundFilledFor={explainedIds} bind:this={viewerApp} on:prepareOpen={() => void refreshSetupFeatures()} on:overlay={(event) => (overlayOpen = event.detail)}>
+      <NeedsSetupCard slot="prepare-readiness" notice={insightsNotice} on:open={handleOpenPanel} />
+      <!-- Its opposite, driven by the same bit (D-700): the readiness card
+           says a question cannot be asked here, this one asks it. The Prepare
+           panel hands down the meetings it is describing; whether there is an
+           endpoint to ask, and whether this reader may pick a template, are
+           the shell's to know and neither is a fact the viewing layer has. -->
+      <svelte:fragment slot="prepare-generate" let:entries let:onInsightCreated>
+        {#if insightsReady}
+          <GenerateCard
+            {entries}
+            {operatorClient}
+            on:open={handleOpenPanel}
+            on:created={(event) => onInsightCreated(event.detail)}
+          />
+        {/if}
+      </svelte:fragment>
+      <!-- The reader's own shares, in the list's empty state and above a list
+           that has meetings (D-885). The same component in both, drawing
+           nothing when there is no news; `refresh` is the viewer's catalog
+           re-read and `meetings` what it lists, handed down as slot props. -->
+      <svelte:fragment slot="list-empty" let:refresh let:meetings>
+        <SharingNotice {sharing} variant="card" {appUrl} {meetings} accept={acceptRecordingShares} dismiss={dismissRecordingNotices} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} on:dismissed={(event) => handleNoticesDismissed(event.detail)} />
+      </svelte:fragment>
+      <svelte:fragment slot="list-notice" let:refresh let:meetings>
+        <SharingNotice {sharing} variant="strip" {appUrl} {meetings} accept={acceptRecordingShares} dismiss={dismissRecordingNotices} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} on:dismissed={(event) => handleNoticesDismissed(event.detail)} />
+      </svelte:fragment>
+      <svelte:fragment slot="meeting-not-found" let:meetingId let:refresh>
+        {@const access = meetingAccess(setupHealth?.sharing, meetingId)}
+        {#if access}
+          <MeetingAccessNotice {access} {appUrl} accept={acceptRecordingShares} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} />
+        {/if}
+      </svelte:fragment>
+      <!-- Help (D-910): everyone downloads their own bundle here; an
+           administrator is pointed at Operator › Help for the installation one. -->
+      <SupportBundle slot="support" let:close openOperatorHelp={operatorAvailable ? () => { close(); openOperatorHelp(); } : null} />
+    </ViewerApp>
   </div>
-{:else}
-  <ViewerApp {ncMode} {dataProvider} {audience} supportOffered listEmptyFilled={sharingNews} notFoundFilledFor={explainedIds} on:prepareOpen={() => void refreshSetupFeatures()}>
-    <NeedsSetupCard slot="prepare-readiness" notice={insightsNotice} on:open={handleOpenPanel} />
-    <svelte:fragment slot="prepare-generate" let:entries let:onInsightCreated>
-      {#if insightsReady}
-        <GenerateCard
-          {entries}
-          {operatorClient}
-          on:open={handleOpenPanel}
-          on:created={(event) => onInsightCreated(event.detail)}
-        />
-      {/if}
-    </svelte:fragment>
-    <!-- The reader's own shares, in the list's empty state and above a list
-         that has meetings (D-885). The same component in both, drawing
-         nothing when there is no news; `refresh` is the viewer's catalog
-         re-read and `meetings` what it lists, handed down as slot props. -->
-    <svelte:fragment slot="list-empty" let:refresh let:meetings>
-      <SharingNotice {sharing} variant="card" {appUrl} {meetings} accept={acceptRecordingShares} dismiss={dismissRecordingNotices} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} on:dismissed={(event) => handleNoticesDismissed(event.detail)} />
-    </svelte:fragment>
-    <svelte:fragment slot="list-notice" let:refresh let:meetings>
-      <SharingNotice {sharing} variant="strip" {appUrl} {meetings} accept={acceptRecordingShares} dismiss={dismissRecordingNotices} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} on:dismissed={(event) => handleNoticesDismissed(event.detail)} />
-    </svelte:fragment>
-    <svelte:fragment slot="meeting-not-found" let:meetingId let:refresh>
-      {@const access = meetingAccess(setupHealth?.sharing, meetingId)}
-      {#if access}
-        <MeetingAccessNotice {access} {appUrl} accept={acceptRecordingShares} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} />
-      {/if}
-    </svelte:fragment>
-    <SupportBundle slot="support" />
-  </ViewerApp>
-{/if}
+  {#if operatorAvailable && surface === "operator" && operatorClient}
+    <!-- Scroll pane (bounded flex child) is kept SEPARATE from the themed
+         .cassini-root: putting .cassini-root's height:100% on the flex/scroll
+         element fought the flex sizing. Here the outer div is a clean bounded
+         scroller (flex:1 + overflow-y:auto); the operator was authored to
+         scroll at the page level (min-h-screen), which the fixed-height shell
+         removes. The inner .cassini-root + data-theme give it the daisyUI
+         theme in the shadow build (tokens aren't on :host) and the NC-colour
+         overrides, exactly like the viewer's browse surface. -->
+    <div class="cassini-shell-surface cassini-shell-scroll scroll-stable" data-theme={themeMode}>
+      <div class="cassini-root" data-theme={themeMode}>
+        <Operator />
+      </div>
+    </div>
+  {/if}
+</div>
 
 </div>
 
@@ -850,12 +778,11 @@
        (which carries the bg-base-200 grid) collapses to content height and the
        meeting view loses its background and layout (D-420 V3).
        `flex: 1 1 auto` + `min-height: 0` in #app's flex column gives exactly
-       that — a used height the flex algorithm resolved — and, unlike
-       `height: 100%`, one that accounts for chrome rendered ABOVE the shell.
-       D-763's "recording needs action" banner is such chrome, and with
-       `height: 100%` the shell overflowed the visible area by the banner's
-       height, putting the bottom of every panel out of scrolling reach. Same
-       pattern as .cassini-shell-surface below. */
+       that — a used height the flex algorithm resolved. Every banner lives
+       INSIDE the shell (.cassini-shell-banner), never above it: chrome outside
+       it pushed the viewer's height:100% past the clipped frame and cut off the
+       bottom of the list, selection bar included (#500). Same pattern as
+       .cassini-shell-surface below. */
     flex: 1 1 auto;
     min-height: 0;
   }
@@ -968,9 +895,10 @@
     display: none;
   }
 
-  /* The setup strip: fixed chrome, like the nav, so the viewer below keeps a
+  /* Every strip above the surfaces (recording warning, retention reminder, setup
+     notice): fixed chrome, like the nav, so the viewer below keeps a
      bounded flex height. flex:none is what stops it stretching or being squeezed
-     when the meeting list grows. Its administrator details can be long, so it
+     when the meeting list grows. The setup notice's details can be long, so a strip
      scrolls itself past 40% of the shell rather than squeezing the meeting list
      (or the operator surface) out of view on a small screen (D-849). */
   .cassini-shell-banner {
