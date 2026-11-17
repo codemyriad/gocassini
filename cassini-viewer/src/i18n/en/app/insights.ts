@@ -120,6 +120,7 @@ const insights = {
     create_unavailable: "One of these meetings is not available to you, or this deployment cannot create insights.",
     list_unavailable: "Insights could not be listed.",
     rename_unavailable: "That insight is not available to you, or this deployment cannot rename insights.",
+    delete_unavailable: "That insight is no longer there, or this deployment cannot delete insights.",
     insight_unavailable: "That insight is not available to you, or this deployment cannot create insights.",
     already_running: "This insight is already running.",
     // Cassini could not be reached. {detail} is empty, or the browser's reason
@@ -130,6 +131,7 @@ const insights = {
       read: "Could not reach Cassini to read the insight{detail}.",
       retry: "Could not reach Cassini to retry the insight{detail}.",
       rename: "Could not reach Cassini to rename the insight{detail}.",
+      delete: "Could not reach Cassini to delete the insight{detail}.",
     },
     // Cassini answered that it could not do it.
     cassini_failed: {
@@ -138,6 +140,7 @@ const insights = {
       read: "Cassini could not read the insight.",
       retry: "Cassini could not retry the insight.",
       rename: "Cassini could not rename the insight.",
+      delete: "Cassini could not delete the insight. Its document may still be in your Files.",
     },
     // Any other failure. {status} is an HTTP status number.
     failed_status: {
@@ -146,6 +149,7 @@ const insights = {
       read: "Could not read the insight (HTTP {status}).",
       retry: "Could not retry the insight (HTTP {status}).",
       rename: "Could not rename the insight (HTTP {status}).",
+      delete: "Could not delete the insight (HTTP {status}).",
     },
   },
   // Writing or rewriting a meeting's summary from Operator, and what Settings

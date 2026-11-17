@@ -44,6 +44,7 @@
   import {
     ALL_BROWSE_TYPES,
     filterInsightsByRoom,
+    insightHeadline,
     insightsForMeeting,
     missingInsightSources,
     resolveInsightSources,
@@ -1128,7 +1129,8 @@
       if (destroyed) {
         return;
       }
-      insights = listed;
+      // A listing fetched before a delete landed would put the insight back.
+      insights = listed.filter((record) => !deletedInsightIds.has(record.id));
       insightsLoaded = true;
       insightsError = "";
     } catch (error) {
@@ -1225,6 +1227,60 @@
     } finally {
       renamingInsightId = "";
     }
+  }
+
+  // Deleting an insight (#499) goes through a confirmation, like deleting a
+  // meeting. Not optimistic: the dialog stays up, busy, until the operator has
+  // answered, so a refusal (still running, or Files would not let go of the
+  // document) is shown on the insight that is still open rather than as a card
+  // that vanished and came back. Once deleted, the id is remembered so a
+  // listing already in flight cannot bring it back.
+  const deletedInsightIds = new Set<string>();
+  let insightDeleteConfirm: InsightRecord | null = null;
+  let insightDeleteBusy = false;
+  let insightDeleteError: { id: string; message: string } | null = null;
+
+  function requestDeleteSelectedInsight() {
+    if (selectedInsight && canDeleteInsight && !insightDeleteBusy) {
+      insightDeleteError = null;
+      insightDeleteConfirm = selectedInsight;
+    }
+  }
+
+  async function confirmDeleteInsight() {
+    const record = insightDeleteConfirm;
+    const provider = dataProvider;
+    if (!record || !provider.deleteInsight || insightDeleteBusy) {
+      return;
+    }
+    insightDeleteBusy = true;
+    try {
+      await provider.deleteInsight(record.id);
+      if (destroyed) {
+        return;
+      }
+      deletedInsightIds.add(record.id);
+      insights = insights.filter((row) => row.id !== record.id);
+      if (selectedInsightId === record.id) {
+        closeSheet();
+      }
+    } catch (error) {
+      if (destroyed) {
+        return;
+      }
+      insightDeleteError = {
+        id: record.id,
+        message: error instanceof Error ? error.message : String(error),
+      };
+    } finally {
+      insightDeleteBusy = false;
+      insightDeleteConfirm = null;
+    }
+    void refreshInsights();
+  }
+
+  $: if (insightDeleteError && insightDeleteError.id !== selectedInsightId) {
+    insightDeleteError = null;
   }
 
   function renameSelectedInsight(event: CustomEvent<string>) {
@@ -1427,6 +1483,7 @@
   // sheet render the control only when the provider has the method.
   $: canRetryInsight = typeof dataProvider.retryInsight === "function";
   $: canRenameInsight = typeof dataProvider.renameInsight === "function";
+  $: canDeleteInsight = typeof dataProvider.deleteInsight === "function";
   // The offline copy (D-792). Files is only where there is a Nextcloud to open
   // it in; a source links to its own sheet in this viewer, wherever this is.
   $: insightFilesUrl =
@@ -1440,6 +1497,9 @@
   $: insightSources = resolveInsightSources(insights, catalogMeetings);
   $: insightSourceCounts = new Map(
     [...insightSources].map(([id, sources]) => [id, sources.length]),
+  );
+  $: insightMissingSourceCounts = new Map(
+    insights.map((record) => [record.id, missingInsightSources(record, insightSources.get(record.id) ?? [])]),
   );
   // An insight carries no tags, so a tag filter leaves none of them.
   $: roomInsights = activeTagIds.length > 0 ? [] : filterInsightsByRoom(insights, selectedRoomKey);
@@ -1675,6 +1735,7 @@
       {insightsLoaded}
       {insightsError}
       {insightSourceCounts}
+      {insightMissingSourceCounts}
       {listEmptyFilled}
       insightsRetryable={canRetryInsight}
       {retryingInsightId}
@@ -1852,6 +1913,9 @@
             on:retry={retrySelectedInsight}
             on:rename={renameSelectedInsight}
             on:renameCancel={() => (insightRenameError = null)}
+            canDelete={canDeleteInsight}
+            deleteError={insightDeleteError?.id === selectedInsight.id ? insightDeleteError.message : ""}
+            on:delete={requestDeleteSelectedInsight}
           />
         {:else}
           <!-- The other direction (D-721): a meeting says which insights read
@@ -1999,6 +2063,18 @@
         busy={deleteBusy}
         on:cancel={() => (deleteConfirm = null)}
         on:confirm={confirmDeleteMeetings}
+      />
+    {/if}
+    {#if insightDeleteConfirm}
+      <ConfirmDialog
+        title={$LL.viewer.insights.delete.confirm_title({ name: insightHeadline(insightDeleteConfirm) })}
+        body={insightDeleteConfirm.documentPath
+          ? $LL.viewer.insights.delete.confirm_body()
+          : $LL.viewer.insights.delete.confirm_body_no_document()}
+        confirmLabel={$LL.viewer.insights.delete.confirm_button()}
+        busy={insightDeleteBusy}
+        on:cancel={() => (insightDeleteConfirm = null)}
+        on:confirm={() => void confirmDeleteInsight()}
       />
     {/if}
   </div>

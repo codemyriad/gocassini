@@ -1385,6 +1385,7 @@
       "create_unavailable": "Een van deze vergaderingen is niet voor je beschikbaar, of deze installatie kan geen inzichten maken.",
       "list_unavailable": "Kon de inzichten niet ophalen.",
       "rename_unavailable": "Dat inzicht is niet voor je beschikbaar, of deze installatie kan de naam van inzichten niet wijzigen.",
+      "delete_unavailable": "",
       "insight_unavailable": "Dat inzicht is niet voor je beschikbaar, of deze installatie kan geen inzichten maken.",
       "already_running": "Dit inzicht is al bezig.",
       "unreachable": {
@@ -1392,21 +1393,24 @@
         "list": "Kon Cassini niet bereiken om je inzichten op te halen{detail}.",
         "read": "Kon Cassini niet bereiken om het inzicht te lezen{detail}.",
         "retry": "Kon Cassini niet bereiken om het inzicht opnieuw te proberen{detail}.",
-        "rename": "Kon Cassini niet bereiken om de naam van het inzicht te wijzigen{detail}."
+        "rename": "Kon Cassini niet bereiken om de naam van het inzicht te wijzigen{detail}.",
+        "delete": ""
       },
       "cassini_failed": {
         "create": "Cassini kon het inzicht niet starten.",
         "list": "Cassini kon je inzichten niet ophalen.",
         "read": "Cassini kon het inzicht niet lezen.",
         "retry": "Cassini kon het inzicht niet opnieuw proberen.",
-        "rename": "Cassini kon de naam van het inzicht niet wijzigen."
+        "rename": "Cassini kon de naam van het inzicht niet wijzigen.",
+        "delete": ""
       },
       "failed_status": {
         "create": "Kon het inzicht niet starten (HTTP {status}).",
         "list": "Kon je inzichten niet ophalen (HTTP {status}).",
         "read": "Kon het inzicht niet lezen (HTTP {status}).",
         "retry": "Kon het inzicht niet opnieuw proberen (HTTP {status}).",
-        "rename": "Kon de naam van het inzicht niet wijzigen (HTTP {status})."
+        "rename": "Kon de naam van het inzicht niet wijzigen (HTTP {status}).",
+        "delete": ""
       }
     },
     "summary_action": {

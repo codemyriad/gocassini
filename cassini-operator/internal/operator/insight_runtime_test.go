@@ -66,6 +66,11 @@ type insightDAV struct {
 	// raced is a file that appears between the run's HEAD and its PUT: HEAD says
 	// 404, and a PUT that asked for a new file (If-None-Match: *) finds it.
 	raced map[string]bool
+	// fileIDs is the Nextcloud file id PROPFIND reports for a held document;
+	// deleted records each DELETE, and failDelete answers it 500.
+	fileIDs    map[string]int64
+	deleted    []string
+	failDelete bool
 }
 
 type insightPut struct {
@@ -75,7 +80,7 @@ type insightPut struct {
 
 func newInsightDAV(t *testing.T, catalog string, visible ...string) *insightDAV {
 	t.Helper()
-	dav := &insightDAV{existing: map[string]bool{}, documents: map[string]string{}, refusePut: map[string]int{}, raced: map[string]bool{}}
+	dav := &insightDAV{existing: map[string]bool{}, documents: map[string]string{}, refusePut: map[string]int{}, raced: map[string]bool{}, fileIDs: map[string]int64{}}
 	allowed := make(map[string]bool, len(visible))
 	for _, name := range visible {
 		allowed[name] = true
@@ -92,6 +97,39 @@ func newInsightDAV(t *testing.T, catalog string, visible ...string) *insightDAV 
 		switch {
 		case r.Method == http.MethodGet && base == "catalog.json":
 			_, _ = w.Write([]byte(catalog))
+		case r.Method == "PROPFIND" && strings.HasSuffix(base, ".md"):
+			dav.mu.Lock()
+			_, held := dav.documents[rel]
+			fileID := dav.fileIDs[rel]
+			dav.mu.Unlock()
+			if !held {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			w.WriteHeader(http.StatusMultiStatus)
+			_, _ = fmt.Fprintf(w, `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns">`+
+				`<d:response><d:href>%s</d:href><d:propstat><d:prop><oc:fileid>%d</oc:fileid></d:prop>`+
+				`<d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>`, r.URL.Path, fileID)
+		case r.Method == http.MethodDelete:
+			if !isHome || !strings.HasPrefix(rel, "alice/") {
+				t.Errorf("insight DELETE to %s, want the caller's own home", r.URL.Path)
+			}
+			dav.mu.Lock()
+			if dav.failDelete {
+				dav.mu.Unlock()
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			_, held := dav.documents[rel]
+			dav.deleted = append(dav.deleted, rel)
+			delete(dav.documents, rel)
+			delete(dav.existing, rel)
+			dav.mu.Unlock()
+			if !held {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
 		case r.Method == "PROPFIND":
 			w.WriteHeader(http.StatusMultiStatus)
 			body := strings.Builder{}
@@ -211,6 +249,12 @@ func (d *insightDAV) dropDocument(relPath string) {
 	defer d.mu.Unlock()
 	delete(d.documents, relPath)
 	delete(d.existing, relPath)
+}
+
+func (d *insightDAV) deletes() []string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return append([]string(nil), d.deleted...)
 }
 
 func (d *insightDAV) markExisting(relPath string) {

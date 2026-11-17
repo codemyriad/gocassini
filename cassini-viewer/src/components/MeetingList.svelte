@@ -113,6 +113,8 @@
   // shell against the WHOLE catalog — not against this room's meetings, which
   // would undercount an insight that spans rooms, which most of them do.
   export let insightSourceCounts: ReadonlyMap<string, number> = new Map();
+  // How many of each insight's sources are gone, for the card's pill (#499).
+  export let insightMissingSourceCounts: ReadonlyMap<string, number> = new Map();
   // Retry from the card (D-749): offered where the shell's provider can, and
   // the shell says which run is mid-retry and what the last retry answered.
   export let insightsRetryable = false;
@@ -637,6 +639,7 @@
             <InsightCard
               insight={item.insight}
               sourceCount={insightSourceCounts.get(item.insight.id) ?? 0}
+              missingSourceCount={insightMissingSourceCounts.get(item.insight.id) ?? 0}
               selected={item.insight.id === selectedInsightId}
               canRetry={insightsRetryable}
               retrying={retryingInsightId === item.insight.id}

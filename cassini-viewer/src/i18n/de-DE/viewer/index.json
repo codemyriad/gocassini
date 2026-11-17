@@ -741,13 +741,16 @@
     },
     "card": {
       "kind": "Erkenntnis",
-      "meetings": "{count:number|num} {{Besprechung|Besprechungen}}"
+      "meetings": "{count:number|num} {{Besprechung|Besprechungen}}",
+      "sources_unavailable": ""
     },
     "document": {
       "region_label": "Erkenntnis",
       "name_input_label": "Name der Erkenntnis",
       "rename_button_label": "Erkenntnis umbenennen",
       "rename_tooltip": "Umbenennen",
+      "delete_button_label": "",
+      "delete_tooltip": "",
       "close_label": "Erkenntnis schließen",
       "rooms": "{count:number|num} {{Unterhaltung|Unterhaltungen}}",
       "export_label": "Diese Erkenntnis exportieren",
@@ -773,6 +776,12 @@
       "template_label": "Vorlage",
       "provider_label": "Anbieter",
       "attempt_label": "Versuch"
+    },
+    "delete": {
+      "confirm_title": "",
+      "confirm_body": "",
+      "confirm_body_no_document": "",
+      "confirm_button": ""
     },
     "export": {
       "written_by": "Von Cassini geschrieben am {date}",
