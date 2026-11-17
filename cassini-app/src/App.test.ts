@@ -54,15 +54,15 @@ describe("the shell's setup features", () => {
     expect(appSource).toMatch(/setupFeatures\?\.insights === true/);
   });
 
-  it("fills both Prepare slots wherever the browse surface is mounted", () => {
-    // Three call sites — with the operator tab, under an advisory setup strip,
-    // and bare — and a reader who picks meetings gets the same panel in all of
-    // them. A slot filled in two of the three is a card that appears only for
-    // some readers, with nothing on screen to explain why.
+  it("fills both Prepare slots on the one browse surface every reader gets", () => {
+    // The viewer is mounted once, for administrators and readers alike (#500),
+    // so a reader who picks meetings gets the same panel whoever they are. A
+    // second mount would be a second place to forget a slot.
     const readiness = appSource.match(/slot="prepare-readiness"/g) ?? [];
     const generate = appSource.match(/slot="prepare-generate"/g) ?? [];
-    expect(readiness).toHaveLength(3);
-    expect(generate).toHaveLength(3);
+    expect(appSource.match(/<ViewerApp\b/g) ?? []).toHaveLength(1);
+    expect(readiness).toHaveLength(1);
+    expect(generate).toHaveLength(1);
   });
 
   it("hands every Generate card's created run back to the viewer", () => {
@@ -71,8 +71,8 @@ describe("the shell's setup features", () => {
     // prop, and a call site that forgot it would leave that reader with a
     // button that did nothing visible.
     const forwarded = appSource.match(/on:created=\{\(event\) => onInsightCreated\(event\.detail\)\}/g) ?? [];
-    expect(forwarded).toHaveLength(3);
-    expect(appSource.match(/let:onInsightCreated/g) ?? []).toHaveLength(3);
+    expect(forwarded).toHaveLength(1);
+    expect(appSource.match(/let:onInsightCreated/g) ?? []).toHaveLength(1);
   });
 
   it("builds the template client from the probe, never from the admin hint", () => {
@@ -104,12 +104,12 @@ describe("the shell's setup features", () => {
     expect(appSource).toContain("the setup re-check failed.");
   });
 
-  it("re-reads them each time the Prepare panel opens, at every mount of the viewer", () => {
+  it("re-reads them each time the Prepare panel opens", () => {
     // A non-admin never leaves the operator surface, so the return-leg refresh
     // never fires for them; the panel opening is the moment the readiness card
     // is looked at (D-749).
     const refreshed = appSource.match(/on:prepareOpen=\{\(\) => void refreshSetupFeatures\(\)\}/g) ?? [];
-    expect(refreshed).toHaveLength(3);
+    expect(refreshed).toHaveLength(1);
   });
 });
 
@@ -128,41 +128,33 @@ describe("the shell after the Setup tab", () => {
   });
 
   it("sends the setup notice's own button somewhere that exists", () => {
-    // The broken-install branches carry a step with `action: "settings"` since
-    // D-759. It opens Operator › Publish pipeline, where "Who can see
-    // recordings" and the service-account controls live (D-757), rather than
-    // the operator's default Recordings panel.
-    expect(appSource).toContain("on:navigate={openPublishPipeline}");
+    // Doctor, where the storage check names the failing step and links on to
+    // the recordings account controls (#500), rather than the operator's
+    // default Recordings panel.
+    expect(appSource).toContain("on:navigate={openDoctor}");
     expect(appSource).not.toContain('on:navigate={() => selectSurface("operator")}');
   });
 
-  // "Try again" on the notice is the operator's own re-check (D-759), not
-  // another read of the verdict: the verdict is the last recorded outcome of a
-  // preflight, so re-reading it would render the same answer and teach an
-  // administrator that the button does nothing.
-  it("re-runs the operator's check when the notice asks, then re-reads the answer", () => {
-    expect(appSource).toContain("on:retry={retrySetupCheck}");
-    expect(appSource).toContain("await operatorClient?.recheckStorage();");
-    expect(appSource).toMatch(/async function retrySetupCheck[\s\S]{0,900}await readInstanceState\(\);/);
-    // The notice says which tone to draw itself in, and the shell says whether
-    // the request it asked for is still running.
+  // No Try again on the notice (#500): Doctor re-runs the same check, and
+  // what is fixed there re-reads the notice through the setup-changed signal.
+  it("leaves re-checking to Doctor", () => {
+    expect(appSource).not.toContain("retrySetupCheck");
+    expect(appSource).not.toContain("setupRetryBusy");
     expect(appSource).toContain("tone={setupNotice.tone}");
-    expect(appSource).toContain("busy={setupRetryBusy}");
+    expect(appSource).toContain("stopListeningForSetupChanges = onSetupChanged(");
   });
 
   it("gives every browse surface the audience the chip renders", () => {
-    // Three call sites — with the operator tab, under an advisory setup strip,
-    // and bare — and the chip is for every user, so a reader must not get a
-    // different answer depending on which of them drew their list.
+    // One mount for every reader (#500), and the chip is for every user.
     const mounts = appSource.match(/<ViewerApp \{ncMode\} \{dataProvider\} \{audience\}[^>]*>/g) ?? [];
-    expect(mounts).toHaveLength(3);
+    expect(mounts).toHaveLength(1);
     expect(appSource).toContain("$: audience = recordingAudience(setupHealth);");
   });
 
   // D-763's warning, rehomed. Its old destination (#surface=setup) is gone
   // (D-756), and a warning that navigates nowhere teaches people to ignore it.
   it("sends the recording warning to where the checks now live", () => {
-    expect(appSource).toContain("function openRecordingSetup()");
+    expect(appSource).toContain("function openDoctor()");
     // Both hops: the surface alone opens the default panel (Recordings) and
     // leaves the reader hunting for the checks.
     expect(appSource).toContain('applyPanel(applySurface(window.location.hash, "operator"), "doctor")');
@@ -177,15 +169,15 @@ describe("the shell after the Setup tab", () => {
     // A non-admin's every request to that surface 403s at the proxy, so the
     // button is admin-only — while the fact stays visible to everyone, because
     // it explains why their recordings are not appearing.
-    expect(appSource).toMatch(/\{#if recordingNeedsAction\}[\s\S]{0,400}\{#if operatorAvailable\}/);
-    expect(appSource).toMatch(/function openRecordingSetup\(\)[\s\S]{0,400}if \(!operatorAvailable\)/);
+    expect(appSource).toContain("buildRecordingNotice({ isAdmin: operatorAvailable, appUrl })");
+    expect(appSource).toMatch(/recordingNotice = \$LL && recordingNeedsAction && !setupNotice/);
+    expect(appSource).toMatch(/function openDoctor\(\)[\s\S]{0,400}if \(!operatorAvailable\)/);
   });
 });
 
 describe("the setup notice in the shell", () => {
-  // The markup after <script>/<style>, split at the shell's top-level branches.
+  // The markup after <script>/<style>.
   const markup = appSource.slice(appSource.indexOf("</script>"), appSource.indexOf("<style"));
-  const branches = markup.split(/\n\{:else(?: if [^}]*)?\}\n/);
 
   it("never takes the meeting list's place (D-849)", () => {
     // A failed recordings check refuses publishing; reading never consults it.
@@ -194,21 +186,27 @@ describe("the setup notice in the shell", () => {
     // recording behind a message about future ones.
     expect(appSource).not.toContain("blocking");
     expect(appSource).not.toContain("cassini-setup-surface");
-    // Every top-level branch that draws the notice also mounts the viewer.
-    const withNotice = branches.filter((branch) => /<SetupNotice\b/.test(branch));
-    expect(withNotice).toHaveLength(2);
-    for (const branch of withNotice) {
-      expect(branch).toMatch(/<ViewerApp\b/);
-      // ...and draws the notice only as the strip above it.
-      expect(branch.match(/<SetupNotice\b/g)).toHaveLength(1);
-      // The nearest banner before the notice must be its own, not another
-      // strip's (the retention reminder also sits above the list).
-      const notice = branch.indexOf("<SetupNotice");
-      const banner = branch.lastIndexOf("cassini-shell-banner", notice);
-      expect(banner).toBeGreaterThan(-1);
-      expect(branch.slice(banner, notice)).not.toContain("{/if}");
-      expect(notice).toBeLessThan(branch.indexOf("<ViewerApp"));
-    }
+    // The setup notice and the recording warning, both strips above the one
+    // viewer.
+    expect(markup.match(/<SetupNotice\b/g)).toHaveLength(2);
+    // The nearest banner before the notice must be its own, not another
+    // strip's (the retention reminder also sits above the list).
+    const notice = markup.indexOf("<SetupNotice\n");
+    const banner = markup.lastIndexOf("cassini-shell-banner", notice);
+    expect(banner).toBeGreaterThan(-1);
+    expect(markup.slice(banner, notice)).not.toContain("{/if}");
+    expect(notice).toBeLessThan(markup.indexOf("<ViewerApp"));
+  });
+
+  it("keeps the recording warning inside the shell, in a banner of its own (#500)", () => {
+    // Drawn above .cassini-shell, it pushed the viewer past the clipped frame
+    // and cut off the bottom of the list (App.layout.browser.test.ts).
+    expect(markup).toMatch(/<div class="cassini-app-content">\s*(<!--[\s\S]*?-->\s*)?<div class="cassini-shell">/);
+    const warning = markup.indexOf("<SetupNotice notice={recordingNotice}");
+    const banner = markup.lastIndexOf("cassini-shell-banner", warning);
+    expect(banner).toBeGreaterThan(-1);
+    expect(markup.slice(banner, warning)).not.toContain("{/if}");
+    expect(warning).toBeLessThan(markup.indexOf("<ViewerApp"));
   });
 
   it("keeps the strip from squeezing the meeting list out of view", () => {
@@ -224,22 +222,20 @@ describe("the setup notice in the shell", () => {
 // the list's empty state and above a list that has meetings. The viewer owns
 // the slots and the list; the shell owns the answer and the request.
 describe("the reader's own recording shares in Browse", () => {
-  it("fills both list slots wherever the browse surface is mounted", () => {
-    // Three call sites, the same rule as the Prepare slots: a slot filled in
-    // two of the three is a notice some readers never see.
-    expect(appSource.match(/slot="list-empty"/g) ?? []).toHaveLength(3);
-    expect(appSource.match(/slot="list-notice"/g) ?? []).toHaveLength(3);
-    expect(appSource.match(/listEmptyFilled=\{sharingNews\}/g) ?? []).toHaveLength(3);
+  it("fills both list slots on the browse surface", () => {
+    expect(appSource.match(/slot="list-empty"/g) ?? []).toHaveLength(1);
+    expect(appSource.match(/slot="list-notice"/g) ?? []).toHaveLength(1);
+    expect(appSource.match(/listEmptyFilled=\{sharingNews\}/g) ?? []).toHaveLength(1);
   });
 
-  it("explains a linked meeting the reader cannot open, wherever the browse surface is mounted", () => {
+  it("explains a linked meeting the reader cannot open", () => {
     // Talk's chat and Nextcloud's notifications link to `#meeting=<job id>`.
     // A waiting or refused share says so there instead of "Meeting not found",
     // read from /setup as it came: a notice dismissed in the list still
     // explains the meeting's own page.
-    expect(appSource.match(/slot="meeting-not-found" let:meetingId let:refresh/g) ?? []).toHaveLength(3);
-    expect(appSource.match(/notFoundFilledFor=\{explainedIds\}/g) ?? []).toHaveLength(3);
-    expect(appSource.match(/meetingAccess\(setupHealth\?\.sharing, meetingId\)/g) ?? []).toHaveLength(3);
+    expect(appSource.match(/slot="meeting-not-found" let:meetingId let:refresh/g) ?? []).toHaveLength(1);
+    expect(appSource.match(/notFoundFilledFor=\{explainedIds\}/g) ?? []).toHaveLength(1);
+    expect(appSource.match(/meetingAccess\(setupHealth\?\.sharing, meetingId\)/g) ?? []).toHaveLength(1);
     expect(appSource).toContain("$: explainedIds = explainedMeetingIds(setupHealth?.sharing);");
   });
 
@@ -262,19 +258,18 @@ describe("the reader's own recording shares in Browse", () => {
   it("hands the notice the listed meetings, and forgets what the reader dismissed", () => {
     // A recording a rerun published shows up in the viewer's own listing,
     // which rides down as a slot prop: the notice drops it with no reload.
-    expect(appSource.match(/let:refresh let:meetings/g) ?? []).toHaveLength(6);
-    expect(appSource.match(/\{meetings\} accept=\{acceptRecordingShares\} dismiss=\{dismissRecordingNotices\}/g) ?? []).toHaveLength(6);
-    expect(appSource.match(/on:dismissed=\{\(event\) => handleNoticesDismissed\(event\.detail\)\}/g) ?? []).toHaveLength(6);
+    expect(appSource.match(/let:refresh let:meetings/g) ?? []).toHaveLength(2);
+    expect(appSource.match(/\{meetings\} accept=\{acceptRecordingShares\} dismiss=\{dismissRecordingNotices\}/g) ?? []).toHaveLength(2);
+    expect(appSource.match(/on:dismissed=\{\(event\) => handleNoticesDismissed\(event\.detail\)\}/g) ?? []).toHaveLength(2);
     expect(appSource).toMatch(/function handleNoticesDismissed[\s\S]{0,200}dismissedNotices = new Set\(\[\.\.\.dismissedNotices, \.\.\.jobIds\]\);/);
   });
 
   it("re-reads the list through the viewer's own refresh after an acceptance", () => {
     // The refresh rides down as a slot prop from the viewer, so the accepted
     // recording appears through the path an import takes, with nothing
-    // remounted — in every mount, for both list slots and the meeting's
-    // not-found card.
-    expect(appSource.match(/let:refresh/g) ?? []).toHaveLength(9);
-    expect(appSource.match(/on:accepted=\{\(event\) => handleSharesAccepted\(event\.detail, refresh\)\}/g) ?? []).toHaveLength(9);
+    // remounted — for both list slots and the meeting's not-found card.
+    expect(appSource.match(/let:refresh/g) ?? []).toHaveLength(3);
+    expect(appSource.match(/on:accepted=\{\(event\) => handleSharesAccepted\(event\.detail, refresh\)\}/g) ?? []).toHaveLength(3);
     expect(appSource).toMatch(/function handleSharesAccepted[\s\S]{0,500}void refresh\(\);/);
   });
 
@@ -290,6 +285,6 @@ describe("the reader's own recording shares in Browse", () => {
 
   it("makes the request from the shell, with the operator's base path", () => {
     expect(appSource).toMatch(/function acceptRecordingShares[\s\S]{0,200}return acceptShares\(operatorBasePath, shareIds\);/);
-    expect(appSource.match(/accept=\{acceptRecordingShares\}/g) ?? []).toHaveLength(9);
+    expect(appSource.match(/accept=\{acceptRecordingShares\}/g) ?? []).toHaveLength(3);
   });
 });

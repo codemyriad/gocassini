@@ -3,8 +3,6 @@
     "app": {
       "nav_label": "Áreas do Cassini",
       "tab_browse": "Navegar",
-      "recording_needs_action": "A configuração de gravação requer a atenção de um administrador.",
-      "open_recording_setup": "Abrir configuração de gravação",
       "retention_load_failed": "Não foi possível carregar as definições de retenção.",
       "retention_dismiss_failed": "Não foi possível ignorar o lembrete: {detail}"
     },
@@ -49,30 +47,21 @@
       "bundle_failed": "Não foi possível preparar o pacote (HTTP {status})."
     },
     "setup_notice": {
-      "checking": "A verificar…",
-      "show_details": "Mostrar detalhes",
-      "details_heading": "Detalhes para administradores",
-      "open_publish_pipeline": "Abrir {place}",
+      "open_doctor": "",
       "title_failing": "O Cassini não consegue guardar gravações neste momento",
       "title_unchecked": "O Cassini ainda não verificou se consegue guardar gravações",
-      "summary_failing": "Ainda pode navegar pelas gravações. As chamadas continuam a funcionar, mas as gravações vão falhar até isto ser corrigido.",
-      "summary_unchecked": "Ainda pode navegar pelas gravações, mas as novas vão falhar até esta verificação ser executada.",
-      "share_label": "Envie esta ligação a um administrador para obter instruções de configuração.",
-      "step_rerun_setup": "Execute novamente a configuração do Cassini: desative e volte a ativar a aplicação",
-      "step_open_settings": "Abra {place} para verificar a conta de gravações",
-      "step_create_account": "Crie a conta {user} no Nextcloud",
-      "step_set_admin_user": "Defina {variable} como um administrador do Nextcloud",
+      "reader_failing": "",
+      "reader_unchecked": "",
+      "copy_link": "",
+      "title_recording": "",
+      "reader_recording": "",
       "cause_unknown": "O Cassini não conseguiu confirmar a configuração das gravações.",
       "cause": {
         "nextcloud_probe": "O Nextcloud não respondeu à verificação da conta de gravações.",
         "private_archive": "O Cassini não conseguiu confirmar que a sua pasta de gravações é privada e permite escrita.",
         "sharing_api": "A partilha de ficheiros do Nextcloud não está disponível para a conta de gravações do Cassini.",
         "owner_account": "A conta de gravações do Cassini não existe."
-      },
-      "detail_state": "O operador comunicou {state}.",
-      "detail_state_at_step": "O operador comunicou {state} em {step}.",
-      "note_occ": "{command} é a forma como a sua instalação o invoca, por exemplo {example}.",
-      "reference": "Consulte {endpoint} para ver o relatório completo de acesso às gravações."
+      }
     },
     "sharing_notice": {
       "pending_title": "{count:number|num} {{|gravação está|||gravações estão|gravações estão}} à sua espera",
