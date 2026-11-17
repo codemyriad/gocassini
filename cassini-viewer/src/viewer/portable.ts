@@ -1546,6 +1546,22 @@ export function describeVariantSuffix(meetingId: string): string {
   return toTitleCase(match[1].replace(/\./g, "-"));
 }
 
+// opusCommentKeys lists the comment keys of an Ogg Opus stream's header
+// without reading anything past it. "more" means bytes end before the header
+// does, so the caller has to read further; null means the stream has no Opus
+// comment header it can read.
+export function opusCommentKeys(bytes: Uint8Array, complete: boolean): string[] | "more" | null {
+  try {
+    return Object.keys(parseOpusCommentTags(bytes));
+  } catch (error) {
+    // Only these two refusals can come from cutting the stream short: a page
+    // that runs past the bytes, or a header packet that never finished.
+    const message = error instanceof Error ? error.message : String(error);
+    if (!complete && /truncated Ogg page|missing OpusTags/.test(message)) return "more";
+    return null;
+  }
+}
+
 function parseOpusCommentTags(bytes: Uint8Array): Record<string, string> {
   const packets = extractOggPackets(bytes, 2);
   if (packets.length < 2) {

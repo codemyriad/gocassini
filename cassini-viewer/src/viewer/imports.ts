@@ -15,6 +15,7 @@ import { dateFormat, durationFormat } from "../i18n/format";
 import {
   extractPortableManifestFromArrayBuffer,
   extractTranscriptionDocument,
+  opusCommentKeys,
   readPortableAnnotations,
   readPortableSummaryMarkdown,
   type PortableMeetingManifest,
@@ -112,7 +113,7 @@ export async function parseImportPreview(file: File): Promise<ImportPreview> {
     // that carries Cassini tags is a portable meeting, and if it does not parse
     // the refusal stands: building it from its audio would silently drop its
     // transcript, speakers, tags, marks and summary.
-    if (looksLikeAudio(file) && !carriesCassiniTags(head)) return describeAudioUpload(file);
+    if (looksLikeAudio(file) && !(await oggCarriesCassiniTags(file, head))) return describeAudioUpload(file);
     const bytes = head.length < SNIFF_BYTES ? head : new Uint8Array(await file.arrayBuffer());
     const { manifest } = await extractPortableManifestFromArrayBuffer(bytes);
     return describePortableManifest(manifest, "opus");
@@ -134,10 +135,26 @@ export async function parseImportPreview(file: File): Promise<ImportPreview> {
 // pages of the stream.
 const SNIFF_BYTES = 1 << 20;
 
-// carriesCassiniTags looks for any Cassini comment key in the head of an Ogg
-// stream. It does not parse the comment header, so a damaged or newer portable
-// file still counts as one and is refused, never re-transcribed.
-function carriesCassiniTags(head: Uint8Array): boolean {
+// oggCarriesCassiniTags says whether an Ogg stream's comment header has any
+// Cassini key. It reads only as far as that header ends, which can be past the
+// first MiB when cover art comes first. A stream whose header cannot be read
+// counts as Cassini when its head mentions a Cassini key anywhere, so a
+// damaged portable file is refused rather than re-transcribed.
+async function oggCarriesCassiniTags(file: File, head: Uint8Array): Promise<boolean> {
+  let bytes = head;
+  for (;;) {
+    const complete = bytes.length < SNIFF_BYTES || bytes.length >= file.size;
+    const keys = opusCommentKeys(bytes, complete);
+    if (keys === "more") {
+      bytes = new Uint8Array(await file.slice(0, bytes.length * 4).arrayBuffer());
+      continue;
+    }
+    if (keys === null) return mentionsCassini(head);
+    return keys.some((key) => key.startsWith("CASSINI_"));
+  }
+}
+
+function mentionsCassini(head: Uint8Array): boolean {
   const needle = [0x43, 0x41, 0x53, 0x53, 0x49, 0x4e, 0x49, 0x5f]; // "CASSINI_"
   outer: for (let i = 0; i + needle.length <= head.length; i += 1) {
     for (let j = 0; j < needle.length; j += 1) {
