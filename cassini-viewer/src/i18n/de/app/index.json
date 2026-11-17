@@ -3,8 +3,6 @@
     "app": {
       "nav_label": "Cassini-Bereiche",
       "tab_browse": "Durchsuchen",
-      "recording_needs_action": "Die Einrichtung der Aufnahme erfordert die Aufmerksamkeit der Administration.",
-      "open_recording_setup": "Aufnahme-Einrichtung öffnen",
       "retention_load_failed": "Die Aufbewahrungseinstellungen konnten nicht geladen werden.",
       "retention_dismiss_failed": "Die Erinnerung konnte nicht ausgeblendet werden: {detail}"
     },
@@ -49,30 +47,21 @@
       "bundle_failed": "Das Paket konnte nicht vorbereitet werden (HTTP {status})."
     },
     "setup_notice": {
-      "checking": "Wird geprüft…",
-      "show_details": "Details anzeigen",
-      "details_heading": "Details für die Administration",
-      "open_publish_pipeline": "{place} öffnen",
+      "open_doctor": "",
       "title_failing": "Cassini kann gerade keine Aufnahmen speichern",
       "title_unchecked": "Cassini hat noch nicht geprüft, ob es Aufnahmen speichern kann",
-      "summary_failing": "Du kannst weiterhin Aufnahmen durchsuchen. Anrufe laufen weiter, aber ihre Aufnahmen schlagen fehl, bis das behoben ist.",
-      "summary_unchecked": "Du kannst weiterhin Aufnahmen durchsuchen, aber neue schlagen fehl, bis diese Prüfung läuft.",
-      "share_label": "Schicke diesen Link an die Administration, um eine Anleitung zur Einrichtung zu erhalten.",
-      "step_rerun_setup": "Führe die Einrichtung von Cassini erneut aus, indem du die App deaktivierst und wieder aktivierst",
-      "step_open_settings": "Öffne {place}, um das Aufnahmekonto zu prüfen",
-      "step_create_account": "Erstelle das Konto {user} in Nextcloud",
-      "step_set_admin_user": "Setze {variable} auf ein Nextcloud-Administrationskonto",
+      "reader_failing": "",
+      "reader_unchecked": "",
+      "copy_link": "",
+      "title_recording": "",
+      "reader_recording": "",
       "cause_unknown": "Cassini konnte die Einrichtung der Aufnahmen nicht bestätigen.",
       "cause": {
         "nextcloud_probe": "Nextcloud hat auf die Prüfung des Aufnahmekontos nicht geantwortet.",
         "private_archive": "Cassini konnte nicht bestätigen, dass sein Aufnahmeordner privat und beschreibbar ist.",
         "sharing_api": "Die Dateifreigabe von Nextcloud ist für das Cassini-Aufnahmekonto nicht verfügbar.",
         "owner_account": "Das Cassini-Aufnahmekonto existiert nicht."
-      },
-      "detail_state": "Der Operator meldete {state}.",
-      "detail_state_at_step": "Der Operator meldete {state} bei {step}.",
-      "note_occ": "{command} ist so aufzurufen, wie es deine Installation vorsieht, zum Beispiel {example}.",
-      "reference": "Den vollständigen Bericht zum Zugriff auf Aufnahmen findest du unter {endpoint}."
+      }
     },
     "sharing_notice": {
       "pending_title": "{count:number|num} {{Aufnahme wartet|Aufnahmen warten}} auf dich",
