@@ -2,6 +2,7 @@
   import { onDestroy, onMount, tick } from "svelte";
   import ViewerApp from "cassini-viewer/App.svelte";
   import { LL } from "cassini-viewer/i18n";
+  import { TriangleAlert } from "@lucide/svelte";
   import { AppDataProvider } from "./appDataProvider";
   import GenerateCard from "./GenerateCard.svelte";
   import NeedsSetupCard from "./NeedsSetupCard.svelte";
@@ -664,11 +665,15 @@
   {#if recordingNeedsAction}
     <div class="cassini-shell-banner" data-theme={themeMode}>
       <div class="cassini-root" data-theme={themeMode}>
-        <div class="m-3 rounded-box border border-base-300 bg-base-100 p-3 text-sm" role="status">
-          {$LL.app.shell.app.recording_needs_action()}
-          {#if operatorAvailable}
-            <button class="btn btn-sm ml-2" on:click={openRecordingSetup}>{$LL.app.shell.app.open_recording_setup()}</button>
-          {/if}
+        <!-- Same strip as SetupNotice's warning tone, so the two read as one kind. -->
+        <div class="px-3 py-2">
+          <section class="alert alert-warning items-center gap-3 py-2" role="status">
+            <TriangleAlert size={16} class="shrink-0" aria-hidden="true" />
+            <p class="text-sm">{$LL.app.shell.app.recording_needs_action()}</p>
+            {#if operatorAvailable}
+              <button class="btn btn-xs" type="button" on:click={openRecordingSetup}>{$LL.app.shell.app.open_recording_setup()}</button>
+            {/if}
+          </section>
         </div>
       </div>
     </div>
