@@ -175,7 +175,7 @@ describe("the shell after the Setup tab", () => {
     // A non-admin's every request to that surface 403s at the proxy, so the
     // button is admin-only — while the fact stays visible to everyone, because
     // it explains why their recordings are not appearing.
-    expect(appSource).toMatch(/\{#if recordingNeedsAction\}[\s\S]{0,800}\{#if operatorAvailable\}/);
+    expect(appSource).toMatch(/\{#if recordingNeedsAction && !setupNotice\}[\s\S]{0,800}\{#if operatorAvailable\}/);
     expect(appSource).toMatch(/function openRecordingSetup\(\)[\s\S]{0,400}if \(!operatorAvailable\)/);
   });
 });

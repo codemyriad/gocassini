@@ -23,20 +23,19 @@ describe("the setup notice", () => {
     expect(infos).toHaveLength(1);
   });
 
-  it("puts the technical account behind a collapsed disclosure", () => {
-    const disclosures =
-      noticeSource.match(/<summary class="cursor-pointer font-medium">\{\$LL\.app\.shell\.setup_notice\.details_heading\(\)\}<\/summary>/g) ?? [];
-    expect(get(LL).app.shell.setup_notice.details_heading()).toBe("Details for administrators");
-    expect(disclosures).toHaveLength(1);
-    // Bound, not `open`: the disclosure starts closed, and "Show details" and
-    // the triangle on the <details> itself cannot disagree about the state.
-    expect(noticeSource).toContain("bind:open={detailsOpen}");
+  it("puts the technical account behind one collapsed disclosure", () => {
+    // One control (#500): there used to be a "Show details" button and a
+    // <details> triangle under it, two rows of chrome for the same thing.
+    expect(noticeSource).not.toMatch(/<details[\s>]/);
+    expect(noticeSource).not.toMatch(/<summary[\s>]/);
     expect(noticeSource).toContain("let detailsOpen = false;");
-    expect(noticeSource).not.toContain("<details open");
+    expect(noticeSource).toContain("{#if hasDetails && detailsOpen}");
+    expect(noticeSource).toContain("aria-expanded={detailsOpen}");
+    expect(noticeSource).toContain("aria-controls={detailsId}");
   });
 
   it("offers the two actions from the mock, as buttons", () => {
-    const showDetails = noticeSource.match(/\n\s*\{\$LL\.app\.shell\.setup_notice\.show_details\(\)\}\n\s*<\/button>/g) ?? [];
+    const showDetails = noticeSource.match(/\n\s*\{\$LL\.app\.shell\.setup_notice\.show_details\(\)\}\n\s*<ChevronDown[^\n]*\n\s*<\/button>/g) ?? [];
     expect(showDetails).toHaveLength(1);
     expect(noticeSource).toContain("{busy ? $LL.app.shell.setup_notice.checking() : $LL.common.action.try_again()}");
     expect(get(LL).common.action.try_again()).toBe("Try again");

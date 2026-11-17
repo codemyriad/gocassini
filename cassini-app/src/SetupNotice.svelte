@@ -1,6 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
-  import { Info, TriangleAlert } from "@lucide/svelte";
+  import { ChevronDown, Info, TriangleAlert } from "@lucide/svelte";
   import { LL, operatorPlace } from "cassini-viewer/i18n";
   import type { SetupNotice, SetupNoticeTone } from "./operator/setupHealth";
 
@@ -12,8 +12,8 @@
   // component, never a different one.
   //
   // One layout: a strip above the meeting list, which stays readable whatever
-  // the check says (D-849). The band stays one line tall until someone wants
-  // more.
+  // the check says (D-849). The band stays one row tall until someone opens
+  // the details (#500).
   //
   // Inside (D-759): the consequence, the cause, two
   // buttons, and every technical thing behind one disclosure. The enum name,
@@ -44,9 +44,11 @@
   // and not something a presentation component should be making.
   const dispatch = createEventDispatcher<{ navigate: "settings"; retry: void }>();
 
-  // Open state of the disclosure, so the "Show details" button and the
-  // <details> element cannot disagree about whether it is open.
+  // Open state of the disclosure. One control opens it: there used to be a
+  // "Show details" button AND a disclosure triangle under it, two rows of
+  // chrome for the same thing.
   let detailsOpen = false;
+  const detailsId = `setup-notice-details-${Math.random().toString(36).slice(2, 8)}`;
 
   // Whether there is a diagnosis behind the disclosure — which is also what
   // says which audience this is drawing for. Only an administrator's notice
@@ -60,7 +62,7 @@
 
 <div class="px-3 py-2">
   <section
-    class="alert items-start gap-3 py-2 {tone === 'warning' ? 'alert-warning' : ''}"
+    class="alert items-start gap-3 py-2 grid-cols-[auto_minmax(0,1fr)] {tone === 'warning' ? 'alert-warning' : ''}"
     role="status"
   >
     {#if tone === "warning"}
@@ -68,71 +70,77 @@
     {:else}
       <Info size={16} class="mt-0.5 shrink-0 opacity-70" aria-hidden="true" />
     {/if}
-    <div class="flex min-w-0 flex-col gap-1">
-      <p class="text-sm">
-        <span class="font-semibold">{notice.title}.</span>
-        {notice.summary}
-        {#if notice.cause}{notice.cause}{/if}
-      </p>
-
-      {#if hasDetails}
-        <div class="flex flex-wrap gap-2 py-1">
-          <button class="btn btn-xs" type="button" disabled={busy} on:click={() => dispatch("retry")}>
-            {busy ? $LL.app.shell.setup_notice.checking() : $LL.common.action.try_again()}
-          </button>
-          <button
-            class="btn btn-xs btn-ghost"
-            type="button"
-            aria-expanded={detailsOpen}
-            on:click={() => (detailsOpen = !detailsOpen)}
-          >
-            {$LL.app.shell.setup_notice.show_details()}
-          </button>
-        </div>
-
-        <details class="text-sm" bind:open={detailsOpen}>
-          <summary class="cursor-pointer font-medium">{$LL.app.shell.setup_notice.details_heading()}</summary>
-          <div class="mt-2 flex flex-col gap-3">
-            {#if notice.detail}
-              <p class="font-mono text-xs break-words opacity-80">{notice.detail}</p>
-            {/if}
-            {#each notice.steps as step, index (step.label)}
-              <div class="flex flex-col gap-1">
-                <p class="text-sm">
-                  <span class="opacity-60">{index + 1}.</span>
-                  {step.label}
-                </p>
-                {#if step.action === "settings"}
-                  <button
-                    class="btn btn-xs w-fit"
-                    type="button"
-                    on:click={() => dispatch("navigate", "settings")}
-                  >
-                    {$LL.app.shell.setup_notice.open_publish_pipeline({ place: operatorPlace("publish_pipeline") })}
-                  </button>
-                {/if}
-                {#if step.commands.length > 0}
-                  <pre
-                    class="m-0 overflow-x-auto rounded-box bg-base-200 p-2 font-mono text-xs leading-relaxed text-base-content">{step.commands.join(
-                      "\n",
-                    )}</pre>
-                {/if}
-              </div>
-            {/each}
-            {#if notice.note}
-              <p class="text-xs opacity-70">{notice.note}</p>
-            {/if}
-            {#if notice.reference}
-              <p class="text-xs opacity-70">{notice.reference}</p>
-            {/if}
+    <div class="flex w-full min-w-0 flex-col gap-1">
+      <!-- One row while closed: the account on the left, the two actions on
+           the right, wrapping under it only when the strip is too narrow. -->
+      <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <p class="min-w-0 flex-1 basis-80 text-sm">
+          <span class="font-semibold">{notice.title}.</span>
+          {notice.summary}
+          {#if notice.cause}{notice.cause}{/if}
+        </p>
+        {#if hasDetails}
+          <div class="flex shrink-0 gap-2">
+            <button class="btn btn-xs" type="button" disabled={busy} on:click={() => dispatch("retry")}>
+              {busy ? $LL.app.shell.setup_notice.checking() : $LL.common.action.try_again()}
+            </button>
+            <button
+              class="btn btn-xs btn-ghost"
+              type="button"
+              aria-expanded={detailsOpen}
+              aria-controls={detailsId}
+              on:click={() => (detailsOpen = !detailsOpen)}
+            >
+              {$LL.app.shell.setup_notice.show_details()}
+              <ChevronDown size={12} class="transition-transform {detailsOpen ? 'rotate-180' : ''}" aria-hidden="true" />
+            </button>
           </div>
-        </details>
+        {/if}
+      </div>
+
+      {#if hasDetails && detailsOpen}
+        <div id={detailsId} class="mt-1 flex flex-col gap-3 text-sm">
+          {#if notice.detail}
+            <p class="font-mono text-xs break-words opacity-80">{notice.detail}</p>
+          {/if}
+          {#each notice.steps as step, index (step.label)}
+            <div class="flex flex-col gap-1">
+              <p class="text-sm">
+                <span class="opacity-60">{index + 1}.</span>
+                {step.label}
+              </p>
+              {#if step.action === "settings"}
+                <button
+                  class="btn btn-xs w-fit"
+                  type="button"
+                  on:click={() => dispatch("navigate", "settings")}
+                >
+                  {$LL.app.shell.setup_notice.open_publish_pipeline({ place: operatorPlace("publish_pipeline") })}
+                </button>
+              {/if}
+              {#if step.commands.length > 0}
+                <pre
+                  class="m-0 overflow-x-auto rounded-box bg-base-200 p-2 font-mono text-xs leading-relaxed text-base-content">{step.commands.join(
+                    "\n",
+                  )}</pre>
+              {/if}
+            </div>
+          {/each}
+          {#if notice.note}
+            <p class="text-xs opacity-70">{notice.note}</p>
+          {/if}
+          {#if notice.reference}
+            <p class="text-xs opacity-70">{notice.reference}</p>
+          {/if}
+        </div>
       {/if}
 
       {#if notice.shareUrl}
-        <div class="flex flex-col gap-1">
-          <p class="text-sm">{notice.shareLabel}</p>
-          <a class="link text-sm break-all" href={notice.shareUrl}>{notice.shareUrl}</a>
+        <!-- The label and the address on one line; the address is cut short to
+             fit, and the whole of it is still what the link copies or opens. -->
+        <div class="flex min-w-0 items-baseline gap-x-2 text-sm">
+          <span>{notice.shareLabel}</span>
+          <a class="link min-w-24 flex-1 truncate" href={notice.shareUrl} title={notice.shareUrl}>{notice.shareUrl}</a>
         </div>
       {/if}
     </div>

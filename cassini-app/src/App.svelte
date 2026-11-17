@@ -661,8 +661,11 @@
        now live in Operator › Doctor. Only an administrator can act on this, so
        the route is only offered to one — everyone else gets the fact, which is
        still worth telling them, because it explains why their recordings are
-       not appearing. -->
-  {#if recordingNeedsAction}
+       not appearing.
+       Held back while the setup notice shows: storage is one of the checks
+       this summarises, so the two would be one problem said twice, and the
+       notice is the one that says what is wrong. -->
+  {#if recordingNeedsAction && !setupNotice}
     <div class="cassini-shell-banner" data-theme={themeMode}>
       <div class="cassini-root" data-theme={themeMode}>
         <!-- Same strip as SetupNotice's warning tone, so the two read as one kind. -->

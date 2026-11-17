@@ -64,7 +64,11 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-const banner = () => page.getByText(get(LL).app.shell.app.recording_needs_action());
+const recordingWarning = () => page.getByText(get(LL).app.shell.app.recording_needs_action());
+// Under a setup notice the recording warning is held back (storage is one of
+// the checks it summarises), so the strip on show is the notice itself.
+const strip = (setupOk: boolean) =>
+  setupOk ? recordingWarning() : page.getByText(get(LL).app.shell.setup_notice.title_failing(), { exact: false });
 
 for (const scenario of [
   { name: "a reader with no operator tab", admin: false, setupOk: true },
@@ -74,7 +78,8 @@ for (const scenario of [
   it(`keeps the selection bar inside the frame under the recording warning, for ${scenario.name}`, async () => {
     stubOperator(scenario);
     app = mount(App, { target: host });
-    await expect.element(banner()).toBeVisible();
+    await expect.element(strip(scenario.setupOk)).toBeVisible();
+    if (!scenario.setupOk) await expect.element(recordingWarning()).not.toBeInTheDocument();
     await page.getByRole("checkbox", { name: "Select Layout fixture", exact: true }).click();
     await expect.poll(() => host.querySelector(".selection-dock")).not.toBeNull();
 
@@ -89,9 +94,9 @@ for (const scenario of [
 
     // The warning is themed: it paints an opaque surface, not Nextcloud's
     // wallpaper through a transparent box.
-    const strip = banner().element() as HTMLElement;
-    expect(strip.closest("[data-theme]")).not.toBeNull();
-    let painted: HTMLElement | null = strip;
+    const shown = strip(scenario.setupOk).element() as HTMLElement;
+    expect(shown.closest("[data-theme]")).not.toBeNull();
+    let painted: HTMLElement | null = shown;
     while (painted && getComputedStyle(painted).backgroundColor === "rgba(0, 0, 0, 0)") painted = painted.parentElement;
     expect(painted && host.contains(painted)).toBe(true);
 
@@ -105,7 +110,7 @@ for (const scenario of [
     await openSetup.click();
     await expect.poll(() => host.querySelector(".cassini-shell-scroll")).not.toBeNull();
     expect(dockElement.closest(".cassini-shell-hidden")).not.toBeNull();
-    await expect.element(banner()).toBeVisible();
+    await expect.element(recordingWarning()).toBeVisible();
     const operator = host.querySelector<HTMLElement>(".cassini-shell-scroll")!.getBoundingClientRect();
     expect(operator.height).toBeGreaterThan(0);
     expect(operator.bottom).toBeLessThanOrEqual(frame.bottom + 0.5);
