@@ -68,7 +68,7 @@ function fixture(options: { deleteInsight?: (id: string) => Promise<void> } = {}
     // Stale on purpose: the operator's listing keeps answering with the run, as
     // one fetched before the delete landed would.
     listInsights: vi.fn(async () => [insight]),
-    loadInsightDocument: vi.fn(async () => ({ run: insight, document: "# Themes\n" })),
+    loadInsightDocument: vi.fn(async () => "# Themes\n"),
     deleteInsight: vi.fn(options.deleteInsight ?? (async (_id: string) => {})),
   });
   return { provider };
