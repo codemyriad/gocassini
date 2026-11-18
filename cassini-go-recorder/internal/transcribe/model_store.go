@@ -173,12 +173,10 @@ func ModelRuntimeFingerprint() string {
 	if st != nil {
 		identity += fmt.Sprintf("/%d/%d/%s", st.Size(), st.ModTime().UnixNano(), os.Getenv("CUDA_VISIBLE_DEVICES"))
 	}
-	// A moved volume, reboot/driver change, or native library replacement
-	// rechecks locally too; none of these changes the weight identity.
-	for _, p := range []string{"/proc/sys/kernel/random/boot_id", "/proc/driver/nvidia/version"} {
-		if b, e := os.ReadFile(p); e == nil {
-			identity += "/" + string(b)
-		}
+	// A GPU driver or native library replacement rechecks locally too; a
+	// reboot alone does not. None of these changes the weight identity.
+	if b, e := os.ReadFile("/proc/driver/nvidia/version"); e == nil {
+		identity += "/" + string(b)
 	}
 	if dir := os.Getenv("CASSINI_LIB_DIR"); dir != "" {
 		for _, pattern := range []string{"libsherpa*", "libonnxruntime*"} {

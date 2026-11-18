@@ -203,14 +203,6 @@ export type NamespaceAppTranslation = {
 			 */
 			tab_browse: string
 			/**
-			 * R​e​c​o​r​d​i​n​g​ ​s​e​t​u​p​ ​n​e​e​d​s​ ​a​n​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​’​s​ ​a​t​t​e​n​t​i​o​n​.
-			 */
-			recording_needs_action: string
-			/**
-			 * O​p​e​n​ ​r​e​c​o​r​d​i​n​g​ ​s​e​t​u​p
-			 */
-			open_recording_setup: string
-			/**
 			 * C​o​u​l​d​ ​n​o​t​ ​l​o​a​d​ ​r​e​t​e​n​t​i​o​n​ ​s​e​t​t​i​n​g​s​.
 			 */
 			retention_load_failed: string
@@ -357,24 +349,12 @@ export type NamespaceAppTranslation = {
 		}
 		setup_notice: {
 			/**
-			 * C​h​e​c​k​i​n​g​…
-			 */
-			checking: string
-			/**
-			 * S​h​o​w​ ​d​e​t​a​i​l​s
-			 */
-			show_details: string
-			/**
-			 * D​e​t​a​i​l​s​ ​f​o​r​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​s
-			 */
-			details_heading: string
-			/**
 			 * O​p​e​n​ ​{​p​l​a​c​e​}
 			 * @param {unknown} place
 			 */
-			open_publish_pipeline: RequiredParams<'place'>
+			open_doctor: RequiredParams<'place'>
 			/**
-			 * C​a​s​s​i​n​i​ ​c​a​n​'​t​ ​s​a​v​e​ ​r​e​c​o​r​d​i​n​g​s​ ​r​i​g​h​t​ ​n​o​w
+			 * N​e​w​ ​r​e​c​o​r​d​i​n​g​s​ ​c​a​n​'​t​ ​b​e​ ​s​a​v​e​d
 			 */
 			title_failing: string
 			/**
@@ -382,36 +362,25 @@ export type NamespaceAppTranslation = {
 			 */
 			title_unchecked: string
 			/**
-			 * Y​o​u​ ​c​a​n​ ​s​t​i​l​l​ ​b​r​o​w​s​e​ ​r​e​c​o​r​d​i​n​g​s​.​ ​C​a​l​l​s​ ​w​i​l​l​ ​s​t​i​l​l​ ​r​u​n​,​ ​b​u​t​ ​t​h​e​i​r​ ​r​e​c​o​r​d​i​n​g​s​ ​w​i​l​l​ ​f​a​i​l​ ​u​n​t​i​l​ ​t​h​i​s​ ​i​s​ ​f​i​x​e​d​.
+			 * C​a​l​l​s​ ​s​t​i​l​l​ ​w​o​r​k​ ​a​n​d​ ​e​x​i​s​t​i​n​g​ ​r​e​c​o​r​d​i​n​g​s​ ​a​r​e​ ​s​t​i​l​l​ ​h​e​r​e​.​ ​A​s​k​ ​a​n​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​ ​t​o​ ​f​i​x​ ​t​h​i​s​.
 			 */
-			summary_failing: string
+			reader_failing: string
 			/**
-			 * Y​o​u​ ​c​a​n​ ​s​t​i​l​l​ ​b​r​o​w​s​e​ ​r​e​c​o​r​d​i​n​g​s​,​ ​b​u​t​ ​n​e​w​ ​o​n​e​s​ ​w​i​l​l​ ​f​a​i​l​ ​u​n​t​i​l​ ​t​h​i​s​ ​c​h​e​c​k​ ​r​u​n​s​.
+			 * E​x​i​s​t​i​n​g​ ​r​e​c​o​r​d​i​n​g​s​ ​a​r​e​ ​s​t​i​l​l​ ​h​e​r​e​.​ ​N​e​w​ ​o​n​e​s​ ​m​a​y​ ​n​o​t​ ​s​a​v​e​ ​u​n​t​i​l​ ​a​n​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​ ​c​h​e​c​k​s​ ​t​h​i​s​.
 			 */
-			summary_unchecked: string
+			reader_unchecked: string
 			/**
-			 * S​e​n​d​ ​t​h​i​s​ ​l​i​n​k​ ​t​o​ ​a​n​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​ ​f​o​r​ ​s​e​t​u​p​ ​i​n​s​t​r​u​c​t​i​o​n​s​.
+			 * C​o​p​y​ ​l​i​n​k​ ​f​o​r​ ​a​n​ ​a​d​m​i​n​i​s​t​r​a​t​o​r
 			 */
-			share_label: string
+			copy_link: string
 			/**
-			 * R​e​-​r​u​n​ ​C​a​s​s​i​n​i​'​s​ ​s​e​t​u​p​ ​b​y​ ​d​i​s​a​b​l​i​n​g​ ​a​n​d​ ​e​n​a​b​l​i​n​g​ ​t​h​e​ ​a​p​p
+			 * R​e​c​o​r​d​i​n​g​ ​s​e​t​u​p​ ​i​s​n​'​t​ ​f​i​n​i​s​h​e​d
 			 */
-			step_rerun_setup: string
+			title_recording: string
 			/**
-			 * O​p​e​n​ ​{​p​l​a​c​e​}​ ​t​o​ ​c​h​e​c​k​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​s​ ​a​c​c​o​u​n​t
-			 * @param {unknown} place
+			 * N​e​w​ ​c​a​l​l​s​ ​m​a​y​ ​n​o​t​ ​b​e​ ​r​e​c​o​r​d​e​d​ ​u​n​t​i​l​ ​a​n​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​ ​f​i​n​i​s​h​e​s​ ​i​t​.
 			 */
-			step_open_settings: RequiredParams<'place'>
-			/**
-			 * C​r​e​a​t​e​ ​t​h​e​ ​{​u​s​e​r​}​ ​a​c​c​o​u​n​t​ ​i​n​ ​N​e​x​t​c​l​o​u​d
-			 * @param {unknown} user
-			 */
-			step_create_account: RequiredParams<'user'>
-			/**
-			 * S​e​t​ ​{​v​a​r​i​a​b​l​e​}​ ​t​o​ ​a​ ​N​e​x​t​c​l​o​u​d​ ​a​d​m​i​n​i​s​t​r​a​t​o​r
-			 * @param {unknown} variable
-			 */
-			step_set_admin_user: RequiredParams<'variable'>
+			reader_recording: string
 			/**
 			 * C​a​s​s​i​n​i​ ​c​o​u​l​d​ ​n​o​t​ ​c​o​n​f​i​r​m​ ​i​t​s​ ​r​e​c​o​r​d​i​n​g​s​ ​s​e​t​u​p​.
 			 */
@@ -434,28 +403,6 @@ export type NamespaceAppTranslation = {
 				 */
 				owner_account: string
 			}
-			/**
-			 * T​h​e​ ​o​p​e​r​a​t​o​r​ ​r​e​p​o​r​t​e​d​ ​{​s​t​a​t​e​}​.
-			 * @param {unknown} state
-			 */
-			detail_state: RequiredParams<'state'>
-			/**
-			 * T​h​e​ ​o​p​e​r​a​t​o​r​ ​r​e​p​o​r​t​e​d​ ​{​s​t​a​t​e​}​ ​a​t​ ​{​s​t​e​p​}​.
-			 * @param {unknown} state
-			 * @param {unknown} step
-			 */
-			detail_state_at_step: RequiredParams<'state' | 'step'>
-			/**
-			 * {​c​o​m​m​a​n​d​}​ ​i​s​ ​h​o​w​e​v​e​r​ ​y​o​u​r​ ​d​e​p​l​o​y​m​e​n​t​ ​i​n​v​o​k​e​s​ ​i​t​,​ ​f​o​r​ ​e​x​a​m​p​l​e​ ​{​e​x​a​m​p​l​e​}​.
-			 * @param {unknown} command
-			 * @param {unknown} example
-			 */
-			note_occ: RequiredParams<'command' | 'example'>
-			/**
-			 * S​e​e​ ​{​e​n​d​p​o​i​n​t​}​ ​f​o​r​ ​t​h​e​ ​f​u​l​l​ ​r​e​c​o​r​d​i​n​g​s​ ​a​c​c​e​s​s​ ​r​e​p​o​r​t​.
-			 * @param {unknown} endpoint
-			 */
-			reference: RequiredParams<'endpoint'>
 		}
 		sharing_notice: {
 			/**
@@ -2239,7 +2186,7 @@ export type NamespaceAppTranslation = {
 				 */
 				title: string
 				/**
-				 * T​a​l​k​ ​n​e​e​d​s​ ​C​a​s​s​i​n​i​'​s​ ​r​e​c​o​r​d​i​n​g​-​s​e​r​v​e​r​ ​U​R​L​ ​a​n​d​ ​i​t​s​ ​r​e​c​o​r​d​i​n​g​ ​s​e​c​r​e​t​.​ ​C​a​s​s​i​n​i​ ​g​e​n​e​r​a​t​e​s​ ​t​h​e​ ​s​e​c​r​e​t​ ​i​t​s​e​l​f​ ​b​u​t​ ​c​a​n​n​o​t​ ​w​r​i​t​e​ ​T​a​l​k​'​s​ ​c​o​n​f​i​g​u​r​a​t​i​o​n​,​ ​s​o​ ​t​h​e​ ​v​a​l​u​e​s​ ​h​a​v​e​ ​t​o​ ​b​e​ ​g​i​v​e​n​ ​t​o​ ​T​a​l​k​.
+				 * T​a​l​k​ ​n​e​e​d​s​ ​C​a​s​s​i​n​i​'​s​ ​r​e​c​o​r​d​i​n​g​-​s​e​r​v​e​r​ ​U​R​L​ ​a​n​d​ ​i​t​s​ ​r​e​c​o​r​d​i​n​g​ ​s​e​c​r​e​t​.​ ​C​a​s​s​i​n​i​ ​g​e​n​e​r​a​t​e​s​ ​t​h​e​ ​s​e​c​r​e​t​ ​i​t​s​e​l​f​ ​b​u​t​ ​c​a​n​n​o​t​ ​w​r​i​t​e​ ​T​a​l​k​'​s​ ​c​o​n​f​i​g​u​r​a​t​i​o​n​,​ ​s​o​ ​t​h​e​ ​v​a​l​u​e​s​ ​h​a​v​e​ ​t​o​ ​b​e​ ​g​i​v​e​n​ ​t​o​ ​T​a​l​k​.​ ​O​n​ ​N​e​x​t​c​l​o​u​d​ ​A​l​l​-​i​n​-​O​n​e​,​ ​a​l​s​o​ ​t​u​r​n​ ​o​f​f​ ​A​I​O​'​s​ ​T​a​l​k​ ​R​e​c​o​r​d​i​n​g​-​s​e​r​v​e​r​ ​a​n​d​ ​s​e​t​ ​N​E​X​T​C​L​O​U​D​_​K​E​E​P​_​D​I​S​A​B​L​E​D​_​A​P​P​S​=​t​r​u​e​,​ ​o​r​ ​A​I​O​ ​r​e​m​o​v​e​s​ ​t​h​e​s​e​ ​v​a​l​u​e​s​ ​e​v​e​r​y​ ​t​i​m​e​ ​N​e​x​t​c​l​o​u​d​ ​s​t​a​r​t​s​.​ ​T​h​a​t​ ​s​e​t​t​i​n​g​ ​a​l​s​o​ ​s​t​o​p​s​ ​A​I​O​ ​r​e​m​o​v​i​n​g​ ​o​t​h​e​r​ ​a​p​p​s​ ​y​o​u​ ​d​i​s​a​b​l​e​ ​l​a​t​e​r​;​ ​s​e​e​ ​A​I​O​ ​r​e​s​t​a​r​t​ ​p​e​r​s​i​s​t​e​n​c​e​ ​i​n​ ​C​a​s​s​i​n​i​'​s​ ​i​n​s​t​a​l​l​ ​g​u​i​d​e​.
 				 */
 				intro: string
 				/**
@@ -3241,7 +3188,7 @@ export type NamespaceAppTranslation = {
 			 */
 			probe_failed: string
 			/**
-			 * T​a​l​k​ ​r​e​f​u​s​e​d​ ​C​a​s​s​i​n​i​.​ ​C​a​s​s​i​n​i​ ​i​s​ ​n​o​t​ ​s​e​t​ ​u​p​ ​a​s​ ​T​a​l​k​'​s​ ​r​e​c​o​r​d​i​n​g​ ​b​a​c​k​e​n​d​ ​y​e​t​,​ ​o​r​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​ ​s​e​c​r​e​t​ ​T​a​l​k​ ​h​a​s​ ​d​o​e​s​ ​n​o​t​ ​m​a​t​c​h​ ​C​a​s​s​i​n​i​'​s​.
+			 * T​a​l​k​ ​r​e​f​u​s​e​d​ ​C​a​s​s​i​n​i​.​ ​C​a​s​s​i​n​i​ ​i​s​ ​n​o​t​ ​s​e​t​ ​u​p​ ​a​s​ ​T​a​l​k​'​s​ ​r​e​c​o​r​d​i​n​g​ ​b​a​c​k​e​n​d​ ​y​e​t​,​ ​o​r​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​ ​s​e​c​r​e​t​ ​T​a​l​k​ ​h​a​s​ ​d​o​e​s​ ​n​o​t​ ​m​a​t​c​h​ ​C​a​s​s​i​n​i​'​s​.​ ​I​f​ ​t​h​i​s​ ​c​o​m​e​s​ ​b​a​c​k​ ​a​f​t​e​r​ ​e​v​e​r​y​ ​N​e​x​t​c​l​o​u​d​ ​r​e​s​t​a​r​t​,​ ​u​p​d​a​t​e​ ​o​r​ ​b​a​c​k​u​p​,​ ​s​o​m​e​t​h​i​n​g​ ​i​n​ ​N​e​x​t​c​l​o​u​d​'​s​ ​s​t​a​r​t​u​p​ ​i​s​ ​r​e​s​e​t​t​i​n​g​ ​T​a​l​k​'​s​ ​r​e​c​o​r​d​i​n​g​ ​b​a​c​k​e​n​d​.​ ​N​e​x​t​c​l​o​u​d​ ​A​l​l​-​i​n​-​O​n​e​ ​d​o​e​s​ ​t​h​i​s​ ​b​y​ ​d​e​f​a​u​l​t​.
 			 */
 			recording_auth_rejected: string
 			/**
@@ -8941,14 +8888,6 @@ export type TranslationFunctions = {
 				 */
 				tab_browse: () => LocalizedString
 				/**
-				 * Recording setup needs an administrator’s attention.
-				 */
-				recording_needs_action: () => LocalizedString
-				/**
-				 * Open recording setup
-				 */
-				open_recording_setup: () => LocalizedString
-				/**
 				 * Could not load retention settings.
 				 */
 				retention_load_failed: () => LocalizedString
@@ -9089,23 +9028,11 @@ export type TranslationFunctions = {
 			}
 			setup_notice: {
 				/**
-				 * Checking…
-				 */
-				checking: () => LocalizedString
-				/**
-				 * Show details
-				 */
-				show_details: () => LocalizedString
-				/**
-				 * Details for administrators
-				 */
-				details_heading: () => LocalizedString
-				/**
 				 * Open {place}
 				 */
-				open_publish_pipeline: (arg: { place: unknown }) => LocalizedString
+				open_doctor: (arg: { place: unknown }) => LocalizedString
 				/**
-				 * Cassini can't save recordings right now
+				 * New recordings can't be saved
 				 */
 				title_failing: () => LocalizedString
 				/**
@@ -9113,33 +9040,25 @@ export type TranslationFunctions = {
 				 */
 				title_unchecked: () => LocalizedString
 				/**
-				 * You can still browse recordings. Calls will still run, but their recordings will fail until this is fixed.
+				 * Calls still work and existing recordings are still here. Ask an administrator to fix this.
 				 */
-				summary_failing: () => LocalizedString
+				reader_failing: () => LocalizedString
 				/**
-				 * You can still browse recordings, but new ones will fail until this check runs.
+				 * Existing recordings are still here. New ones may not save until an administrator checks this.
 				 */
-				summary_unchecked: () => LocalizedString
+				reader_unchecked: () => LocalizedString
 				/**
-				 * Send this link to an administrator for setup instructions.
+				 * Copy link for an administrator
 				 */
-				share_label: () => LocalizedString
+				copy_link: () => LocalizedString
 				/**
-				 * Re-run Cassini's setup by disabling and enabling the app
+				 * Recording setup isn't finished
 				 */
-				step_rerun_setup: () => LocalizedString
+				title_recording: () => LocalizedString
 				/**
-				 * Open {place} to check the recordings account
+				 * New calls may not be recorded until an administrator finishes it.
 				 */
-				step_open_settings: (arg: { place: unknown }) => LocalizedString
-				/**
-				 * Create the {user} account in Nextcloud
-				 */
-				step_create_account: (arg: { user: unknown }) => LocalizedString
-				/**
-				 * Set {variable} to a Nextcloud administrator
-				 */
-				step_set_admin_user: (arg: { variable: unknown }) => LocalizedString
+				reader_recording: () => LocalizedString
 				/**
 				 * Cassini could not confirm its recordings setup.
 				 */
@@ -9162,22 +9081,6 @@ export type TranslationFunctions = {
 					 */
 					owner_account: () => LocalizedString
 				}
-				/**
-				 * The operator reported {state}.
-				 */
-				detail_state: (arg: { state: unknown }) => LocalizedString
-				/**
-				 * The operator reported {state} at {step}.
-				 */
-				detail_state_at_step: (arg: { state: unknown, step: unknown }) => LocalizedString
-				/**
-				 * {command} is however your deployment invokes it, for example {example}.
-				 */
-				note_occ: (arg: { command: unknown, example: unknown }) => LocalizedString
-				/**
-				 * See {endpoint} for the full recordings access report.
-				 */
-				reference: (arg: { endpoint: unknown }) => LocalizedString
 			}
 			sharing_notice: {
 				/**
@@ -10838,7 +10741,7 @@ export type TranslationFunctions = {
 					 */
 					title: () => LocalizedString
 					/**
-					 * Talk needs Cassini's recording-server URL and its recording secret. Cassini generates the secret itself but cannot write Talk's configuration, so the values have to be given to Talk.
+					 * Talk needs Cassini's recording-server URL and its recording secret. Cassini generates the secret itself but cannot write Talk's configuration, so the values have to be given to Talk. On Nextcloud All-in-One, also turn off AIO's Talk Recording-server and set NEXTCLOUD_KEEP_DISABLED_APPS=true, or AIO removes these values every time Nextcloud starts. That setting also stops AIO removing other apps you disable later; see AIO restart persistence in Cassini's install guide.
 					 */
 					intro: () => LocalizedString
 					/**
@@ -11815,7 +11718,7 @@ export type TranslationFunctions = {
 				 */
 				probe_failed: () => LocalizedString
 				/**
-				 * Talk refused Cassini. Cassini is not set up as Talk's recording backend yet, or the recording secret Talk has does not match Cassini's.
+				 * Talk refused Cassini. Cassini is not set up as Talk's recording backend yet, or the recording secret Talk has does not match Cassini's. If this comes back after every Nextcloud restart, update or backup, something in Nextcloud's startup is resetting Talk's recording backend. Nextcloud All-in-One does this by default.
 				 */
 				recording_auth_rejected: () => LocalizedString
 				/**

@@ -36,7 +36,7 @@ fail in a way that looks like a Cassini fault rather than an AIO one.
 ## 2. Before you start
 
 **Do not run `sandbox/wire-cassini.sh` at any point during this procedure.**
-It sets `spreed recording_servers` at line 307, which is precisely the value
+It sets `spreed recording_servers` in `handoff_talk_recording`, which is precisely the value
 under test. Running it after the restart repairs the damage and reports success,
 which is the one outcome that teaches us nothing. If the test fails, that script
 is the *remedy* — run it afterwards, deliberately, once the result is recorded.
@@ -152,9 +152,9 @@ values. The distinction that matters most:
 Then, and only then, repair the instance:
 
 ```bash
-# The rollback the branch's handoff offers, for a backend AIO removed.
-# Substitute the exact backup filename printed during Connect Talk.
-previous=$(cat ./cassini-recording-backend.XXXXXX)
+# Restore the value backed up before the handoff, for a backend AIO removed
+# (install guide, Step 5). Substitute the path of your backup.
+previous=$(cat /root/recording_servers.backup)
 docker exec -u www-data nextcloud-aio-nextcloud \
   php occ config:app:set spreed recording_servers --value="$previous"
 ```
@@ -164,7 +164,7 @@ recorded and the script can no longer hide it.
 
 ## 8. What this does not cover
 
-- **Non-AIO platforms.** The generated Docker/Compose/host/Snap commands are
+- **Non-AIO platforms.** Docker, Compose, host and Snap installations are
   separately unvalidated; a Snap `occ` wrapper is not proof of ExApp
   compatibility. Same acceptance list, different runbook.
 - **Repeated restarts.** One restart proves the startup script's behaviour under

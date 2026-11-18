@@ -17,6 +17,10 @@ type readinessScope struct {
 	host    bool
 	talk    bool
 	archive bool
+	// keepTestRoom stops the Talk probe forgetting a test room that answers
+	// 404. Set by the boot run only: Talk gives the same 404 when the Talk app
+	// is disabled for a moment, and nobody is watching then.
+	keepTestRoom bool
 }
 
 func allReadinessScopes() readinessScope {

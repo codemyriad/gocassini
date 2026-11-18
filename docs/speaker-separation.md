@@ -500,8 +500,10 @@ diarize exits 3.
 
 1. `--model <path>`;
 2. `CASSINI_DIARIZATION_MODEL=<path>`, a development override;
-3. the installed catalogue diarizer in the model store (`CASSINI_CACHE_ROOT`,
-   else `~/.cache/cassini`): the int8 export, else the fp32 one.
+3. the installed catalogue diarizer in the model store (in an AppAPI container
+   the operator's `$APP_PERSISTENT_STORAGE/operator/models`, else
+   `CASSINI_CACHE_ROOT`, else `~/.cache/cassini`): the int8 export, else the
+   fp32 one.
 
 The loose `models/nemotron-3-diarization-int8/model.int8.onnx` of the proof of
 concept is no longer read; import that file to keep using it. A store model's

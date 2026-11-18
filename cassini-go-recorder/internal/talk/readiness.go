@@ -58,7 +58,7 @@ func ProbeConnection(ctx context.Context, cfg config.Config) []ConnectionCheck {
 	if err != nil {
 		var ocsErr *nextcloud.OCSError
 		if errors.As(err, &ocsErr) && (ocsErr.HTTPStatus == 401 || ocsErr.HTTPStatus == 403) {
-			add("talk.discovery", "needs_action", "recording_auth_rejected", "Talk refused Cassini. Cassini is not set up as Talk's recording backend yet, or the recording secret Talk has does not match Cassini's.", "connect_talk")
+			add("talk.discovery", "needs_action", "recording_auth_rejected", "Talk refused Cassini. Cassini is not set up as Talk's recording backend yet, or the recording secret Talk has does not match Cassini's. If this comes back after every Nextcloud restart, update or backup, something in Nextcloud's startup is resetting Talk's recording backend. Nextcloud All-in-One does this by default.", "connect_talk")
 		} else if errors.As(err, &ocsErr) && ocsErr.HTTPStatus == 404 {
 			add("talk.discovery", "needs_action", "talk_or_room_unavailable", "Talk's recording settings are unavailable: either the Talk app is not enabled, or the conversation Cassini checks with is gone. Check the Talk app, then run this check again — Cassini will make a new conversation if it needs one.", "recheck")
 		} else {

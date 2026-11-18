@@ -183,23 +183,7 @@ func (rt *Runtime) saveRecordingSetupLocked(next recordingSetupState) error {
 	if err != nil {
 		return err
 	}
-	file, err := os.CreateTemp(filepath.Dir(path), ".recording-setup-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(file.Name())
-	if _, err = file.Write(raw); err != nil {
-		file.Close()
-		return err
-	}
-	if err = file.Sync(); err != nil {
-		file.Close()
-		return err
-	}
-	if err = file.Close(); err != nil {
-		return err
-	}
-	if err = os.Rename(file.Name(), path); err != nil {
+	if err := writeFileAtomic(path, raw, 0o600); err != nil {
 		return err
 	}
 	rt.recordingSetup.state = next
@@ -544,7 +528,7 @@ func (rt *Runtime) checkRecordingReadinessScoped(ctx context.Context, scope read
 	defer cancel()
 	started := time.Now()
 
-	if scope.storage && s.beginProbe("storage", started) {
+	if scope.storage && rt.resolvedPublishSinkName() == publishSinkNextcloudFiles && s.beginProbe("storage", started) {
 		if cfg, err := LoadExAppConfig(); err == nil && cfg.Active {
 			cfg.preflightDirectShares(ctx, rt.logger)
 		}
@@ -644,7 +628,7 @@ func (rt *Runtime) checkRecordingReadinessScoped(ctx context.Context, scope read
 		// panel went on offering a link to it, and arming re-armed the test
 		// against a conversation that no longer existed. Asking Talk directly
 		// costs one OCS read and does not care about signaling.
-		if !gone && rt.validTestRoom(room) {
+		if !gone && !scope.keepTestRoom && rt.validTestRoom(room) {
 			s.mu.Lock()
 			owner := s.state.TestRoomOwner
 			s.mu.Unlock()
@@ -654,7 +638,7 @@ func (rt *Runtime) checkRecordingReadinessScoped(ctx context.Context, scope read
 			}
 			gone = missing
 		}
-		if gone {
+		if gone && !scope.keepTestRoom {
 			s.mu.Lock()
 			next := s.state
 			next.TestRoomURL = ""

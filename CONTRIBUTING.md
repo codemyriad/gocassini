@@ -33,6 +33,11 @@ them as public and unsuitable for any real deployment.
 - Add a `changelog.d/` fragment for user-facing changes, install/release
   behavior, app-store metadata, security posture, or operator documentation.
   Do not edit `CHANGELOG.md` directly except during release preparation.
+- Never just tighten a settings limit (term counts, lengths, alias bounds,
+  retention rules, LLM provider limits). Cassini rejects the whole settings file
+  when one saved value breaks a limit, so a lower limit turns transcription off
+  on every install that saved more. A PR that tightens a limit must make the
+  loader trim or drop the offending value, with a log line, instead.
 
 ## PR conflict warnings
 

@@ -1569,7 +1569,7 @@ The required local shape is `nc_app_gocassini_data/operator/jobs/` plus a nonemp
 `nc_app_gocassini_data/operator/jobs.sqlite3`. Keep all per-attempt directories
 under `jobs/`, including raw media, intermediate outputs, and logs. Also retain
 other volume contents: annotation databases, any SQLite `-wal`/`-shm` sidecars,
-settings, lifecycle state, models, and any legacy `site/` directory. Do not copy
+settings, models, and any legacy `site/` directory. Do not copy
 only the SQLite DB, only the job folders, or substitute a Nextcloud data-directory
 backup. For overridden storage paths, consult [persistent storage](../docs/exapp-install.md#persistent-storage)
 and assemble the expected layout from the actual durable paths.

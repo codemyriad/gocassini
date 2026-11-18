@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"cassini-operator/internal/operator/appapi"
@@ -55,7 +56,11 @@ func newMCPHandler(exapp ExAppConfig, search searchDeps, annotations *annotation
 		annotations: annotations,
 		logger:      logger,
 	}
-	return mcpserver.NewHandler(reader, appapi.UserID, logger)
+	var proxyHost string
+	if nextcloudURL, err := url.Parse(exapp.NextcloudURL); err == nil {
+		proxyHost = nextcloudURL.Host
+	}
+	return mcpserver.NewHandler(reader, appapi.UserID, logger, proxyHost)
 }
 
 func (m *mcpReader) Rooms(ctx context.Context, caller string) (mcpserver.RoomsResult, error) {

@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"io"
 	"log"
 	"net/http"
@@ -441,7 +442,7 @@ func TestUIAssetRoutesMatchRegisteredScripts(t *testing.T) {
 	writeFile(t, filepath.Join(viewerDist, "embedded", "viewer.js.map"), sourceMap)
 
 	root := http.NewServeMux()
-	ExAppConfig{ViewerDist: viewerDist}.installRoutes(root, t.TempDir(), log.New(&bytes.Buffer{}, "", 0), searchDeps{})
+	ExAppConfig{ViewerDist: viewerDist}.installRoutes(root, log.New(&bytes.Buffer{}, "", 0), searchDeps{})
 
 	// assertEmbeddedAsset checks an embedded JS/CSS route serves the on-disk
 	// bundle (right content type, references #app, never an iframe bootstrap).
@@ -514,7 +515,7 @@ func TestUIAssetRoutesMatchRegisteredScripts(t *testing.T) {
 // handler's "assets not bundled" behavior.
 func TestUIEmbeddedAssetUnavailableWithoutDist(t *testing.T) {
 	root := http.NewServeMux()
-	ExAppConfig{}.installRoutes(root, t.TempDir(), log.New(&bytes.Buffer{}, "", 0), searchDeps{})
+	ExAppConfig{}.installRoutes(root, log.New(&bytes.Buffer{}, "", 0), searchDeps{})
 
 	for _, path := range []string{
 		"/ui/viewer.js", "/ui/viewer.css", "/ui/viewer.js.map",
@@ -530,7 +531,7 @@ func TestUIEmbeddedAssetUnavailableWithoutDist(t *testing.T) {
 
 func TestUIAssetHandlerUnknownPathAndMethod(t *testing.T) {
 	root := http.NewServeMux()
-	ExAppConfig{}.installRoutes(root, t.TempDir(), log.New(&bytes.Buffer{}, "", 0), searchDeps{})
+	ExAppConfig{}.installRoutes(root, log.New(&bytes.Buffer{}, "", 0), searchDeps{})
 
 	r := httptest.NewRequest(http.MethodGet, "/ui/other.js", nil)
 	w := httptest.NewRecorder()
@@ -740,10 +741,9 @@ func TestNewHTTPHandlerLifecycleBypassesBasePath(t *testing.T) {
 	defer cleanup()
 	rt.cfg.BasePath = "/operator"
 
-	tmp := t.TempDir()
 	exappCfg := ExAppConfig{} // no APP_SECRET -> middleware off
 
-	handler := newHTTPHandlerWithStateDir(log.New(&bytes.Buffer{}, "", 0), rt, exappCfg, tmp)
+	handler := newLifecycleTestHandler(log.New(&bytes.Buffer{}, "", 0), rt, exappCfg)
 
 	r := httptest.NewRequest(http.MethodPut, "/enabled?enabled=1", nil)
 	w := httptest.NewRecorder()
@@ -752,6 +752,16 @@ func TestNewHTTPHandlerLifecycleBypassesBasePath(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("PUT /enabled at root: got %d, want 200; body=%s", w.Code, w.Body.String())
 	}
+	r = httptest.NewRequest(http.MethodPost, "/init", nil)
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("POST /init at root: got %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	// The lifecycle endpoints are stateless: app-state.json is no longer written.
+	if _, err := os.Stat(filepath.Join(filepath.Dir(rt.cfg.DBPath), "app-state.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("app-state.json after /enabled and /init: %v, want not exist", err)
+	}
 }
 
 func TestNewHTTPHandlerAppAPIMiddlewareWrapsRoutes(t *testing.T) {
@@ -759,14 +769,13 @@ func TestNewHTTPHandlerAppAPIMiddlewareWrapsRoutes(t *testing.T) {
 	defer cleanup()
 	rt.cfg.BasePath = "/operator"
 
-	tmp := t.TempDir()
 	exappCfg := ExAppConfig{
 		Active:     true,
 		AppID:      "gocassini",
 		AppVersion: "0.1.0",
 		AppSecret:  "shh",
 	}
-	handler := newHTTPHandlerWithStateDir(log.New(&bytes.Buffer{}, "", 0), rt, exappCfg, tmp)
+	handler := newLifecycleTestHandler(log.New(&bytes.Buffer{}, "", 0), rt, exappCfg)
 
 	// Without AppAPI headers -> 401
 	r := httptest.NewRequest(http.MethodGet, "/operator/jobs", nil)
@@ -793,11 +802,10 @@ func TestNewHTTPHandlerLifecycleAlsoBehindMiddleware(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
 
-	tmp := t.TempDir()
 	exappCfg := ExAppConfig{
 		Active: true, AppID: "gocassini", AppSecret: "shh",
 	}
-	handler := newHTTPHandlerWithStateDir(log.New(&bytes.Buffer{}, "", 0), rt, exappCfg, tmp)
+	handler := newLifecycleTestHandler(log.New(&bytes.Buffer{}, "", 0), rt, exappCfg)
 
 	r := httptest.NewRequest(http.MethodPut, "/enabled?enabled=1", nil)
 	w := httptest.NewRecorder()
@@ -821,13 +829,12 @@ func TestNewHTTPHandlerHeartbeatBypassesMiddleware(t *testing.T) {
 	defer cleanup()
 	rt.cfg.BasePath = "/operator"
 
-	tmp := t.TempDir()
 	// Active middleware: heartbeat must still pass without AppAPI headers,
 	// because AppAPI's reachability probe does not send them.
 	exappCfg := ExAppConfig{
 		Active: true, AppID: "gocassini", AppVersion: "0.1.0", AppSecret: "shh",
 	}
-	handler := newHTTPHandlerWithStateDir(log.New(&bytes.Buffer{}, "", 0), rt, exappCfg, tmp)
+	handler := newLifecycleTestHandler(log.New(&bytes.Buffer{}, "", 0), rt, exappCfg)
 
 	r := httptest.NewRequest(http.MethodGet, "/heartbeat", nil)
 	w := httptest.NewRecorder()
@@ -858,16 +865,16 @@ func TestNewHTTPHandlerHeartbeatBypassesMiddleware(t *testing.T) {
 	}
 }
 
-// newHTTPHandlerWithStateDir is a test-only variant that overrides where the
-// lifecycle state file is written. Production code derives this from cfg.DBPath.
-func newHTTPHandlerWithStateDir(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig, stateDir string) http.Handler {
+// newLifecycleTestHandler is a test-only variant of newHTTPHandler that mounts
+// only the lifecycle, static and job routes.
+func newLifecycleTestHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.Handler {
 	api := http.NewServeMux()
 	api.HandleFunc("/jobs", rt.jobsHandler)
 	api.HandleFunc("/jobs/", rt.jobDetailHandler)
 	api.HandleFunc("/events", rt.eventsHandler)
 
 	root := http.NewServeMux()
-	exappCfg.installRoutes(root, stateDir, logger, searchDeps{})
+	exappCfg.installRoutes(root, logger, searchDeps{})
 	mountBasePathOnto(root, rt.cfg.BasePath, api, []string{"/jobs", "/jobs/", "/events"})
 
 	outer := http.NewServeMux()

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -65,7 +66,7 @@ func serve(t *testing.T, reader Reader, logs *bytes.Buffer) string {
 	handler := NewHandler(reader, func(ctx context.Context) string {
 		caller, _ := ctx.Value(callerKey{}).(string)
 		return caller
-	}, log.New(logs, "", 0))
+	}, log.New(logs, "", 0), "")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if user := r.Header.Get("X-Test-User"); user != "" {
 			r = r.WithContext(context.WithValue(r.Context(), callerKey{}, user))
@@ -243,5 +244,39 @@ func TestServerIsStatelessJSON(t *testing.T) {
 	}
 	if resp.Header.Get("Mcp-Session-Id") != "" {
 		t.Fatal("a stateless server issued a session")
+	}
+}
+
+func TestHandlerAppAPIHostOnLoopback(t *testing.T) {
+	handler := NewHandler(fakeReader{}, func(ctx context.Context) string {
+		caller, _ := ctx.Value(callerKey{}).(string)
+		return caller
+	}, log.New(&bytes.Buffer{}, "", 0), "cloud.example")
+	for _, tc := range []struct {
+		name, host, caller string
+		status             int
+	}{
+		{"authenticated proxy", "cloud.example", "alice", http.StatusOK},
+		{"unexpected host", "other.example", "alice", http.StatusForbidden},
+		{"unauthenticated proxy", "cloud.example", "", http.StatusForbidden},
+		{"loopback", "localhost", "alice", http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodPost, "http://"+tc.host+"/mcp", strings.NewReader(
+				`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`,
+			))
+			ctx := context.WithValue(r.Context(), http.LocalAddrContextKey, &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 8080})
+			ctx = context.WithValue(ctx, callerKey{}, tc.caller)
+			r.Header.Set("Content-Type", "application/json")
+			r.Header.Set("Accept", "application/json, text/event-stream")
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, r.WithContext(ctx))
+			if w.Code != tc.status {
+				t.Fatalf("status = %d, want %d: %s", w.Code, tc.status, w.Body)
+			}
+			if tc.status == http.StatusOK && !strings.Contains(w.Body.String(), `"tools"`) {
+				t.Fatalf("missing tools in %s", w.Body)
+			}
+		})
 	}
 }

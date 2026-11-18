@@ -2841,7 +2841,7 @@ esac
 		MaxRecordWorkers: 1,
 		MaxBuildWorkers:  1,
 		TalkSharedSecret: "test-recording-secret",
-	}, logger, ioDiscard{}, ioDiscard{})
+	}, newSupportJournal(filepath.Join(tmp, "jobs")), logger, ioDiscard{}, ioDiscard{})
 	rt.buildJobFn = func(ctx context.Context, task buildTask) (string, error) {
 		meetingPath := attemptMeetingPath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber)
 		if err := writeReadyMeetingBundleFixture(meetingPath, task.ArtifactRunPath); err != nil {
@@ -2893,7 +2893,7 @@ func newTestRuntimeWithLogger(t *testing.T, logger *log.Logger) (*Runtime, func(
 		MaxRecordWorkers: 1,
 		MaxBuildWorkers:  1,
 		TalkSharedSecret: "test-recording-secret",
-	}, logger, ioDiscard{}, ioDiscard{})
+	}, newSupportJournal(filepath.Join(tmp, "jobs")), logger, ioDiscard{}, ioDiscard{})
 	rt.recordJobFn = func(ctx context.Context, job Job, req TriggerRequest) (recordResult, error) {
 		runPath := attemptRunPath(rt.cfg.WorkRoot, job.ID, job.CurrentAttemptNumber)
 		bundle, err := PrepareRunBundle(runPath, false)

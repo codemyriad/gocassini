@@ -88,6 +88,10 @@ type Config struct {
 }
 
 type Runtime struct {
+	// dataOnEphemeralStorage is set once by Run before it listens: the job
+	// database, work root or a local site root is on overlay or tmpfs.
+	dataOnEphemeralStorage bool
+
 	supportJournal *supportJournal
 	supportGate    supportGate
 	// requestLog is the operator logger without the support journal tee.
@@ -290,9 +294,9 @@ type Runtime struct {
 	settings     STTSettings
 	settingsPath string
 	// settingsWriteMu serializes every read-modify-write of the STT policy
-	// (PUT /settings, the GET refresh from disk, the retired-model
-	// migration), so a writer never saves a copy older than another
-	// writer's. settingsMu only guards the in-memory copy.
+	// (PUT /settings, the retired-model migration), so a writer never saves a
+	// copy older than another writer's. settingsMu only guards the in-memory
+	// copy.
 	settingsWriteMu sync.Mutex
 	// LLM policy (D-696): persisted beside the STT policy, guarded the same way
 	// for job-spawn reads against PUT /settings/llm writes.
@@ -381,8 +385,6 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	logger := log.New(stderr, "cassini-operator: ", log.LstdFlags)
-
 	cfg, exitCode, err := loadConfig(args, stderr)
 	if err != nil {
 		if exitCode == 0 {
@@ -399,6 +401,21 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	cfg.BindAddr = exappCfg.applyToBindAddr(cfg.BindAddr)
 
+	// Take the work-root lock before anything writes to the volume, so a second
+	// operator on the same root exits before it can generate a Talk secret.
+	unlockRoot, err := lockWorkRoot(cfg.WorkRoot)
+	if err != nil {
+		fmt.Fprintf(stderr, "work root: %v\n", err)
+		return 1
+	}
+	defer unlockRoot()
+	// Then start the support journal, so every startup line below reaches
+	// support bundles. requestLog stays stderr-only: NewRuntime gets the plain
+	// logger and tees its own operator logger into this journal.
+	journal := newSupportJournal(cfg.WorkRoot)
+	stderrLog := log.New(stderr, "cassini-operator: ", log.LstdFlags)
+	logger := log.New(io.MultiWriter(stderr, journal), stderrLog.Prefix(), stderrLog.Flags())
+
 	// Zero-config Talk recording (D-447): generate + persist a recording secret
 	// when none was supplied, and derive the backend URL to register in spreed.
 	// An explicit CASSINI_TALK_RECORDING_SECRET still wins. The persisted secret
@@ -408,29 +425,23 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	cfg.TalkSecretSource = prov.SecretSource
 	cfg.TalkRecordingBackendURL = prov.BackendURL
 
-	unlockRoot, err := lockWorkRoot(cfg.WorkRoot)
-	if err != nil {
-		fmt.Fprintf(stderr, "work root: %v\n", err)
-		return 1
-	}
-	defer unlockRoot()
 	store, err := OpenStore(cfg.DBPath)
 	if err != nil {
-		fmt.Fprintf(stderr, "open store: %v\n", err)
+		logger.Printf("open store: %v", err)
 		return 1
 	}
 	defer store.Close()
 	interruptedAt := nowUTCString()
 	interrupted, err := store.MarkIncompleteJobsInterrupted(context.Background(), interruptedAt)
 	if err != nil {
-		fmt.Fprintf(stderr, "mark interrupted jobs: %v\n", err)
+		logger.Printf("mark interrupted jobs: %v", err)
 		return 1
 	}
 	if interrupted > 0 {
 		logger.Printf("startup interrupted_jobs -> %d", interrupted)
 	}
 
-	runtime := NewRuntime(ctx, store, cfg, logger, stdout, stderr)
+	runtime := NewRuntime(ctx, store, cfg, journal, stderrLog, stdout, stderr)
 	logger = runtime.logger
 	if interrupted > 0 {
 		runtime.emitInterruptedAtStartup(interruptedAt)
@@ -490,7 +501,6 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 				exappCfg.preflightDirectShares(runtime.ctx, logger)
 			}
 		}
-		go exappCfg.preflightDirectShares(runtime.ctx, logger)
 	}
 	if interrupted > 0 {
 		// A restart mid-recording leaves spreed convinced the room is still
@@ -513,7 +523,11 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// started after the ExApp configuration is complete because the index may
 	// read Nextcloud Files as well as local artifacts.
 	runtime.startDetailedStorageUsageRebuilder(exappCfg)
-	warnIfEphemeral(logger, filepath.Dir(cfg.DBPath), cfg.SiteRoot)
+	// The site root counts for support bundles only when it is the publish
+	// destination; with Nextcloud Files it holds only legacy content.
+	dataEphemeral := warnIfEphemeral(logger, filepath.Dir(cfg.DBPath), cfg.WorkRoot)
+	siteEphemeral := warnIfEphemeral(logger, cfg.SiteRoot)
+	runtime.dataOnEphemeralStorage = dataEphemeral || (siteEphemeral && sink.Name() == publishSinkLocal)
 
 	server := &http.Server{
 		Handler:           newHTTPHandler(logger, runtime, exappCfg),
@@ -526,8 +540,11 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	defer listener.Close()
-	// One baseline check when the container boots. NOT a timer, and not the
-	// panel triggering work on load — both of those are still refused.
+	// One baseline check when the container boots. Not the panel triggering
+	// work on load, which is still refused. The only timed re-check is the
+	// storage-usage tick repeating a storage check that ended "degraded"
+	// because Nextcloud did not answer (recheckDegradedStorage); it runs
+	// nothing else and costs a healthy install no request.
 	//
 	// Removed earlier on the reading that checks should only run when asked, and
 	// restored because a cold operator cannot answer the question the panel
@@ -538,11 +555,25 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// probe result, and there was none. A first look was not merely uninformative
 	// but wrong.
 	//
-	// Provisioning is separate and always ran: preflightOnRestart above owns the
-	// restart-convergence path (D-541/D-669).
+	// Storage runs first and once, tracked, with the configured ExAppConfig,
+	// because the Talk probe acts as the administrator that check resolves
+	// (D-541/D-669). The readiness run then skips storage, and it keeps the
+	// saved test room: nobody is watching at boot, and Talk answers 404 for a
+	// disabled Talk app as well as for a deleted room. Only an administrator's
+	// Check again may forget it.
 	if exappCfg.Active {
+		bootCfg := exappCfg
 		runtime.workerWG.Add(1)
-		go func() { defer runtime.workerWG.Done(); runtime.checkRecordingReadiness(runtime.ctx) }()
+		go func() {
+			defer runtime.workerWG.Done()
+			if sink.Name() == publishSinkNextcloudFiles {
+				bootCfg.preflightDirectShares(runtime.ctx, logger)
+			}
+			scope := allReadinessScopes()
+			scope.storage = false
+			scope.keepTestRoom = true
+			runtime.checkRecordingReadinessScoped(runtime.ctx, scope)
+		}()
 	}
 
 	fmt.Fprintf(stdout, "listening -> http://%s\n", listener.Addr().String())
@@ -872,9 +903,10 @@ func normalizeBasePath(value string) (string, error) {
 	return normalized, nil
 }
 
-func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logger, stdout, stderr io.Writer) *Runtime {
+// NewRuntime tees logger into journal for operator output. logger itself must
+// write to stderr only: it becomes requestLog, which the journal never sees.
+func NewRuntime(ctx context.Context, store *Store, cfg Config, journal *supportJournal, logger *log.Logger, stdout, stderr io.Writer) *Runtime {
 	cleanupSupportTemps(os.TempDir(), time.Now())
-	journal := newSupportJournal(cfg.WorkRoot)
 	requestLog := logger
 	logger = log.New(io.MultiWriter(logger.Writer(), journal), logger.Prefix(), logger.Flags())
 	queueCapacity := cfg.MaxBuildWorkers * 16
@@ -946,22 +978,38 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 		rt.annotations = annotationIndex
 	}
 
-	// Detect hardware on first start (or track it under an auto default) and
-	// load the persisted STT policy. A failure here must not take the operator
-	// down: fall back to an in-memory auto default so jobs still run (D-435).
+	// Load the persisted STT policy, once: after this, memory is the truth and
+	// only a save writes the file. A missing file gives the detected defaults.
+	// A failure here must not take the operator down: fall back to in-memory
+	// defaults so jobs still run (D-435), and keep the rejected file before a
+	// save can replace it. An absent file is logged: boot is the only place
+	// that state arises, and support needs to see it.
+	settingsExisted := fileExists(rt.settingsPath)
 	if settings, err := LoadOrInitSettingsWithMigrationReporter(rt.settingsPath, rt.reportSettingsMigration); err != nil {
-		logger.Printf("stt_settings load failed (%v); using in-memory auto default", err)
-		rt.settings = detectSettings()
+		logger.Print(settingsLoadFailedMessage("stt_settings", rt.settingsPath, "running on defaults (transcription off, new recordings shared with attendees only)", "Settings", err))
+		fallback := detectSettings()
+		// The rejected file may have narrowed the audience; never widen who
+		// sees a recording because it could not be read. A fresh install
+		// (no file) keeps the room default.
+		fallback.ShareAudience = shareAudienceAttendees
+		rt.settings = fallback
 	} else {
 		rt.settings = settings
+		if !settingsExisted {
+			logger.Printf("%s was not found; using detected defaults (transcription off) until an administrator saves Settings", filepath.Base(rt.settingsPath))
+		}
 	}
 	// Same for the LLM policy: seed from the deploy env on first start; on a
 	// load failure keep running on the deploy env rather than refusing to start.
+	llmExisted := fileExists(rt.llmSettingsPath)
 	if llm, err := LoadOrInitLLMSettings(rt.llmSettingsPath, os.Getenv); err != nil {
-		logger.Printf("llm_settings load failed (%v); using the deploy environment", err)
+		logger.Print(settingsLoadFailedMessage("llm_settings", rt.llmSettingsPath, "using the deploy environment", "AI providers", err))
 		rt.llm = SeedLLMSettings(os.Getenv)
 	} else {
 		rt.llm = llm
+		if !llmExisted {
+			logger.Printf("llm_settings created from the deploy environment (%s was not found)", filepath.Base(rt.llmSettingsPath))
+		}
 	}
 	store.SetStateChangePublisher(rt.publishStateChangeEvent)
 	rt.startEventWebhook()
@@ -1174,7 +1222,7 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 		search.importAnnotations = annotations.importListedDocuments
 	}
 	// ExApp lifecycle + static prefixes (no-op when their env paths are unset).
-	exappCfg.installRoutes(root, filepath.Dir(rt.cfg.DBPath), logger, search)
+	exappCfg.installRoutes(root, logger, search)
 	// Insights (D-700): their own top-level prefix, mounted on the ROOT mux
 	// beside /published/ rather than under BasePath, because that is where
 	// appinfo/info.xml declares them — `^insights\/…`, USER, and the app's first
