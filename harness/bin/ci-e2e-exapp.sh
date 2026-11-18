@@ -206,9 +206,9 @@ if grep -qF 'readiness-container-test' <<<"$body"; then
 fi
 log 'OK   saved recording setup is redacted'
 
-# --- Lifecycle state persistence after restart ---
+# --- Saved state persistence after restart ---
 
-log "restarting container; lifecycle state should survive only if the data path is persistent"
+log "restarting container; saved state should survive only if the data path is persistent"
 # State lives in /var/lib/cassini-operator inside the container. With docker
 # restart (not run -rm), the same writable layer is reused.
 docker restart "${CONTAINER_NAME}" >/dev/null

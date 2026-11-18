@@ -81,12 +81,8 @@ checking. Do not change proxy routing solely because an icon is absent.
    The connection check authenticates using that public identity but never joins
    the call or records media. Talk supplies its own backend identity when starting
    a recording; only a real test verifies that path.
-4. Open **Connect Talk**. Identify the installation method and who can change
-   its server configuration. Use the administrator request if you lack host
-   access. For a confirmed command path, review the advanced commands and
-   acknowledge that they replace the previous recorder. They save the previous
-   `recording_servers` value to a private, uniquely named backup and prompt for
-   an administrator app password. Keep that backup for rollback.
+4. Open **Connect Talk**. Back up Talk's current `recording_servers`, then give
+   Talk the two values shown ([install guide, Step 5](exapp-install.md#step-5--talk-handoff-reversible)).
 5. Press **Check again**. A denied settings request means the recording credential, access rules and
    backend configuration need checking; it does not identify which one caused
    the denial or establish that HPB is absent. A missing signaling address is
@@ -136,9 +132,11 @@ Do not prepare another test while your intended test is already recording.
 Outbound Talk and nonblocking storage preflight results retain their last
 verdict and show when they were checked, even after five minutes. An older pass
 shows what worked at that time, not proof of the current connection. **Check
-again** refreshes these checks. Outbound Talk results live in memory and are
-lost on ExApp restart; then the connection is **Not verified** until checked
-again. A local storage admission block is reported separately and stays
+again** refreshes these checks. One storage result also refreshes itself: when
+the storage check ended degraded because Nextcloud did not answer (for example,
+Cassini started before Nextcloud after a server reboot), Cassini repeats it
+every five minutes until Nextcloud answers. Outbound Talk results live in memory and are
+re-checked once when the ExApp starts. A local storage admission block is reported separately and stays
 actionable until cleared. A destination not covered by the Nextcloud preflight
 is reported as unverified. Speech processing checks establish prerequisites,
 not a successful transcription.
@@ -177,8 +175,7 @@ To preserve a custom recording backend:
    ```
 
    Exit zero means AIO will neither select its recorder nor delete a custom
-   recording backend under the inspected startup logic. The generated AIO
-   handoff commands check these conditions before making changes.
+   recording backend under the inspected startup logic.
 4. Apply **Connect Talk** and run the test recording.
 
 Keeping disabled apps changes AIO's cleanup behavior for other optional apps
@@ -197,22 +194,13 @@ The steps above are the configuration. Proving it on a real installation is
 [Runbook: prove Cassini survives an AIO restart](runbooks/validate-aio-restart-persistence.md),
 which also covers the case this section does not: AppAPI itself ending up
 disabled, which makes Cassini unreachable rather than merely misconfigured.
+AIO's startup script disables AppAPI only when `REMOVE_DISABLED_APPS=yes` and
+neither AIO's HaRP nor its Docker Socket Proxy is on. Setting
+`NEXTCLOUD_KEEP_DISABLED_APPS=true` prevents it. A deploy daemon that works
+does not need to be registered again.
 
-For rollback on AIO, restore the backup made by Connect Talk:
-
-```bash
-# Substitute the exact backup filename printed during handoff.
-previous=$(cat ./cassini-recording-backend.XXXXXX)
-if [ -n "$previous" ]; then
-  docker exec -u www-data nextcloud-aio-nextcloud php occ config:app:set spreed recording_servers --value="$previous"
-else
-  docker exec -u www-data nextcloud-aio-nextcloud php occ config:app:delete spreed recording_servers
-fi
-unset previous
-```
-
-The generated handoff also enables `call_recording`. If it was previously
-disabled, restore that choice through Talk's administration settings.
+To undo the handoff, follow the **Rollback** block in the
+[install guide, Step 5](exapp-install.md#step-5--talk-handoff-reversible).
 
 ## API and testing
 
@@ -260,44 +248,9 @@ and remove only confirmed leftovers from a failed run before retrying. The norma
 CPU CI job runs this check. Its Nextcloud restart is not an AIO mastercontainer
 restart; validate the AIO-specific persistence settings on your deployment too.
 
-## Environment-aware repair guidance
+## Eligibility and network findings
 
-Each repair form opens beneath its check. Cassini uses its live diagnostics for
-capability findings, but does not infer Nextcloud's installation method from its
-own container or assume that an administrator has host access. The form starts
-with both installation method and access unknown.
-
-Administrators can identify AIO, Docker, Compose, a host/archive installation,
-Snap, or another/unknown method. Access is a separate choice: host terminal,
-container/appliance console, provider/another administrator, or unknown. These
-are user-supplied choices, not automatic detection results. They stay in page
-memory and are not saved as deployment facts.
-
-For a confirmed host terminal and a supported command path, Connect Talk offers
-advanced commands. Docker, Compose and host installations require explicit
-service/container, web-server user and absolute occ-path details as applicable.
-The instructions identify the Nextcloud host as the target even when Cassini runs
-elsewhere. The script checks its tools and Nextcloud before writing configuration;
-copying requires acknowledgment that the current recorder will be replaced.
-Changing installation details clears that acknowledgment.
-
-Provider-managed, console-only, unknown and other installations receive a safe
-administrator request and guidance on what information to obtain. Each request
-uses known check labels and states; it excludes raw messages, room URLs, job IDs
-and credentials. Secret-related requests ask the administrator to configure the
-value securely rather than reply with it in a support ticket. These requests are
-copyable text; Cassini does not send them automatically.
-
-The command paths are covered by generation, quoting, gating and browser tests.
-They have not all been validated on live platform deployments. A Snap occ wrapper
-is not proof of ExApp compatibility; a provider's actual policies and a remote
-execution host may determine what is possible. Podman, Kubernetes and vendor NAS
-packages need a verified platform-specific path before generated commands can
-be offered for them.
-
-Automatic environment classification from authoritative deployment metadata and
-an in-app Talk configuration operation remain future work. Neither is claimed
-by this UI. The [pre-install guide](before-installing.md) explains eligibility
+The [pre-install guide](before-installing.md) explains eligibility
 before Cassini can run, including actual AppAPI test deployment, recorder-target
 architecture, HPB and provider involvement.
 
@@ -306,5 +259,5 @@ administrator may have repaired Nextcloud or HPB since the check. The recorder
 validates the actual connection. Missing local credentials and storage admission
 requirements still refuse recording early. The ordinary-user attention banner
 can reflect the last network finding even when it is old; its age is visible in
-the administrator's checks. A restart discards that network finding, so the
-banner's disappearance does not establish that the problem was repaired.
+the administrator's checks. A restart discards that network finding; it is
+re-checked once when the ExApp starts.

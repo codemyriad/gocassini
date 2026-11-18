@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"os/user"
 	"path/filepath"
 	"syscall"
 
@@ -287,7 +286,7 @@ func commandCheck(id string, name string) doctorCheck {
 }
 
 func sttModelCacheChecks() []doctorCheck {
-	cacheRoot := defaultCassiniCacheRoot()
+	cacheRoot := transcribe.DefaultCacheDir()
 	// Report the *resolved* device+model the build will actually use, so doctor
 	// reflects GPU auto-detection and the quality-tier model choice.
 	device := transcribe.ResolveDevice(os.Getenv("CASSINI_STT_DEVICE"))
@@ -373,21 +372,6 @@ func writableDirAdvice(label string, path string) string {
 	default:
 		return fmt.Sprintf("make %s writable or choose a different writable path", path)
 	}
-}
-
-func defaultCassiniCacheRoot() string {
-	if value := os.Getenv("CASSINI_CACHE_ROOT"); value != "" {
-		return value
-	}
-	currentUser, err := user.Current()
-	if err == nil && currentUser.HomeDir != "" {
-		return filepath.Join(currentUser.HomeDir, ".cache", "cassini")
-	}
-	home, err := os.UserHomeDir()
-	if err == nil && home != "" {
-		return filepath.Join(home, ".cache", "cassini")
-	}
-	return filepath.Join(".", ".cache", "cassini")
 }
 
 func formatBytes(value int64) string {

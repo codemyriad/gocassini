@@ -35,7 +35,7 @@ type modelView struct {
 // the sizes and is ready once it passed the runtime check on the device. A
 // diarizer always runs on the CPU, has nothing to pair with, and is ready when
 // it is installed and the runtime supports Nemotron: that is cheap to check
-// on every listing and, unlike a receipt, survives a reboot.
+// on every listing and, unlike a receipt, survives an upgrade.
 func listModelView(s *modelstore.Store, m modelstore.Model, device string) modelView {
 	var dl, installed int64
 	for _, c := range s.Components(m) {
@@ -71,7 +71,7 @@ func runModels(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	command := args[0]
 	fs := flag.NewFlagSet("cassini models "+command, flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	root := fs.String("cache-root", defaultCassiniCacheRoot(), "persistent operator model cache root")
+	root := fs.String("cache-root", transcribe.DefaultCacheDir(), "persistent operator model cache root")
 	revision := fs.String("revision", "", "pinned model revision (models list --json)")
 	modelID := fs.String("model", "", "model ID, required for raw-file import")
 	device := fs.String("device", "cpu", "target device: cpu or cuda")

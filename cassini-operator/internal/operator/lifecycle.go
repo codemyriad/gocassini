@@ -7,11 +7,8 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 )
 
 // AppAPI lifecycle callbacks. These are invoked by AppAPI directly (not by
@@ -22,110 +19,24 @@ import (
 //   PUT  /enabled?enabled=0   admin disabled the app, return {"error": ""}
 //   POST /init                run any first-time setup, return {}
 //
-// We persist the enabled flag in a small JSON file alongside the operator DB
-// so it survives container restarts. Re-runs of either endpoint are idempotent.
-
-type LifecycleState struct {
-	Enabled    bool   `json:"enabled"`
-	LastInitAt string `json:"last_init_at,omitempty"`
-}
-
-// LifecycleStore is the minimal persistence backend the lifecycle handlers need.
-// Implementations must be safe for concurrent calls (PUT /enabled and POST /init
-// can race when an admin clicks fast).
-type LifecycleStore interface {
-	Load() (LifecycleState, error)
-	Save(LifecycleState) error
-	// Update applies fn to the stored state as one atomic read-modify-write.
-	// The handlers must use it instead of separate Load/Save calls, whose
-	// distinct lock scopes let concurrent handlers lose updates (D-364).
-	Update(fn func(*LifecycleState)) error
-}
-
-type fileLifecycleStore struct {
-	path string
-	mu   sync.Mutex
-}
-
-// NewFileLifecycleStore returns a LifecycleStore that persists to a JSON file.
-// The file's parent directory must already exist.
-func NewFileLifecycleStore(path string) LifecycleStore {
-	return &fileLifecycleStore{path: path}
-}
-
-func (s *fileLifecycleStore) Load() (LifecycleState, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.loadLocked()
-}
-
-func (s *fileLifecycleStore) Save(state LifecycleState) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.saveLocked(state)
-}
-
-func (s *fileLifecycleStore) Update(fn func(*LifecycleState)) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	state, err := s.loadLocked()
-	if err != nil {
-		return err
-	}
-	fn(&state)
-	return s.saveLocked(state)
-}
-
-func (s *fileLifecycleStore) loadLocked() (LifecycleState, error) {
-	raw, err := os.ReadFile(s.path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return LifecycleState{}, nil
-		}
-		return LifecycleState{}, fmt.Errorf("read lifecycle state %s: %w", s.path, err)
-	}
-	var st LifecycleState
-	if len(raw) == 0 {
-		return st, nil
-	}
-	if err := json.Unmarshal(raw, &st); err != nil {
-		return LifecycleState{}, fmt.Errorf("decode lifecycle state %s: %w", s.path, err)
-	}
-	return st, nil
-}
-
-func (s *fileLifecycleStore) saveLocked(state LifecycleState) error {
-	payload, err := json.Marshal(state)
-	if err != nil {
-		return fmt.Errorf("encode lifecycle state: %w", err)
-	}
-	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, payload, 0o644); err != nil {
-		return fmt.Errorf("write lifecycle state %s: %w", tmp, err)
-	}
-	if err := os.Rename(tmp, s.path); err != nil {
-		return fmt.Errorf("rename lifecycle state to %s: %w", s.path, err)
-	}
-	return nil
-}
+// Both endpoints are stateless: nothing reads the enabled flag or the init
+// time back, so neither is stored and a re-run answers the same way.
 
 // LifecycleHandlers wires PUT /enabled and POST /init onto a mux.
 type LifecycleHandlers struct {
-	Store  LifecycleStore
 	Logger *log.Logger
-	NowUTC func() string
 	// InitProgressReporter is called once /init has run, in a goroutine so
 	// the HTTP response can return immediately. It signals progress=100 to
 	// AppAPI via the OCS endpoint. Nil disables the callback (dev / tests).
 	InitProgressReporter func()
-	// UIRegistrar is called after PUT /enabled?enabled=1 has been persisted,
+	// UIRegistrar is called after PUT /enabled?enabled=1 has been answered,
 	// in a goroutine for the same reason as InitProgressReporter: it calls
 	// back into Nextcloud (AppAPI's ExApp UI OCS API, see uiRegistrar in
 	// exapp.go), which can deadlock a single-worker PHP setup if done before
 	// the /enabled response is written. Nil disables it (dev / tests).
 	UIRegistrar func()
-	// EnabledCallback runs asynchronously after an enabled/disabled state was
-	// persisted and answered. ExApp integrations use the enabled=true edge for
+	// EnabledCallback runs asynchronously after an enabled/disabled request
+	// was answered. ExApp integrations use the enabled=true edge for
 	// callbacks that AppAPI would reject while registration is still disabled.
 	EnabledCallback func(bool)
 }
@@ -135,13 +46,6 @@ func (h *LifecycleHandlers) logger() *log.Logger {
 		return h.Logger
 	}
 	return log.Default()
-}
-
-func (h *LifecycleHandlers) now() string {
-	if h.NowUTC != nil {
-		return h.NowUTC()
-	}
-	return nowUTCString()
 }
 
 // Register attaches the lifecycle endpoints to the given mux at the root.
@@ -183,11 +87,6 @@ func (h *LifecycleHandlers) handleEnabled(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if err := h.Store.Update(func(st *LifecycleState) { st.Enabled = enabled }); err != nil {
-		h.logger().Printf("lifecycle enabled: update state: %v", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "save state failed"})
-		return
-	}
 	h.logger().Printf("lifecycle enabled -> %v", enabled)
 	// AppAPI expects `{"error": ""}` on success, `{"error": "..."}` to refuse.
 	writeJSON(w, http.StatusOK, map[string]string{"error": ""})
@@ -207,11 +106,6 @@ func (h *LifecycleHandlers) handleInit(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	if err := h.Store.Update(func(st *LifecycleState) { st.LastInitAt = h.now() }); err != nil {
-		h.logger().Printf("lifecycle init: update state: %v", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "save state failed"})
 		return
 	}
 	h.logger().Printf("lifecycle init: ok")
@@ -242,10 +136,4 @@ func parseEnabledFlag(raw string) (bool, error) {
 		return false, fmt.Errorf("invalid enabled flag %q", raw)
 	}
 	return b, nil
-}
-
-// DefaultLifecycleStatePath returns the canonical on-disk path for the
-// lifecycle state file, derived from the operator's DB path.
-func DefaultLifecycleStatePath(dbPath string) string {
-	return filepath.Join(filepath.Dir(dbPath), "app-state.json")
 }

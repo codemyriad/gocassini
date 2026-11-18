@@ -208,7 +208,7 @@ func (rt *Runtime) modelsHandler(w http.ResponseWriter, r *http.Request) {
 	if path == "" && r.Method == http.MethodGet {
 		device := r.URL.Query().Get("device")
 		if device == "" {
-			device, _ = effectiveDevice(rt.currentSettings().DeviceOverride)
+			device, _ = effectiveDevice(rt.currentSettings().executionDeviceOverride())
 		}
 		if device != "cpu" && device != "cuda" {
 			writeJSONError(w, 400, "device must be cpu or cuda")

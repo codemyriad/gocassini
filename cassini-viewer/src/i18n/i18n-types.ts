@@ -2186,7 +2186,7 @@ export type NamespaceAppTranslation = {
 				 */
 				title: string
 				/**
-				 * T​a​l​k​ ​n​e​e​d​s​ ​C​a​s​s​i​n​i​'​s​ ​r​e​c​o​r​d​i​n​g​-​s​e​r​v​e​r​ ​U​R​L​ ​a​n​d​ ​i​t​s​ ​r​e​c​o​r​d​i​n​g​ ​s​e​c​r​e​t​.​ ​C​a​s​s​i​n​i​ ​g​e​n​e​r​a​t​e​s​ ​t​h​e​ ​s​e​c​r​e​t​ ​i​t​s​e​l​f​ ​b​u​t​ ​c​a​n​n​o​t​ ​w​r​i​t​e​ ​T​a​l​k​'​s​ ​c​o​n​f​i​g​u​r​a​t​i​o​n​,​ ​s​o​ ​t​h​e​ ​v​a​l​u​e​s​ ​h​a​v​e​ ​t​o​ ​b​e​ ​g​i​v​e​n​ ​t​o​ ​T​a​l​k​.
+				 * T​a​l​k​ ​n​e​e​d​s​ ​C​a​s​s​i​n​i​'​s​ ​r​e​c​o​r​d​i​n​g​-​s​e​r​v​e​r​ ​U​R​L​ ​a​n​d​ ​i​t​s​ ​r​e​c​o​r​d​i​n​g​ ​s​e​c​r​e​t​.​ ​C​a​s​s​i​n​i​ ​g​e​n​e​r​a​t​e​s​ ​t​h​e​ ​s​e​c​r​e​t​ ​i​t​s​e​l​f​ ​b​u​t​ ​c​a​n​n​o​t​ ​w​r​i​t​e​ ​T​a​l​k​'​s​ ​c​o​n​f​i​g​u​r​a​t​i​o​n​,​ ​s​o​ ​t​h​e​ ​v​a​l​u​e​s​ ​h​a​v​e​ ​t​o​ ​b​e​ ​g​i​v​e​n​ ​t​o​ ​T​a​l​k​.​ ​O​n​ ​N​e​x​t​c​l​o​u​d​ ​A​l​l​-​i​n​-​O​n​e​,​ ​a​l​s​o​ ​t​u​r​n​ ​o​f​f​ ​A​I​O​'​s​ ​T​a​l​k​ ​R​e​c​o​r​d​i​n​g​-​s​e​r​v​e​r​ ​a​n​d​ ​s​e​t​ ​N​E​X​T​C​L​O​U​D​_​K​E​E​P​_​D​I​S​A​B​L​E​D​_​A​P​P​S​=​t​r​u​e​,​ ​o​r​ ​A​I​O​ ​r​e​m​o​v​e​s​ ​t​h​e​s​e​ ​v​a​l​u​e​s​ ​e​v​e​r​y​ ​t​i​m​e​ ​N​e​x​t​c​l​o​u​d​ ​s​t​a​r​t​s​.​ ​T​h​a​t​ ​s​e​t​t​i​n​g​ ​a​l​s​o​ ​s​t​o​p​s​ ​A​I​O​ ​r​e​m​o​v​i​n​g​ ​o​t​h​e​r​ ​a​p​p​s​ ​y​o​u​ ​d​i​s​a​b​l​e​ ​l​a​t​e​r​;​ ​s​e​e​ ​A​I​O​ ​r​e​s​t​a​r​t​ ​p​e​r​s​i​s​t​e​n​c​e​ ​i​n​ ​C​a​s​s​i​n​i​'​s​ ​i​n​s​t​a​l​l​ ​g​u​i​d​e​.
 				 */
 				intro: string
 				/**
@@ -3188,7 +3188,7 @@ export type NamespaceAppTranslation = {
 			 */
 			probe_failed: string
 			/**
-			 * T​a​l​k​ ​r​e​f​u​s​e​d​ ​C​a​s​s​i​n​i​.​ ​C​a​s​s​i​n​i​ ​i​s​ ​n​o​t​ ​s​e​t​ ​u​p​ ​a​s​ ​T​a​l​k​'​s​ ​r​e​c​o​r​d​i​n​g​ ​b​a​c​k​e​n​d​ ​y​e​t​,​ ​o​r​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​ ​s​e​c​r​e​t​ ​T​a​l​k​ ​h​a​s​ ​d​o​e​s​ ​n​o​t​ ​m​a​t​c​h​ ​C​a​s​s​i​n​i​'​s​.
+			 * T​a​l​k​ ​r​e​f​u​s​e​d​ ​C​a​s​s​i​n​i​.​ ​C​a​s​s​i​n​i​ ​i​s​ ​n​o​t​ ​s​e​t​ ​u​p​ ​a​s​ ​T​a​l​k​'​s​ ​r​e​c​o​r​d​i​n​g​ ​b​a​c​k​e​n​d​ ​y​e​t​,​ ​o​r​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​ ​s​e​c​r​e​t​ ​T​a​l​k​ ​h​a​s​ ​d​o​e​s​ ​n​o​t​ ​m​a​t​c​h​ ​C​a​s​s​i​n​i​'​s​.​ ​I​f​ ​t​h​i​s​ ​c​o​m​e​s​ ​b​a​c​k​ ​a​f​t​e​r​ ​e​v​e​r​y​ ​N​e​x​t​c​l​o​u​d​ ​r​e​s​t​a​r​t​,​ ​u​p​d​a​t​e​ ​o​r​ ​b​a​c​k​u​p​,​ ​s​o​m​e​t​h​i​n​g​ ​i​n​ ​N​e​x​t​c​l​o​u​d​'​s​ ​s​t​a​r​t​u​p​ ​i​s​ ​r​e​s​e​t​t​i​n​g​ ​T​a​l​k​'​s​ ​r​e​c​o​r​d​i​n​g​ ​b​a​c​k​e​n​d​.​ ​N​e​x​t​c​l​o​u​d​ ​A​l​l​-​i​n​-​O​n​e​ ​d​o​e​s​ ​t​h​i​s​ ​b​y​ ​d​e​f​a​u​l​t​.
 			 */
 			recording_auth_rejected: string
 			/**
@@ -10741,7 +10741,7 @@ export type TranslationFunctions = {
 					 */
 					title: () => LocalizedString
 					/**
-					 * Talk needs Cassini's recording-server URL and its recording secret. Cassini generates the secret itself but cannot write Talk's configuration, so the values have to be given to Talk.
+					 * Talk needs Cassini's recording-server URL and its recording secret. Cassini generates the secret itself but cannot write Talk's configuration, so the values have to be given to Talk. On Nextcloud All-in-One, also turn off AIO's Talk Recording-server and set NEXTCLOUD_KEEP_DISABLED_APPS=true, or AIO removes these values every time Nextcloud starts. That setting also stops AIO removing other apps you disable later; see AIO restart persistence in Cassini's install guide.
 					 */
 					intro: () => LocalizedString
 					/**
@@ -11718,7 +11718,7 @@ export type TranslationFunctions = {
 				 */
 				probe_failed: () => LocalizedString
 				/**
-				 * Talk refused Cassini. Cassini is not set up as Talk's recording backend yet, or the recording secret Talk has does not match Cassini's.
+				 * Talk refused Cassini. Cassini is not set up as Talk's recording backend yet, or the recording secret Talk has does not match Cassini's. If this comes back after every Nextcloud restart, update or backup, something in Nextcloud's startup is resetting Talk's recording backend. Nextcloud All-in-One does this by default.
 				 */
 				recording_auth_rejected: () => LocalizedString
 				/**
