@@ -47,14 +47,14 @@
       "bundle_failed": "Impossibile preparare il pacchetto (HTTP {status})."
     },
     "setup_notice": {
-      "open_doctor": "",
+      "open_doctor": "Apri {place}",
       "title_failing": "Al momento Cassini non può salvare le registrazioni",
       "title_unchecked": "Cassini non ha verificato di poter salvare le registrazioni",
-      "reader_failing": "",
-      "reader_unchecked": "",
-      "copy_link": "",
-      "title_recording": "",
-      "reader_recording": "",
+      "reader_failing": "Le chiamate funzionano ancora e le registrazioni esistenti sono ancora qui. Chiedi a un amministratore di risolvere il problema.",
+      "reader_unchecked": "Le registrazioni esistenti sono ancora qui. Le nuove potrebbero non essere salvate finché un amministratore non lo verifica.",
+      "copy_link": "Copia il link per un amministratore",
+      "title_recording": "La configurazione della registrazione non è completa",
+      "reader_recording": "Le nuove chiamate potrebbero non essere registrate finché un amministratore non la completa.",
       "cause_unknown": "Cassini non ha potuto confermare la configurazione delle registrazioni.",
       "cause": {
         "nextcloud_probe": "Nextcloud non ha risposto al controllo dell’account delle registrazioni.",
