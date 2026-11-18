@@ -42,7 +42,7 @@ jobs:
   # them waited for a runner before the build could start.
   prepare:
     name: Classify changes, validate manifest, resolve FFmpeg
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       relevant: ${{ steps.changes.outputs.relevant }}
       compatibility-matrix: ${{ steps.compatibility.outputs.matrix }}
@@ -301,7 +301,7 @@ jobs:
   # multi-arch manifest list.
   build-image-amd64:
     name: Build ExApp image (amd64)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: prepare
     if: needs.prepare.outputs.relevant == 'true'
     outputs:
@@ -439,7 +439,7 @@ jobs:
   # newer push cancels the run, so a stale run never retags the registry.
   build-image:
     name: Build ExApp image
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [build-image-amd64, build-image-arm64]
     if: github.event_name != 'pull_request'
     outputs:
@@ -477,7 +477,7 @@ jobs:
 
   compatibility:
     name: Installed compatibility (${{ matrix.baseline }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [prepare, build-image-amd64, build-image]
     if: ${{ needs.prepare.outputs.relevant == 'true' && !cancelled() && needs.build-image-amd64.result == 'success' && (needs.build-image.result == 'success' || github.event_name == 'pull_request') }}
     timeout-minutes: 40
@@ -533,7 +533,7 @@ jobs:
   # job) stay out.
   faithful-installed-exapp-talk-cpu:
     name: Faithful installed ExApp Talk artifact (CPU)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs:
       - prepare
       - build-image-amd64
@@ -588,7 +588,7 @@ jobs:
 
   release-evidence:
     name: Qualify release artifacts
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: [prepare, build-image, build-image-arm64, build-image-cuda, faithful-installed-exapp-talk-cpu, container-checks, e2e-talk-record-cuda, transcribe-smoke-cuda]
     steps:
@@ -628,7 +628,7 @@ jobs:
     # ride under it are the required-fields marker lint in prepare above
     # and harness/bin/test-negative-manifest.sh in ci.yml's contracts job.
     name: D-403 manifest allow-list sensitivity control (CPU)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [prepare, build-image-amd64, build-image]
     if: ${{ github.event_name == 'workflow_dispatch' && !cancelled() && needs.build-image-amd64.result == 'success' && needs.build-image.result == 'success' }}
     timeout-minutes: 20
@@ -727,7 +727,7 @@ jobs:
   # exit.
   container-checks:
     name: Container checks (smoke, HTTP plane, real entrypoint)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [build-image-amd64, build-image]
     if: ${{ !cancelled() && needs.build-image-amd64.result == 'success' && (needs.build-image.result == 'success' || github.event_name == 'pull_request') }}
     timeout-minutes: 40
@@ -856,8 +856,8 @@ jobs:
     # of its inputs. Build+push it only when that exact hash is absent from
     # ghcr, so an unchanged base is never rebuilt or re-downloaded; the
     # per-commit CUDA app build reuses it via FROM (D-375). Stays on
-    # ubuntu-latest — no GPU needed, keeps george free.
-    runs-on: ubuntu-latest
+    # ubuntu-24.04 — no GPU needed, keeps george free.
+    runs-on: ubuntu-24.04
     needs: prepare
     # Heavy tier: builds on push/dispatch, or on a PR explicitly labeled
     # `full-ci`. The same-repo clause keeps the CUDA chain (which feeds the
@@ -938,11 +938,11 @@ jobs:
   build-image-cuda:
     name: Build CUDA ExApp image
     # CUDA Docker builds do not touch the GPU — they're just layer assembly.
-    # Running on ubuntu-latest frees the single self-hosted GPU runner for
+    # Running on ubuntu-24.04 frees the single self-hosted GPU runner for
     # jobs that actually need it (transcribe-smoke-cuda, e2e-talk-record-cuda,
     # deploy-preview's deploy-gpu). Only the thin per-commit layers build here;
     # the fat base comes prebuilt from build-cuda-base via FROM (D-375).
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [prepare, build-cuda-base]
     # Heavy tier: builds on push/dispatch, or on a PR explicitly labeled
     # `full-ci`. Fork PRs cannot push to ghcr and must never run downstream CUDA

@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   select:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       matrix: ${{ steps.select.outputs.matrix }}
       image: ${{ steps.select.outputs.image }}
@@ -30,7 +30,7 @@ jobs:
   canary:
     name: Upstream Nextcloud ${{ matrix.major }}
     needs: select
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
