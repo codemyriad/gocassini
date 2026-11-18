@@ -22,6 +22,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -58,12 +59,27 @@ const Version = "1"
 // NewHandler returns the MCP endpoint. Mount it behind the AppAPI middleware:
 // caller reads the identity that middleware verified. Every call is logged
 // with its caller to logger, which is the audit trail for now.
-func NewHandler(reader Reader, caller CallerFunc, logger *log.Logger) http.Handler {
+func NewHandler(reader Reader, caller CallerFunc, logger *log.Logger, proxyHost string) http.Handler {
 	server := NewServer(reader, caller, logger)
-	return mcp.NewStreamableHTTPHandler(
-		func(*http.Request) *mcp.Server { return server },
-		&mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true},
-	)
+	getServer := func(*http.Request) *mcp.Server { return server }
+	options := mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true}
+	defaultHandler := mcp.NewStreamableHTTPHandler(getServer, &options)
+	if proxyHost == "" {
+		return defaultHandler
+	}
+
+	// AppAPI can forward Nextcloud's public Host to a loopback listener.
+	// Exempt only that authority and only for an authenticated AppAPI caller.
+	proxyOptions := options
+	proxyOptions.DisableLocalhostProtection = true
+	proxyHandler := mcp.NewStreamableHTTPHandler(getServer, &proxyOptions)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.EqualFold(r.Host, proxyHost) && caller(r.Context()) != "" {
+			proxyHandler.ServeHTTP(w, r)
+			return
+		}
+		defaultHandler.ServeHTTP(w, r)
+	})
 }
 
 // NewServer builds the server and registers the tools.
