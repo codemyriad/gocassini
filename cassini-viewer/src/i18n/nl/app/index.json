@@ -47,14 +47,14 @@
       "bundle_failed": "Kon de bundel niet voorbereiden (HTTP {status})."
     },
     "setup_notice": {
-      "open_doctor": "",
+      "open_doctor": "{place} openen",
       "title_failing": "Cassini kan op dit moment geen opnames opslaan",
       "title_unchecked": "Cassini heeft nog niet gecontroleerd of het opnames kan opslaan",
-      "reader_failing": "",
-      "reader_unchecked": "",
-      "copy_link": "",
-      "title_recording": "",
-      "reader_recording": "",
+      "reader_failing": "Gesprekken werken nog en bestaande opnames zijn er nog. Vraag een beheerder om dit op te lossen.",
+      "reader_unchecked": "Bestaande opnames zijn er nog. Nieuwe worden mogelijk niet opgeslagen totdat een beheerder dit controleert.",
+      "copy_link": "Link kopiëren voor een beheerder",
+      "title_recording": "De opname-instellingen zijn niet voltooid",
+      "reader_recording": "Nieuwe gesprekken worden mogelijk niet opgenomen totdat een beheerder ze voltooit.",
       "cause_unknown": "Cassini kon de opname-instellingen niet bevestigen.",
       "cause": {
         "nextcloud_probe": "Nextcloud heeft niet gereageerd op de controle van het opname-account.",
