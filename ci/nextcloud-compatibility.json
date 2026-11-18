@@ -82,7 +82,7 @@
       "nextcloud_version": "35.0.0"
     }
   ],
-  "canary_image": "ghcr.io/codemyriad/gocassini:0.4.0@sha256:a989fcc0fa3546dd33f1f107781fbc48af71e447a6c6aad1811a5ba32b47a3ba",
+  "canary_image": "ghcr.io/codemyriad/gocassini:0.4.1@sha256:b9117be4f35be66207c569feff4744b0df659dc4532a32908f71ee923d2aee1a",
   "maximum_major": 35,
   "minimum": "33.0.9",
   "previews": [],
