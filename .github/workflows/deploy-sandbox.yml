@@ -31,7 +31,7 @@ env:
 
 jobs:
   build-and-deploy:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: Sandbox
     steps:
       - uses: actions/checkout@v4
