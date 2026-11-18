@@ -566,7 +566,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		runtime.workerWG.Add(1)
 		go func() {
 			defer runtime.workerWG.Done()
-			bootCfg.preflightDirectShares(runtime.ctx, logger)
+			if sink.Name() == publishSinkNextcloudFiles {
+				bootCfg.preflightDirectShares(runtime.ctx, logger)
+			}
 			scope := allReadinessScopes()
 			scope.storage = false
 			scope.keepTestRoom = true

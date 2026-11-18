@@ -16,15 +16,25 @@ import (
 // rejected across restarts is kept once. It returns the copy's base name, or
 // "" when nothing was kept (no file, or links not supported).
 func keepRejectedCopy(path string) string {
-	info, err := os.Stat(path)
+	info, err := os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() {
 		return ""
 	}
-	keep := fmt.Sprintf("%s.rejected-%d", path, info.ModTime().UnixNano())
-	if err := os.Link(path, keep); err != nil && !errors.Is(err, fs.ErrExist) {
-		return ""
+	base := fmt.Sprintf("%s.rejected-%d", path, info.ModTime().UnixNano())
+	keep := base
+	for suffix := 1; ; suffix++ {
+		if err := os.Link(path, keep); err == nil {
+			return filepath.Base(keep)
+		} else if !errors.Is(err, fs.ErrExist) {
+			return ""
+		}
+		if st, err := os.Lstat(keep); err == nil && os.SameFile(info, st) {
+			return filepath.Base(keep)
+		}
+		// A restored or replaced file can have the same mtime as a
+		// different rejected file already kept under this name.
+		keep = fmt.Sprintf("%s-%d", base, suffix)
 	}
-	return filepath.Base(keep)
 }
 
 // settingsLoadFailedMessage is the start-up log line for a settings file that

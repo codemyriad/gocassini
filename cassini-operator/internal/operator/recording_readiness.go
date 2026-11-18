@@ -528,7 +528,7 @@ func (rt *Runtime) checkRecordingReadinessScoped(ctx context.Context, scope read
 	defer cancel()
 	started := time.Now()
 
-	if scope.storage && s.beginProbe("storage", started) {
+	if scope.storage && rt.resolvedPublishSinkName() == publishSinkNextcloudFiles && s.beginProbe("storage", started) {
 		if cfg, err := LoadExAppConfig(); err == nil && cfg.Active {
 			cfg.preflightDirectShares(ctx, rt.logger)
 		}

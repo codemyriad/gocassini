@@ -57,6 +57,9 @@ type STTSettings struct {
 	DetectedGPU         bool       `json:"detected_gpu"`
 	Cores               int        `json:"cores"`
 
+	// A CUDA pin under automatic quality falls back to CPU for this boot.
+	deferCUDAPin bool
+
 	// StandInFor, StandInReason and StandInDetail are set by build admission
 	// alone, for one build: ActiveModel is then a retired model standing in
 	// for StandInFor, which is not ready (see admitStandIn). They are never
@@ -332,10 +335,9 @@ func detectSettings() STTSettings {
 //
 // Loading refreshes the DetectedGPU/Cores/HardwareFingerprint display fields
 // in memory. When the stored source is "auto" the quality tier is derived from
-// the live host, in memory too, and the device override is kept; a cuda pin
-// the host cannot serve is ignored for this start only (the file keeps it, so
-// the next start with a working GPU uses it). When the source is "user" the
-// policy is never touched. A hardware change never writes the file.
+// the live host in memory too. The device override is preserved, with CPU
+// fallback for an automatic policy when CUDA is unavailable. A hardware
+// change never writes the file.
 func LoadOrInitSettings(path string) (STTSettings, error) {
 	return LoadOrInitSettingsWithMigrationReporter(path, nil)
 }
@@ -403,11 +405,7 @@ func LoadOrInitSettingsWithMigrationReporter(path string, report SettingsMigrati
 	if s.Source == sttSourceAuto {
 		cudaCapable := cudaCapableHost()
 		s.Quality = defaultQualityForHardware(cudaCapable)
-		if s.DeviceOverride == deviceCUDA && !cudaCapable {
-			// A GPU that is late or gone at this start: transcribe on the CPU
-			// for now. Memory only, so the next start with a GPU uses the pin.
-			s.DeviceOverride = ""
-		}
+		s.deferCUDAPin = s.DeviceOverride == deviceCUDA && !cudaCapable
 	}
 
 	if migration.ClearedDeviceOverride != "" {
@@ -548,8 +546,8 @@ func (s STTSettings) ChildEnv(base []string) []string {
 		out = append(out, envSTTStandInFor+"="+s.StandInFor, envSTTStandInReason+"="+s.StandInReason, envSTTStandInDetail+"="+s.StandInDetail)
 	}
 	out = append(out, envSTTQuality+"="+normalizeQuality(s.Quality))
-	if s.DeviceOverride != "" {
-		out = append(out, envSTTDevice+"="+s.DeviceOverride)
+	if override := s.executionDeviceOverride(); override != "" {
+		out = append(out, envSTTDevice+"="+override)
 	}
 	if terms, err := normalizeTranscriptionTerms(s.TranscriptionTerms); err == nil && len(terms) > 0 {
 		encoded, _ := json.Marshal(terms)
@@ -613,13 +611,26 @@ func (rt *Runtime) effectiveFor(s STTSettings) effectiveSTT {
 }
 
 func (s STTSettings) effective() effectiveSTT {
-	device, note := effectiveDevice(s.DeviceOverride)
+	override := s.executionDeviceOverride()
+	device, note := effectiveDevice(override)
+	if override != s.DeviceOverride {
+		note = "The GPU was unavailable at startup. Recordings are transcribed on the CPU for this run. The GPU setting takes effect after restarting with a usable GPU."
+	}
 	return effectiveSTT{
 		Quality: normalizeQuality(s.Quality),
 		Device:  device,
 		Model:   s.modelForDevice(device),
 		Note:    note,
 	}
+}
+
+// executionDeviceOverride gives auto policy a CPU fallback while retaining
+// the configured CUDA pin in settings.
+func (s STTSettings) executionDeviceOverride() string {
+	if s.deferCUDAPin && s.Source == sttSourceAuto && isCUDA(s.DeviceOverride) {
+		return deviceCPU
+	}
+	return s.DeviceOverride
 }
 
 // effectiveDevice mirrors Runtime.resolveBuildDevice for display: it answers
@@ -757,7 +768,8 @@ func transcriptionSelectionChanged(prev, next STTSettings) bool {
 		prev.ActiveModel != next.ActiveModel ||
 		prev.ActiveRevision != next.ActiveRevision ||
 		normalizeQuality(prev.Quality) != normalizeQuality(next.Quality) ||
-		prev.DeviceOverride != next.DeviceOverride
+		prev.DeviceOverride != next.DeviceOverride ||
+		prev.executionDeviceOverride() != next.executionDeviceOverride()
 }
 
 func (rt *Runtime) handlePutSettings(w http.ResponseWriter, r *http.Request) {
@@ -829,6 +841,9 @@ func (rt *Runtime) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if device == "auto" {
 			device = ""
+		}
+		if device != current.DeviceOverride {
+			updated.deferCUDAPin = false
 		}
 		updated.DeviceOverride = device
 	}

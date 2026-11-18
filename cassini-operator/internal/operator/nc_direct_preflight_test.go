@@ -16,6 +16,7 @@ import (
 // to fail, the way a Nextcloud that is still starting fails them.
 type flakyNextcloud struct {
 	mu           sync.Mutex
+	userBody     string
 	userStatus   int    // GET /cloud/users/cassini (0 = the account exists)
 	createStatus int    // POST /cloud/users (0 = "already exists")
 	shareStatus  int    // GET shares (0 = ok)
@@ -35,7 +36,7 @@ func (f *flakyNextcloud) handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.requests.Add(1)
 		f.mu.Lock()
-		userStatus, createStatus, shareStatus, shareBody, shareDelay, davStatus := f.userStatus, f.createStatus, f.shareStatus, f.shareBody, f.shareDelay, f.davStatus
+		userStatus, userBody, createStatus, shareStatus, shareBody, shareDelay, davStatus := f.userStatus, f.userBody, f.createStatus, f.shareStatus, f.shareBody, f.shareDelay, f.davStatus
 		f.mu.Unlock()
 		switch {
 		case r.URL.Path == "/ocs/v2.php/apps/app_api/api/v1/users":
@@ -45,7 +46,7 @@ func (f *flakyNextcloud) handler() http.Handler {
 		case r.URL.Path == "/ocs/v2.php/cloud/users/cassini" && r.Method == http.MethodGet:
 			if userStatus != 0 {
 				w.WriteHeader(userStatus)
-				_, _ = io.WriteString(w, `<html>Service Unavailable</html>`)
+				_, _ = io.WriteString(w, userBody)
 				return
 			}
 			_, _ = io.WriteString(w, `{"ocs":{"meta":{"statuscode":200},"data":{"id":"cassini"}}}`)
@@ -96,6 +97,8 @@ func flakyNextcloudConfig(t *testing.T, f *flakyNextcloud) ExAppConfig {
 	return testExAppConfig(srv.URL)
 }
 
+const missingAccountBody = `{"ocs":{"meta":{"status":"failure","statuscode":998},"data":[]}}`
+
 const shareAPIDisabledBody = `{"ocs":{"meta":{"status":"failure","statuscode":404,"message":"Share API is disabled"},"data":[]}}`
 
 // A Nextcloud that is busy or still starting says nothing about the recordings
@@ -110,16 +113,21 @@ func TestStorageCheckRefusesRecordingOnlyForADefiniteAnswer(t *testing.T) {
 		step string
 	}{
 		{"account lookup 503", &flakyNextcloud{userStatus: 503}, ncSubstrateDegraded, "nextcloud_probe"},
+		{"account lookup proxy 404", &flakyNextcloud{userStatus: 404, userBody: "<html>Not Found</html>"}, ncSubstrateDegraded, "nextcloud_probe"},
+		{"account lookup proxy 200", &flakyNextcloud{userStatus: 200, userBody: "{}"}, ncSubstrateDegraded, "nextcloud_probe"},
+		{"account lookup unauthorized", &flakyNextcloud{userStatus: 401}, ncSubstrateDegraded, "nextcloud_probe"},
 		{"account lookup 429", &flakyNextcloud{userStatus: 429}, ncSubstrateDegraded, "nextcloud_probe"},
 		{"account lookup 503 after create 502", &flakyNextcloud{userStatus: 503, createStatus: 502}, ncSubstrateDegraded, "nextcloud_probe"},
 		{"share list 502 proxy page", &flakyNextcloud{shareStatus: 502, shareBody: `<html>Bad Gateway</html>`}, ncSubstrateDegraded, "sharing_api"},
 		{"share list 503 maintenance page", &flakyNextcloud{shareStatus: 503, shareBody: `<html>maintenance</html>`}, ncSubstrateDegraded, "sharing_api"},
 		{"share list 503 OCS", &flakyNextcloud{shareStatus: 503, shareBody: `{"ocs":{"meta":{"status":"failure","statuscode":503,"message":"x"},"data":[]}}`}, ncSubstrateDegraded, "sharing_api"},
+		{"share list OCS 503 over HTTP 200", &flakyNextcloud{shareStatus: 200, shareBody: `{"ocs":{"meta":{"status":"failure","statuscode":503}}}`}, ncSubstrateDegraded, "sharing_api"},
+		{"share list proxy 404 JSON", &flakyNextcloud{shareStatus: 404, shareBody: "{}"}, ncSubstrateDegraded, "sharing_api"},
 		{"share list 429", &flakyNextcloud{shareStatus: 429}, ncSubstrateDegraded, "sharing_api"},
 		// Definite answers keep their state and remedy.
 		{"share API disabled", &flakyNextcloud{shareStatus: 404, shareBody: shareAPIDisabledBody}, ncSubstrateUnavailable, "sharing_api"},
-		{"account missing, create refused 403", &flakyNextcloud{userStatus: 404, createStatus: 403}, ncSubstrateUnavailable, storageStepServiceAccount},
-		{"account missing, create failed 500", &flakyNextcloud{userStatus: 404, createStatus: 500}, ncSubstrateUnavailable, storageStepServiceAccount},
+		{"account missing, create refused 403", &flakyNextcloud{userStatus: 404, userBody: missingAccountBody, createStatus: 403}, ncSubstrateUnavailable, storageStepServiceAccount},
+		{"account missing, create failed 500", &flakyNextcloud{userStatus: 404, userBody: missingAccountBody, createStatus: 500}, ncSubstrateUnavailable, storageStepServiceAccount},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := flakyNextcloudConfig(t, tc.f)
@@ -209,4 +217,18 @@ func TestRecheckDegradedStorageOnlyRetriesANextcloudThatDidNotAnswer(t *testing.
 			t.Fatal("the tick ran the first check; that is the boot check's job")
 		}
 	})
+}
+
+func TestLocalPublishSinkSkipsNextcloudStorageReadinessCheck(t *testing.T) {
+	f := &flakyNextcloud{}
+	cfg := flakyNextcloudConfig(t, f)
+	t.Setenv(envAppSecret, cfg.AppSecret)
+	t.Setenv(envAppID, cfg.AppID)
+	t.Setenv(envNextcloudURL, cfg.NextcloudURL)
+
+	rt := &Runtime{cfg: Config{PublishSink: publishSinkLocal, DBPath: t.TempDir() + "/jobs.sqlite3"}, logger: discardLogger()}
+	rt.checkRecordingReadinessScoped(context.Background(), readinessScope{storage: true})
+	if count := f.requests.Load(); count != 0 {
+		t.Fatalf("local publish sink sent %d storage requests to Nextcloud", count)
+	}
 }

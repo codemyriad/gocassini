@@ -171,11 +171,11 @@ func TestLoadNeverWritesForAHardwareChange(t *testing.T) {
 			wantQual:   sttQualityBest,
 		},
 		{
-			// Decision O2: ignored for this start only; the file keeps it.
-			name:       "auto + cuda pin without a GPU is cleared in memory only",
+			// Decision O2: the CUDA pin is preserved across unrelated saves.
+			name:       "auto + cuda pin without a GPU runs on the CPU",
 			stored:     STTSettings{Source: sttSourceAuto, Quality: sttQualityBest, DeviceOverride: deviceCUDA},
 			gpu:        false,
-			wantDevice: "",
+			wantDevice: deviceCUDA,
 			wantQual:   sttQualityBalanced,
 		},
 		{
@@ -378,5 +378,62 @@ func TestFreshInstallMakesNoRejectedCopy(t *testing.T) {
 	}
 	if m, _ := filepath.Glob(filepath.Join(dir, "*.rejected-*")); len(m) != 0 {
 		t.Fatalf("copies on a fresh install: %v", m)
+	}
+}
+
+func TestSettingsSavePreservesUnavailableCUDAPin(t *testing.T) {
+	clearLLMEnv(t)
+	stubNVIDIADevice(t, false)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+	writeSettingsFixture(t, path, STTSettings{
+		Source: sttSourceAuto, Quality: sttQualityBest, DeviceOverride: deviceCUDA,
+	})
+	rt := startRuntimeIn(t, dir, discardLogger())
+	got := rt.currentSettings()
+	if device, err := resolveDeviceForSettings(got); err != nil || device != deviceCPU {
+		t.Fatalf("effective device = %q, %v, want cpu", device, err)
+	}
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPut, "/settings", strings.NewReader(`{"transcription_terms":["Cassini"]}`))
+	rt.handlePutSettings(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("save = %d: %s", response.Code, response.Body)
+	}
+	var saved STTSettings
+	if err := json.Unmarshal(readFileBytes(t, path), &saved); err != nil || saved.DeviceOverride != deviceCUDA {
+		t.Fatalf("saved CUDA pin = %q, %v", saved.DeviceOverride, err)
+	}
+}
+
+func TestKeepRejectedCopyPreservesDifferentFilesWithTheSameMtime(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+	first := []byte("first broken file")
+	second := []byte("second broken file")
+	if err := os.WriteFile(path, first, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstCopy := keepRejectedCopy(path)
+	if err := writeFileAtomic(path, second, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	secondCopy := keepRejectedCopy(path)
+	if firstCopy == "" || secondCopy == "" || firstCopy == secondCopy {
+		t.Fatalf("rejected copy names: %q and %q", firstCopy, secondCopy)
+	}
+	if !bytes.Equal(readFileBytes(t, filepath.Join(dir, firstCopy)), first) ||
+		!bytes.Equal(readFileBytes(t, filepath.Join(dir, secondCopy)), second) {
+		t.Fatal("rejected copies did not preserve both versions")
+	}
+	if again := keepRejectedCopy(path); again != secondCopy {
+		t.Fatalf("repeat check kept %q, want %q", again, secondCopy)
 	}
 }

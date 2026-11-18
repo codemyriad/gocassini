@@ -86,32 +86,36 @@ func (c ExAppConfig) userExists(ctx context.Context, client *http.Client, userID
 	if err != nil {
 		return false, err
 	}
-	// HTTP 2xx plus the id below is the evidence; the OCS meta code is NOT part
-	// of the test. /ocs/v1.php answers 100 for OK and /ocs/v2.php answers 200 —
-	// requiring 100 made this always-false against a real v2 endpoint, which is
-	// how a service account that plainly existed was reported missing on the
-	// sandbox. An explicit not-found still short-circuits. A server fault or a
-	// rate limit says nothing about the account, so it is an error, not "no".
-	if status >= 500 || status == http.StatusTooManyRequests {
-		return false, fmt.Errorf("look up account %q: HTTP %d", userID, status)
-	}
-	if status/100 != 2 {
-		return false, nil
-	}
-	if code := ocsStatusCode(body); code == 998 || code == 404 {
-		return false, nil
-	}
 	var env struct {
 		OCS struct {
-			Data struct {
-				ID string `json:"id"`
-			} `json:"data"`
+			Meta struct {
+				StatusCode int `json:"statuscode"`
+			} `json:"meta"`
+			Data json.RawMessage `json:"data"`
 		} `json:"ocs"`
 	}
 	if err := json.Unmarshal(body, &env); err != nil {
+		return false, fmt.Errorf("decode account lookup for %q (HTTP %d): %w", userID, status, err)
+	}
+	// Nextcloud's OCS not-found reply confirms absence. An HTTP status
+	// alone can come from a proxy or mean that acting as the admin failed.
+	code := env.OCS.Meta.StatusCode
+	if (status == http.StatusNotFound || status/100 == 2) && (code == 998 || code == http.StatusNotFound) {
 		return false, nil
 	}
-	return env.OCS.Data.ID == userID, nil
+	if status/100 != 2 || (code != 100 && code != 200) {
+		return false, fmt.Errorf("look up account %q: unexpected HTTP %d, OCS %d", userID, status, code)
+	}
+	var account struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(env.OCS.Data, &account); err != nil {
+		return false, fmt.Errorf("decode account %q: %w", userID, err)
+	}
+	if account.ID != userID {
+		return false, fmt.Errorf("lookup for account %q did not return its ID", userID)
+	}
+	return true, nil
 }
 
 func parseOCSUserList(body []byte) ([]string, error) {

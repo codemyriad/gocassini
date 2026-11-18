@@ -79,7 +79,8 @@ func (c ExAppConfig) preflightDirectSharesLocked(ctx context.Context, logger *lo
 		// proves nothing, so it is degraded: recording continues and publish
 		// checks again.
 		var refused *ncShareError
-		if errors.As(err, &refused) && refused.HTTPStatus < 500 {
+		if errors.As(err, &refused) && (refused.HTTPStatus/100 == 2 || refused.HTTPStatus == refused.OCSStatus) &&
+			(refused.OCSStatus == http.StatusUnauthorized || refused.OCSStatus == http.StatusForbidden || refused.OCSStatus == http.StatusNotFound) {
 			ncAccessSubstrate.unavailable("sharing_api", err)
 		} else {
 			ncAccessSubstrate.degraded("sharing_api", err)
