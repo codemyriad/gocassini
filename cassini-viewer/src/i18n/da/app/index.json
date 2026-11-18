@@ -47,14 +47,14 @@
       "bundle_failed": "Kunne ikke forberede pakken (HTTP {status})."
     },
     "setup_notice": {
-      "open_doctor": "",
+      "open_doctor": "Åbn {place}",
       "title_failing": "Cassini kan ikke gemme optagelser lige nu",
       "title_unchecked": "Cassini har ikke kontrolleret, at den kan gemme optagelser",
-      "reader_failing": "",
-      "reader_unchecked": "",
-      "copy_link": "",
-      "title_recording": "",
-      "reader_recording": "",
+      "reader_failing": "Opkald virker stadig, og eksisterende optagelser er her stadig. Bed en administrator om at rette det.",
+      "reader_unchecked": "Eksisterende optagelser er her stadig. Nye bliver måske ikke gemt, før en administrator har kontrolleret det.",
+      "copy_link": "Kopiér link til en administrator",
+      "title_recording": "Opsætningen af optagelse er ikke færdig",
+      "reader_recording": "Nye opkald bliver måske ikke optaget, før en administrator gør den færdig.",
       "cause_unknown": "Cassini kunne ikke bekræfte sin opsætning af optagelser.",
       "cause": {
         "nextcloud_probe": "Nextcloud svarede ikke på kontrollen af optagelseskontoen.",
