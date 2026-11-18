@@ -145,8 +145,12 @@ def build_index(policy, records, jobs, images, src, policy_hash, manifest_hash):
     require(set(images['cpu']['platforms']) == {'linux/amd64', 'linux/arm64'}, 'CPU image must include both platforms')
     for name, job in [('cpu', 'build-image'), ('cuda', 'build-image-cuda')]:
         require(images[name]['digest'] == jobs[job]['outputs']['digest'], f'{name}: registry tag differs from source build')
-    tested = images['cpu']['platforms']['linux/amd64']['config_digest']
-    require(all(r['observed']['cassini']['config_id'] == tested for r in records), 'tested CPU image differs from release image')
+    # Docker's classic image store reports an image's config digest as its ID; the containerd
+    # image store (Docker's default on ubuntu-26.04 runners) reports the digest it was pulled by.
+    # Each pins the same amd64 image, so any of them proves the release image was the one tested.
+    amd64 = images['cpu']['platforms']['linux/amd64']
+    tested = {amd64['config_digest'], amd64['manifest_digest'], images['cpu']['digest']}
+    require(all(r['observed']['cassini']['config_id'] in tested for r in records), 'tested CPU image differs from release image')
     return {'schema': 'cassini.release-evidence.v1', 'source': src, 'policy_sha256': policy_hash,
             'manifest_sha256': manifest_hash, 'jobs': jobs, 'images': images, 'records': records}
 
