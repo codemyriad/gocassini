@@ -301,30 +301,7 @@ func (c *retentionConfig) save(s retentionSettings) error {
 	if err = os.MkdirAll(filepath.Dir(c.path), 0700); err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(filepath.Dir(c.path), ".retention-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(f.Name())
-	if _, err = f.Write(data); err == nil {
-		err = f.Sync()
-	}
-	closeErr := f.Close()
-	if err == nil {
-		err = closeErr
-	}
-	if err != nil {
-		return err
-	}
-	if err = os.Rename(f.Name(), c.path); err != nil {
-		return err
-	}
-	dir, err := os.Open(filepath.Dir(c.path))
-	if err != nil {
-		return err
-	}
-	defer dir.Close()
-	return dir.Sync()
+	return writeFileAtomic(c.path, data, 0o600)
 }
 func (rt *Runtime) retentionHandler(w http.ResponseWriter, r *http.Request) {
 	c := rt.retention

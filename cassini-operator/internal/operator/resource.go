@@ -287,7 +287,7 @@ func (rt *Runtime) resolveBuildDevice() (string, error) {
 // size a build for a device the tier was not chosen against.
 func resolveDeviceForSettings(settings STTSettings) (string, error) {
 	cudaCapable, cudaDetail := imageCUDACapability()
-	switch override := strings.ToLower(strings.TrimSpace(settings.DeviceOverride)); override {
+	switch override := strings.ToLower(strings.TrimSpace(settings.executionDeviceOverride())); override {
 	case "cpu":
 		return deviceCPU, nil
 	case "cuda":

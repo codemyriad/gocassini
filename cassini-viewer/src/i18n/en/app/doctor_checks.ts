@@ -54,7 +54,7 @@ const doctor_checks = {
     probe_failed:
       "The connection check did not finish. Check the recorder installation and connectivity, then retry.",
     recording_auth_rejected:
-      "Talk refused Cassini. Cassini is not set up as Talk's recording backend yet, or the recording secret Talk has does not match Cassini's.",
+      "Talk refused Cassini. Cassini is not set up as Talk's recording backend yet, or the recording secret Talk has does not match Cassini's. If this comes back after every Nextcloud restart, update or backup, something in Nextcloud's startup is resetting Talk's recording backend. Nextcloud All-in-One does this by default.",
     recording_auth_verified: "Talk accepted Cassini's recording credential.",
     // On the Recording credential row.
     recording_secret_missing:

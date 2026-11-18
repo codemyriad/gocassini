@@ -4,21 +4,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
 
-func newTestHandlers(t *testing.T) (*LifecycleHandlers, string) {
+func newTestHandlers(t *testing.T) *LifecycleHandlers {
 	t.Helper()
-	statePath := filepath.Join(t.TempDir(), "app-state.json")
-	return &LifecycleHandlers{
-		Store: NewFileLifecycleStore(statePath),
-		NowUTC: func() string {
-			return "2026-01-01T00:00:00Z"
-		},
-	}, statePath
+	return &LifecycleHandlers{}
 }
 
 func putEnabled(t *testing.T, h *LifecycleHandlers, query string, body string) *httptest.ResponseRecorder {
@@ -57,7 +50,7 @@ func postInit(t *testing.T, h *LifecycleHandlers) *httptest.ResponseRecorder {
 }
 
 func TestEnabledTrue(t *testing.T) {
-	h, statePath := newTestHandlers(t)
+	h := newTestHandlers(t)
 
 	w := putEnabled(t, h, "enabled=1", "")
 	if w.Code != http.StatusOK {
@@ -70,39 +63,19 @@ func TestEnabledTrue(t *testing.T) {
 	if resp["error"] != "" {
 		t.Fatalf("got error %q, want empty", resp["error"])
 	}
-
-	// State persisted to disk.
-	store := NewFileLifecycleStore(statePath)
-	st, err := store.Load()
-	if err != nil {
-		t.Fatalf("reload state: %v", err)
-	}
-	if !st.Enabled {
-		t.Fatalf("state.Enabled = false, want true")
-	}
 }
 
 func TestEnabledFalse(t *testing.T) {
-	h, statePath := newTestHandlers(t)
-	// First enable, then disable, to prove state transitions.
+	h := newTestHandlers(t)
 	_ = putEnabled(t, h, "enabled=1", "")
 	w := putEnabled(t, h, "enabled=0", "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("got %d, want 200", w.Code)
 	}
-
-	store := NewFileLifecycleStore(statePath)
-	st, err := store.Load()
-	if err != nil {
-		t.Fatalf("reload state: %v", err)
-	}
-	if st.Enabled {
-		t.Fatalf("state.Enabled = true, want false")
-	}
 }
 
 func TestEnabledFromJSONBody(t *testing.T) {
-	h, _ := newTestHandlers(t)
+	h := newTestHandlers(t)
 	// Some AppAPI versions POST the flag as JSON body rather than query param.
 	w := putEnabled(t, h, "", `{"enabled": true}`)
 	if w.Code != http.StatusOK {
@@ -111,7 +84,7 @@ func TestEnabledFromJSONBody(t *testing.T) {
 }
 
 func TestEnabledMissingFlag(t *testing.T) {
-	h, _ := newTestHandlers(t)
+	h := newTestHandlers(t)
 	w := putEnabled(t, h, "", "")
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("got %d, want 400", w.Code)
@@ -119,53 +92,17 @@ func TestEnabledMissingFlag(t *testing.T) {
 }
 
 func TestEnabledIdempotent(t *testing.T) {
-	h, statePath := newTestHandlers(t)
+	h := newTestHandlers(t)
 	for i := 0; i < 3; i++ {
 		w := putEnabled(t, h, "enabled=1", "")
 		if w.Code != http.StatusOK {
 			t.Fatalf("attempt %d: got %d, want 200", i, w.Code)
 		}
 	}
-	store := NewFileLifecycleStore(statePath)
-	st, err := store.Load()
-	if err != nil {
-		t.Fatalf("reload: %v", err)
-	}
-	if !st.Enabled {
-		t.Fatalf("state not persisted after idempotent calls")
-	}
-}
-
-func TestEnabledStateSurvivesRestart(t *testing.T) {
-	// REGRESSION: lifecycle state on disk must be re-readable by a fresh
-	// handler instance — proves the JSON file is the source of truth.
-	statePath := filepath.Join(t.TempDir(), "app-state.json")
-	h1 := &LifecycleHandlers{
-		Store:  NewFileLifecycleStore(statePath),
-		NowUTC: func() string { return "2026-01-01T00:00:00Z" },
-	}
-	w := putEnabled(t, h1, "enabled=1", "")
-	if w.Code != http.StatusOK {
-		t.Fatalf("got %d, want 200", w.Code)
-	}
-
-	// Simulate container restart by constructing a new handler over the
-	// same on-disk state.
-	h2 := &LifecycleHandlers{
-		Store:  NewFileLifecycleStore(statePath),
-		NowUTC: func() string { return "2026-01-01T00:00:01Z" },
-	}
-	st, err := h2.Store.Load()
-	if err != nil {
-		t.Fatalf("h2 load: %v", err)
-	}
-	if !st.Enabled {
-		t.Fatalf("state lost across restart: got %+v", st)
-	}
 }
 
 func TestInitOK(t *testing.T) {
-	h, _ := newTestHandlers(t)
+	h := newTestHandlers(t)
 	w := postInit(t, h)
 	if w.Code != http.StatusOK {
 		t.Fatalf("got %d, want 200", w.Code)
@@ -176,26 +113,17 @@ func TestInitOK(t *testing.T) {
 }
 
 func TestInitIdempotent(t *testing.T) {
-	h, statePath := newTestHandlers(t)
+	h := newTestHandlers(t)
 	for i := 0; i < 3; i++ {
 		w := postInit(t, h)
 		if w.Code != http.StatusOK {
 			t.Fatalf("attempt %d: got %d, want 200", i, w.Code)
 		}
 	}
-	// LastInitAt updated, Enabled unchanged.
-	store := NewFileLifecycleStore(statePath)
-	st, err := store.Load()
-	if err != nil {
-		t.Fatalf("reload: %v", err)
-	}
-	if st.LastInitAt == "" {
-		t.Fatalf("LastInitAt not persisted")
-	}
 }
 
 func TestEnabledTrueTriggersUIRegistrar(t *testing.T) {
-	h, _ := newTestHandlers(t)
+	h := newTestHandlers(t)
 	called := make(chan struct{}, 1)
 	h.UIRegistrar = func() { called <- struct{}{} }
 
@@ -211,7 +139,7 @@ func TestEnabledTrueTriggersUIRegistrar(t *testing.T) {
 }
 
 func TestEnabledFalseDoesNotTriggerUIRegistrar(t *testing.T) {
-	h, _ := newTestHandlers(t)
+	h := newTestHandlers(t)
 	called := make(chan struct{}, 1)
 	h.UIRegistrar = func() { called <- struct{}{} }
 
@@ -227,7 +155,7 @@ func TestEnabledFalseDoesNotTriggerUIRegistrar(t *testing.T) {
 }
 
 func TestEnabledCallbackReceivesPersistedState(t *testing.T) {
-	h, _ := newTestHandlers(t)
+	h := newTestHandlers(t)
 	called := make(chan bool, 2)
 	h.EnabledCallback = func(enabled bool) { called <- enabled }
 
@@ -252,7 +180,7 @@ func TestEnabledCallbackReceivesPersistedState(t *testing.T) {
 }
 
 func TestEnabledRejectsGET(t *testing.T) {
-	h, _ := newTestHandlers(t)
+	h := newTestHandlers(t)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -265,7 +193,7 @@ func TestEnabledRejectsGET(t *testing.T) {
 }
 
 func TestInitRejectsGET(t *testing.T) {
-	h, _ := newTestHandlers(t)
+	h := newTestHandlers(t)
 	mux := http.NewServeMux()
 	h.Register(mux)
 

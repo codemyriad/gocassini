@@ -225,9 +225,15 @@ func TestCaptureOnlyUpdatePreservesQualityPolicy(t *testing.T) {
 				if rec.Code != http.StatusOK {
 					t.Fatalf("save: %d %s", rec.Code, rec.Body.String())
 				}
-				loaded, err := LoadOrInitSettings(rt.settingsPath)
-				if err != nil || loaded.Source != source || loaded.Quality != sttQualityBest {
-					t.Fatalf("capture-only save changed quality policy: %+v, %v", loaded, err)
+				// Read the file itself: loading derives an automatic tier from
+				// this host, which says nothing about what the save wrote.
+				raw, err := os.ReadFile(rt.settingsPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var saved STTSettings
+				if err := json.Unmarshal(raw, &saved); err != nil || saved.Source != source || saved.Quality != sttQualityBest {
+					t.Fatalf("capture-only save changed quality policy: %+v, %v", saved, err)
 				}
 			})
 		}

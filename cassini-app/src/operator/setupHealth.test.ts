@@ -1,7 +1,7 @@
 import { get } from "svelte/store";
 import { describe, expect, it } from "vitest";
 import { LL } from "cassini-viewer/i18n";
-import { buildSetupNotice, readRecordingsAccess, readSetupHealth, readSharing, recordingAudience } from "./setupHealth";
+import { buildRecordingNotice, buildSetupNotice, readRecordingsAccess, readSetupHealth, readSharing, recordingAudience } from "./setupHealth";
 
 const health = { ok: true, state: "provisioned", mode: "direct_shares", audience: "participants", cause: "", features: null, sharing: null };
 
@@ -23,20 +23,21 @@ describe("direct share setup status", () => {
     expect(readSetupHealth(health)).toEqual(health);
     expect(readRecordingsAccess({ recordings_access: { ok: false, state: "unavailable", step: "owner_account", detail: "private detail" } })?.detail).toBe("private detail");
     const notice = buildSetupNotice({ health: { ...health, ok: false, state: "unavailable" }, access: null, isAdmin: false, appUrl: "https://example.test/app" });
-    expect(notice?.detail).toBe("");
+    expect(notice?.admin).toBe(false);
+    expect(notice?.cause).toBe("");
     expect(notice?.shareUrl).toBe("https://example.test/app");
   });
   it("keeps existing reads visible while setup is unverified", () => {
-    const notice = buildSetupNotice({ health: { ...health, ok: false, state: "unknown" }, access: null, isAdmin: true, appUrl: "" });
+    const notice = buildSetupNotice({ health: { ...health, ok: false, state: "unknown" }, access: null, isAdmin: false, appUrl: "" });
     expect(notice?.tone).toBe("neutral");
-    // Browsing, not a promise that every read succeeds (D-849).
-    expect(notice?.summary).toMatch(/^You can still browse recordings, but new ones will fail/);
+    // Existing recordings, not a promise that every read succeeds (D-849).
+    expect(notice?.summary).toMatch(/^Existing recordings are still here\. New ones may not save/);
   });
   it("says browsing still works when the check fails, since only publishing stops (D-849)", () => {
     const notice = buildSetupNotice({ health: { ...health, ok: false, state: "unavailable" }, access: null, isAdmin: false, appUrl: "" });
     expect(notice?.tone).toBe("warning");
-    expect(notice?.title).toBe("Cassini can't save recordings right now");
-    expect(notice?.summary).toMatch(/^You can still browse recordings\./);
+    expect(notice?.title).toBe("New recordings can't be saved");
+    expect(notice?.summary).toMatch(/^Calls still work and existing recordings are still here\./);
     expect(notice).not.toHaveProperty("blocking");
   });
 });
@@ -54,8 +55,6 @@ describe("the setup notice's cause", () => {
     expect(cause("private_archive")).toBe(t.private_archive());
     expect(cause("sharing_api")).toBe(t.sharing_api());
     expect(cause("owner_account")).toBe("The Cassini recordings account does not exist.");
-    // The raw state text stays as the operator sent it.
-    expect(buildSetupNotice({ health: failing, access: { ok: false, state: "unavailable", step: "owner_account", detail: "raw", cause: "" }, isAdmin: true, appUrl: "" })?.detail).toBe("raw");
   });
 
   it("falls back to the operator's sentence for a step it does not know, then /setup's, then its own", () => {
@@ -66,6 +65,10 @@ describe("the setup notice's cause", () => {
 
   it("is not shown to someone who is not an administrator", () => {
     expect(cause("owner_account", "x", false)).toBe("");
+  });
+
+  it("takes the place of the reader's summary for an administrator", () => {
+    expect(buildSetupNotice({ health: failing, access: null, isAdmin: true, appUrl: "https://example.test/app" })).toMatchObject({ summary: "", shareUrl: "" });
   });
 });
 
@@ -133,5 +136,21 @@ describe("the caller's recording shares on /setup", () => {
     // Without a job id an unpublished recording could be neither dismissed
     // nor matched once published.
     expect(read?.unpublished).toEqual([{ jobId: "J9", title: "", roomName: "", startedAt: "" }]);
+  });
+});
+
+// The recording warning in the setup notice's shape (#500): the same strip,
+// pointing an administrator at Doctor and everyone else at an administrator.
+describe("the recording warning", () => {
+  it("gives an administrator the title and Doctor's button, nothing to read", () => {
+    expect(buildRecordingNotice({ isAdmin: true, appUrl: "https://example.test/app" })).toEqual({
+      tone: "warning", admin: true, title: "Recording setup isn't finished", summary: "", cause: "", shareUrl: "",
+    });
+  });
+  it("gives everyone else the consequence and the link to pass on", () => {
+    expect(buildRecordingNotice({ isAdmin: false, appUrl: "https://example.test/app" })).toEqual({
+      tone: "warning", admin: false, title: "Recording setup isn't finished",
+      summary: "New calls may not be recorded until an administrator finishes it.", cause: "", shareUrl: "https://example.test/app",
+    });
   });
 });

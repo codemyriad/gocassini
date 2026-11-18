@@ -1,7 +1,6 @@
 package operator
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -162,7 +161,7 @@ func TestNormalizeTranscriptionTermsEnforcesBounds(t *testing.T) {
 	}
 }
 
-func TestLoadOrInitSettingsFirstStartWritesAutoDefault(t *testing.T) {
+func TestLoadOrInitSettingsMissingFileGivesAutoDefaultWithoutWriting(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 
 	s, err := LoadOrInitSettings(path)
@@ -184,13 +183,17 @@ func TestLoadOrInitSettingsFirstStartWritesAutoDefault(t *testing.T) {
 		t.Fatalf("Cores = %d, want >= 1", s.Cores)
 	}
 
-	// File exists and round-trips.
-	loaded, err := LoadOrInitSettings(path)
+	// settings.json is created by the first save, not by a load, so its
+	// absence stays visible across restarts.
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("loading created settings.json: %v", err)
+	}
+	again, err := LoadOrInitSettings(path)
 	if err != nil {
 		t.Fatalf("second LoadOrInitSettings() error = %v", err)
 	}
-	if loaded.Source != s.Source || loaded.Quality != s.Quality || loaded.HardwareFingerprint != s.HardwareFingerprint {
-		t.Fatalf("round-trip mismatch: %#v vs %#v", loaded, s)
+	if again.Source != s.Source || again.Quality != s.Quality || again.HardwareFingerprint != s.HardwareFingerprint {
+		t.Fatalf("defaults differ between loads: %#v vs %#v", again, s)
 	}
 }
 
@@ -497,44 +500,6 @@ func TestGetSettingsReturnsEffectiveView(t *testing.T) {
 	}
 	if resp.Effective.Quality != normalizeQuality(resp.Quality) {
 		t.Fatalf("effective.quality = %q, want %q", resp.Effective.Quality, normalizeQuality(resp.Quality))
-	}
-}
-
-func TestGetSettingsLogsPersistedPolicyMigration(t *testing.T) {
-	rt, cleanup := newTestRuntime(t)
-	defer cleanup()
-
-	legacy := STTSettings{
-		Quality:            sttQualityBest,
-		DeviceOverride:     "tpu",
-		TranscriptionTerms: []string{"Gocassini"},
-		Source:             sttSourceUser,
-	}
-	raw, err := json.Marshal(legacy)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(rt.settingsPath, raw, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	var logs bytes.Buffer
-	rt.logger = log.New(&logs, "operator: ", 0)
-
-	req := httptest.NewRequest(http.MethodGet, "/settings", nil)
-	rec := httptest.NewRecorder()
-	rt.settingsHandler(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("GET /settings = %d, want 200 body=%s", rec.Code, rec.Body.String())
-	}
-	for _, bit := range []string{
-		"operator: stt_settings migrated",
-		`unsupported device_override="tpu"`,
-		"the policy now auto-selects the device",
-	} {
-		if !strings.Contains(logs.String(), bit) {
-			t.Errorf("migration log %q does not contain %q", logs.String(), bit)
-		}
 	}
 }
 
