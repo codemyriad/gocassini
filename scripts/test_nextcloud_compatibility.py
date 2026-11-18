@@ -183,6 +183,17 @@ class ReleaseTests(unittest.TestCase):
             with self.subTest(record=self.records[0]), self.assertRaises(ValueError):
                 self.build()
 
+    def test_containerd_image_ids_identify_the_release_image(self):
+        # The containerd image store reports the pulled digest instead of the config digest.
+        for pulled in (self.images['cpu']['digest'], self.images['cpu']['platforms']['linux/amd64']['manifest_digest']):
+            for record in self.records:
+                record['observed']['cassini']['config_id'] = pulled
+            with self.subTest(pulled=pulled):
+                self.verify(self.build())
+        self.records[0]['observed']['cassini']['config_id'] = self.images['cpu']['platforms']['linux/arm64']['manifest_digest']
+        with self.assertRaisesRegex(ValueError, 'tested CPU image differs'):
+            self.build()
+
     def test_failed_or_skipped_specialized_job_blocks(self):
         for job in evidence.REQUIRED_JOBS:
             for result in ['failure', 'cancelled', 'skipped', 'timed_out']:
