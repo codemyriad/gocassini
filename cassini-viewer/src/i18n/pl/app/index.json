@@ -47,14 +47,14 @@
       "bundle_failed": "Nie udało się przygotować pakietu (HTTP {status})."
     },
     "setup_notice": {
-      "open_doctor": "",
+      "open_doctor": "Otwórz {place}",
       "title_failing": "Cassini nie może teraz zapisywać nagrań",
       "title_unchecked": "Cassini nie sprawdził jeszcze, czy może zapisywać nagrania",
-      "reader_failing": "",
-      "reader_unchecked": "",
-      "copy_link": "",
-      "title_recording": "",
-      "reader_recording": "",
+      "reader_failing": "Połączenia nadal działają, a dotychczasowe nagrania są dostępne. Poproś administratora o rozwiązanie problemu.",
+      "reader_unchecked": "Dotychczasowe nagrania są dostępne. Nowe mogą nie zostać zapisane, dopóki administrator tego nie sprawdzi.",
+      "copy_link": "Skopiuj link dla administratora",
+      "title_recording": "Konfiguracja nagrywania nie została ukończona",
+      "reader_recording": "Nowe połączenia mogą nie zostać nagrane, dopóki administrator jej nie ukończy.",
       "cause_unknown": "Cassini nie mógł potwierdzić konfiguracji nagrań.",
       "cause": {
         "nextcloud_probe": "Nextcloud nie odpowiedział na sprawdzenie konta nagrań.",
