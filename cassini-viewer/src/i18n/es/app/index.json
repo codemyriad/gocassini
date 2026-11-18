@@ -47,14 +47,14 @@
       "bundle_failed": "No se pudo preparar el paquete (HTTP {status})."
     },
     "setup_notice": {
-      "open_doctor": "",
+      "open_doctor": "Abrir {place}",
       "title_failing": "Cassini no puede guardar grabaciones en este momento",
       "title_unchecked": "Cassini no ha comprobado que pueda guardar grabaciones",
-      "reader_failing": "",
-      "reader_unchecked": "",
-      "copy_link": "",
-      "title_recording": "",
-      "reader_recording": "",
+      "reader_failing": "Las llamadas siguen funcionando y las grabaciones existentes siguen aquí. Pide a un administrador que lo solucione.",
+      "reader_unchecked": "Las grabaciones existentes siguen aquí. Puede que las nuevas no se guarden hasta que un administrador lo compruebe.",
+      "copy_link": "Copiar enlace para un administrador",
+      "title_recording": "La configuración de grabación no está terminada",
+      "reader_recording": "Puede que las nuevas llamadas no se graben hasta que un administrador la termine.",
       "cause_unknown": "Cassini no pudo confirmar su configuración de grabación.",
       "cause": {
         "nextcloud_probe": "Nextcloud no respondió a la comprobación de la cuenta de grabaciones.",
