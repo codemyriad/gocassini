@@ -47,14 +47,14 @@
       "bundle_failed": "Das Paket konnte nicht vorbereitet werden (HTTP {status})."
     },
     "setup_notice": {
-      "open_doctor": "",
+      "open_doctor": "{place} öffnen",
       "title_failing": "Cassini kann gerade keine Aufnahmen speichern",
       "title_unchecked": "Cassini hat noch nicht geprüft, ob es Aufnahmen speichern kann",
-      "reader_failing": "",
-      "reader_unchecked": "",
-      "copy_link": "",
-      "title_recording": "",
-      "reader_recording": "",
+      "reader_failing": "Anrufe funktionieren weiterhin und vorhandene Aufnahmen sind noch da. Bitten Sie die Administration, das zu beheben.",
+      "reader_unchecked": "Vorhandene Aufnahmen sind noch da. Neue werden möglicherweise nicht gespeichert, bis die Administration das prüft.",
+      "copy_link": "Link für die Administration kopieren",
+      "title_recording": "Die Einrichtung der Aufnahme ist nicht abgeschlossen",
+      "reader_recording": "Neue Anrufe werden möglicherweise nicht aufgenommen, bis die Administration sie abschließt.",
       "cause_unknown": "Cassini konnte die Einrichtung der Aufnahmen nicht bestätigen.",
       "cause": {
         "nextcloud_probe": "Nextcloud hat auf die Prüfung des Aufnahmekontos nicht geantwortet.",
