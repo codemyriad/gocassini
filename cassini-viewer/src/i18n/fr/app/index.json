@@ -47,14 +47,14 @@
       "bundle_failed": "Impossible de préparer le lot (HTTP {status})."
     },
     "setup_notice": {
-      "open_doctor": "",
+      "open_doctor": "Ouvrir {place}",
       "title_failing": "Cassini ne peut pas sauvegarder les enregistrements pour le moment",
       "title_unchecked": "Cassini n’a pas vérifié qu’il peut sauvegarder les enregistrements",
-      "reader_failing": "",
-      "reader_unchecked": "",
-      "copy_link": "",
-      "title_recording": "",
-      "reader_recording": "",
+      "reader_failing": "Les appels fonctionnent toujours et les enregistrements existants sont toujours là. Demandez à un administrateur de corriger le problème.",
+      "reader_unchecked": "Les enregistrements existants sont toujours là. Les nouveaux risquent de ne pas être sauvegardés tant qu’un administrateur n’a pas vérifié.",
+      "copy_link": "Copier le lien pour un administrateur",
+      "title_recording": "La configuration de l’enregistrement n’est pas terminée",
+      "reader_recording": "Les nouveaux appels risquent de ne pas être enregistrés tant qu’un administrateur ne l’a pas terminée.",
       "cause_unknown": "Cassini n’a pas pu confirmer la configuration de ses enregistrements.",
       "cause": {
         "nextcloud_probe": "Nextcloud n’a pas répondu à la vérification du compte des enregistrements.",
