@@ -34,7 +34,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     defaults:
       run:
         working-directory: cassini-microsite
@@ -73,7 +73,7 @@ jobs:
   # fails if the committed pair is not what the source produces. See
   # cassini-microsite/scripts/sync-embed.mjs for why it is committed at all.
   embed:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v4
 
@@ -97,7 +97,7 @@ jobs:
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [build, embed]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     environment:
       name: gocassini.com
       url: https://gocassini.com

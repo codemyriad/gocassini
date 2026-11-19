@@ -4,6 +4,13 @@ self-hosted-runner:
   #   gpu    — the GPU runner (transcribe-smoke-cuda, e2e-talk-record-cuda,
   #            deploy-preview's deploy-gpu)
   #   george — the deploy-preview host
+  #
+  # Also GitHub-hosted labels newer than actionlint's latest release
+  # (v1.7.12, March 2026), which rejects them as unknown. Drop each one once
+  # an actionlint release lists it.
+  #   ubuntu-26.04, ubuntu-26.04-arm — the hosted runners since #518
   labels:
     - gpu
     - george
+    - ubuntu-26.04
+    - ubuntu-26.04-arm

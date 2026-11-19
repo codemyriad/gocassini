@@ -2,7 +2,7 @@ name: Deploy Preview
 
 # Branch-preview pipeline. Behavior:
 #   * UI-only changes always publish a per-branch viewer pointed at main's
-#     processed meetings (cheap, runs on ubuntu-24.04, parallel across branches).
+#     processed meetings (cheap, runs on ubuntu-26.04, parallel across branches).
 #   * Processing changes (cassini-go-recorder, scripts/process-recordings.sh,
 #     bin/cassini, or this workflow) DO NOT auto-reprocess. They publish a
 #     UI-only preview unless the developer opts in by:
@@ -49,7 +49,7 @@ jobs:
       github.event_name != 'pull_request' ||
       (github.event.pull_request.head.repo.full_name == github.repository &&
        contains(github.event.pull_request.labels.*.name, 'preview'))
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     outputs:
       branch: ${{ steps.detect.outputs.branch }}
       encoded_branch: ${{ steps.detect.outputs.encoded_branch }}
@@ -207,7 +207,7 @@ jobs:
       false &&
       needs.detect.outputs.should_run == 'true' &&
       needs.detect.outputs.should_process != 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     concurrency:
       group: branch-ui-${{ github.ref }}
       cancel-in-progress: false
@@ -237,7 +237,7 @@ jobs:
         run: |
           set -euo pipefail
           # ffmpeg supplies ffprobe, which cassini-viewer's export-static-meetings
-          # invokes per .opus to read its tags. ubuntu-24.04 doesn't ship it on
+          # invokes per .opus to read its tags. ubuntu-26.04 doesn't ship it on
           # PATH by default for this action context.
           # ci-apt-update.sh, not a bare update: a vendor apt source we never
           # install from can fail it (exit 100) and take this step with it.
