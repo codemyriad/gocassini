@@ -19,6 +19,7 @@
     formatImportDate,
     formatImportDuration,
     importJobTerminal,
+    importRunningStage,
     parseImportPreview,
     type ImportJobRecord,
     type ImportPreview,
@@ -392,8 +393,21 @@
 
   // What a running row says. The operator's stages after the upload are one
   // step to the person importing: their meeting is being added.
-  function runningLabel(state: ImportJobRecord["state"]): string {
-    return state === "uploading" ? text.running_uploading() : text.running_adding();
+  function runningLabel(job: ImportJobRecord): string {
+    switch (importRunningStage(job)) {
+      case "uploading":
+        return text.running_uploading();
+      case "waiting":
+        return text.running_waiting();
+      case "queued":
+        return text.running_queued({ count: job.queuePosition ?? 0 });
+      case "fetching":
+        return text.running_fetching();
+      case "checking":
+        return text.running_checking();
+      default:
+        return text.running_adding();
+    }
   }
 
   // One plain line per settled row. The operator's own error text is for
@@ -605,8 +619,11 @@
                 <div class="import-text">
                   <span class="import-title">{job.sourceName}</span>
                   {#if running}
-                    <span class="import-meta">{runningLabel(job.state)}</span>
-                    <progress class="progress progress-primary import-bar"></progress>
+                    <span class="import-meta">{runningLabel(job)}</span>
+                    <!-- Only work in progress gets a bar: a queued row is waiting. -->
+                    {#if job.state !== "queued"}
+                      <progress class="progress progress-primary import-bar"></progress>
+                    {/if}
                   {:else if isFailure(job)}
                     <span class="import-meta">
                       <span class="text-error">{settledLine(job)}</span>

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -31,6 +32,46 @@ const (
 	importStateFailed       = "failed"
 	importStateCanceled     = "canceled"
 )
+
+// importStateProcessing reports a job a worker is running.
+func importStateProcessing(state string) bool {
+	switch state {
+	case importStateFetching, importStateValidating, importStateDelivering, importStateSharing, importStateIndexing:
+		return true
+	}
+	return false
+}
+
+// setImportQueuePositions fills QueuePosition on one caller's queued web
+// imports: the caller's worker runs them oldest first, after whatever it is
+// running now.
+func setImportQueuePositions(jobs []ImportJob) {
+	order := make([]int, len(jobs))
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(a, b int) bool {
+		ja, jb := jobs[order[a]], jobs[order[b]]
+		if ja.CreatedAt != jb.CreatedAt {
+			return ja.CreatedAt < jb.CreatedAt
+		}
+		return ja.ID < jb.ID
+	})
+	ahead := 0
+	for _, i := range order {
+		if importStateProcessing(jobs[i].State) && !jobs[i].isCLI() {
+			ahead++
+		}
+	}
+	for _, i := range order {
+		if jobs[i].State != importStateQueued || jobs[i].isCLI() {
+			continue
+		}
+		position := ahead
+		jobs[i].QueuePosition = &position
+		ahead++
+	}
+}
 
 func importStateTerminal(state string) bool {
 	return state == importStateUploadFailed || state == importStateDone || state == importStateFailed || state == importStateCanceled
@@ -81,6 +122,10 @@ type ImportJob struct {
 	ImportedAt             string `json:"importedAt,omitempty"`
 	CreatedAt              string `json:"createdAt"`
 	UpdatedAt              string `json:"updatedAt"`
+	// QueuePosition is set on queued web imports in the caller's listing: how
+	// many of the caller's own imports will run before this one. Imports from
+	// other people never count; each person's queue runs on its own.
+	QueuePosition *int `json:"queuePosition,omitempty"`
 }
 
 // The persisted local: marker already distinguishes CLI sources, including
@@ -209,11 +254,31 @@ func (s *Store) ImportJob(ctx context.Context, id string) (ImportJob, bool, erro
 	return j, true, nil
 }
 
-// nextQueuedImport claims nothing; it reports the oldest queued row for the
-// single worker to run. Claiming happens by moving the state off `queued`.
-func (s *Store) nextQueuedImport(ctx context.Context) (ImportJob, bool, error) {
+// queuedImportCreators lists the callers with web imports waiting to run.
+func (s *Store) queuedImportCreators(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT DISTINCT created_by FROM import_jobs WHERE state=? AND staged_path NOT GLOB 'local:*'`, importStateQueued)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var users []string
+	for rows.Next() {
+		var user string
+		if err := rows.Scan(&user); err != nil {
+			return nil, err
+		}
+		users = append(users, user)
+	}
+	return users, rows.Err()
+}
+
+// nextQueuedImportFor claims nothing; it reports one caller's oldest queued
+// row for that caller's worker to run. Claiming happens by moving the state
+// off `queued`, and only that caller's worker reads their queue.
+func (s *Store) nextQueuedImportFor(ctx context.Context, user string) (ImportJob, bool, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT `+importJobColumns+` FROM import_jobs WHERE state=? AND staged_path NOT GLOB 'local:*' ORDER BY created_at, id LIMIT 1`, importStateQueued)
+		`SELECT `+importJobColumns+` FROM import_jobs WHERE created_by=? AND state=? AND staged_path NOT GLOB 'local:*' ORDER BY created_at, id LIMIT 1`, user, importStateQueued)
 	j, err := scanImportJob(row.Scan)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ImportJob{}, false, nil

@@ -1,7 +1,7 @@
 import { describeImportSharing } from "./imports";
 import { describe, expect, it } from "vitest";
 
-import { formatImportDuration, importJobTerminal, parseImportPreview } from "./imports";
+import { formatImportDuration, importJobTerminal, importRunningStage, parseImportPreview } from "./imports";
 import { durationFormat } from "../i18n";
 
 function fileOf(name: string, bytes: Uint8Array | string): File {
@@ -79,5 +79,20 @@ describe("describeImportSharing", () => {
   });
   it("says so when the meeting is private", () => {
     expect(describeImportSharing({ sharing: { share: false } })).toEqual({ line: "Only you", title: "Only you can open this meeting." });
+  });
+});
+
+describe("importRunningStage", () => {
+  it("tells a queued import from one being worked on", () => {
+    expect(importRunningStage({ state: "uploading" })).toBe("uploading");
+    // Next in the person's own queue, or from a server that sends no position.
+    expect(importRunningStage({ state: "queued", queuePosition: 0 })).toBe("waiting");
+    expect(importRunningStage({ state: "queued" })).toBe("waiting");
+    expect(importRunningStage({ state: "queued", queuePosition: 2 })).toBe("queued");
+    expect(importRunningStage({ state: "fetching" })).toBe("fetching");
+    expect(importRunningStage({ state: "validating" })).toBe("checking");
+    for (const state of ["delivering", "sharing", "indexing"] as const) {
+      expect(importRunningStage({ state })).toBe("adding");
+    }
   });
 });

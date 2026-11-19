@@ -364,6 +364,14 @@ const browse = {
     import_meetings: "Import {count:number|num} {{meeting|meetings}}",
     // What a running import says.
     running_uploading: "Uploading…",
+    // Queued and next: it starts as soon as the server picks it up.
+    running_waiting: "Waiting to start…",
+    // Plural; see the translator guide. {count}: the person's own imports that run before this one.
+    running_queued: "Queued · {count:number|num} ahead",
+    // The server is reading the uploaded file from the person's Files.
+    running_fetching: "Fetching…",
+    // The server is checking the file is a meeting it can import.
+    running_checking: "Checking…",
     running_adding: "Adding…",
     // What a finished import says.
     settled_upload_failed: "Upload didn't finish",

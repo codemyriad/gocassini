@@ -30,7 +30,7 @@ func TestImportJobLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	queued, ok, err := s.nextQueuedImport(ctx)
+	queued, ok, err := s.nextQueuedImportFor(ctx, "alice")
 	if err != nil || !ok || queued.ID != job.ID || queued.State != importStateQueued {
 		t.Fatalf("queued claim: %+v ok=%v err=%v", queued, ok, err)
 	}
@@ -242,7 +242,7 @@ func TestInterruptedCLIImportsAreNotRequeuedAsWebUploads(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Queue selection itself excludes CLI jobs, even before startup recovery.
-	if next, ok, err := s.nextQueuedImport(ctx); err != nil || !ok || next.ID != upload.ID {
+	if next, ok, err := s.nextQueuedImportFor(ctx, "alice"); err != nil || !ok || next.ID != upload.ID {
 		t.Fatal(next, ok, err)
 	}
 	if n, err := s.RequeueUnfinishedImports(ctx); err != nil || n != 1 {

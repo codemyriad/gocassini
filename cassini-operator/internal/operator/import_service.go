@@ -59,24 +59,49 @@ type importService struct {
 	// stream and each pull runs under the worker's own context.
 	client *http.Client
 
-	// mu guards the two fields below and nothing else: which job the worker is
-	// on and how to cancel it. It is never held across a database call or a
-	// Nextcloud request, so a slow Nextcloud for one caller cannot stall every
-	// other caller's poll.
-	mu        sync.Mutex
-	runningID string
-	cancelRun context.CancelFunc
+	// mu guards the two maps below and nothing else: which jobs are running
+	// (and how to cancel each), and which callers have a worker draining their
+	// queue. It is never held across a Nextcloud request, so a slow Nextcloud
+	// for one caller cannot stall every other caller's poll.
+	mu sync.Mutex
+	// running maps a running job's id to the cancel for its run.
+	running map[string]context.CancelFunc
+	// userWorkers holds the callers whose queue has a worker. Each caller gets
+	// one worker, which runs their imports one at a time in the order they
+	// were queued, so one person's imports never wait behind another's (#509).
+	userWorkers map[string]bool
+	// fetchSlots bounds how many staged files are downloaded at once across
+	// all callers: each fetch can be up to maxImportUploadBytes on the work
+	// volume. Nil means unbounded (handler-only tests).
+	fetchSlots chan struct{}
+	// perform runs one import; nil means performImport. A seam for tests.
+	perform func(ctx context.Context, job ImportJob) (meetingImportResult, error)
 	// userLocks serializes one caller's staging work — registering uploads,
 	// confirming them, removing files, sweeping the folder — so two tabs cannot
 	// race on one folder, while callers stay independent of each other.
 	userLocks keyedLocks
 }
 
-// running reports the job the worker is on, or "" between jobs.
-func (s *importService) running() string {
+// maxConcurrentImportFetches bounds simultaneous staged-file downloads.
+const maxConcurrentImportFetches = 3
+
+// isRunning reports whether a worker is on this job right now.
+func (s *importService) isRunning(id string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.runningID
+	_, ok := s.running[id]
+	return ok
+}
+
+// runningIDs is a snapshot of the jobs workers are on.
+func (s *importService) runningIDs() map[string]bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ids := make(map[string]bool, len(s.running))
+	for id := range s.running {
+		ids[id] = true
+	}
+	return ids
 }
 
 // withUserLock runs fn holding the caller's staging lock, bounded by the
@@ -104,11 +129,12 @@ func newImportService(rt *Runtime, exapp ExAppConfig, logger *log.Logger) *impor
 		return nil
 	}
 	service := &importService{
-		rt:       rt,
-		exapp:    exapp,
-		logger:   logger,
-		importer: newMeetingImporter(rt.cfg, exapp, rt, logger),
-		client:   &http.Client{Transport: &http.Transport{ResponseHeaderTimeout: ncFilesProxyHeadersTTL}},
+		rt:         rt,
+		exapp:      exapp,
+		logger:     logger,
+		importer:   newMeetingImporter(rt.cfg, exapp, rt, logger),
+		client:     &http.Client{Transport: &http.Transport{ResponseHeaderTimeout: ncFilesProxyHeadersTTL}},
+		fetchSlots: make(chan struct{}, maxConcurrentImportFetches),
 	}
 	service.startWorker()
 	service.startStagingGC()
@@ -225,6 +251,7 @@ func (s *importService) list(w http.ResponseWriter, r *http.Request, caller stri
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	setImportQueuePositions(jobs)
 	writeJSON(w, http.StatusOK, map[string]any{"imports": jobs})
 }
 
@@ -394,8 +421,8 @@ func (s *importService) cancel(w http.ResponseWriter, r *http.Request, job Impor
 		return
 	}
 	s.mu.Lock()
-	if s.runningID == job.ID && s.cancelRun != nil {
-		s.cancelRun()
+	if cancelRun := s.running[job.ID]; cancelRun != nil {
+		cancelRun()
 	}
 	s.mu.Unlock()
 	writeJSON(w, http.StatusAccepted, map[string]bool{"accepted": true})
@@ -426,7 +453,7 @@ func (s *importService) retry(w http.ResponseWriter, r *http.Request, job Import
 	}
 	// A cancel lands on the row before the worker has let go of the job; a
 	// retry in that window would be claimed by the dying run's bookkeeping.
-	if s.running() == job.ID {
+	if s.isRunning(job.ID) {
 		writeJSONError(w, http.StatusConflict, "cancellation is still finishing; retry in a moment")
 		return
 	}
@@ -470,11 +497,7 @@ func (s *importService) startWorker() {
 			if rt.ctx.Err() != nil {
 				return
 			}
-			if job, ok, err := rt.store.nextQueuedImport(rt.ctx); err == nil && ok {
-				s.runImportJob(job)
-			} else if err != nil && rt.ctx.Err() == nil {
-				s.logf("import worker: %v", err)
-			}
+			s.dispatch()
 			select {
 			case <-rt.ctx.Done():
 				return
@@ -484,7 +507,62 @@ func (s *importService) startWorker() {
 	}()
 }
 
-func (s *importService) runImportJob(job ImportJob) {
+// dispatch gives every caller with queued imports a worker, unless they
+// already have one. It runs on the dispatcher goroutine, which holds a
+// workerWG count of its own, so adding to the group here is safe.
+func (s *importService) dispatch() {
+	rt := s.rt
+	creators, err := rt.store.queuedImportCreators(rt.ctx)
+	if err != nil {
+		if rt.ctx.Err() == nil {
+			s.logf("import worker: %v", err)
+		}
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.userWorkers == nil {
+		s.userWorkers = map[string]bool{}
+	}
+	for _, user := range creators {
+		if s.userWorkers[user] {
+			continue
+		}
+		s.userWorkers[user] = true
+		rt.workerWG.Add(1)
+		go s.drainUser(user)
+	}
+}
+
+// drainUser runs one caller's queued imports, oldest first, until none are
+// left. A job queued after it gives up is picked up by the next dispatch.
+func (s *importService) drainUser(user string) {
+	rt := s.rt
+	defer rt.workerWG.Done()
+	defer func() {
+		s.mu.Lock()
+		delete(s.userWorkers, user)
+		s.mu.Unlock()
+	}()
+	for rt.ctx.Err() == nil {
+		job, ok, err := rt.store.nextQueuedImportFor(rt.ctx, user)
+		if err != nil {
+			if rt.ctx.Err() == nil {
+				s.logf("import worker for %s: %v", user, err)
+			}
+			return
+		}
+		if !ok || !s.runImportJob(job) {
+			// Nothing queued, or the job moved on before this worker claimed
+			// it (a cancel): the next dispatch looks again.
+			return
+		}
+	}
+}
+
+// runImportJob runs one job to a settled state. It reports false when it did
+// not start the job because the row is no longer queued.
+func (s *importService) runImportJob(job ImportJob) bool {
 	rt := s.rt
 	ctx, cancel := context.WithCancel(rt.ctx)
 	defer cancel()
@@ -493,36 +571,46 @@ func (s *importService) runImportJob(job ImportJob) {
 	current, ok, err := rt.store.ImportJob(ctx, job.ID)
 	if err != nil || !ok || current.State != importStateQueued {
 		s.mu.Unlock()
-		return
+		if err != nil {
+			s.logf("import %s: %v", job.ID, err)
+		}
+		return false
 	}
-	s.runningID, s.cancelRun = job.ID, cancel
+	if s.running == nil {
+		s.running = map[string]context.CancelFunc{}
+	}
+	s.running[job.ID] = cancel
 	s.mu.Unlock()
 	defer func() {
 		s.mu.Lock()
-		s.runningID, s.cancelRun = "", nil
+		delete(s.running, job.ID)
 		s.mu.Unlock()
 	}()
 
-	result, err := s.performImport(ctx, job)
+	perform := s.perform
+	if perform == nil {
+		perform = s.performImport
+	}
+	result, err := perform(ctx, job)
 	if ctx.Err() != nil && rt.ctx.Err() != nil {
 		// Operator shutdown, not a verdict: leave the row for recovery requeue.
 		_ = s.setState(job.ID, importStateQueued, "", "")
-		return
+		return true
 	}
 	if ctx.Err() != nil {
 		// A user cancel: the row is already canceled, and the guard inside
 		// SetImportJobState keeps any late write from resurrecting it.
-		return
+		return true
 	}
 	if err != nil {
 		s.logf("import %s (%s): %v", job.ID, job.SourceName, err)
 		_ = s.setState(job.ID, importStateFailed, "", err.Error())
-		return
+		return true
 	}
 	_ = rt.store.SetImportJobProvenance(context.Background(), job.ID, result.Format, result.ContentID, result.SourceRoomID, result.CreatedAtUTC, result.RecordedAtLocal)
 	if err := rt.store.SetImportJobOutcome(context.Background(), job.ID, result.DeliveredName, result.FileID, result.ImportedAtUTC); err != nil {
 		s.logf("import %s: persist outcome: %v", job.ID, err)
-		return
+		return true
 	}
 	s.logf("import succeeded id=%s source=%q delivered=%s file_id=%d shared_with=%d not_shared_with=%d searchable=%t",
 		job.ID, job.SourceName, result.DeliveredName, result.FileID, result.SharedWith, len(result.NotSharedWith), result.SearchIndexed)
@@ -533,20 +621,42 @@ func (s *importService) runImportJob(job ImportJob) {
 	} else {
 		_ = rt.store.MarkImportStagingRemoved(context.Background(), job.ID)
 	}
+	return true
+}
+
+// acquireFetchSlot waits for one of the shared download slots. The job stays
+// queued while it waits, so the caller's sheet keeps saying so.
+func (s *importService) acquireFetchSlot(ctx context.Context) (func(), error) {
+	if s.fetchSlots == nil {
+		return func() {}, nil
+	}
+	select {
+	case s.fetchSlots <- struct{}{}:
+		return func() { <-s.fetchSlots }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 func (s *importService) performImport(ctx context.Context, job ImportJob) (meetingImportResult, error) {
 	if job.isCLI() {
 		return meetingImportResult{}, fmt.Errorf("%s", importCLIRecovery)
 	}
+	release, err := s.acquireFetchSlot(ctx)
+	if err != nil {
+		return meetingImportResult{}, err
+	}
 	_ = s.setState(job.ID, importStateFetching, "fetching", "")
 	staging, err := os.MkdirTemp(rtWorkScratchDir(s.rt.cfg.WorkRoot), ".import-fetch-")
 	if err != nil {
+		release()
 		return meetingImportResult{}, err
 	}
 	defer func() { _ = os.RemoveAll(staging) }()
 	local := filepath.Join(staging, "staged")
-	if _, _, status, err := s.exapp.davDownloadFile(ctx, s.client, job.CreatedBy, job.StagedPath, local, maxImportUploadBytes); err != nil {
+	_, _, status, err := s.exapp.davDownloadFile(ctx, s.client, job.CreatedBy, job.StagedPath, local, maxImportUploadBytes)
+	release()
+	if err != nil {
 		if status == http.StatusNotFound {
 			return meetingImportResult{}, fmt.Errorf("the staged file %s is no longer in your Files", job.StagedPath)
 		}

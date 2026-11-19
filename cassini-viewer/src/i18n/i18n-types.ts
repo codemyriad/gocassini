@@ -6586,6 +6586,23 @@ export type NamespaceViewerTranslation = {
 			 */
 			running_uploading: string
 			/**
+			 * W​a​i​t​i​n​g​ ​t​o​ ​s​t​a​r​t​…
+			 */
+			running_waiting: string
+			/**
+			 * Q​u​e​u​e​d​ ​·​ ​{​c​o​u​n​t​|​n​u​m​}​ ​a​h​e​a​d
+			 * @param {number} count
+			 */
+			running_queued: RequiredParams<'count|num'>
+			/**
+			 * F​e​t​c​h​i​n​g​…
+			 */
+			running_fetching: string
+			/**
+			 * C​h​e​c​k​i​n​g​…
+			 */
+			running_checking: string
+			/**
 			 * A​d​d​i​n​g​…
 			 */
 			running_adding: string
@@ -14860,6 +14877,22 @@ export type TranslationFunctions = {
 				 * Uploading…
 				 */
 				running_uploading: () => LocalizedString
+				/**
+				 * Waiting to start…
+				 */
+				running_waiting: () => LocalizedString
+				/**
+				 * Queued · {count|num} ahead
+				 */
+				running_queued: (arg: { count: number }) => LocalizedString
+				/**
+				 * Fetching…
+				 */
+				running_fetching: () => LocalizedString
+				/**
+				 * Checking…
+				 */
+				running_checking: () => LocalizedString
 				/**
 				 * Adding…
 				 */

@@ -77,12 +77,35 @@ it.each(["staged", "failed", "canceled"] as const)("polls a retried %s import th
  });
  open(provider);
  await page.getByRole("button", { name: "Retry", exact: true }).click();
- await expect.element(page.getByText("Adding…", { exact: true })).toBeVisible();
+ await expect.element(page.getByText("Waiting to start…", { exact: true })).toBeVisible();
  // The server completes after the immediate post-Retry refresh. Only polling
  // can discover this transition; do not remount or navigate the workbench.
  current = { ...current, state: "done" };
  await expect.poll(() => host.querySelector(".import-item")?.textContent ?? "", { timeout: 6000 }).toContain("Imported");
  expect(host.querySelector(".import-item progress")).toBeNull();
+});
+
+it("says whether an import is queued behind the person's own or being worked on", async () => {
+ const provider: DataProvider = Object.assign(new StaticCatalogProvider(), {
+  listImports: async () => [
+   { ...job("third", "queued"), queuePosition: 2 },
+   { ...job("second", "queued"), queuePosition: 1 },
+   job("first", "validating"),
+  ],
+ });
+ open(provider);
+ const row = async (name: string) => {
+  await expect.element(page.getByText(`${name}.json`, { exact: true })).toBeVisible();
+  return Array.from(host.querySelectorAll(".import-item")).find((item) => item.textContent?.includes(`${name}.json`))!;
+ };
+ const first = await row("first");
+ expect(first.textContent).toContain("Checking…");
+ expect(first.querySelector("progress")).not.toBeNull();
+ const second = await row("second");
+ expect(second.textContent).toContain("Queued · 1 ahead");
+ // A queued row is waiting, not working: no progress bar.
+ expect(second.querySelector("progress")).toBeNull();
+ expect((await row("third")).textContent).toContain("Queued · 2 ahead");
 });
 
 it.each(["failed", "canceled"] as const)("explains recovery for %s CLI imports without offering web Retry", async (state) => {
