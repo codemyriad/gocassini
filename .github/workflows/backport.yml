@@ -26,7 +26,7 @@ permissions:
 jobs:
   backport:
     name: Open backport PRs
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     # Merged PRs only, and on `labeled` only for a backport label added after
     # the merge. pull_request_target runs the base branch's workflow, and the
     # action only cherry-picks the merged commits; no PR code is executed.

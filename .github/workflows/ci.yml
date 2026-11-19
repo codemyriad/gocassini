@@ -59,7 +59,7 @@ jobs:
   # contracts instead of after it.
   changes:
     name: Classify changes
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     outputs:
       suite: ${{ steps.classify.outputs.suite }}
@@ -120,7 +120,7 @@ jobs:
 
   contracts:
     name: Fast manifest + harness contracts
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs: changes
     if: needs.changes.outputs.suite == 'true'
     steps:
@@ -183,7 +183,7 @@ jobs:
   # even if the first fails.
   ui:
     name: UI tests
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs: changes
     if: needs.changes.outputs.suite == 'true'
     steps:
@@ -238,7 +238,7 @@ jobs:
 
   unit:
     name: Unit tests (${{ matrix.module }})
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs: changes
     if: needs.changes.outputs.suite == 'true'
     strategy:
@@ -361,7 +361,7 @@ jobs:
 
   integration:
     name: "Integration (${{ matrix.script }}${{ matrix.nextcloud_image && format(', {0}', matrix.nextcloud_image) || '' }})"
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     # Not `unit` or `contracts` (D-906): waiting for them, then for a runner,
     # cost more than the integration runs it saved when one of them failed.
     needs: changes
@@ -415,7 +415,7 @@ jobs:
   # instead of hiding recorder bring-up races behind a best-of-3 retry.
   integration-mute:
     name: "Integration (ci-e2e-mute.sh)"
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     # Not `unit` or `contracts` (D-906): waiting for them, then for a runner,
     # cost more than the integration runs it saved when one of them failed.
     needs: changes
@@ -475,7 +475,7 @@ jobs:
   # that job's own failure.
   ci-passed:
     name: CI passed
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs: [changes, contracts, ui, unit, integration, integration-mute]
     if: always()
     steps:
