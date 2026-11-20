@@ -17,8 +17,9 @@ administrator can change **Share recordings with** in Operator › Publish
 pipeline to **Only people who were in the call**. In that mode the roster is
 the local Nextcloud accounts Talk reports with its `inCall` flag when the
 recording starts and stops, plus every local account the recorder itself saw in
-the call, plus the person who started it. Guests, email invitees and federated
-participants are skipped in either mode. The recorder's own list is monotonic,
+the call, plus the person who started it while **Always include the person who
+started the recording** is on. Guests, email invitees and federated participants
+are skipped in either mode. The recorder's own list is monotonic,
 so someone who joined after the start and left again before the stop is still
 in it.
 
@@ -33,8 +34,8 @@ chat post, whose title and link the whole room would see.
 
 A third choice, **Only the room's moderators**, shares each recording with the
 room's owner and moderators who have a local Nextcloud account, whether or not
-they were in the call, plus the person who started it. Talk only lets a
-moderator record, so the starter is normally one of them. In a one-to-one
+they were in the call, plus the person who started it while the starter option is
+on. Talk only lets a moderator record, so the starter is normally one of them. In a one-to-one
 conversation Talk makes both people owners, so both receive the recording. Other members of the
 room receive nothing, the recorder's in-call list is not used, and the room
 chat post is skipped. The shares are read-only, in a public room too, so a
@@ -43,6 +44,16 @@ stops. If neither read worked, the recording is shared only with the person who
 started it and the run carries a notice; **Re-share with moderators** on that
 run reads the room's moderators at that moment, saves that list for the
 recording and shares with them.
+
+The starter option applies to every audience choice. It is on by default, which
+preserves the historical behaviour where whoever started a recording could always
+open it. Turning it off shares with exactly the chosen audience; if Cassini
+captured no audience at all, the starter still receives the recording so it is
+never left without a recipient. The room owner is the starter for automatic
+recordings, so on a room where recording starts automatically this option is what
+decides whether the owner receives calls they did not join. The choice is frozen
+when recording starts; recordings made before the option existed keep the old
+always-include behaviour.
 
 ## Access checks
 

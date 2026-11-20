@@ -14,10 +14,17 @@ describe("parseImportPreview", () => {
     await expect(parseImportPreview(fileOf("a.opus", new Uint8Array()))).rejects.toThrow(/empty/i);
   });
 
-  it("refuses a file that is neither Ogg nor JSON, whatever its name says", async () => {
-    await expect(parseImportPreview(fileOf("meeting.opus", "RIFF....WAVE"))).rejects.toThrow(
+  it("refuses a file that is neither Ogg, JSON nor plausibly audio", async () => {
+    await expect(parseImportPreview(fileOf("notes.txt", "RIFF....WAVE"))).rejects.toThrow(
       /not a portable meeting/i,
     );
+  });
+
+  it("takes a raw audio recording as a meeting source and names it from the file", async () => {
+    const preview = await parseImportPreview(fileOf("Board offsite.m4a", "not decoded in the browser"));
+    expect(preview.format).toBe("audio");
+    expect(preview.title).toBe("Board offsite");
+    expect(preview.hasAudio).toBe(true);
   });
 
   it("routes an OggS prefix to the portable parser, which fails closed without the format tag", async () => {

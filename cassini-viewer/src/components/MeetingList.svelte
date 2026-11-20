@@ -41,6 +41,16 @@
     return day ? text.imported_on({ date: day }) : text.imported_here();
   }
 
+  // The Uploaded badge's tooltip: the same sentence, for the audio path.
+  function uploadedTitle(uploaded: { by?: string; atUtc?: string }): string {
+    const by = uploaded.by?.trim() ?? "";
+    const at = uploaded.atUtc ? new Date(uploaded.atUtc) : null;
+    const day = at && !Number.isNaN(at.getTime()) ? dateFormat({ dateStyle: "medium" }).format(at) : "";
+    if (by && day) return text.uploaded_by_on({ name: by, date: day });
+    if (by) return text.uploaded_by({ name: by });
+    return day ? text.uploaded_on({ date: day }) : text.uploaded_here();
+  }
+
   // Already narrowed to the selected room by the shell. The room filter is NOT
   // applied here, because the rail and the result-line chip both need to agree
   // with it and neither is inside this component.
@@ -685,7 +695,12 @@
                   <span class="row-meta">
                     <span>{formatMeetingStartWithDay(meeting)}</span>
                     <span class="badge badge-ghost badge-xs">{meeting.meetingPath ? text.transcription_only() : text.audio_included()}</span>
-                    {#if meeting.imported}
+                    {#if meeting.uploaded}
+                      <span
+                        class="badge badge-ghost badge-xs"
+                        title={uploadedTitle(meeting.uploaded)}
+                      >{text.uploaded_badge()}</span>
+                    {:else if meeting.imported}
                       <span
                         class="badge badge-ghost badge-xs"
                         title={importedTitle(meeting.imported)}

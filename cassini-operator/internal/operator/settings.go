@@ -32,7 +32,13 @@ type STTSettings struct {
 	// recorded. A string rather than a boolean so another audience can be added
 	// without a migration. The chosen mode is frozen on the job at recording
 	// start, so a later settings change cannot alter an in-progress recording.
-	ShareAudience      string   `json:"share_audience"`
+	ShareAudience string `json:"share_audience"`
+	// ShareWithStarter says whether the recording starter (the room owner for
+	// automatic recordings) always receives the published file, even when the
+	// chosen audience does not contain them. Nil means the historical default:
+	// true. A pointer rather than a bool so a settings file written before this
+	// option existed keeps the old behaviour instead of silently opting out.
+	ShareWithStarter   *bool    `json:"share_with_starter,omitempty"`
 	ActiveModel        string   `json:"active_model,omitempty"`
 	ActiveRevision     string   `json:"active_revision,omitempty"`
 	Quality            string   `json:"quality"`
@@ -286,6 +292,18 @@ func normalizeQuality(s string) string {
 	}
 }
 
+// boolPointer stores the explicit value of a tri-state settings field.
+func boolPointer(value bool) *bool {
+	return &value
+}
+
+// SharesWithStarter reports whether the recording starter is always added to
+// the audience. A setting written before the option existed has no value and
+// keeps the old, always-include behaviour.
+func (s STTSettings) SharesWithStarter() bool {
+	return s.ShareWithStarter == nil || *s.ShareWithStarter
+}
+
 // normalizeShareAudience returns the persisted named audience mode, defaulting
 // an omitted value to the historical room audience. Any other value is refused
 // rather than silently coerced: the mode decides who can read a recording.
@@ -321,6 +339,7 @@ func detectSettings() STTSettings {
 	return STTSettings{
 		MeetingFormat:       "opus",
 		ShareAudience:       shareAudienceRoom,
+		ShareWithStarter:    boolPointer(true),
 		Quality:             defaultQualityForHardware(cudaCapableHost()),
 		Source:              sttSourceAuto,
 		HardwareFingerprint: hardwareFingerprint(gpu, cores),
@@ -356,6 +375,9 @@ func LoadOrInitSettingsWithMigrationReporter(path string, report SettingsMigrati
 	var s STTSettings
 	if err := json.Unmarshal(raw, &s); err != nil {
 		return STTSettings{}, fmt.Errorf("parse settings %s: %w", path, err)
+	}
+	if s.ShareWithStarter == nil {
+		s.ShareWithStarter = boolPointer(true)
 	}
 	if s.MeetingFormat == "" {
 		s.MeetingFormat = "opus"
@@ -686,6 +708,7 @@ type settingsUpdate struct {
 	// means "leave the audience alone", so a client that does not know about
 	// the option cannot switch it off by omitting it.
 	ShareAudience      *string   `json:"share_audience"`
+	ShareWithStarter   *bool     `json:"share_with_starter"`
 	ActiveModel        *string   `json:"active_model"`
 	ActiveRevision     *string   `json:"active_revision"`
 	Quality            *string   `json:"quality,omitempty"`
@@ -711,6 +734,9 @@ func (rt *Runtime) currentSettings() STTSettings {
 	}
 	if s.ShareAudience == "" {
 		s.ShareAudience = shareAudienceRoom
+	}
+	if s.ShareWithStarter == nil {
+		s.ShareWithStarter = boolPointer(true)
 	}
 	return s
 }
@@ -826,6 +852,9 @@ func (rt *Runtime) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		updated.ShareAudience = audience
+	}
+	if in.ShareWithStarter != nil {
+		updated.ShareWithStarter = boolPointer(*in.ShareWithStarter)
 	}
 	if in.ActiveModel != nil {
 		updated.ActiveModel = *in.ActiveModel

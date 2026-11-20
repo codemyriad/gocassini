@@ -197,3 +197,27 @@ it("groups the people a meeting is shared with, and an empty list means only me"
  await expect.element(page.getByText("Groups", { exact: true })).not.toBeInTheDocument();
  await expect.element(page.getByRole("button", { name: "Only me" })).toBeVisible();
 });
+
+it("uploads an audio recording as an audio-kind import and follows it to a created meeting", async () => {
+ let jobs: ImportJobRecord[] = [];
+ const stage = vi.fn(async () => ".CassiniImports/standup.m4a");
+ const provider: DataProvider = Object.assign(new StaticCatalogProvider(), {
+  listImports: async () => [...jobs],
+  stageImportUpload: stage,
+  startImports: vi.fn(async () => {
+   jobs = [{ ...job("audio", "validating"), kind: "audio" as const, sourceName: "standup.m4a" }];
+   return jobs;
+  }),
+ });
+ open(provider);
+ const transfer = new DataTransfer();
+ transfer.items.add(new File(["not decoded here"], "Standup.m4a", { type: "audio/mp4" }));
+ const input = host.querySelector('input[type="file"]') as HTMLInputElement;
+ input.files = transfer.files; input.dispatchEvent(new Event("change", { bubbles: true }));
+ await expect.element(page.getByText("Audio recording", { exact: true })).toBeVisible();
+ await page.getByRole("button", { name: "Import 1 meeting", exact: true }).click();
+ await expect.element(page.getByText("Transcribing…", { exact: true })).toBeVisible();
+ expect(stage.mock.calls[0]?.[3]).toBe("audio");
+ jobs = [{ ...jobs[0], state: "done", contentId: "mtg_x" }];
+ await expect.poll(() => host.querySelector(".import-item")?.textContent ?? "", { timeout: 6000 }).toContain("Meeting created");
+});

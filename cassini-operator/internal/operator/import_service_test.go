@@ -214,3 +214,53 @@ func TestCLIImportsRejectWebRecoveryAndRemainVisible(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// An upload registers its kind with its sharing. The submit that follows names
+// only the staged path, so a client cannot reinterpret bytes already uploaded.
+func TestAudioImportKindIsFixedAtRegistration(t *testing.T) {
+	s := importHandlerService(t)
+	ctx := context.Background()
+	body := `{"prepare":true,"files":[
+	  {"stagedPath":".CassiniImports/standup.m4a","sourceName":"standup.m4a","expectedBytes":10,"kind":"audio"},
+	  {"stagedPath":".CassiniImports/retro.opus","sourceName":"retro.opus","expectedBytes":10}
+	]}`
+	w := importDo(t, s, http.MethodPost, importsURLPath, "alice", body)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("prepare: %d %s", w.Code, w.Body.String())
+	}
+	var prepared struct {
+		Imports []ImportJob `json:"imports"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &prepared); err != nil {
+		t.Fatal(err)
+	}
+	if len(prepared.Imports) != 2 || prepared.Imports[0].Kind != importKindAudio || prepared.Imports[1].Kind != importKindMeeting {
+		t.Fatalf("prepared kinds: %+v", prepared.Imports)
+	}
+	for _, job := range prepared.Imports {
+		if err := s.rt.store.ConfirmImportUpload(ctx, job.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Kind at submit is refused rather than ignored.
+	if w := importDo(t, s, http.MethodPost, importsURLPath, "alice", `{"files":[{"stagedPath":".CassiniImports/standup.m4a","kind":"meeting"}]}`); w.Code != http.StatusBadRequest {
+		t.Fatalf("kind on submit: %d %s", w.Code, w.Body.String())
+	}
+	if w := importDo(t, s, http.MethodPost, importsURLPath, "alice", `{"prepare":true,"files":[{"stagedPath":".CassiniImports/x.m4a","expectedBytes":3,"kind":"video"}]}`); w.Code != http.StatusBadRequest {
+		t.Fatalf("unknown kind: %d %s", w.Code, w.Body.String())
+	}
+	if w := importDo(t, s, http.MethodPost, importsURLPath, "alice", `{"files":[{"stagedPath":".CassiniImports/standup.m4a"},{"stagedPath":".CassiniImports/retro.opus"}]}`); w.Code != http.StatusAccepted {
+		t.Fatalf("submit: %d %s", w.Code, w.Body.String())
+	}
+	jobs, err := s.rt.store.ImportJobsFor(ctx, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	kinds := map[string]string{}
+	for _, job := range jobs {
+		kinds[job.SourceName] = job.Kind
+	}
+	if kinds["standup.m4a"] != importKindAudio || kinds["retro.opus"] != importKindMeeting {
+		t.Fatalf("stored kinds: %+v", kinds)
+	}
+}

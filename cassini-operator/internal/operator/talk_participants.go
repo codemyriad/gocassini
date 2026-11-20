@@ -194,6 +194,9 @@ type talkRecordingBinding struct {
 	Owner     string
 	RoomToken string
 	Public    bool
+	// ShareWithStarter is the option frozen when the recording started. Nil is
+	// an older recording, whose behaviour follows the current setting.
+	ShareWithStarter *bool
 }
 
 func talkRecordingBindingFrom(state talkRoomState) (talkRecordingBinding, bool) {
@@ -202,7 +205,7 @@ func talkRecordingBindingFrom(state talkRoomState) (talkRecordingBinding, bool) 
 	if owner == "" || roomToken == "" {
 		return talkRecordingBinding{}, false
 	}
-	return talkRecordingBinding{Owner: owner, RoomToken: roomToken, Public: state.RoomPublic}, true
+	return talkRecordingBinding{Owner: owner, RoomToken: roomToken, Public: state.RoomPublic, ShareWithStarter: state.ShareWithStarter}, true
 }
 
 // Resolving a recording's audience is now load-bearing: the nextcloud-files

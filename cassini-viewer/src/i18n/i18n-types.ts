@@ -4668,10 +4668,6 @@ export type NamespaceAppTranslation = {
 			 */
 			audience_moderators_description: string
 			/**
-			 * T​h​e​ ​p​e​r​s​o​n​ ​w​h​o​ ​s​t​a​r​t​e​d​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​ ​a​l​w​a​y​s​ ​r​e​c​e​i​v​e​s​ ​i​t​.
-			 */
-			audience_moderators_starter: string
-			/**
 			 * I​n​ ​a​ ​o​n​e​-​t​o​-​o​n​e​ ​c​o​n​v​e​r​s​a​t​i​o​n​,​ ​b​o​t​h​ ​p​e​o​p​l​e​ ​r​e​c​e​i​v​e​ ​i​t​.
 			 */
 			audience_moderators_one_to_one: string
@@ -4687,6 +4683,22 @@ export type NamespaceAppTranslation = {
 			 * N​o​ ​m​e​s​s​a​g​e​ ​i​s​ ​p​o​s​t​e​d​ ​i​n​ ​t​h​e​ ​T​a​l​k​ ​r​o​o​m​'​s​ ​c​h​a​t​,​ ​b​e​c​a​u​s​e​ ​t​h​e​ ​w​h​o​l​e​ ​r​o​o​m​ ​w​o​u​l​d​ ​s​e​e​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​'​s​ ​t​i​t​l​e​ ​a​n​d​ ​l​i​n​k​.
 			 */
 			audience_chat_skipped: string
+			/**
+			 * A​l​w​a​y​s​ ​i​n​c​l​u​d​e​ ​t​h​e​ ​p​e​r​s​o​n​ ​w​h​o​ ​s​t​a​r​t​e​d​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g
+			 */
+			always_include_starter_label: string
+			/**
+			 * T​h​e​ ​r​o​o​m​ ​o​w​n​e​r​ ​i​s​ ​t​h​e​ ​s​t​a​r​t​e​r​ ​f​o​r​ ​a​u​t​o​m​a​t​i​c​ ​r​e​c​o​r​d​i​n​g​s​.​ ​W​h​e​n​ ​o​f​f​,​ ​a​ ​r​e​c​o​r​d​i​n​g​ ​g​o​e​s​ ​o​n​l​y​ ​t​o​ ​t​h​e​ ​c​h​o​s​e​n​ ​a​u​d​i​e​n​c​e​;​ ​t​h​e​ ​s​t​a​r​t​e​r​ ​s​t​i​l​l​ ​r​e​c​e​i​v​e​s​ ​i​t​ ​w​h​e​n​ ​C​a​s​s​i​n​i​ ​c​a​p​t​u​r​e​d​ ​n​o​ ​a​u​d​i​e​n​c​e​.
+			 */
+			always_include_starter_description: string
+			/**
+			 * T​h​e​ ​p​e​r​s​o​n​ ​w​h​o​ ​s​t​a​r​t​e​d​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​ ​a​l​w​a​y​s​ ​r​e​c​e​i​v​e​s​ ​i​t​.
+			 */
+			starter_included: string
+			/**
+			 * T​h​e​ ​p​e​r​s​o​n​ ​w​h​o​ ​s​t​a​r​t​e​d​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​ ​r​e​c​e​i​v​e​s​ ​i​t​ ​o​n​l​y​ ​i​f​ ​t​h​e​ ​c​a​p​t​u​r​e​d​ ​a​u​d​i​e​n​c​e​ ​i​n​c​l​u​d​e​s​ ​t​h​e​m​,​ ​o​r​ ​i​f​ ​C​a​s​s​i​n​i​ ​c​a​p​t​u​r​e​d​ ​n​o​ ​a​u​d​i​e​n​c​e​ ​a​t​ ​a​l​l​.
+			 */
+			starter_not_included: string
 			/**
 			 * A​p​p​l​i​e​s​ ​t​o​ ​r​e​c​o​r​d​i​n​g​s​ ​t​h​a​t​ ​s​t​a​r​t​ ​a​f​t​e​r​ ​y​o​u​ ​s​a​v​e​.​ ​R​e​c​o​r​d​i​n​g​s​ ​i​n​ ​p​r​o​g​r​e​s​s​ ​o​r​ ​a​l​r​e​a​d​y​ ​p​u​b​l​i​s​h​e​d​ ​k​e​e​p​ ​t​h​e​ ​a​u​d​i​e​n​c​e​ ​t​h​e​y​ ​h​a​d​.
 			 */
@@ -5706,6 +5718,30 @@ export type NamespaceViewerTranslation = {
 			 * I​m​p​o​r​t​e​d
 			 */
 			imported_badge: string
+			/**
+			 * U​p​l​o​a​d​e​d​ ​b​y​ ​{​n​a​m​e​}​ ​o​n​ ​{​d​a​t​e​}
+			 * @param {unknown} date
+			 * @param {unknown} name
+			 */
+			uploaded_by_on: RequiredParams<'date' | 'name'>
+			/**
+			 * U​p​l​o​a​d​e​d​ ​b​y​ ​{​n​a​m​e​}
+			 * @param {unknown} name
+			 */
+			uploaded_by: RequiredParams<'name'>
+			/**
+			 * U​p​l​o​a​d​e​d​ ​o​n​ ​{​d​a​t​e​}
+			 * @param {unknown} date
+			 */
+			uploaded_on: RequiredParams<'date'>
+			/**
+			 * U​p​l​o​a​d​e​d​ ​i​n​t​o​ ​t​h​i​s​ ​a​r​c​h​i​v​e
+			 */
+			uploaded_here: string
+			/**
+			 * U​p​l​o​a​d​e​d
+			 */
+			uploaded_badge: string
 			search_label: {
 				meetings: {
 					/**
@@ -6443,7 +6479,7 @@ export type NamespaceViewerTranslation = {
 			 */
 			close: string
 			/**
-			 * A​d​d​ ​m​e​e​t​i​n​g​s​ ​d​o​w​n​l​o​a​d​e​d​ ​f​r​o​m​ ​C​a​s​s​i​n​i​,​ ​h​e​r​e​ ​o​r​ ​o​n​ ​a​n​o​t​h​e​r​ ​N​e​x​t​c​l​o​u​d​:​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​ ​(​.​o​p​u​s​)​,​ ​o​r​ ​j​u​s​t​ ​i​t​s​ ​t​r​a​n​s​c​r​i​p​t​ ​(​.​j​s​o​n​)​.
+			 * A​d​d​ ​a​ ​m​e​e​t​i​n​g​ ​d​o​w​n​l​o​a​d​e​d​ ​f​r​o​m​ ​C​a​s​s​i​n​i​ ​—​ ​i​t​s​ ​r​e​c​o​r​d​i​n​g​ ​(​.​o​p​u​s​)​ ​o​r​ ​j​u​s​t​ ​i​t​s​ ​t​r​a​n​s​c​r​i​p​t​ ​(​.​j​s​o​n​)​ ​—​ ​o​r​ ​u​p​l​o​a​d​ ​a​n​ ​a​u​d​i​o​ ​r​e​c​o​r​d​i​n​g​ ​a​n​d​ ​l​e​t​ ​C​a​s​s​i​n​i​ ​t​r​a​n​s​c​r​i​b​e​ ​a​n​d​ ​s​u​m​m​a​r​i​s​e​ ​i​t​.
 			 */
 			intro: string
 			/**
@@ -6451,7 +6487,7 @@ export type NamespaceViewerTranslation = {
 			 */
 			drop_label: string
 			/**
-			 * D​r​o​p​ ​f​i​l​e​s​ ​h​e​r​e
+			 * D​r​o​p​ ​m​e​e​t​i​n​g​s​ ​o​r​ ​a​u​d​i​o​ ​h​e​r​e
 			 */
 			drop_here: string
 			/**
@@ -6463,7 +6499,7 @@ export type NamespaceViewerTranslation = {
 			 */
 			choose_files: string
 			/**
-			 * S​p​e​a​k​e​r​ ​n​a​m​e​s​,​ ​t​a​g​s​ ​a​n​d​ ​t​h​e​ ​s​u​m​m​a​r​y​ ​c​o​m​e​ ​w​i​t​h​ ​t​h​e​ ​f​i​l​e​.​ ​Y​o​u​ ​c​h​o​o​s​e​ ​w​h​o​ ​c​a​n​ ​s​e​e​ ​e​a​c​h​ ​m​e​e​t​i​n​g​ ​b​e​f​o​r​e​ ​i​t​ ​i​s​ ​a​d​d​e​d​.
+			 * S​p​e​a​k​e​r​ ​n​a​m​e​s​,​ ​t​a​g​s​ ​a​n​d​ ​t​h​e​ ​s​u​m​m​a​r​y​ ​c​o​m​e​ ​w​i​t​h​ ​a​ ​C​a​s​s​i​n​i​ ​f​i​l​e​.​ ​A​u​d​i​o​ ​i​s​ ​t​r​a​n​s​c​r​i​b​e​d​ ​a​n​d​ ​s​u​m​m​a​r​i​s​e​d​ ​h​e​r​e​,​ ​o​n​c​e​ ​a​ ​m​o​d​e​l​ ​i​s​ ​c​o​n​f​i​g​u​r​e​d​.​ ​Y​o​u​ ​c​h​o​o​s​e​ ​w​h​o​ ​c​a​n​ ​s​e​e​ ​e​a​c​h​ ​m​e​e​t​i​n​g​ ​b​e​f​o​r​e​ ​i​t​ ​i​s​ ​a​d​d​e​d​.
 			 */
 			note: string
 			/**
@@ -6479,7 +6515,7 @@ export type NamespaceViewerTranslation = {
 			 */
 			files_label: string
 			/**
-			 * N​o​t​ ​a​ ​m​e​e​t​i​n​g​ ​f​i​l​e​ ​f​r​o​m​ ​C​a​s​s​i​n​i​,​ ​s​o​ ​i​t​ ​w​a​s​ ​s​k​i​p​p​e​d​.
+			 * N​o​t​ ​a​ ​C​a​s​s​i​n​i​ ​m​e​e​t​i​n​g​ ​f​i​l​e​ ​o​r​ ​a​ ​r​e​a​d​a​b​l​e​ ​a​u​d​i​o​ ​r​e​c​o​r​d​i​n​g​,​ ​s​o​ ​i​t​ ​w​a​s​ ​s​k​i​p​p​e​d​.
 			 */
 			not_a_meeting: string
 			/**
@@ -6590,6 +6626,10 @@ export type NamespaceViewerTranslation = {
 			 */
 			running_adding: string
 			/**
+			 * T​r​a​n​s​c​r​i​b​i​n​g​…
+			 */
+			running_transcribing: string
+			/**
 			 * U​p​l​o​a​d​ ​d​i​d​n​'​t​ ​f​i​n​i​s​h
 			 */
 			settled_upload_failed: string
@@ -6614,9 +6654,17 @@ export type NamespaceViewerTranslation = {
 			 */
 			settled_imported: string
 			/**
+			 * M​e​e​t​i​n​g​ ​c​r​e​a​t​e​d
+			 */
+			settled_created: string
+			/**
 			 * T​r​a​n​s​c​r​i​p​t​ ​o​n​l​y
 			 */
 			preview_transcript_only: string
+			/**
+			 * A​u​d​i​o​ ​r​e​c​o​r​d​i​n​g
+			 */
+			preview_audio: string
 			/**
 			 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​s​p​e​a​k​e​r​|​s​p​e​a​k​e​r​s​}​}
 			 * @param {number} count
@@ -13071,10 +13119,6 @@ export type TranslationFunctions = {
 				 */
 				audience_moderators_description: () => LocalizedString
 				/**
-				 * The person who started the recording always receives it.
-				 */
-				audience_moderators_starter: () => LocalizedString
-				/**
 				 * In a one-to-one conversation, both people receive it.
 				 */
 				audience_moderators_one_to_one: () => LocalizedString
@@ -13090,6 +13134,22 @@ export type TranslationFunctions = {
 				 * No message is posted in the Talk room's chat, because the whole room would see the recording's title and link.
 				 */
 				audience_chat_skipped: () => LocalizedString
+				/**
+				 * Always include the person who started the recording
+				 */
+				always_include_starter_label: () => LocalizedString
+				/**
+				 * The room owner is the starter for automatic recordings. When off, a recording goes only to the chosen audience; the starter still receives it when Cassini captured no audience.
+				 */
+				always_include_starter_description: () => LocalizedString
+				/**
+				 * The person who started the recording always receives it.
+				 */
+				starter_included: () => LocalizedString
+				/**
+				 * The person who started the recording receives it only if the captured audience includes them, or if Cassini captured no audience at all.
+				 */
+				starter_not_included: () => LocalizedString
 				/**
 				 * Applies to recordings that start after you save. Recordings in progress or already published keep the audience they had.
 				 */
@@ -14040,6 +14100,26 @@ export type TranslationFunctions = {
 				 * Imported
 				 */
 				imported_badge: () => LocalizedString
+				/**
+				 * Uploaded by {name} on {date}
+				 */
+				uploaded_by_on: (arg: { date: unknown, name: unknown }) => LocalizedString
+				/**
+				 * Uploaded by {name}
+				 */
+				uploaded_by: (arg: { name: unknown }) => LocalizedString
+				/**
+				 * Uploaded on {date}
+				 */
+				uploaded_on: (arg: { date: unknown }) => LocalizedString
+				/**
+				 * Uploaded into this archive
+				 */
+				uploaded_here: () => LocalizedString
+				/**
+				 * Uploaded
+				 */
+				uploaded_badge: () => LocalizedString
 				search_label: {
 					meetings: {
 						/**
@@ -14725,7 +14805,7 @@ export type TranslationFunctions = {
 				 */
 				close: () => LocalizedString
 				/**
-				 * Add meetings downloaded from Cassini, here or on another Nextcloud: the recording (.opus), or just its transcript (.json).
+				 * Add a meeting downloaded from Cassini — its recording (.opus) or just its transcript (.json) — or upload an audio recording and let Cassini transcribe and summarise it.
 				 */
 				intro: () => LocalizedString
 				/**
@@ -14733,7 +14813,7 @@ export type TranslationFunctions = {
 				 */
 				drop_label: () => LocalizedString
 				/**
-				 * Drop files here
+				 * Drop meetings or audio here
 				 */
 				drop_here: () => LocalizedString
 				/**
@@ -14745,7 +14825,7 @@ export type TranslationFunctions = {
 				 */
 				choose_files: () => LocalizedString
 				/**
-				 * Speaker names, tags and the summary come with the file. You choose who can see each meeting before it is added.
+				 * Speaker names, tags and the summary come with a Cassini file. Audio is transcribed and summarised here, once a model is configured. You choose who can see each meeting before it is added.
 				 */
 				note: () => LocalizedString
 				/**
@@ -14761,7 +14841,7 @@ export type TranslationFunctions = {
 				 */
 				files_label: () => LocalizedString
 				/**
-				 * Not a meeting file from Cassini, so it was skipped.
+				 * Not a Cassini meeting file or a readable audio recording, so it was skipped.
 				 */
 				not_a_meeting: () => LocalizedString
 				/**
@@ -14865,6 +14945,10 @@ export type TranslationFunctions = {
 				 */
 				running_adding: () => LocalizedString
 				/**
+				 * Transcribing…
+				 */
+				running_transcribing: () => LocalizedString
+				/**
 				 * Upload didn't finish
 				 */
 				settled_upload_failed: () => LocalizedString
@@ -14889,9 +14973,17 @@ export type TranslationFunctions = {
 				 */
 				settled_imported: () => LocalizedString
 				/**
+				 * Meeting created
+				 */
+				settled_created: () => LocalizedString
+				/**
 				 * Transcript only
 				 */
 				preview_transcript_only: () => LocalizedString
+				/**
+				 * Audio recording
+				 */
+				preview_audio: () => LocalizedString
 				/**
 				 * {count|num} {{speaker|speakers}}
 				 */

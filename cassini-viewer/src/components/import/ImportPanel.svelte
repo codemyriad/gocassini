@@ -290,9 +290,10 @@
             share: item.audience.length > 0,
             audience: item.audience.map(({ type, id, label }) => ({ type, id, label })),
           };
+          const kind = item.preview?.format === "audio" ? "audio" : "meeting";
           const stagedPath = await dataProvider.stageImportUpload(item.file, (sent) => {
             patch(item.key, { sentBytes: sent });
-          }, sharing);
+          }, sharing, kind);
           // This upload is already durable. Queue it independently so a large
           // selection cannot upload fully and then hit the 50-file batch cap.
           removePending(item.key);
@@ -392,8 +393,10 @@
 
   // What a running row says. The operator's stages after the upload are one
   // step to the person importing: their meeting is being added.
-  function runningLabel(state: ImportJobRecord["state"]): string {
-    return state === "uploading" ? text.running_uploading() : text.running_adding();
+  function runningLabel(job: ImportJobRecord): string {
+    if (job.state === "uploading") return text.running_uploading();
+    if (job.kind === "audio" && job.state === "validating") return text.running_transcribing();
+    return text.running_adding();
   }
 
   // One plain line per settled row. The operator's own error text is for
@@ -409,7 +412,7 @@
       case "canceled":
         return text.settled_canceled();
       default:
-        return text.settled_imported();
+        return job.kind === "audio" ? text.settled_created() : text.settled_imported();
     }
   }
 
@@ -420,7 +423,7 @@
 
   function previewLine(preview: ImportPreview): string {
     const parts = [
-      preview.hasAudio ? "" : text.preview_transcript_only(),
+      preview.format === "audio" ? text.preview_audio() : preview.hasAudio ? "" : text.preview_transcript_only(),
       formatImportDate(preview.dateLabel),
       formatImportDuration(preview.durationMs),
     ];
@@ -469,7 +472,7 @@
       id="import-file-input"
       type="file"
       multiple
-      accept=".opus,.ogg,.oga,.ogx,.json,audio/ogg,application/ogg,application/json"
+      accept=".opus,.ogg,.oga,.ogx,.json,.mp3,.m4a,.m4b,.wav,.aac,.flac,.webm,.weba,.aif,.aiff,.wma,.amr,.3gp,audio/*,application/ogg,application/json"
       class="hidden"
       on:change={(event) => {
         acceptFiles(event.currentTarget.files);
@@ -605,7 +608,7 @@
                 <div class="import-text">
                   <span class="import-title">{job.sourceName}</span>
                   {#if running}
-                    <span class="import-meta">{runningLabel(job.state)}</span>
+                    <span class="import-meta">{runningLabel(job)}</span>
                     <progress class="progress progress-primary import-bar"></progress>
                   {:else if isFailure(job)}
                     <span class="import-meta">

@@ -911,3 +911,45 @@ func TestMeetingFormatSurvivesHardwareRefresh(t *testing.T) {
 		t.Fatalf("legacy settings: %+v %v", loaded, err)
 	}
 }
+
+// The starter-share option is a tri-state persisted field: absent keeps the
+// historical always-share behaviour, and an explicit false survives unrelated
+// updates.
+func TestPutSettingsAcceptsShareWithStarter(t *testing.T) {
+	rt := newSettingsTestRuntime(t)
+
+	rec := httptest.NewRecorder()
+	rt.handlePutSettings(rec, httptest.NewRequest(http.MethodPut, "/settings",
+		strings.NewReader(`{"quality":"balanced","share_with_starter":false}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200 (body=%s)", rec.Code, rec.Body.String())
+	}
+	saved, err := LoadOrInitSettings(rt.settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.SharesWithStarter() {
+		t.Fatal("share_with_starter = true, want false")
+	}
+
+	rec = httptest.NewRecorder()
+	rt.handlePutSettings(rec, httptest.NewRequest(http.MethodPut, "/settings",
+		strings.NewReader(`{"quality":"fast"}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unrelated update code = %d, want 200", rec.Code)
+	}
+	saved, err = LoadOrInitSettings(rt.settingsPath)
+	if err != nil || saved.SharesWithStarter() {
+		t.Fatalf("unrelated update changed share_with_starter: %v %v", saved.SharesWithStarter(), err)
+	}
+
+	rec = httptest.NewRecorder()
+	rt.handlePutSettings(rec, httptest.NewRequest(http.MethodPut, "/settings",
+		strings.NewReader(`{"share_with_starter":true}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("turn-on code = %d, want 200", rec.Code)
+	}
+	if !rt.currentSettings().SharesWithStarter() {
+		t.Fatal("share_with_starter did not turn back on")
+	}
+}

@@ -110,6 +110,15 @@ it("saves the recording audience option", async () => {
   await expect.element(moderators).toBeChecked();
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect.poll(() => saved.share_audience).toBe("moderators");
+
+  // The starter option is explicit in the same save, and defaults on.
+  const starter = page.getByRole("checkbox", { name: /^Always include the person who started/ });
+  await expect.element(starter).toBeChecked();
+  await starter.click();
+  await expect.element(starter).not.toBeChecked();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect.poll(() => saved.share_with_starter).toBe(false);
+  await expect.poll(() => writes.at(-1)).toMatchObject({ share_with_starter: false });
 });
 
 it("keeps publication separate from source retention and explicitly opts into deletion", async () => {

@@ -46,6 +46,8 @@ export interface ImportFileRequest {
 // One import job as the operator serves it (GET imports).
 export interface ImportJobRecord {
   origin?: "upload" | "cli";
+  /** "audio" rows are transcribed and summarised by Cassini before delivery. */
+  kind?: "meeting" | "audio";
   id: string;
   batchId: string;
   createdBy: string;
@@ -82,7 +84,7 @@ export function importJobTerminal(state: ImportJobRecord["state"]): boolean {
 
 // What the local parse learned about a dropped file.
 export interface ImportPreview {
-  format: "opus" | "json";
+  format: "opus" | "json" | "audio";
   title: string;
   dateLabel: string;
   durationMs: number;
@@ -103,17 +105,50 @@ export async function parseImportPreview(file: File): Promise<ImportPreview> {
     throw new Error(get(LL).viewer.browse.import.file_empty());
   }
   if (bytes[0] === 0x4f && bytes[1] === 0x67 && bytes[2] === 0x67 && bytes[3] === 0x53) {
-    const { manifest } = await extractPortableManifestFromArrayBuffer(bytes);
-    return describePortableManifest(manifest, "opus");
+    try {
+      const { manifest } = await extractPortableManifestFromArrayBuffer(bytes);
+      return describePortableManifest(manifest, "opus");
+    } catch (error) {
+      // A raw Ogg/Opus recording is not a portable meeting, but it is still a
+      // meeting source: the operator transcribes it. The file name is the only
+      // thing the browser can say about it without decoding the whole upload.
+      if (looksLikeAudio(file)) return describeAudioUpload(file);
+      throw error;
+    }
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(stripUTF8BOM(new TextDecoder().decode(bytes)));
   } catch {
+    if (looksLikeAudio(file)) return describeAudioUpload(file);
     throw new Error(get(LL).viewer.browse.import.not_portable());
   }
   const { manifest } = await extractTranscriptionDocument(parsed);
   return describePortableManifest(manifest, "json");
+}
+
+// looksLikeAudio is a filename/MIME hint only. It exists to keep a clearly
+// non-meeting file from reaching the operator; the operator's ffprobe is the
+// authority on whether the bytes are actually readable audio.
+const AUDIO_EXTENSIONS = /\.(mp3|m4a|m4b|mp4a|wav|aac|flac|ogg|oga|opus|webm|weba|aif|aiff|wma|amr|3gp|3gpp)$/i;
+
+function looksLikeAudio(file: File): boolean {
+  return file.type.startsWith("audio/") || AUDIO_EXTENSIONS.test(file.name);
+}
+
+function describeAudioUpload(file: File): ImportPreview {
+  const title = file.name.replace(/\.[^.]+$/, "").trim() || get(LL).viewer.browse.import.untitled();
+  return {
+    format: "audio",
+    title,
+    dateLabel: "",
+    durationMs: 0,
+    speakerCount: 0,
+    tagCount: 0,
+    markCount: 0,
+    hasSummary: false,
+    hasAudio: true,
+  };
 }
 
 function describePortableManifest(

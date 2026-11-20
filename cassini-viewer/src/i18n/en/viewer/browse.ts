@@ -52,6 +52,13 @@ const browse = {
     imported_on: "Imported on {date}",
     imported_here: "Imported into this archive",
     imported_badge: "Imported",
+    // Tooltip on a row's Uploaded badge: the meeting was built from an audio
+    // recording. {name} is who uploaded it, {date} the day.
+    uploaded_by_on: "Uploaded by {name} on {date}",
+    uploaded_by: "Uploaded by {name}",
+    uploaded_on: "Uploaded on {date}",
+    uploaded_here: "Uploaded into this archive",
+    uploaded_badge: "Uploaded",
     // The search field's placeholder, by what the list is showing and what search can find.
     search_label: {
       meetings: {
@@ -320,16 +327,16 @@ const browse = {
     title: "Import meetings",
     close: "Close import",
     intro:
-      "Add meetings downloaded from Cassini, here or on another Nextcloud: the recording (.opus), or just its transcript (.json).",
+      "Add a meeting downloaded from Cassini — its recording (.opus) or just its transcript (.json) — or upload an audio recording and let Cassini transcribe and summarise it.",
     drop_label: "Drop files to import",
-    drop_here: "Drop files here",
+    drop_here: "Drop meetings or audio here",
     drop_more: "Drop more files",
     choose_files: "Choose files",
-    note: "Speaker names, tags and the summary come with the file. You choose who can see each meeting before it is added.",
+    note: "Speaker names, tags and the summary come with a Cassini file. Audio is transcribed and summarised here, once a model is configured. You choose who can see each meeting before it is added.",
     share_all_with: "Share all with",
     share_all_placeholder: "A person, group or team",
     files_label: "Files to import",
-    not_a_meeting: "Not a meeting file from Cassini, so it was skipped.",
+    not_a_meeting: "Not a Cassini meeting file or a readable audio recording, so it was skipped.",
     reading: "Reading…",
     // {percent} is a number from 0 to 100.
     uploading_percent: "Uploading {percent}%",
@@ -365,6 +372,8 @@ const browse = {
     // What a running import says.
     running_uploading: "Uploading…",
     running_adding: "Adding…",
+    // A raw audio upload being transcribed and summarised before delivery.
+    running_transcribing: "Transcribing…",
     // What a finished import says.
     settled_upload_failed: "Upload didn't finish",
     settled_server_failed: "Import on the server didn't finish",
@@ -372,8 +381,11 @@ const browse = {
     settled_staged: "Uploaded, not started",
     settled_canceled: "Canceled",
     settled_imported: "Imported",
+    // An audio upload that became a meeting, rather than a file imported whole.
+    settled_created: "Meeting created",
     // Parts of a dropped file's summary line, joined with " · ".
     preview_transcript_only: "Transcript only",
+    preview_audio: "Audio recording",
     // Plural; see the translator guide. {count}: speakers in the file.
     preview_speakers: "{count:number|num} {{speaker|speakers}}",
     // Plural; see the translator guide. {count}: tags in the file.

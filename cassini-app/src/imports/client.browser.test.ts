@@ -32,6 +32,11 @@ it("registers owner metadata and sharing before sending bytes, then confirms sta
  expect(mock.events).toEqual(["prepare","mkdir","put","staged"]);
  expect(mock.body().files[0]).toMatchObject({stagedPath:path,expectedBytes:3,sourceName:"test.json",share:true,audience:[{type:"user",id:"bob",label:"Bob Lee"}]});
 });
+it("registers a raw audio upload as an audio source",async()=>{
+ const mock = mockUpload();
+ const path = await stageImportUpload(new File(["123"],"standup.m4a"),undefined,undefined,"audio");
+ expect(mock.body().files[0]).toMatchObject({stagedPath:path,sourceName:"standup.m4a",kind:"audio"});
+});
 it("does not upload when DB preparation fails",async()=>{
  const mock=mockUpload(201,503);
  await expect(stageImportUpload(new File(["123"],"test.json"))).rejects.toThrow();

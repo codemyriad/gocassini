@@ -218,6 +218,12 @@ export interface Settings {
    * frozen on the job at recording start.
    */
   share_audience?: ShareAudience;
+  /**
+   * Whether the recording starter (the room owner for automatic recordings)
+   * always receives the recording, even when they are not in the chosen
+   * audience. Missing means the historical default, true.
+   */
+  share_with_starter?: boolean;
   active_model?: string;
   active_revision?: string;
   quality: SettingsQuality;
@@ -242,6 +248,12 @@ export interface SettingsUpdate {
   source_retention?: "storage-policy" | "delete-after-processing";
   transcription_enabled?: boolean;
   share_audience?: ShareAudience;
+  /**
+   * Whether the recording starter (the room owner for automatic recordings)
+   * always receives the recording, even when they are not in the chosen
+   * audience. Missing means the historical default, true.
+   */
+  share_with_starter?: boolean;
   active_model?: string;
   active_revision?: string;
   quality?: SettingsQuality;

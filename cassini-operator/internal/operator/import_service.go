@@ -237,11 +237,14 @@ func (s *importService) list(w http.ResponseWriter, r *http.Request, caller stri
 type importCreateRequest struct {
 	Prepare bool `json:"prepare"`
 	Files   []struct {
-		ExpectedBytes int64             `json:"expectedBytes"`
-		StagedPath    string            `json:"stagedPath"`
-		SourceName    string            `json:"sourceName"`
-		Share         bool              `json:"share"`
-		Audience      []importPrincipal `json:"audience"`
+		ExpectedBytes int64  `json:"expectedBytes"`
+		StagedPath    string `json:"stagedPath"`
+		SourceName    string `json:"sourceName"`
+		// Kind is "meeting" (a portable Cassini file) or "audio" (a raw
+		// recording to transcribe and summarise). Omitted means "meeting".
+		Kind     string            `json:"kind"`
+		Share    bool              `json:"share"`
+		Audience []importPrincipal `json:"audience"`
 	} `json:"files"`
 }
 
@@ -274,8 +277,16 @@ func (s *importService) create(w http.ResponseWriter, r *http.Request, caller st
 			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		if !request.Prepare && (file.Share || len(file.Audience) > 0 || file.ExpectedBytes != 0 || strings.TrimSpace(file.SourceName) != "") {
-			writeJSONError(w, http.StatusBadRequest, "sharing is decided when the upload is registered; a submit names only staged paths")
+		if !request.Prepare && (file.Share || len(file.Audience) > 0 || file.ExpectedBytes != 0 || strings.TrimSpace(file.SourceName) != "" || strings.TrimSpace(file.Kind) != "") {
+			writeJSONError(w, http.StatusBadRequest, "sharing and kind are decided when the upload is registered; a submit names only staged paths")
+			return
+		}
+		kind := strings.TrimSpace(file.Kind)
+		if kind == "" {
+			kind = importKindMeeting
+		}
+		if kind != importKindMeeting && kind != importKindAudio {
+			writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("unknown import kind %q", file.Kind))
 			return
 		}
 		sharing := importAudience{Share: file.Share}
@@ -313,7 +324,7 @@ func (s *importService) create(w http.ResponseWriter, r *http.Request, caller st
 		}
 		jobs = append(jobs, ImportJob{
 			State: state, StagingState: stagingState, ExpectedBytes: file.ExpectedBytes,
-			ID: ulid.Make().String(), BatchID: batchID, CreatedBy: caller,
+			ID: ulid.Make().String(), BatchID: batchID, CreatedBy: caller, Kind: kind,
 			SourceName: sourceName, StagedPath: staged, Sharing: sharing,
 		})
 	}
@@ -558,11 +569,17 @@ func (s *importService) performImport(ctx context.Context, job ImportJob) (meeti
 			audience = append(audience, sharePrincipal{Type: principal.Type, ID: principal.ID})
 		}
 	}
-	return s.importer.run(ctx, meetingImportRequest{
+	message := meetingImportRequest{
 		ImportID: job.ID, CreatedBy: job.CreatedBy, LocalPath: local, Audience: audience,
-	}, func(state, phase string) {
+	}
+	report := func(state, phase string) {
 		_ = s.setState(job.ID, state, phase, "")
-	})
+	}
+	if job.Kind == importKindAudio {
+		message.Title = audioTitleFromSource(job.SourceName)
+		return s.importer.runAudio(ctx, message, report)
+	}
+	return s.importer.run(ctx, message, report)
 }
 
 func (s *importService) setState(id, state, phase, errText string) error {

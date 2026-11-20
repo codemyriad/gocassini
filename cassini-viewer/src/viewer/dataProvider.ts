@@ -249,15 +249,16 @@ export interface DataProvider {
   // so the tab is absent rather than present and failing.
   //
   // stageImportUpload first registers the upload with the operator — source
-  // name, size and the SHARING, which is final from then on — then puts the
-  // file into the CALLER'S OWN Files (the operator later pulls it as the
-  // caller and removes it after a successful import) and resolves to the
-  // staged path startImports is given. Progress is byte-level, for the
-  // per-file bar.
+  // name, size, the KIND (a complete portable meeting, or raw audio to
+  // transcribe) and the SHARING, all final from then on — then puts the file
+  // into the CALLER'S OWN Files (the operator later pulls it as the caller and
+  // removes it after a successful import) and resolves to the staged path
+  // startImports is given. Progress is byte-level, for the per-file bar.
   stageImportUpload?(
     file: File,
     onProgress?: (sentBytes: number, totalBytes: number) => void,
     sharing?: ImportSharingRequest,
+    kind?: "meeting" | "audio",
   ): Promise<string>;
   // startImports queues registered uploads whose bytes have landed. A file is
   // named by its staged path only; sharing was decided at registration.

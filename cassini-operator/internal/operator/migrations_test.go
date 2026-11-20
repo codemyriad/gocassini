@@ -510,6 +510,7 @@ func TestNewestMigrationHasARollbackTest(t *testing.T) {
 		"share_notice_dismissals":  true,
 		"job_audience_mode":        true,
 		"event_outbox":             true,
+		"import_job_kind":          true,
 	}
 	newest := migrations[len(migrations)-1].Name
 	if !covered[newest] {
@@ -781,5 +782,43 @@ func TestMigrateDownDropsEventOutbox(t *testing.T) {
 	}
 	if event, ok, err := store.nextDueEvent(ctx, nowUTCString()); err != nil || !ok || event.ID != "evt_after_upgrade" {
 		t.Fatalf("nextDueEvent() after re-upgrade = %+v, %v, %v", event, ok, err)
+	}
+}
+
+// A rollback past 0029 forgets that a row was an audio recording to build; every
+// row reads as a portable meeting again. Nothing else about the row changes,
+// and the re-upgrade restores the default, so an old worker never mistakes an
+// audio row for a ready meeting.
+func TestMigrateDownImportJobKindDefaultsToMeeting(t *testing.T) {
+	migrations, err := loadMigrations()
+	if err != nil {
+		t.Fatalf("loadMigrations() error = %v", err)
+	}
+	at := migrationIndex(migrations, "import_job_kind")
+	if at < 0 {
+		t.Fatal("no import_job_kind migration")
+	}
+	store, err := OpenStore(filepath.Join(t.TempDir(), "jobs.sqlite3"))
+	if err != nil {
+		t.Fatalf("OpenStore() error = %v", err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	job := ImportJob{ID: "AUDIOKIND1", BatchID: "b", CreatedBy: "alice", SourceName: "a.m4a", StagedPath: ".CassiniImports/a.m4a", Kind: importKindAudio}
+	if err := store.CreateImportJobs(ctx, []ImportJob{job}); err != nil {
+		t.Fatalf("CreateImportJobs() error = %v", err)
+	}
+	if err := store.migrateDownTo(migrations[at].Version - 1); err != nil {
+		t.Fatalf("migrateDownTo(%d) error = %v", migrations[at].Version-1, err)
+	}
+	if _, err := store.db.Exec(`SELECT kind FROM import_jobs`); err == nil {
+		t.Fatal("import_jobs.kind survived the down migration")
+	}
+	if err := store.ensureSchema(); err != nil {
+		t.Fatalf("ensureSchema() error = %v", err)
+	}
+	got, ok, err := store.ImportJob(ctx, "AUDIOKIND1")
+	if err != nil || !ok || got.Kind != importKindMeeting {
+		t.Fatalf("import kind after re-upgrade = %q, ok=%v, err=%v; want meeting", got.Kind, ok, err)
 	}
 }
