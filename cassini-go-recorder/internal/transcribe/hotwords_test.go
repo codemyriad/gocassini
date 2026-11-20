@@ -393,7 +393,7 @@ func TestDecodingDefaultsToGreedyWithoutHints(t *testing.T) {
 	fp32 := transducerPaths(t)
 	fp32.ModelID = ModelParakeetUltra
 	int8 := transducerPaths(t)
-	int8.ModelID, int8.BpeVocabFile = ModelParakeetUltraInt8, ""
+	int8.ModelID, int8.BpeVocabFile = ModelFluidSpeechProInt8, ""
 	for _, value := range []string{"unset", "", " ", "1", "true", "TRUE", "yes", "on", "maybe"} {
 		if value == "unset" {
 			t.Setenv(envHintsDisabled, "")
@@ -404,7 +404,7 @@ func TestDecodingDefaultsToGreedyWithoutHints(t *testing.T) {
 		if hintsEnabled() {
 			t.Fatalf("%s=%q enables hints", envHintsDisabled, value)
 		}
-		for name, paths := range map[string]ModelPaths{"ctc": ctc, "ultra": fp32, "ultra-int8": int8} {
+		for name, paths := range map[string]ModelPaths{"ctc": ctc, "ultra": fp32, "fluid-int8": int8} {
 			vocabulary := vocabularyForBuild([]string{"Librocco"}, []AudioStream{{Index: 1, SpeakerLabel: "Silvio"}, {Index: 2, SpeakerLabel: "Chris"}})
 			dec, prov, err := resolveDecoderVocabulary(t.TempDir(), vocabulary, paths)
 			if err != nil {

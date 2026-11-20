@@ -35,7 +35,7 @@ func TestParakeetUltraSpecs(t *testing.T) {
 	if !SupportsCUDA(ModelParakeetUltra) {
 		t.Fatal("Ultra fp32 must install and probe on CUDA")
 	}
-	for _, id := range []ModelID{ModelParakeetUltraInt8, ModelParakeet110M, ModelParakeetV3Int8, "unknown"} {
+	for _, id := range []ModelID{ModelFluidSpeechProInt8, ModelParakeetUltraInt8, ModelParakeet110M, ModelParakeetV3Int8, "unknown"} {
 		if SupportsCUDA(id) {
 			t.Fatalf("%s must not run on CUDA", id)
 		}
@@ -95,7 +95,9 @@ func TestParakeetUltraDecoders(t *testing.T) {
 // Each catalogue entry installs exactly the files its spec loads, under the
 // revision dist.gocassini.com publishes (the SHA-256 of the `sha256sum`
 // listing of the files sorted by name, not Moondream's model.safetensors,
-// credited in the NOTICE). Both share v3's tokenizer file.
+// credited in the NOTICE). Both share v3's tokenizer file. Ultra int8 v2 is
+// retired (D-1092) but its entry still describes the files an upgraded
+// install has.
 func TestParakeetUltraCatalogueEntries(t *testing.T) {
 	c := modelstore.Shipped()
 	if err := c.Validate(); err != nil {
@@ -106,9 +108,12 @@ func TestParakeetUltraCatalogueEntries(t *testing.T) {
 		ModelParakeetUltra:     "5030173982bf58c7975b4b26bd47cc4612f54c5c93846756f5c27cbff27f94f6",
 		ModelParakeetUltraInt8: "50c15b94ea9cb1c2f8dbcdcbc0f15b450169154deeb206923cb5388f60892366",
 	} {
-		m, err := c.Model(string(id), "")
+		m, retired, err := c.Lookup(string(id), "")
 		if err != nil {
 			t.Fatal(err)
+		}
+		if retired != knownModels[id].Retired {
+			t.Fatalf("%s retired in the catalogue = %v, in its spec = %v", id, retired, knownModels[id].Retired)
 		}
 		if m.Kind != modelstore.KindSpeech || m.License != "CC-BY-4.0" || m.SourceURL != "https://huggingface.co/moondream/parakeet-ultra" {
 			t.Fatalf("catalogue entry %+v", m)
@@ -164,11 +169,12 @@ func TestParakeetUltraCatalogueEntries(t *testing.T) {
 	}
 }
 
-// Parakeet Ultra int8 v1 and Parakeet v3 are retired: a configuration that
-// still names one resolves to the shipped Ultra model of the same precision,
-// drops the revision it pinned (that was the retired model's), and says so. An
-// id no catalogue ever shipped is left alone, so the build reports it
-// unavailable rather than transcribing with another model.
+// Parakeet Ultra int8 v2 and v1 and Parakeet v3 are retired: a configuration
+// that still names one resolves to the shipped model of the same precision
+// (Fluid Speech Pro int8 or Ultra fp32), drops the revision it pinned (that was
+// the retired model's), and says so. An id no catalogue ever shipped is left
+// alone, so the build reports it unavailable rather than transcribing with
+// another model.
 func TestRetiredModelResolvesToItsReplacement(t *testing.T) {
 	cases := []struct {
 		explicit, revision, device string
@@ -177,11 +183,13 @@ func TestRetiredModelResolvesToItsReplacement(t *testing.T) {
 		{"parakeet-tdt-0.6b-v3", "9125e6a7beb392821f19a3633b80bb2847599580e34ed42a4128732978ad759c", "cuda",
 			ResolvedModel{ID: ModelParakeetUltra, Replaces: "parakeet-tdt-0.6b-v3"}},
 		{"parakeet-tdt-0.6b-v3-int8", "5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf", "cpu",
-			ResolvedModel{ID: ModelParakeetUltraInt8, Replaces: "parakeet-tdt-0.6b-v3-int8"}},
+			ResolvedModel{ID: ModelFluidSpeechProInt8, Replaces: "parakeet-tdt-0.6b-v3-int8"}},
 		{"parakeet-ultra-0.6b-int8", "18cb623004dd6c15999b93cb70b14d8a1f6e8f3a2a97ff733f104bfc3494f6a9", "cpu",
-			ResolvedModel{ID: ModelParakeetUltraInt8, Replaces: "parakeet-ultra-0.6b-int8"}},
+			ResolvedModel{ID: ModelFluidSpeechProInt8, Replaces: "parakeet-ultra-0.6b-int8"}},
 		{"parakeet-ultra-0.6b-int8-v2", "50c15b94ea9cb1c2f8dbcdcbc0f15b450169154deeb206923cb5388f60892366", "cpu",
-			ResolvedModel{ID: ModelParakeetUltraInt8, Revision: "50c15b94ea9cb1c2f8dbcdcbc0f15b450169154deeb206923cb5388f60892366"}},
+			ResolvedModel{ID: ModelFluidSpeechProInt8, Replaces: "parakeet-ultra-0.6b-int8-v2"}},
+		{"fluid-speech-pro-0.6b-int8", "366116b549382a16e31cfa571c2e7e442814e950541187b9ab9ab3e6236b4f5b", "cpu",
+			ResolvedModel{ID: ModelFluidSpeechProInt8, Revision: "366116b549382a16e31cfa571c2e7e442814e950541187b9ab9ab3e6236b4f5b"}},
 		{"no-such-model", "abc", "cpu", ResolvedModel{ID: "no-such-model", Revision: "abc"}},
 	}
 	for _, c := range cases {
@@ -192,24 +200,29 @@ func TestRetiredModelResolvesToItsReplacement(t *testing.T) {
 }
 
 // The environment the operator, an image or an administrator sets is where a
-// retired pin survives an upgrade. The build moves to the shipped Ultra export
-// and its log says why.
-func TestBuildConfigMovesARetiredEnvPinToUltra(t *testing.T) {
+// retired pin survives an upgrade. The build moves to the shipped model of the
+// same precision and its log says why.
+func TestBuildConfigMovesARetiredEnvPinToItsReplacement(t *testing.T) {
 	t.Setenv("CASSINI_STT_MODEL", "parakeet-tdt-0.6b-v3-int8")
 	t.Setenv("CASSINI_STT_REVISION", "5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf")
-	t.Setenv("CASSINI_STT_ADDITIONAL_MODELS", "parakeet-tdt-0.6b-v3, parakeet-ultra-0.6b-int8, parakeet-tdt-ctc-110m-en-int8")
+	t.Setenv("CASSINI_STT_ADDITIONAL_MODELS", "parakeet-tdt-0.6b-v3, parakeet-ultra-0.6b-int8, parakeet-ultra-0.6b-int8-v2, parakeet-tdt-ctc-110m-en-int8")
 	cfg := DefaultBuildConfig()
-	if cfg.ModelID != ModelParakeetUltraInt8 || cfg.ModelRevision != "" || cfg.ReplacedModelID != "parakeet-tdt-0.6b-v3-int8" {
+	if cfg.ModelID != ModelFluidSpeechProInt8 || cfg.ModelRevision != "" || cfg.ReplacedModelID != "parakeet-tdt-0.6b-v3-int8" {
 		t.Fatalf("model %s revision %q replaced %q", cfg.ModelID, cfg.ModelRevision, cfg.ReplacedModelID)
 	}
-	if !reflect.DeepEqual(cfg.AdditionalModels, []ModelID{ModelParakeetUltra, ModelParakeetUltraInt8, ModelParakeet110M}) {
+	if !reflect.DeepEqual(cfg.AdditionalModels, []ModelID{ModelParakeetUltra, ModelFluidSpeechProInt8, ModelFluidSpeechProInt8, ModelParakeet110M}) {
 		t.Fatalf("additional models %v", cfg.AdditionalModels)
 	}
 
-	t.Setenv("CASSINI_STT_MODEL", "parakeet-ultra-0.6b-int8")
-	t.Setenv("CASSINI_STT_REVISION", "18cb623004dd6c15999b93cb70b14d8a1f6e8f3a2a97ff733f104bfc3494f6a9")
-	if cfg := DefaultBuildConfig(); cfg.ModelID != ModelParakeetUltraInt8 || cfg.ModelRevision != "" || cfg.ReplacedModelID != "parakeet-ultra-0.6b-int8" {
-		t.Fatalf("model %s revision %q replaced %q", cfg.ModelID, cfg.ModelRevision, cfg.ReplacedModelID)
+	for retired, revision := range map[string]string{
+		"parakeet-ultra-0.6b-int8":    "18cb623004dd6c15999b93cb70b14d8a1f6e8f3a2a97ff733f104bfc3494f6a9",
+		"parakeet-ultra-0.6b-int8-v2": "50c15b94ea9cb1c2f8dbcdcbc0f15b450169154deeb206923cb5388f60892366",
+	} {
+		t.Setenv("CASSINI_STT_MODEL", retired)
+		t.Setenv("CASSINI_STT_REVISION", revision)
+		if cfg := DefaultBuildConfig(); cfg.ModelID != ModelFluidSpeechProInt8 || cfg.ModelRevision != "" || string(cfg.ReplacedModelID) != retired {
+			t.Fatalf("model %s revision %q replaced %q", cfg.ModelID, cfg.ModelRevision, cfg.ReplacedModelID)
+		}
 	}
 
 	t.Setenv("CASSINI_STT_MODEL", "no-such-model")

@@ -36,17 +36,17 @@ describe("voice separation in the speech models", () => {
     expect(voiceSeparationModel(inventory([speech, { ...diarizer, kind: undefined }]))).toBeUndefined();
     for (const device of ["cpu", "cuda"]) {
       for (const quality of ["fast", "balanced", "best"]) {
-        expect(transcriptionModelId(quality, device)).toMatch(/^parakeet-/);
+        expect(transcriptionModelId(quality, device)).not.toBe(VOICE_SEPARATION_MODEL_ID);
       }
     }
   });
 
-  it("runs Parakeet Ultra on every tier but the CPU fast one", () => {
+  it("runs Parakeet Ultra fp32 on every GPU tier and CPU best, Fluid Speech Pro int8 on CPU balanced", () => {
     for (const quality of ["fast", "balanced", "best"]) {
       expect(transcriptionModelId(quality, "cuda")).toBe("parakeet-ultra-0.6b");
     }
     expect(transcriptionModelId("best", "cpu")).toBe("parakeet-ultra-0.6b");
-    expect(transcriptionModelId("balanced", "cpu")).toBe("parakeet-ultra-0.6b-int8-v2");
+    expect(transcriptionModelId("balanced", "cpu")).toBe("fluid-speech-pro-0.6b-int8");
     expect(transcriptionModelId("fast", "cpu")).toBe("parakeet-tdt-ctc-110m-en-int8");
   });
 

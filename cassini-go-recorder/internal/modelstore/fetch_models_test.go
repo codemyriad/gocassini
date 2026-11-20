@@ -7,7 +7,8 @@ import (
 )
 
 // deployment/models/fetch-models.sh restates the dist artifacts of the Parakeet
-// Ultra models so an image or CI job can fetch them without the Go binary. Every line
+// Ultra and Fluid Speech Pro models so an image or CI job can fetch them
+// without the Go binary. Every line
 // it carries must be the catalogue's own mapping, or a fetch verifies against
 // digests the app would reject.
 func TestFetchModelsScriptMatchesCatalogue(t *testing.T) {
@@ -45,7 +46,7 @@ func TestFetchModelsScriptMatchesCatalogue(t *testing.T) {
 		}
 		seen[id] = true
 	}
-	for _, id := range []string{"parakeet-ultra-0.6b", "parakeet-ultra-0.6b-int8-v2"} {
+	for _, id := range []string{"parakeet-ultra-0.6b", "fluid-speech-pro-0.6b-int8"} {
 		if !seen[id] {
 			t.Fatalf("fetch-models.sh does not list %s", id)
 		}

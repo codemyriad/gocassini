@@ -104,7 +104,7 @@ func TestApplyToEnv(t *testing.T) {
 	// CPU: no VRAM probe, device pinned so the child cannot re-detect, and the
 	// thread budget (cores minus reserve) rather than the CUDA single thread.
 	probeGPUFreeMB = func() (int, bool) { return 0, false }
-	out, err := l.applyToEnv([]string{"X=1", "CASSINI_STT_DEVICE=cuda"}, deviceCPU, modelParakeetUltraInt8)
+	out, err := l.applyToEnv([]string{"X=1", "CASSINI_STT_DEVICE=cuda"}, deviceCPU, modelFluidSpeechProInt8)
 	if err != nil {
 		t.Fatalf("CPU applyToEnv() error = %v", err)
 	}
@@ -119,7 +119,7 @@ func TestApplyToEnv(t *testing.T) {
 	}
 	// The governor sized this build for a model; the child must load exactly
 	// that one rather than re-deriving it from the tier.
-	if !contains(out, "CASSINI_STT_MODEL="+modelParakeetUltraInt8) {
+	if !contains(out, "CASSINI_STT_MODEL="+modelFluidSpeechProInt8) {
 		t.Errorf("admitted model was not pinned into the child environment: %v", out)
 	}
 
@@ -767,7 +767,7 @@ func TestMinFreeMemForBuild(t *testing.T) {
 	}{
 		{deviceCUDA, modelParakeetUltraFp32, 6144},
 		{deviceCPU, modelParakeet110M, 512 + 1024},
-		{deviceCPU, modelParakeetUltraInt8, 2048 + 1024},
+		{deviceCPU, modelFluidSpeechProInt8, 2048 + 1024},
 		{deviceCPU, modelParakeetUltraFp32, 3584 + 1024},
 		// An unrecognised model is charged the largest known footprint: the
 		// governor exists to keep a build from OOMing Nextcloud and Talk.
@@ -838,7 +838,7 @@ func TestCPUFloorsRankByTierCost(t *testing.T) {
 	// hold — so assert the ordering rather than only the individual numbers.
 	l := resourceLimitsFromEnv()
 	fast := l.minFreeMemForBuild(deviceCPU, modelParakeet110M)
-	balanced := l.minFreeMemForBuild(deviceCPU, modelParakeetUltraInt8)
+	balanced := l.minFreeMemForBuild(deviceCPU, modelFluidSpeechProInt8)
 	best := l.minFreeMemForBuild(deviceCPU, modelParakeetUltraFp32)
 	if !(fast < balanced && balanced < best) {
 		t.Fatalf("CPU floors are not ordered by tier cost: fast=%d balanced=%d best=%d", fast, balanced, best)
@@ -917,7 +917,7 @@ func newAdmissionTestRuntime(t *testing.T, cassiniBin, jobID string) (*Runtime, 
 		logger: log.New(io.Discard, "", 0),
 		settings: STTSettings{
 			TranscriptionEnabled: true,
-			ActiveModel:          modelParakeetUltraInt8, ActiveRevision: "r1",
+			ActiveModel:          modelFluidSpeechProInt8, ActiveRevision: "r1",
 			Quality: sttQualityBalanced, DeviceOverride: deviceCPU,
 		},
 		maxBuildResourceDeferrals: 2,
@@ -925,7 +925,7 @@ func newAdmissionTestRuntime(t *testing.T, cassiniBin, jobID string) (*Runtime, 
 	return rt, runPath
 }
 
-const readyInt8Inventory = `[{"id":"parakeet-ultra-0.6b-int8-v2","revision":"r1","installed":true,"ready":true,"device":"cpu"}]`
+const readyInt8Inventory = `[{"id":"fluid-speech-pro-0.6b-int8","revision":"r1","installed":true,"ready":true,"device":"cpu"}]`
 
 // A native crash after media preparation leaves a partial bundle. The audio-only
 // rebuild must start from an empty directory, or the meeting build refuses it
@@ -964,7 +964,7 @@ func attemptTranscriptionDetail(t *testing.T, rt *Runtime, jobID string) string 
 // the audio.
 func TestExecuteBuildCLIDefersTransientTranscriptionAdmission(t *testing.T) {
 	const jobID = "probe-deferred"
-	rt, runPath := newAdmissionTestRuntime(t, fakeModelCassini(t, `[{"id":"parakeet-ultra-0.6b-int8-v2","revision":"r1","installed":true,"ready":false,"device":"cpu"}]`), jobID)
+	rt, runPath := newAdmissionTestRuntime(t, fakeModelCassini(t, `[{"id":"fluid-speech-pro-0.6b-int8","revision":"r1","installed":true,"ready":false,"device":"cpu"}]`), jobID)
 	t.Setenv("FAKE_PROBE_EXIT", "75")
 	task := buildTask{JobID: jobID, AttemptNumber: 1, ArtifactRunPath: runPath}
 
@@ -1015,7 +1015,7 @@ func TestExecuteBuildCLIKeepsAudioWhenModelRAMNeverFrees(t *testing.T) {
 	rt, runPath := newAdmissionTestRuntime(t, fakeModelCassini(t, readyInt8Inventory), jobID)
 	t.Setenv("CASSINI_BUILD_MEM_WAIT_SECS", "0")
 	limits := resourceLimitsFromEnv()
-	audioFloor, modelFloor := limits.minFreeMemForBuild(deviceCPU, ""), limits.minFreeMemForBuild(deviceCPU, modelParakeetUltraInt8)
+	audioFloor, modelFloor := limits.minFreeMemForBuild(deviceCPU, ""), limits.minFreeMemForBuild(deviceCPU, modelFluidSpeechProInt8)
 	if audioFloor >= modelFloor {
 		t.Fatalf("audio floor %d is not below the model floor %d", audioFloor, modelFloor)
 	}
@@ -1038,7 +1038,7 @@ func TestExecuteBuildCLIKeepsAudioWhenModelRAMNeverFrees(t *testing.T) {
 // audio at once rather than defer.
 func TestExecuteBuildCLIKeepsAudioWhenTheModelIsNotInstalled(t *testing.T) {
 	const jobID = "model-missing"
-	rt, runPath := newAdmissionTestRuntime(t, fakeModelCassini(t, `[{"id":"parakeet-ultra-0.6b-int8-v2","revision":"r1","installed":false,"ready":false,"device":"cpu"}]`), jobID)
+	rt, runPath := newAdmissionTestRuntime(t, fakeModelCassini(t, `[{"id":"fluid-speech-pro-0.6b-int8","revision":"r1","installed":false,"ready":false,"device":"cpu"}]`), jobID)
 	meetingPath, err := rt.executeBuildCLI(context.Background(), buildTask{JobID: jobID, AttemptNumber: 1, ArtifactRunPath: runPath})
 	if err != nil {
 		t.Fatalf("executeBuildCLI() = %v, want the audio preserved", err)

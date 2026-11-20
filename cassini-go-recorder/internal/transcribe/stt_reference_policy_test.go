@@ -7,7 +7,7 @@ import (
 )
 
 func TestBoundaryPolicyPreservesUtterancesOnlyForParakeetModels(t *testing.T) {
-	for _, id := range []ModelID{ModelParakeetUltra, ModelParakeetUltraInt8} {
+	for _, id := range []ModelID{ModelParakeetUltra, ModelFluidSpeechProInt8, ModelParakeetUltraInt8} {
 		p := vadDecodePolicyForModel(id)
 		if !p.preserveVADSpan || p.contextMS != 30 || p.tailPaddingMS != 0 || p.headPaddingMS != 0 || !p.disableSyntheticPadding {
 			t.Fatalf("%s policy: %+v", id, p)
@@ -25,10 +25,10 @@ func TestBoundaryPolicyPreservesUtterancesOnlyForParakeetModels(t *testing.T) {
 }
 
 // With biasing turned back on, a hint-capable bundle of either Ultra
-// precision keeps the vocabulary and beam search.
+// precision, or of Fluid Speech Pro, keeps the vocabulary and beam search.
 func TestReferenceFrontendRetainsVocabularyHints(t *testing.T) {
 	enableHints(t)
-	for _, id := range []ModelID{ModelParakeetUltra, ModelParakeetUltraInt8} {
+	for _, id := range []ModelID{ModelParakeetUltra, ModelFluidSpeechProInt8, ModelParakeetUltraInt8} {
 		dir := t.TempDir()
 		paths := transducerPaths(t)
 		paths.ModelID = id
@@ -57,7 +57,7 @@ func TestReferenceFrontendRetainsVocabularyHints(t *testing.T) {
 // No native recognizer is needed: a short reference chunk must return before
 // constructing a stream. This covers the former zero-frame native abort.
 func TestReferenceSkipsChunksWithoutTwoFeatureFrames(t *testing.T) {
-	for _, id := range []ModelID{ModelParakeetUltra, ModelParakeetUltraInt8} {
+	for _, id := range []ModelID{ModelParakeetUltra, ModelFluidSpeechProInt8, ModelParakeetUltraInt8} {
 		policy := vadDecodePolicyForModel(id)
 		for _, n := range []int{0, 1, 159, 160, 319} {
 			for _, vadSegment := range []bool{false, true} {
@@ -74,7 +74,7 @@ func TestReferenceSkipsChunksWithoutTwoFeatureFrames(t *testing.T) {
 func TestReferenceINT8WithoutHintTokenizerUsesGreedy(t *testing.T) {
 	enableHints(t)
 	paths := transducerPaths(t)
-	paths.ModelID = ModelParakeetUltraInt8
+	paths.ModelID = ModelFluidSpeechProInt8
 	paths.BpeVocabFile = ""
 	for _, terms := range [][]string{nil, {"Librocco"}} {
 		decoder, provenance, err := resolveDecoder(t.TempDir(), terms, paths)

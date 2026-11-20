@@ -59,18 +59,19 @@ const QUALITY_LABELS: Record<SettingsQuality, () => string> = {
 // quality setting, so the strip names what actually transcribes.
 const MODEL_TIERS: Record<string, SettingsQuality> = {
   "parakeet-tdt-ctc-110m-en-int8": "fast",
+  "fluid-speech-pro-0.6b-int8": "balanced",
   "parakeet-ultra-0.6b-int8-v2": "balanced",
   "parakeet-ultra-0.6b-int8": "balanced",
   "parakeet-ultra-0.6b": "best",
 };
 
 // The model a quality tier runs on a device. On the GPU every tier runs the
-// full-precision Parakeet Ultra; on the CPU, best is Ultra fp32, balanced its
-// int8 build and fast the small 110M model.
+// full-precision Parakeet Ultra; on the CPU, best is Ultra fp32, balanced
+// Fluid Speech Pro int8 (a fine-tune of Ultra) and fast the small 110M model.
 export function speechModelFor(quality: string, device: string): string {
   if (device === "cuda") return "parakeet-ultra-0.6b";
   if (quality === "best") return "parakeet-ultra-0.6b";
-  return quality === "fast" ? "parakeet-tdt-ctc-110m-en-int8" : "parakeet-ultra-0.6b-int8-v2";
+  return quality === "fast" ? "parakeet-tdt-ctc-110m-en-int8" : "fluid-speech-pro-0.6b-int8";
 }
 
 const FINISHED_JOB_STATES = ["ready", "failed", "cancelled"];
@@ -122,11 +123,11 @@ export function pipelineStatus(input: PipelineInput): PipelineStatus {
     // Switched on with a model that is not there: recordings publish without a
     // transcript, so the strip must not read as healthy. One being installed
     // is different: recordings wait for it. Either way, while a retired model
-    // it replaced is still installed (such as Ultra int8 v1 or v3 after an
-    // upgrade), recordings are transcribed with that one meanwhile, and the
-    // strip says so. So it does for an installed model whose runtime check
-    // failed: the operator names a stand-in for an installed model only then,
-    // not while its check is still to run.
+    // it replaced is still installed (such as Ultra int8 v2, Ultra int8 v1 or
+    // v3 after an upgrade), recordings are transcribed with that one
+    // meanwhile, and the strip says so. So it does for an installed model
+    // whose runtime check failed: the operator names a stand-in for an
+    // installed model only then, not while its check is still to run.
     const installing = input.activeModelDownload;
     const meanwhile = input.activeModelInstalled != null && input.activeModelStandIn ? ` · ${t.reason.previous_model_meanwhile()}` : "";
     if (input.activeModelInstalled === false && installing) {
