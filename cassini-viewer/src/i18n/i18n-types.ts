@@ -6586,7 +6586,7 @@ export type NamespaceViewerTranslation = {
 			 */
 			running_uploading: string
 			/**
-			 * W​a​i​t​i​n​g​ ​t​o​ ​s​t​a​r​t​…
+			 * W​a​i​t​i​n​g​ ​f​o​r​ ​t​h​e​ ​s​e​r​v​e​r​…
 			 */
 			running_waiting: string
 			/**
@@ -14878,7 +14878,7 @@ export type TranslationFunctions = {
 				 */
 				running_uploading: () => LocalizedString
 				/**
-				 * Waiting to start…
+				 * Waiting for the server…
 				 */
 				running_waiting: () => LocalizedString
 				/**

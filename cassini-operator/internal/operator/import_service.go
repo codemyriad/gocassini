@@ -3,6 +3,7 @@ package operator
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -70,10 +71,13 @@ type importService struct {
 	// one worker, which runs their imports one at a time in the order they
 	// were queued, so one person's imports never wait behind another's (#509).
 	userWorkers map[string]bool
-	// fetchSlots bounds how many staged files are downloaded at once across
-	// all callers: each fetch can be up to maxImportUploadBytes on the work
-	// volume. Nil means unbounded (handler-only tests).
-	fetchSlots chan struct{}
+	// importSlots bounds how many imports run at once across all callers. A
+	// slot is held for the whole import, not just the download: the staged
+	// copy (up to maxImportUploadBytes) stays on the work volume, and the
+	// validating `cassini publish` writes a second one, until the import
+	// settles. Waiters are served in arrival order. Nil means unbounded
+	// (handler-only tests).
+	importSlots chan struct{}
 	// perform runs one import; nil means performImport. A seam for tests.
 	perform func(ctx context.Context, job ImportJob) (meetingImportResult, error)
 	// userLocks serializes one caller's staging work — registering uploads,
@@ -82,8 +86,16 @@ type importService struct {
 	userLocks keyedLocks
 }
 
-// maxConcurrentImportFetches bounds simultaneous staged-file downloads.
-const maxConcurrentImportFetches = 3
+// maxConcurrentImports bounds imports running at once across all callers.
+const maxConcurrentImports = 3
+
+// importFetchIdleTimeout is how long a staged-file download may go without
+// receiving a byte before it is abandoned. Without it, a Nextcloud that sends
+// headers and then stalls would hold an import slot until someone cancels.
+var importFetchIdleTimeout = 2 * time.Minute
+
+// importFetchIdlePoll is how often the download's progress is checked.
+var importFetchIdlePoll = 5 * time.Second
 
 // isRunning reports whether a worker is on this job right now.
 func (s *importService) isRunning(id string) bool {
@@ -129,12 +141,12 @@ func newImportService(rt *Runtime, exapp ExAppConfig, logger *log.Logger) *impor
 		return nil
 	}
 	service := &importService{
-		rt:         rt,
-		exapp:      exapp,
-		logger:     logger,
-		importer:   newMeetingImporter(rt.cfg, exapp, rt, logger),
-		client:     &http.Client{Transport: &http.Transport{ResponseHeaderTimeout: ncFilesProxyHeadersTTL}},
-		fetchSlots: make(chan struct{}, maxConcurrentImportFetches),
+		rt:          rt,
+		exapp:       exapp,
+		logger:      logger,
+		importer:    newMeetingImporter(rt.cfg, exapp, rt, logger),
+		client:      &http.Client{Transport: &http.Transport{ResponseHeaderTimeout: ncFilesProxyHeadersTTL}},
+		importSlots: make(chan struct{}, maxConcurrentImports),
 	}
 	service.startWorker()
 	service.startStagingGC()
@@ -251,7 +263,7 @@ func (s *importService) list(w http.ResponseWriter, r *http.Request, caller stri
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	setImportQueuePositions(jobs)
+	setImportQueuePositions(jobs, s.runningIDs())
 	writeJSON(w, http.StatusOK, map[string]any{"imports": jobs})
 }
 
@@ -561,18 +573,24 @@ func (s *importService) drainUser(user string) {
 }
 
 // runImportJob runs one job to a settled state. It reports false when it did
-// not start the job because the row is no longer queued.
+// not start the job: the row is no longer queued, or the claim could not be
+// written. Either way the caller's worker stops and the next dispatch, a
+// second later, looks again.
 func (s *importService) runImportJob(job ImportJob) bool {
 	rt := s.rt
 	ctx, cancel := context.WithCancel(rt.ctx)
 	defer cancel()
-	// Recheck under the lock so a cancel that landed after the queue read wins.
+	// Read and register under the lock. cancel() writes the row first and then
+	// takes the lock to find the run, so a cancel either lands before this read
+	// (and the job is not started) or finds the run registered here (and stops
+	// it). The read is one indexed row; holding the lock across it is the price
+	// of that ordering.
 	s.mu.Lock()
 	current, ok, err := rt.store.ImportJob(ctx, job.ID)
 	if err != nil || !ok || current.State != importStateQueued {
 		s.mu.Unlock()
 		if err != nil {
-			s.logf("import %s: %v", job.ID, err)
+			s.logf("import %s: read before start: %v", job.ID, err)
 		}
 		return false
 	}
@@ -587,27 +605,38 @@ func (s *importService) runImportJob(job ImportJob) bool {
 		s.mu.Unlock()
 	}()
 
+	// Wait for one of the shared slots. The row stays queued meanwhile, so
+	// the sheet keeps saying the import is waiting.
+	release, err := s.acquireImportSlot(ctx)
+	if err != nil {
+		s.settleInterrupted(job)
+		return true
+	}
+	defer release()
+	// Claim: move the row off queued. If that cannot be written, do not run
+	// the import — a row still queued would be picked straight up again.
+	if err := s.setState(job.ID, importStateFetching, "fetching", ""); err != nil {
+		s.logf("import %s: claim: %v", job.ID, err)
+		return false
+	}
+
 	perform := s.perform
 	if perform == nil {
 		perform = s.performImport
 	}
 	result, err := perform(ctx, job)
-	if ctx.Err() != nil && rt.ctx.Err() != nil {
-		// Operator shutdown, not a verdict: leave the row for recovery requeue.
-		_ = s.setState(job.ID, importStateQueued, "", "")
-		return true
-	}
 	if ctx.Err() != nil {
-		// A user cancel: the row is already canceled, and the guard inside
-		// SetImportJobState keeps any late write from resurrecting it.
+		s.settleInterrupted(job)
 		return true
 	}
 	if err != nil {
 		s.logf("import %s (%s): %v", job.ID, job.SourceName, err)
-		_ = s.setState(job.ID, importStateFailed, "", err.Error())
+		s.saveState(job.ID, importStateFailed, "", err.Error())
 		return true
 	}
-	_ = rt.store.SetImportJobProvenance(context.Background(), job.ID, result.Format, result.ContentID, result.SourceRoomID, result.CreatedAtUTC, result.RecordedAtLocal)
+	if err := rt.store.SetImportJobProvenance(context.Background(), job.ID, result.Format, result.ContentID, result.SourceRoomID, result.CreatedAtUTC, result.RecordedAtLocal); err != nil {
+		s.logf("import %s: persist provenance: %v", job.ID, err)
+	}
 	if err := rt.store.SetImportJobOutcome(context.Background(), job.ID, result.DeliveredName, result.FileID, result.ImportedAtUTC); err != nil {
 		s.logf("import %s: persist outcome: %v", job.ID, err)
 		return true
@@ -618,49 +647,108 @@ func (s *importService) runImportJob(job ImportJob) bool {
 	// quota and is theirs to see; it never fails a landed import.
 	if err := s.exapp.davDeleteUserFile(context.Background(), s.client, job.CreatedBy, job.StagedPath); err != nil {
 		s.logf("import %s: staged copy not removed (%v)", job.ID, err)
-	} else {
-		_ = rt.store.MarkImportStagingRemoved(context.Background(), job.ID)
+	} else if err := rt.store.MarkImportStagingRemoved(context.Background(), job.ID); err != nil {
+		s.logf("import %s: record staged copy removed: %v", job.ID, err)
 	}
 	return true
 }
 
-// acquireFetchSlot waits for one of the shared download slots. The job stays
-// queued while it waits, so the caller's sheet keeps saying so.
-func (s *importService) acquireFetchSlot(ctx context.Context) (func(), error) {
-	if s.fetchSlots == nil {
+// settleInterrupted records a run that stopped because its context ended.
+// Operator shutdown is not a verdict: the row goes back to queued for the
+// recovery requeue. A user cancel has already written the row, and the guard
+// inside SetImportJobState keeps any late write from resurrecting it.
+func (s *importService) settleInterrupted(job ImportJob) {
+	if s.rt.ctx.Err() != nil {
+		s.saveState(job.ID, importStateQueued, "", "")
+	}
+}
+
+// acquireImportSlot waits for one of the shared import slots.
+func (s *importService) acquireImportSlot(ctx context.Context) (func(), error) {
+	if s.importSlots == nil {
 		return func() {}, nil
 	}
 	select {
-	case s.fetchSlots <- struct{}{}:
-		return func() { <-s.fetchSlots }, nil
+	case s.importSlots <- struct{}{}:
+		return func() { <-s.importSlots }, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+}
+
+// fetchStaged downloads the caller's staged file to local, abandoning the
+// download when no byte has arrived for importFetchIdleTimeout.
+func (s *importService) fetchStaged(ctx context.Context, job ImportJob, local string) error {
+	idleTimeout, poll := importFetchIdleTimeout, importFetchIdlePoll
+	fetchCtx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	errStalled := fmt.Errorf("the download from your Files stalled for %s", idleTimeout)
+	done := make(chan struct{})
+	watched := make(chan struct{})
+	// Stop the watchdog and wait for it, so it never outlives the download.
+	defer func() {
+		close(done)
+		<-watched
+	}()
+	go func() {
+		defer close(watched)
+		// The file appears once headers arrive (those have their own timeout)
+		// and grows as the body streams in.
+		var lastSize int64 = -1
+		lastProgress := time.Now()
+		tick := time.NewTicker(poll)
+		defer tick.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-fetchCtx.Done():
+				return
+			case <-tick.C:
+			}
+			var size int64
+			if info, err := os.Stat(local); err == nil {
+				size = info.Size()
+			}
+			if size != lastSize {
+				lastSize, lastProgress = size, time.Now()
+				continue
+			}
+			if time.Since(lastProgress) >= idleTimeout {
+				cancel(errStalled)
+				return
+			}
+		}
+	}()
+	_, _, status, err := s.exapp.davDownloadFile(fetchCtx, s.client, job.CreatedBy, job.StagedPath, local, maxImportUploadBytes)
+	if err == nil {
+		return nil
+	}
+	if errors.Is(context.Cause(fetchCtx), errStalled) && ctx.Err() == nil {
+		return errStalled
+	}
+	if status == http.StatusNotFound {
+		return fmt.Errorf("the staged file %s is no longer in your Files", job.StagedPath)
+	}
+	return fmt.Errorf("fetch the staged file: %w", err)
 }
 
 func (s *importService) performImport(ctx context.Context, job ImportJob) (meetingImportResult, error) {
 	if job.isCLI() {
 		return meetingImportResult{}, fmt.Errorf("%s", importCLIRecovery)
 	}
-	release, err := s.acquireFetchSlot(ctx)
-	if err != nil {
-		return meetingImportResult{}, err
-	}
-	_ = s.setState(job.ID, importStateFetching, "fetching", "")
 	staging, err := os.MkdirTemp(rtWorkScratchDir(s.rt.cfg.WorkRoot), ".import-fetch-")
 	if err != nil {
-		release()
 		return meetingImportResult{}, err
 	}
-	defer func() { _ = os.RemoveAll(staging) }()
-	local := filepath.Join(staging, "staged")
-	_, _, status, err := s.exapp.davDownloadFile(ctx, s.client, job.CreatedBy, job.StagedPath, local, maxImportUploadBytes)
-	release()
-	if err != nil {
-		if status == http.StatusNotFound {
-			return meetingImportResult{}, fmt.Errorf("the staged file %s is no longer in your Files", job.StagedPath)
+	defer func() {
+		if err := os.RemoveAll(staging); err != nil {
+			s.logf("import %s: remove scratch: %v", job.ID, err)
 		}
-		return meetingImportResult{}, fmt.Errorf("fetch the staged file: %w", err)
+	}()
+	local := filepath.Join(staging, "staged")
+	if err := s.fetchStaged(ctx, job, local); err != nil {
+		return meetingImportResult{}, err
 	}
 	audience := make([]sharePrincipal, 0, len(job.Sharing.Audience))
 	if job.Sharing.Share {
@@ -671,12 +759,21 @@ func (s *importService) performImport(ctx context.Context, job ImportJob) (meeti
 	return s.importer.run(ctx, meetingImportRequest{
 		ImportID: job.ID, CreatedBy: job.CreatedBy, LocalPath: local, Audience: audience,
 	}, func(state, phase string) {
-		_ = s.setState(job.ID, state, phase, "")
+		s.saveState(job.ID, state, phase, "")
 	})
 }
 
 func (s *importService) setState(id, state, phase, errText string) error {
 	return s.rt.store.SetImportJobState(context.Background(), id, state, phase, errText)
+}
+
+// saveState is setState where the caller cannot act on a failure: it is
+// logged, never dropped silently. A stale state is corrected by the next
+// write or by the startup requeue.
+func (s *importService) saveState(id, state, phase, errText string) {
+	if err := s.setState(id, state, phase, errText); err != nil {
+		s.logf("import %s: save state %s: %v", id, state, err)
+	}
 }
 
 func (s *importService) logf(format string, args ...any) {

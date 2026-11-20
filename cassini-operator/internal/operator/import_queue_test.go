@@ -3,9 +3,15 @@ package operator
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sort"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -46,15 +52,18 @@ func TestImportQueuePositionsCountOnlyTheCallersOwnWork(t *testing.T) {
 	at := func(sec int) string { return time.Date(2026, 11, 19, 10, 0, sec, 0, time.UTC).Format(time.RFC3339) }
 	// Newest first, as ImportJobsFor lists them.
 	jobs := []ImportJob{
-		{ID: "q3", State: importStateQueued, CreatedAt: at(5)},
-		{ID: "q2", State: importStateQueued, CreatedAt: at(4)},
-		{ID: "failed", State: importStateFailed, CreatedAt: at(3)},
-		{ID: "q1", State: importStateQueued, CreatedAt: at(2)},
-		{ID: "running", State: importStateValidating, CreatedAt: at(1)},
+		{ID: "q3", State: importStateQueued, CreatedAt: at(6)},
+		{ID: "q2", State: importStateQueued, CreatedAt: at(5)},
+		{ID: "failed", State: importStateFailed, CreatedAt: at(4)},
+		{ID: "q1", State: importStateQueued, CreatedAt: at(3)},
+		{ID: "running", State: importStateValidating, CreatedAt: at(2)},
+		// Left in a processing state by a failed write, with no worker on it:
+		// it must not count as ahead.
+		{ID: "stale", State: importStateIndexing, CreatedAt: at(1)},
 		{ID: "done", State: importStateDone, CreatedAt: at(0)},
 		{ID: "cli", State: importStateQueued, StagedPath: "local:/tmp/x.opus", CreatedAt: at(0)},
 	}
-	setImportQueuePositions(jobs)
+	setImportQueuePositions(jobs, map[string]bool{"running": true})
 	want := map[string]int{"q1": 1, "q2": 2, "q3": 3}
 	for _, job := range jobs {
 		expected, queued := want[job.ID]
@@ -66,11 +75,23 @@ func TestImportQueuePositionsCountOnlyTheCallersOwnWork(t *testing.T) {
 		}
 	}
 
-	// With nothing running, the oldest queued import is next: position 0.
-	idle := []ImportJob{{ID: "only", State: importStateQueued, CreatedAt: at(0)}}
-	setImportQueuePositions(idle)
+	// With no worker on anything, the stale row is ignored and the oldest
+	// queued import is next: position 0.
+	idle := []ImportJob{{ID: "next", State: importStateQueued, CreatedAt: at(1)}, {ID: "stale", State: importStateIndexing, CreatedAt: at(0)}}
+	setImportQueuePositions(idle, nil)
 	if idle[0].QueuePosition == nil || *idle[0].QueuePosition != 0 {
 		t.Fatalf("idle position: %v", idle[0].QueuePosition)
+	}
+
+	// The worker is on a job that is still queued, waiting for a slot: that
+	// job is next (0), the one after it 1.
+	waiting := []ImportJob{{ID: "later", State: importStateQueued, CreatedAt: at(1)}, {ID: "slot", State: importStateQueued, CreatedAt: at(0)}}
+	setImportQueuePositions(waiting, map[string]bool{"slot": true})
+	if p := waiting[1].QueuePosition; p == nil || *p != 0 {
+		t.Fatalf("job waiting for a slot: %v", p)
+	}
+	if p := waiting[0].QueuePosition; p == nil || *p != 1 {
+		t.Fatalf("job behind it: %v", p)
 	}
 }
 
@@ -176,28 +197,132 @@ func TestOneCallersImportDoesNotHoldAnothers(t *testing.T) {
 	waitForImportState(t, s, "a2", importStateCanceled)
 }
 
-func TestFetchSlotsBoundConcurrentDownloads(t *testing.T) {
-	s := &importService{fetchSlots: make(chan struct{}, 2)}
+func TestImportSlotsCapImportsAcrossCallers(t *testing.T) {
+	var current, peak atomic.Int32
+	started := make(chan string, 16)
+	release := make(chan struct{})
+	s := queueWorkerService(t, func(ctx context.Context, job ImportJob) (meetingImportResult, error) {
+		n := current.Add(1)
+		for {
+			p := peak.Load()
+			if n <= p || peak.CompareAndSwap(p, n) {
+				break
+			}
+		}
+		defer current.Add(-1)
+		started <- job.ID
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return meetingImportResult{}, ctx.Err()
+		}
+		return meetingImportResult{}, errors.New("test import settled")
+	})
+	s.importSlots = make(chan struct{}, 3)
+	const users = 10
+	var jobs []ImportJob
+	for i := 0; i < users; i++ {
+		user := fmt.Sprintf("user%02d", i)
+		jobs = append(jobs, queueTestJob("j-"+user, user))
+	}
+	if err := s.rt.store.CreateImportJobs(context.Background(), jobs); err != nil {
+		t.Fatal(err)
+	}
+	s.dispatch()
+
+	// Exactly three run; the other seven wait, still queued.
+	for i := 0; i < 3; i++ {
+		select {
+		case <-started:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("only %d imports started", i)
+		}
+	}
+	select {
+	case id := <-started:
+		t.Fatalf("%s started beyond the cap", id)
+	case <-time.After(150 * time.Millisecond):
+	}
+	queued := 0
+	for _, job := range jobs {
+		if got, _, _ := s.rt.store.ImportJob(context.Background(), job.ID); got.State == importStateQueued {
+			queued++
+		}
+	}
+	if queued != users-3 {
+		t.Fatalf("%d imports still queued, want %d", queued, users-3)
+	}
+
+	// Releasing them lets every import run, never more than three at once.
+	close(release)
+	for _, job := range jobs {
+		waitForImportState(t, s, job.ID, importStateFailed)
+	}
+	if p := peak.Load(); p != 3 {
+		t.Fatalf("peak concurrent imports %d, want 3", p)
+	}
+}
+
+func TestImportSlotWaitEndsWithTheImport(t *testing.T) {
+	s := &importService{importSlots: make(chan struct{}, 1)}
 	ctx := context.Background()
-	first, err := s.acquireFetchSlot(ctx)
+	held, err := s.acquireImportSlot(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := s.acquireFetchSlot(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// A third waits, and gives up when its import is canceled.
+	// A second waits, and gives up when its import is canceled.
 	waiting, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
 	defer cancel()
-	if _, err := s.acquireFetchSlot(waiting); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("third fetch: %v", err)
+	if _, err := s.acquireImportSlot(waiting); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("second import: %v", err)
 	}
-	first()
-	third, err := s.acquireFetchSlot(ctx)
+	held()
+	next, err := s.acquireImportSlot(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second()
-	third()
+	next()
+}
+
+func TestStalledStagedDownloadIsAbandoned(t *testing.T) {
+	idle, poll := importFetchIdleTimeout, importFetchIdlePoll
+	importFetchIdleTimeout, importFetchIdlePoll = 300*time.Millisecond, 20*time.Millisecond
+	t.Cleanup(func() { importFetchIdleTimeout, importFetchIdlePoll = idle, poll })
+
+	var stall atomic.Bool
+	stall.Store(true)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("OggS partial"))
+		w.(http.Flusher).Flush()
+		if stall.Load() {
+			// Headers and some bytes, then nothing until the client gives up.
+			<-r.Context().Done()
+		}
+	}))
+	defer srv.Close()
+	s := &importService{
+		exapp:  ExAppConfig{NextcloudURL: srv.URL, AppID: "cassini", AppVersion: "1", AppSecret: "secret"},
+		client: srv.Client(),
+		logger: log.New(testWriter{t}, "", 0),
+	}
+	job := queueTestJob("stalled", "alice")
+	local := filepath.Join(t.TempDir(), "staged")
+
+	begun := time.Now()
+	err := s.fetchStaged(context.Background(), job, local)
+	if err == nil || !strings.Contains(err.Error(), "stalled") {
+		t.Fatalf("stalled download: %v", err)
+	}
+	if elapsed := time.Since(begun); elapsed > 5*time.Second {
+		t.Fatalf("gave up after %s", elapsed)
+	}
+
+	// A download that keeps flowing is not cut off.
+	stall.Store(false)
+	if err := s.fetchStaged(context.Background(), job, local); err != nil {
+		t.Fatalf("complete download: %v", err)
+	}
+	if got, _ := os.ReadFile(local); string(got) != "OggS partial" {
+		t.Fatalf("downloaded %q", got)
+	}
 }

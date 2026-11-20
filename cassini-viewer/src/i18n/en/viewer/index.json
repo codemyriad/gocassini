@@ -263,7 +263,7 @@
       "importing": "Importing…",
       "import_meetings": "Import {count:number|num} {{meeting|meetings}}",
       "running_uploading": "Uploading…",
-      "running_waiting": "Waiting to start…",
+      "running_waiting": "Waiting for the server…",
       "running_queued": "Queued · {count:number|num} ahead",
       "running_fetching": "Fetching…",
       "running_checking": "Checking…",

@@ -77,7 +77,7 @@ it.each(["staged", "failed", "canceled"] as const)("polls a retried %s import th
  });
  open(provider);
  await page.getByRole("button", { name: "Retry", exact: true }).click();
- await expect.element(page.getByText("Waiting to start…", { exact: true })).toBeVisible();
+ await expect.element(page.getByText("Waiting for the server…", { exact: true })).toBeVisible();
  // The server completes after the immediate post-Retry refresh. Only polling
  // can discover this transition; do not remount or navigate the workbench.
  current = { ...current, state: "done" };

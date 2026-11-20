@@ -33,19 +33,13 @@ const (
 	importStateCanceled     = "canceled"
 )
 
-// importStateProcessing reports a job a worker is running.
-func importStateProcessing(state string) bool {
-	switch state {
-	case importStateFetching, importStateValidating, importStateDelivering, importStateSharing, importStateIndexing:
-		return true
-	}
-	return false
-}
-
 // setImportQueuePositions fills QueuePosition on one caller's queued web
-// imports: the caller's worker runs them oldest first, after whatever it is
-// running now.
-func setImportQueuePositions(jobs []ImportJob) {
+// imports. running is the set of jobs a worker is on right now — not the rows
+// in a processing state, which a failed write can leave behind with no worker.
+// The caller's worker runs one job at a time, so whatever it is on comes
+// first (position 0 if that job is itself still queued, waiting for a slot),
+// then the rest of their queue, oldest first.
+func setImportQueuePositions(jobs []ImportJob, running map[string]bool) {
 	order := make([]int, len(jobs))
 	for i := range order {
 		order[i] = i
@@ -59,12 +53,17 @@ func setImportQueuePositions(jobs []ImportJob) {
 	})
 	ahead := 0
 	for _, i := range order {
-		if importStateProcessing(jobs[i].State) && !jobs[i].isCLI() {
-			ahead++
+		if !running[jobs[i].ID] {
+			continue
 		}
+		if jobs[i].State == importStateQueued {
+			position := 0
+			jobs[i].QueuePosition = &position
+		}
+		ahead++
 	}
 	for _, i := range order {
-		if jobs[i].State != importStateQueued || jobs[i].isCLI() {
+		if jobs[i].State != importStateQueued || jobs[i].isCLI() || running[jobs[i].ID] {
 			continue
 		}
 		position := ahead
