@@ -1,11 +1,13 @@
 package operator
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -20,6 +22,7 @@ import (
 //	GET  insights/<id>            one run + document    200 {run, "document": "…"}
 //	POST insights/<id>/retry      retry a failed run    200 {run} · 409 if busy
 //	POST insights/<id>/name       rename a run          200 {run}
+//	POST insights/<id>/delete     delete a finished run 204 · 409 if busy
 //
 // Mounted on the ROOT mux beside /published/, not under the operator's
 // BasePath, because they are their own top-level prefix in appinfo/info.xml.
@@ -37,7 +40,8 @@ import (
 //     one that does not exist. This is the archive's standing rule (D-521): a
 //     recording you may not read must never reveal that it exists, and the run
 //     that names it inherits that.
-//   - 409 — a retry against a run that is not failed. BeginAttempt is the lock,
+//   - 409 — a retry against a run that is not failed, or a delete against one
+//     that is queued or running. BeginAttempt is the lock,
 //     so of two retries pressed at once one attempt starts and one is refused.
 //   - 502 — a failed scan, or a request with no verified caller identity. The
 //     second means the AppAPI middleware did not run: answering "you may read
@@ -104,7 +108,7 @@ type insightListResponse struct {
 	Insights []InsightRun `json:"insights"`
 }
 
-// register mounts the five operations on the root mux. Two patterns, because
+// register mounts the six operations on the root mux. Two patterns, because
 // Go's ServeMux resolves "/insights" and "/insights/" separately and the
 // manifest declares both the bare and the trailing-slash form of each route.
 func (s *insightService) register(root *http.ServeMux) {
@@ -142,7 +146,7 @@ func (s *insightService) serveCollection(w http.ResponseWriter, r *http.Request)
 	}
 }
 
-// serveItem routes the three per-run paths. The trailing-slash form of the
+// serveItem routes the four per-run paths. The trailing-slash form of the
 // collection lands here too — AppAPI's `^insights\/?$` matches it — so it is
 // forwarded rather than treated as a run whose id is empty.
 func (s *insightService) serveItem(w http.ResponseWriter, r *http.Request) {
@@ -181,6 +185,12 @@ func (s *insightService) serveItem(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.rename(w, r, caller, id)
+	case "delete":
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w, http.MethodPost)
+			return
+		}
+		s.delete(w, r, caller, id)
 	default:
 		http.NotFound(w, r)
 	}
@@ -660,6 +670,99 @@ func (s *insightService) rename(w http.ResponseWriter, r *http.Request, caller, 
 		return
 	}
 	writeJSON(w, http.StatusOK, run)
+}
+
+// --- POST insights/<id>/delete ------------------------------------------------------
+
+// delete removes a finished run and the document it delivered (#499).
+//
+// POST to an action path rather than DELETE on the run, as meeting delete is
+// (D-861): every mutating USER route in the manifest is a POST, and the run's own
+// path is declared GET.
+//
+// The document goes first, as the caller, so Nextcloud puts it in their trash
+// bin where they can restore it. Only then does the row go: a delete that fails
+// at Nextcloud leaves the insight listed and retryable, and one that fails at
+// the row is retried against a document that is already gone, which
+// deleteInsightDocument treats as done.
+//
+// A queued or running run is refused. Its attempt is about to deliver a file, and
+// deleting the row underneath it would leave that file in the caller's Files
+// with nothing in Cassini pointing at it.
+func (s *insightService) delete(w http.ResponseWriter, r *http.Request, caller, id string) {
+	run, ok := s.ownRun(w, r, caller, id)
+	if !ok {
+		return
+	}
+	if run.Status != insightStatusSucceeded && run.Status != insightStatusFailed {
+		writeJSONError(w, http.StatusConflict, "This insight is still running. Delete it once it has finished.")
+		return
+	}
+	if err := s.deleteInsightDocument(r.Context(), run); err != nil {
+		s.logf("insights: delete document of run=%s for caller=%s: %v", id, caller, err)
+		writeJSONError(w, http.StatusBadGateway, "the insight's document could not be deleted from your files")
+		return
+	}
+	err := s.store.DeleteRun(r.Context(), id)
+	switch {
+	case err == nil:
+	case errors.Is(err, errInsightRunBusy):
+		writeJSONError(w, http.StatusConflict, "This insight is still running. Delete it once it has finished.")
+		return
+	case errors.Is(err, sql.ErrNoRows):
+		http.NotFound(w, r)
+		return
+	default:
+		s.logf("insights: delete run=%s for caller=%s: %v", id, caller, err)
+		writeJSONError(w, http.StatusBadGateway, "the insight could not be deleted")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// deleteInsightDocument removes the run's delivered document from the caller's
+// own files, as them.
+//
+// The path is the one the run wrote, but the caller owns that folder and may
+// have moved the document away and put something else under its name. Where the
+// run kept the file id (D-792), the file at the path is checked against it, and
+// a different file is left alone: deleting an insight must never delete a file
+// it did not write. A run delivered before the id was kept has only its path to
+// go on, and that is what it deletes.
+//
+// A document that is no longer at its path counts as deleted. The insight is
+// what the caller asked to remove, and a file they already moved is theirs.
+func (s *insightService) deleteInsightDocument(ctx context.Context, run InsightRun) error {
+	relPath := strings.TrimSpace(run.DocumentPath)
+	if relPath == "" {
+		return nil
+	}
+	// The operator only ever delivers into its own folder (see deliver). A path
+	// outside it is not one this run wrote, whatever the row says.
+	if !strings.HasPrefix(relPath, ncInsightsRoot+"/") {
+		return fmt.Errorf("document path %q is outside %s", relPath, ncInsightsRoot)
+	}
+	if wantID := strings.TrimSpace(run.DocumentFileID); wantID != "" {
+		leaf, err := s.exapp.davPropfindLeafState(ctx, s.client, run.CreatedBy, relPath)
+		if err != nil {
+			return err
+		}
+		if !leaf.Exists {
+			return nil
+		}
+		if leaf.FileID == 0 {
+			// Nextcloud did not say which file this is, so it cannot be told
+			// apart from somebody else's. Refusing keeps the insight listed and
+			// the delete retryable, rather than dropping the row and leaving the
+			// document behind with nothing pointing at it.
+			return fmt.Errorf("PROPFIND %s returned no file id", relPath)
+		}
+		if strconv.FormatInt(leaf.FileID, 10) != wantID {
+			s.logf("insights: run=%s document path %s now holds a different file (id %d, run wrote %s); leaving it in caller=%s's files", run.ID, relPath, leaf.FileID, wantID, run.CreatedBy)
+			return nil
+		}
+	}
+	return s.exapp.davDeleteUserFile(ctx, s.client, run.CreatedBy, relPath)
 }
 
 // ownRun loads a run the caller may see.

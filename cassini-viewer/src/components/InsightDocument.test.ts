@@ -173,6 +173,55 @@ describe("InsightDocument", () => {
     });
   });
 
+  describe("delete (#499)", () => {
+    const finished = (status: InsightRecord["status"]): InsightRecord => ({
+      id: "ins_0123456789abcdef",
+      status,
+      createdBy: "alice",
+      attemptNumber: 1,
+      workflowId: "summarise",
+      workflowVersion: "v0",
+      workflowSha256: "abc",
+      meetingIds: [],
+      roomIds: [],
+      question: "",
+      name: "Design sync",
+      provider: "",
+      model: "",
+      documentPath: "",
+      reason: "",
+      error: "",
+      createdAt: "2026-09-03T10:00:00Z",
+      updatedAt: "2026-09-03T10:00:00Z",
+    });
+    const label = () => get(LL).viewer.insights.document.delete_button_label();
+
+    it("offers the bin on a finished insight where the provider can delete", () => {
+      for (const status of ["succeeded", "failed"] as const) {
+        expect(render(InsightDocument, { props: { insight: finished(status), canDelete: true } }).body).toContain(
+          `aria-label="${label()}"`,
+        );
+      }
+      expect(render(InsightDocument, { props: { insight: finished("succeeded") } }).body).not.toContain(label());
+    });
+
+    it("hides it while the run is queued or running, which the operator would refuse", () => {
+      for (const status of ["queued", "running"] as const) {
+        expect(render(InsightDocument, { props: { insight: finished(status), canDelete: true } }).body).not.toContain(
+          label(),
+        );
+      }
+    });
+
+    it("dispatches rather than deleting, and shows the shell's refusal", () => {
+      expect(insightDocumentSource).toContain('dispatch("delete")');
+      const html = render(InsightDocument, {
+        props: { insight: finished("succeeded"), canDelete: true, deleteError: "Cassini could not delete the insight." },
+      }).body;
+      expect(html).toContain("Cassini could not delete the insight.");
+    });
+  });
+
   describe("rename", () => {
     const named: InsightRecord = {
       id: "ins_0123456789abcdef",

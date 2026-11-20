@@ -1385,6 +1385,7 @@
       "create_unavailable": "L’une de ces réunions ne vous est pas accessible, ou ce déploiement ne peut pas créer d’analyses.",
       "list_unavailable": "Impossible de lister les analyses.",
       "rename_unavailable": "Cette analyse ne vous est pas accessible, ou ce déploiement ne peut pas renommer les analyses.",
+      "delete_unavailable": "",
       "insight_unavailable": "Cette analyse ne vous est pas accessible, ou ce déploiement ne peut pas créer d’analyses.",
       "already_running": "Cette analyse est déjà en cours.",
       "unreachable": {
@@ -1392,21 +1393,24 @@
         "list": "Impossible de joindre Cassini pour lister vos analyses{detail}.",
         "read": "Impossible de joindre Cassini pour lire l’analyse{detail}.",
         "retry": "Impossible de joindre Cassini pour relancer l’analyse{detail}.",
-        "rename": "Impossible de joindre Cassini pour renommer l’analyse{detail}."
+        "rename": "Impossible de joindre Cassini pour renommer l’analyse{detail}.",
+        "delete": ""
       },
       "cassini_failed": {
         "create": "Cassini n’a pas pu lancer l’analyse.",
         "list": "Cassini n’a pas pu lister vos analyses.",
         "read": "Cassini n’a pas pu lire l’analyse.",
         "retry": "Cassini n’a pas pu relancer l’analyse.",
-        "rename": "Cassini n’a pas pu renommer l’analyse."
+        "rename": "Cassini n’a pas pu renommer l’analyse.",
+        "delete": ""
       },
       "failed_status": {
         "create": "Impossible de lancer l’analyse (HTTP {status}).",
         "list": "Impossible de lister vos analyses (HTTP {status}).",
         "read": "Impossible de lire l’analyse (HTTP {status}).",
         "retry": "Impossible de relancer l’analyse (HTTP {status}).",
-        "rename": "Impossible de renommer l’analyse (HTTP {status})."
+        "rename": "Impossible de renommer l’analyse (HTTP {status}).",
+        "delete": ""
       }
     },
     "summary_action": {

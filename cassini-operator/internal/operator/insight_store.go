@@ -337,6 +337,48 @@ WHERE id = ?`, name, id)
 	return s.GetRun(ctx, id)
 }
 
+// DeleteRun removes a finished run and its attempt history (#499).
+//
+// Only a run that is succeeded or failed is deleted, and the check is part of
+// the DELETE itself: a retry that claimed the run between the handler's read and
+// here moves it to running, and this then finds nothing to delete rather than
+// pulling the row out from under an attempt that is about to write to it. That
+// case answers errInsightRunBusy; a run that is not there at all answers
+// sql.ErrNoRows. The attempts are removed in the same transaction rather than
+// left to ON DELETE CASCADE, which only fires on connections that turned
+// foreign keys on.
+func (s *insightStore) DeleteRun(ctx context.Context, id string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin delete insight run: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	var status string
+	if err := tx.QueryRowContext(ctx, `SELECT status FROM insight_runs WHERE id = ?`, id).Scan(&status); err != nil {
+		return err
+	}
+	if status != insightStatusSucceeded && status != insightStatusFailed {
+		return errInsightRunBusy
+	}
+	result, err := tx.ExecContext(ctx, `
+DELETE FROM insight_runs
+WHERE id = ? AND status IN (?, ?)`, id, insightStatusSucceeded, insightStatusFailed)
+	if err != nil {
+		return fmt.Errorf("delete insight run: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if changed == 0 {
+		return errInsightRunBusy
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM insight_run_attempts WHERE run_id = ?`, id); err != nil {
+		return fmt.Errorf("delete insight run attempts: %w", err)
+	}
+	return tx.Commit()
+}
+
 // BeginAttempt moves a queued or failed run to running and returns it, or
 // errInsightRunBusy if it is already queued or running.
 //

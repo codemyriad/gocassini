@@ -1385,6 +1385,7 @@
       "create_unavailable": "One of these meetings is not available to you, or this deployment cannot create insights.",
       "list_unavailable": "Insights could not be listed.",
       "rename_unavailable": "That insight is not available to you, or this deployment cannot rename insights.",
+      "delete_unavailable": "That insight is no longer there, or this deployment cannot delete insights.",
       "insight_unavailable": "That insight is not available to you, or this deployment cannot create insights.",
       "already_running": "This insight is already running.",
       "unreachable": {
@@ -1392,21 +1393,24 @@
         "list": "Could not reach Cassini to list your insights{detail}.",
         "read": "Could not reach Cassini to read the insight{detail}.",
         "retry": "Could not reach Cassini to retry the insight{detail}.",
-        "rename": "Could not reach Cassini to rename the insight{detail}."
+        "rename": "Could not reach Cassini to rename the insight{detail}.",
+        "delete": "Could not reach Cassini to delete the insight{detail}."
       },
       "cassini_failed": {
         "create": "Cassini could not start the insight.",
         "list": "Cassini could not list your insights.",
         "read": "Cassini could not read the insight.",
         "retry": "Cassini could not retry the insight.",
-        "rename": "Cassini could not rename the insight."
+        "rename": "Cassini could not rename the insight.",
+        "delete": "Cassini could not delete the insight. Its document may still be in your Files."
       },
       "failed_status": {
         "create": "Could not start the insight (HTTP {status}).",
         "list": "Could not list your insights (HTTP {status}).",
         "read": "Could not read the insight (HTTP {status}).",
         "retry": "Could not retry the insight (HTTP {status}).",
-        "rename": "Could not rename the insight (HTTP {status})."
+        "rename": "Could not rename the insight (HTTP {status}).",
+        "delete": "Could not delete the insight (HTTP {status})."
       }
     },
     "summary_action": {

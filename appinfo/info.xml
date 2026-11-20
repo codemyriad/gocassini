@@ -475,10 +475,11 @@ Summaries and questions use whichever language model you connect, so their ratin
       </route>
 
       <!--
-        USER: insights. Five operations over four paths — create a run
+        USER: insights. Six operations over five paths — create a run
         (POST insights), list the caller's own runs (GET insights), read one
         with its document (GET insights/<id>), retry a failed one
-        (POST insights/<id>/retry), rename one (POST insights/<id>/name).
+        (POST insights/<id>/retry), rename one (POST insights/<id>/name),
+        delete a finished one with its document (POST insights/<id>/delete).
 
         Declared as one block, and deliberately not folded into
         `^published\/.+$`, because create and retry are the app's FIRST
@@ -495,7 +496,7 @@ Summaries and questions use whichever language model you connect, so their ratin
 
         The id pattern must not swallow the retry path: `[^\/]+` cannot cross a
         `/`, so `^insights\/[^\/]+\/?$` matches `insights/ins_0123…` and leaves
-        `insights/ins_0123…/retry` and `…/name` to the routes below it. See
+        `insights/ins_0123…/retry`, `…/name` and `…/delete` to the routes below it. See
         docs/exapp-update-constraints.md §5a for the command that checks a
         pattern against the paths it must and must not match — and for why a
         release that changes this block must bump <version>.
@@ -519,6 +520,14 @@ Summaries and questions use whichever language model you connect, so their ratin
            creator, the same rule as every other insights/<id> route. -->
       <route>
         <url>^insights\/[^\/]+\/name\/?$</url>
+        <verb>POST</verb>
+        <access_level>USER</access_level>
+      </route>
+      <!-- Delete (#499): the run and the document it delivered, which the
+           operator deletes from the creator's Files as them, so it lands in
+           their trash bin. 404 for anyone but the creator, as above. -->
+      <route>
+        <url>^insights\/[^\/]+\/delete\/?$</url>
         <verb>POST</verb>
         <access_level>USER</access_level>
       </route>

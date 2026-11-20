@@ -741,13 +741,16 @@
     },
     "card": {
       "kind": "Analisi",
-      "meetings": "{count:number|num} {{|riunione|||riunioni|riunioni}}"
+      "meetings": "{count:number|num} {{|riunione|||riunioni|riunioni}}",
+      "sources_unavailable": ""
     },
     "document": {
       "region_label": "Analisi",
       "name_input_label": "Nome dell’analisi",
       "rename_button_label": "Rinomina l’analisi",
       "rename_tooltip": "Rinomina",
+      "delete_button_label": "",
+      "delete_tooltip": "",
       "close_label": "Chiudi l’analisi",
       "rooms": "{count:number|num} {{|conversazione|||conversazioni|conversazioni}}",
       "export_label": "Esporta questa analisi",
@@ -773,6 +776,12 @@
       "template_label": "Schema",
       "provider_label": "Provider",
       "attempt_label": "Tentativo"
+    },
+    "delete": {
+      "confirm_title": "",
+      "confirm_body": "",
+      "confirm_body_no_document": "",
+      "confirm_button": ""
     },
     "export": {
       "written_by": "Scritta da Cassini il {date}",

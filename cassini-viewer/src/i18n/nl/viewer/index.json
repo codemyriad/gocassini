@@ -741,13 +741,16 @@
     },
     "card": {
       "kind": "Inzicht",
-      "meetings": "{count:number|num} {{vergadering|vergaderingen}}"
+      "meetings": "{count:number|num} {{vergadering|vergaderingen}}",
+      "sources_unavailable": ""
     },
     "document": {
       "region_label": "Inzicht",
       "name_input_label": "Naam van het inzicht",
       "rename_button_label": "Naam van het inzicht wijzigen",
       "rename_tooltip": "Naam wijzigen",
+      "delete_button_label": "",
+      "delete_tooltip": "",
       "close_label": "Inzicht sluiten",
       "rooms": "{count:number|num} {{ruimte|ruimtes}}",
       "export_label": "Dit inzicht exporteren",
@@ -773,6 +776,12 @@
       "template_label": "Sjabloon",
       "provider_label": "Aanbieder",
       "attempt_label": "Poging"
+    },
+    "delete": {
+      "confirm_title": "",
+      "confirm_body": "",
+      "confirm_body_no_document": "",
+      "confirm_button": ""
     },
     "export": {
       "written_by": "Geschreven door Cassini op {date}",

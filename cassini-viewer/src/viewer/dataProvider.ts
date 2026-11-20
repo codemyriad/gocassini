@@ -190,6 +190,14 @@ export interface DataProvider {
   // fails.
   renameInsight?(id: string, name: string): Promise<InsightRecord>;
 
+  // OPTIONAL (#499): delete a finished run and its document — `POST
+  // insights/<id>/delete`. The operator deletes the document from the caller's
+  // Files as them, so it lands in their trash bin, and refuses a queued or
+  // running run (409). Only the run's creator may. Optional for the reason
+  // rename is: a build with no operator offers no Delete rather than one that
+  // fails.
+  deleteInsight?(id: string): Promise<void>;
+
   // OPTIONAL (D-792): where an insight's document opens in Nextcloud Files —
   // its folder, scrolled to the file — or "" when it has no document.
   //

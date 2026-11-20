@@ -40,6 +40,16 @@ describe("InsightCard", () => {
     expect(insightCardSource).not.toMatch(/\{insight\.meetingIds/);
   });
 
+  it("marks an insight that lost a source, from the shell's count, with the sheet's sentence as its tooltip", () => {
+    // #499: the note was only visible once the insight was opened.
+    expect(insightCardSource).toContain("export let missingSourceCount = 0;");
+    expect(insightCardSource).toContain("{#if missingSourceCount > 0}");
+    expect(insightCardSource).toContain("$LL.viewer.insights.card.sources_unavailable({ count: missingSourceCount })");
+    expect(insightCardSource).toContain("$LL.viewer.insights.document.missing_sources({ count: missingSourceCount })");
+    expect(get(LL).viewer.insights.card.sources_unavailable({ count: 1 })).toBe("1 source unavailable");
+    expect(get(LL).viewer.insights.card.sources_unavailable({ count: 2 })).toBe("2 sources unavailable");
+  });
+
   it("takes its accent from the app's own colour", () => {
     // An insight is the app's headline object, so it wears the app's colour —
     // in the embedded build, the instance's own accent. It was amber to stay

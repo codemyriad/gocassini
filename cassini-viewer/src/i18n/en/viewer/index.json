@@ -741,13 +741,16 @@
     },
     "card": {
       "kind": "Insight",
-      "meetings": "{count:number|num} {{meeting|meetings}}"
+      "meetings": "{count:number|num} {{meeting|meetings}}",
+      "sources_unavailable": "{count:number|num} {{source|sources}} unavailable"
     },
     "document": {
       "region_label": "Insight",
       "name_input_label": "Insight name",
       "rename_button_label": "Rename the insight",
       "rename_tooltip": "Rename",
+      "delete_button_label": "Delete the insight",
+      "delete_tooltip": "Delete",
       "close_label": "Close the insight",
       "rooms": "{count:number|num} {{room|rooms}}",
       "export_label": "Export this insight",
@@ -773,6 +776,12 @@
       "template_label": "Template",
       "provider_label": "Provider",
       "attempt_label": "Attempt"
+    },
+    "delete": {
+      "confirm_title": "Delete “{name}”?",
+      "confirm_body": "Removes this insight from your list and moves its document to your Nextcloud trash bin. The meetings it was made from are not affected.",
+      "confirm_body_no_document": "Removes this insight from your list. The meetings it was made from are not affected.",
+      "confirm_button": "Delete insight"
     },
     "export": {
       "written_by": "Written by Cassini on {date}",

@@ -1385,6 +1385,7 @@
       "create_unavailable": "Et af disse møder er ikke tilgængeligt for dig, eller denne installation kan ikke oprette indsigter.",
       "list_unavailable": "Indsigterne kunne ikke vises.",
       "rename_unavailable": "Den indsigt er ikke tilgængelig for dig, eller denne installation kan ikke omdøbe indsigter.",
+      "delete_unavailable": "",
       "insight_unavailable": "Den indsigt er ikke tilgængelig for dig, eller denne installation kan ikke oprette indsigter.",
       "already_running": "Denne indsigt kører allerede.",
       "unreachable": {
@@ -1392,21 +1393,24 @@
         "list": "Kunne ikke nå Cassini for at vise dine indsigter{detail}.",
         "read": "Kunne ikke nå Cassini for at læse indsigten{detail}.",
         "retry": "Kunne ikke nå Cassini for at prøve indsigten igen{detail}.",
-        "rename": "Kunne ikke nå Cassini for at omdøbe indsigten{detail}."
+        "rename": "Kunne ikke nå Cassini for at omdøbe indsigten{detail}.",
+        "delete": ""
       },
       "cassini_failed": {
         "create": "Cassini kunne ikke starte indsigten.",
         "list": "Cassini kunne ikke vise dine indsigter.",
         "read": "Cassini kunne ikke læse indsigten.",
         "retry": "Cassini kunne ikke prøve indsigten igen.",
-        "rename": "Cassini kunne ikke omdøbe indsigten."
+        "rename": "Cassini kunne ikke omdøbe indsigten.",
+        "delete": ""
       },
       "failed_status": {
         "create": "Kunne ikke starte indsigten (HTTP {status}).",
         "list": "Kunne ikke vise dine indsigter (HTTP {status}).",
         "read": "Kunne ikke læse indsigten (HTTP {status}).",
         "retry": "Kunne ikke prøve indsigten igen (HTTP {status}).",
-        "rename": "Kunne ikke omdøbe indsigten (HTTP {status})."
+        "rename": "Kunne ikke omdøbe indsigten (HTTP {status}).",
+        "delete": ""
       }
     },
     "summary_action": {

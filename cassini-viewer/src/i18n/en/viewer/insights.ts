@@ -66,6 +66,10 @@ const insights = {
     // How many of the insight's meetings the reader can see.
     // Plural; see the translator guide. {count}: meetings.
     meetings: "{count:number|num} {{meeting|meetings}}",
+    // A pill on the card when some of the insight's meetings are gone: deleted,
+    // or no longer shared with the reader. Its tooltip is document.missing_sources.
+    // Plural; see the translator guide. {count}: meetings.
+    sources_unavailable: "{count:number|num} {{source|sources}} unavailable",
   },
   // An insight open in the side sheet.
   document: {
@@ -75,6 +79,9 @@ const insights = {
     rename_button_label: "Rename the insight",
     // Tooltip on the pencil button.
     rename_tooltip: "Rename",
+    delete_button_label: "Delete the insight",
+    // Tooltip on the bin button.
+    delete_tooltip: "Delete",
     close_label: "Close the insight",
     // The insight's meetings came from several rooms.
     // Plural; see the translator guide. {count}: rooms, 2 or more.
@@ -114,6 +121,16 @@ const insights = {
     provider_label: "Provider",
     // How many times the insight was tried.
     attempt_label: "Attempt",
+  },
+  // Deleting an insight: the confirmation dialog.
+  delete: {
+    // {name} is the insight's name.
+    confirm_title: "Delete “{name}”?",
+    confirm_body:
+      "Removes this insight from your list and moves its document to your Nextcloud trash bin. The meetings it was made from are not affected.",
+    // A failed insight has no document.
+    confirm_body_no_document: "Removes this insight from your list. The meetings it was made from are not affected.",
+    confirm_button: "Delete insight",
   },
   // The markdown file an insight is copied or downloaded as. People read
   // these lines; no program parses them.
