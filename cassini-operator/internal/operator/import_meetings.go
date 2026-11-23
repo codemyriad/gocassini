@@ -88,7 +88,14 @@ type meetingImporter struct {
 
 func newMeetingImporter(cfg Config, exapp ExAppConfig, rt *Runtime, logger *log.Logger) *meetingImporter {
 	return &meetingImporter{sink: &nextcloudFilesPublishSink{
-		cfg: exapp, logger: logger, client: &http.Client{Timeout: ncFilesUploadTimeout},
+		// No whole-request timeout: one would cut off the upload of a large
+		// file, all the more with several imports sharing the link. A server
+		// that stops answering is caught by the header timeout, and every
+		// import runs under its own size-scaled time limit (importTimeLimit).
+		cfg: exapp, logger: logger, client: &http.Client{Transport: &http.Transport{
+			Proxy:                 http.ProxyFromEnvironment,
+			ResponseHeaderTimeout: ncFilesUploadTimeout,
+		}},
 		cassiniBin: cfg.CassiniBin, rt: rt,
 	}}
 }

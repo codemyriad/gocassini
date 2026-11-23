@@ -6590,7 +6590,7 @@ export type NamespaceViewerTranslation = {
 			 */
 			running_waiting: string
 			/**
-			 * Q​u​e​u​e​d​ ​·​ ​{​c​o​u​n​t​|​n​u​m​}​ ​a​h​e​a​d
+			 * Q​u​e​u​e​d​ ​·​ ​{​c​o​u​n​t​|​n​u​m​}​ ​{​{​i​m​p​o​r​t​|​i​m​p​o​r​t​s​}​}​ ​a​h​e​a​d
 			 * @param {number} count
 			 */
 			running_queued: RequiredParams<'count|num'>
@@ -14882,7 +14882,7 @@ export type TranslationFunctions = {
 				 */
 				running_waiting: () => LocalizedString
 				/**
-				 * Queued · {count|num} ahead
+				 * Queued · {count|num} {{import|imports}} ahead
 				 */
 				running_queued: (arg: { count: number }) => LocalizedString
 				/**

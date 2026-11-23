@@ -102,10 +102,10 @@ it("says whether an import is queued behind the person's own or being worked on"
  expect(first.textContent).toContain("Checking…");
  expect(first.querySelector("progress")).not.toBeNull();
  const second = await row("second");
- expect(second.textContent).toContain("Queued · 1 ahead");
+ expect(second.textContent).toContain("Queued · 1 import ahead");
  // A queued row is waiting, not working: no progress bar.
  expect(second.querySelector("progress")).toBeNull();
- expect((await row("third")).textContent).toContain("Queued · 2 ahead");
+ expect((await row("third")).textContent).toContain("Queued · 2 imports ahead");
 });
 
 it.each(["failed", "canceled"] as const)("explains recovery for %s CLI imports without offering web Retry", async (state) => {

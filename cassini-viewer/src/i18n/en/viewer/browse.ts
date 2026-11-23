@@ -368,7 +368,7 @@ const browse = {
     // room: the server runs a few imports at a time, across everyone.
     running_waiting: "Waiting for the server…",
     // Plural; see the translator guide. {count}: the person's own imports that run before this one.
-    running_queued: "Queued · {count:number|num} ahead",
+    running_queued: "Queued · {count:number|num} {{import|imports}} ahead",
     // The server is reading the uploaded file from the person's Files.
     running_fetching: "Fetching…",
     // The server is checking the file is a meeting it can import.

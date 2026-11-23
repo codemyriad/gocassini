@@ -89,13 +89,54 @@ type importService struct {
 // maxConcurrentImports bounds imports running at once across all callers.
 const maxConcurrentImports = 3
 
-// importFetchIdleTimeout is how long a staged-file download may go without
-// receiving a byte before it is abandoned. Without it, a Nextcloud that sends
-// headers and then stalls would hold an import slot until someone cancels.
-var importFetchIdleTimeout = 2 * time.Minute
-
+// A staged-file download is abandoned when less than importFetchMinProgress
+// arrives within importFetchIdleTimeout: a Nextcloud that stalls, or trickles
+// a byte at a time, would otherwise hold an import slot until someone cancels.
 // importFetchIdlePoll is how often the download's progress is checked.
-var importFetchIdlePoll = 5 * time.Second
+var (
+	importFetchIdleTimeout       = 2 * time.Minute
+	importFetchMinProgress int64 = 64 << 10
+	importFetchIdlePoll          = 5 * time.Second
+)
+
+// importTimeLimit bounds one import from its claim to its settling, so that no
+// step — the download, `cassini publish`, the upload to Nextcloud, search
+// indexing — can hold an import slot indefinitely. It grows with the file:
+// a base allowance plus the time to move the file several times (fetch,
+// publish copy, upload) at a slow 1 MiB/s. A 4 GiB file gets about 3h50m.
+// A variable so tests can shorten it.
+var importTimeLimit = func(job ImportJob) time.Duration {
+	const base = 30 * time.Minute
+	const bytesPerSecond = 1 << 20
+	const passes = 3
+	size := job.ExpectedBytes
+	if size <= 0 || size > maxImportUploadBytes {
+		size = maxImportUploadBytes
+	}
+	return base + time.Duration(passes*size/bytesPerSecond)*time.Second
+}
+
+// Claims that cannot be written back off from importClaimRetryMin, doubling
+// to importClaimRetryMax, so a broken database is not retried every second.
+var (
+	importClaimRetryMin = time.Second
+	importClaimRetryMax = time.Minute
+)
+
+// importRunOutcome is what runImportJob did with a job.
+type importRunOutcome int
+
+const (
+	// importNotStarted: the row was no longer queued (canceled, or settled by
+	// another path) or could not be read. Nothing to retry here.
+	importNotStarted importRunOutcome = iota
+	// importClaimFailed: the row is still queued but the claim could not be
+	// written, so the import did not run. Retry later.
+	importClaimFailed
+	// importSettled: the job ran, or its wait for a slot ended, and its row
+	// says so (or the operator is shutting down).
+	importSettled
+)
 
 // isRunning reports whether a worker is on this job right now.
 func (s *importService) isRunning(id string) bool {
@@ -527,7 +568,7 @@ func (s *importService) dispatch() {
 	creators, err := rt.store.queuedImportCreators(rt.ctx)
 	if err != nil {
 		if rt.ctx.Err() == nil {
-			s.logf("import worker: %v", err)
+			s.logf("import dispatcher: %v", err)
 		}
 		return
 	}
@@ -546,8 +587,9 @@ func (s *importService) dispatch() {
 	}
 }
 
-// drainUser runs one caller's queued imports, oldest first, until none are
-// left. A job queued after it gives up is picked up by the next dispatch.
+// drainUser runs one caller's queued imports, oldest first by when they were
+// first queued (a retried import keeps its place), until none are left. A job
+// queued after it gives up is picked up by the next dispatch.
 func (s *importService) drainUser(user string) {
 	rt := s.rt
 	defer rt.workerWG.Done()
@@ -556,6 +598,7 @@ func (s *importService) drainUser(user string) {
 		delete(s.userWorkers, user)
 		s.mu.Unlock()
 	}()
+	backoff := importClaimRetryMin
 	for rt.ctx.Err() == nil {
 		job, ok, err := rt.store.nextQueuedImportFor(rt.ctx, user)
 		if err != nil {
@@ -564,19 +607,33 @@ func (s *importService) drainUser(user string) {
 			}
 			return
 		}
-		if !ok || !s.runImportJob(job) {
-			// Nothing queued, or the job moved on before this worker claimed
-			// it (a cancel): the next dispatch looks again.
+		if !ok {
 			return
+		}
+		switch s.runImportJob(job) {
+		case importNotStarted:
+			// The job moved on before this worker claimed it (a cancel), or
+			// could not be read: the next dispatch looks again.
+			return
+		case importClaimFailed:
+			// Keep this worker, so the dispatcher does not start another one
+			// a second later, and wait before trying the same job again.
+			s.logf("import %s: retrying the claim in %s", job.ID, backoff)
+			select {
+			case <-rt.ctx.Done():
+				return
+			case <-time.After(backoff):
+			}
+			backoff = min(backoff*2, importClaimRetryMax)
+		default:
+			backoff = importClaimRetryMin
 		}
 	}
 }
 
-// runImportJob runs one job to a settled state. It reports false when it did
-// not start the job: the row is no longer queued, or the claim could not be
-// written. Either way the caller's worker stops and the next dispatch, a
-// second later, looks again.
-func (s *importService) runImportJob(job ImportJob) bool {
+// runImportJob takes one queued job through a slot to a settled state, and
+// reports what became of it.
+func (s *importService) runImportJob(job ImportJob) importRunOutcome {
 	rt := s.rt
 	ctx, cancel := context.WithCancel(rt.ctx)
 	defer cancel()
@@ -592,7 +649,7 @@ func (s *importService) runImportJob(job ImportJob) bool {
 		if err != nil {
 			s.logf("import %s: read before start: %v", job.ID, err)
 		}
-		return false
+		return importNotStarted
 	}
 	if s.running == nil {
 		s.running = map[string]context.CancelFunc{}
@@ -610,36 +667,44 @@ func (s *importService) runImportJob(job ImportJob) bool {
 	release, err := s.acquireImportSlot(ctx)
 	if err != nil {
 		s.settleInterrupted(job)
-		return true
+		return importSettled
 	}
 	defer release()
 	// Claim: move the row off queued. If that cannot be written, do not run
-	// the import — a row still queued would be picked straight up again.
+	// the import: the row still says queued, and nothing would say otherwise.
 	if err := s.setState(job.ID, importStateFetching, "fetching", ""); err != nil {
 		s.logf("import %s: claim: %v", job.ID, err)
-		return false
+		return importClaimFailed
 	}
 
 	perform := s.perform
 	if perform == nil {
 		perform = s.performImport
 	}
-	result, err := perform(ctx, job)
+	limit := importTimeLimit(job)
+	errTooLong := fmt.Errorf("the import did not finish within %s", limit.Round(time.Minute))
+	runCtx, cancelRun := context.WithTimeoutCause(ctx, limit, errTooLong)
+	defer cancelRun()
+	result, err := perform(runCtx, job)
 	if ctx.Err() != nil {
 		s.settleInterrupted(job)
-		return true
+		return importSettled
+	}
+	if runCtx.Err() != nil && errors.Is(context.Cause(runCtx), errTooLong) {
+		// Its own time limit, not a cancel: a verdict the person can retry.
+		err = errTooLong
 	}
 	if err != nil {
 		s.logf("import %s (%s): %v", job.ID, job.SourceName, err)
 		s.saveState(job.ID, importStateFailed, "", err.Error())
-		return true
+		return importSettled
 	}
 	if err := rt.store.SetImportJobProvenance(context.Background(), job.ID, result.Format, result.ContentID, result.SourceRoomID, result.CreatedAtUTC, result.RecordedAtLocal); err != nil {
 		s.logf("import %s: persist provenance: %v", job.ID, err)
 	}
 	if err := rt.store.SetImportJobOutcome(context.Background(), job.ID, result.DeliveredName, result.FileID, result.ImportedAtUTC); err != nil {
 		s.logf("import %s: persist outcome: %v", job.ID, err)
-		return true
+		return importSettled
 	}
 	s.logf("import succeeded id=%s source=%q delivered=%s file_id=%d shared_with=%d not_shared_with=%d searchable=%t",
 		job.ID, job.SourceName, result.DeliveredName, result.FileID, result.SharedWith, len(result.NotSharedWith), result.SearchIndexed)
@@ -650,7 +715,7 @@ func (s *importService) runImportJob(job ImportJob) bool {
 	} else if err := rt.store.MarkImportStagingRemoved(context.Background(), job.ID); err != nil {
 		s.logf("import %s: record staged copy removed: %v", job.ID, err)
 	}
-	return true
+	return importSettled
 }
 
 // settleInterrupted records a run that stopped because its context ended.
@@ -677,12 +742,13 @@ func (s *importService) acquireImportSlot(ctx context.Context) (func(), error) {
 }
 
 // fetchStaged downloads the caller's staged file to local, abandoning the
-// download when no byte has arrived for importFetchIdleTimeout.
+// download when less than importFetchMinProgress arrives within
+// importFetchIdleTimeout.
 func (s *importService) fetchStaged(ctx context.Context, job ImportJob, local string) error {
-	idleTimeout, poll := importFetchIdleTimeout, importFetchIdlePoll
+	idleTimeout, minProgress, poll := importFetchIdleTimeout, importFetchMinProgress, importFetchIdlePoll
 	fetchCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
-	errStalled := fmt.Errorf("the download from your Files stalled for %s", idleTimeout)
+	errStalled := fmt.Errorf("the download from your Files stalled: less than %d KiB arrived in %s", minProgress>>10, idleTimeout)
 	done := make(chan struct{})
 	watched := make(chan struct{})
 	// Stop the watchdog and wait for it, so it never outlives the download.
@@ -693,9 +759,10 @@ func (s *importService) fetchStaged(ctx context.Context, job ImportJob, local st
 	go func() {
 		defer close(watched)
 		// The file appears once headers arrive (those have their own timeout)
-		// and grows as the body streams in.
-		var lastSize int64 = -1
-		lastProgress := time.Now()
+		// and grows as the body streams in. Progress counts only once the file
+		// has grown by minProgress since the window began.
+		var windowSize int64
+		windowStart := time.Now()
 		tick := time.NewTicker(poll)
 		defer tick.Stop()
 		for {
@@ -710,11 +777,11 @@ func (s *importService) fetchStaged(ctx context.Context, job ImportJob, local st
 			if info, err := os.Stat(local); err == nil {
 				size = info.Size()
 			}
-			if size != lastSize {
-				lastSize, lastProgress = size, time.Now()
+			if size-windowSize >= minProgress {
+				windowSize, windowStart = size, time.Now()
 				continue
 			}
-			if time.Since(lastProgress) >= idleTimeout {
+			if time.Since(windowStart) >= idleTimeout {
 				cancel(errStalled)
 				return
 			}

@@ -2,6 +2,7 @@ package operator
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -101,7 +102,7 @@ func queueWorkerService(t *testing.T, perform func(ctx context.Context, job Impo
 	t.Helper()
 	s := importHandlerService(t)
 	ctx, cancel := context.WithCancel(context.Background())
-	s.rt.ctx = ctx
+	s.rt.ctx, s.rt.cancel = ctx, cancel
 	t.Cleanup(func() {
 		cancel()
 		s.rt.workerWG.Wait()
@@ -284,45 +285,257 @@ func TestImportSlotWaitEndsWithTheImport(t *testing.T) {
 	next()
 }
 
-func TestStalledStagedDownloadIsAbandoned(t *testing.T) {
-	idle, poll := importFetchIdleTimeout, importFetchIdlePoll
-	importFetchIdleTimeout, importFetchIdlePoll = 300*time.Millisecond, 20*time.Millisecond
-	t.Cleanup(func() { importFetchIdleTimeout, importFetchIdlePoll = idle, poll })
-
-	var stall atomic.Bool
-	stall.Store(true)
+// stagedFileServer serves a staged file the way the test's mode says.
+func stagedFileServer(t *testing.T, mode *atomic.Value) *httptest.Server {
+	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte("OggS partial"))
-		w.(http.Flusher).Flush()
-		if stall.Load() {
+		flusher := w.(http.Flusher)
+		write := func(b []byte) bool {
+			if _, err := w.Write(b); err != nil {
+				return false
+			}
+			flusher.Flush()
+			return true
+		}
+		switch mode.Load().(string) {
+		case "stall":
 			// Headers and some bytes, then nothing until the client gives up.
+			write([]byte("OggS partial"))
 			<-r.Context().Done()
+		case "trickle":
+			// One byte at a time, forever: data, but no real progress.
+			for write([]byte("x")) {
+				select {
+				case <-r.Context().Done():
+					return
+				case <-time.After(20 * time.Millisecond):
+				}
+			}
+		case "slow":
+			// Steady, slower than the idle window overall, faster than the
+			// minimum progress within it.
+			for i := 0; i < 15; i++ {
+				if !write(make([]byte, 2048)) {
+					return
+				}
+				time.Sleep(50 * time.Millisecond)
+			}
 		}
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestStagedDownloadMustMakeProgress(t *testing.T) {
+	idle, minProgress, poll := importFetchIdleTimeout, importFetchMinProgress, importFetchIdlePoll
+	importFetchIdleTimeout, importFetchMinProgress, importFetchIdlePoll = 300*time.Millisecond, 1024, 20*time.Millisecond
+	t.Cleanup(func() { importFetchIdleTimeout, importFetchMinProgress, importFetchIdlePoll = idle, minProgress, poll })
+
+	var mode atomic.Value
+	srv := stagedFileServer(t, &mode)
 	s := &importService{
 		exapp:  ExAppConfig{NextcloudURL: srv.URL, AppID: "cassini", AppVersion: "1", AppSecret: "secret"},
 		client: srv.Client(),
 		logger: log.New(testWriter{t}, "", 0),
 	}
-	job := queueTestJob("stalled", "alice")
+	job := queueTestJob("download", "alice")
+
+	for _, stalled := range []string{"stall", "trickle"} {
+		mode.Store(stalled)
+		begun := time.Now()
+		err := s.fetchStaged(context.Background(), job, filepath.Join(t.TempDir(), "staged"))
+		if err == nil || !strings.Contains(err.Error(), "stalled") {
+			t.Fatalf("%s: %v", stalled, err)
+		}
+		if elapsed := time.Since(begun); elapsed > 5*time.Second {
+			t.Fatalf("%s: gave up after %s", stalled, elapsed)
+		}
+	}
+
+	// A download that keeps making progress is not cut off, even though it
+	// takes longer than the idle window.
+	mode.Store("slow")
 	local := filepath.Join(t.TempDir(), "staged")
-
 	begun := time.Now()
-	err := s.fetchStaged(context.Background(), job, local)
-	if err == nil || !strings.Contains(err.Error(), "stalled") {
-		t.Fatalf("stalled download: %v", err)
+	if err := s.fetchStaged(context.Background(), job, local); err != nil {
+		t.Fatalf("slow download: %v", err)
 	}
-	if elapsed := time.Since(begun); elapsed > 5*time.Second {
-		t.Fatalf("gave up after %s", elapsed)
+	if elapsed := time.Since(begun); elapsed < importFetchIdleTimeout {
+		t.Fatalf("slow download took only %s; the test proves nothing", elapsed)
+	}
+	if info, err := os.Stat(local); err != nil || info.Size() != 15*2048 {
+		t.Fatalf("downloaded %v %v", info, err)
+	}
+}
+
+func TestImportOverItsTimeLimitFails(t *testing.T) {
+	limit := importTimeLimit
+	importTimeLimit = func(ImportJob) time.Duration { return 100 * time.Millisecond }
+	t.Cleanup(func() { importTimeLimit = limit })
+	s := queueWorkerService(t, func(ctx context.Context, job ImportJob) (meetingImportResult, error) {
+		// A step that never finishes on its own.
+		<-ctx.Done()
+		return meetingImportResult{}, ctx.Err()
+	})
+	s.importSlots = make(chan struct{}, 1)
+	if err := s.rt.store.CreateImportJobs(context.Background(), []ImportJob{queueTestJob("slow", "alice"), queueTestJob("next", "bob")}); err != nil {
+		t.Fatal(err)
+	}
+	s.dispatch()
+	// Both fail on their own limit, one after the other through the single
+	// slot: the slot is given back.
+	waitForImportState(t, s, "slow", importStateFailed)
+	waitForImportState(t, s, "next", importStateFailed)
+	job, _, _ := s.rt.store.ImportJob(context.Background(), "slow")
+	if !strings.Contains(job.Error, "did not finish within") {
+		t.Fatalf("error: %q", job.Error)
+	}
+}
+
+func TestWaitingForASlotCanBeCanceledAndIsPositioned(t *testing.T) {
+	release := make(chan struct{})
+	ran := make(chan string, 8)
+	s := queueWorkerService(t, func(ctx context.Context, job ImportJob) (meetingImportResult, error) {
+		ran <- job.ID
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return meetingImportResult{}, ctx.Err()
+		}
+		return meetingImportResult{}, errors.New("test import settled")
+	})
+	s.importSlots = make(chan struct{}, 1)
+	ctx := context.Background()
+	if err := s.rt.store.CreateImportJobs(ctx, []ImportJob{queueTestJob("a1", "alice")}); err != nil {
+		t.Fatal(err)
+	}
+	s.dispatch()
+	if id := <-ran; id != "a1" {
+		t.Fatalf("ran %s", id)
+	}
+	// Bob's two imports: the first waits for the slot Alice holds.
+	if err := s.rt.store.CreateImportJobs(ctx, []ImportJob{queueTestJob("b1", "bob"), queueTestJob("b2", "bob")}); err != nil {
+		t.Fatal(err)
+	}
+	s.dispatch()
+	deadline := time.Now().Add(5 * time.Second)
+	for !s.isRunning("b1") {
+		if time.Now().After(deadline) {
+			t.Fatal("bob's worker never took b1")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 
-	// A download that keeps flowing is not cut off.
-	stall.Store(false)
-	if err := s.fetchStaged(context.Background(), job, local); err != nil {
-		t.Fatalf("complete download: %v", err)
+	// The real listing says b1 is next and b2 behind it.
+	w := importDo(t, s, http.MethodGet, importsURLPath, "bob", "")
+	var listed struct {
+		Imports []ImportJob `json:"imports"`
 	}
-	if got, _ := os.ReadFile(local); string(got) != "OggS partial" {
-		t.Fatalf("downloaded %q", got)
+	if err := json.Unmarshal(w.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
 	}
+	positions := map[string]int{}
+	for _, job := range listed.Imports {
+		if job.QueuePosition != nil {
+			positions[job.ID] = *job.QueuePosition
+		}
+	}
+	if len(positions) != 2 || positions["b1"] != 0 || positions["b2"] != 1 {
+		t.Fatalf("positions: %v", positions)
+	}
+	// While b1 waits, it cannot be retried or removed out from under its worker.
+	if w := importDo(t, s, http.MethodPost, importsURLPath+"/b1/remove", "bob", ""); w.Code != http.StatusConflict {
+		t.Fatalf("remove while waiting: %d %s", w.Code, w.Body.String())
+	}
+
+	// Cancel b1 while it waits: it never runs, and b2 takes its place.
+	if w := importDo(t, s, http.MethodPost, importsURLPath+"/b1/cancel", "bob", ""); w.Code != http.StatusAccepted {
+		t.Fatalf("cancel: %d %s", w.Code, w.Body.String())
+	}
+	waitForImportState(t, s, "b1", importStateCanceled)
+	close(release)
+	if id := <-ran; id != "b2" {
+		t.Fatalf("ran %s after the cancel, want b2", id)
+	}
+	waitForImportState(t, s, "b2", importStateFailed)
+	select {
+	case id := <-ran:
+		t.Fatalf("%s ran", id)
+	default:
+	}
+}
+
+func TestShutdownReturnsRunningAndWaitingImportsToTheQueue(t *testing.T) {
+	ran := make(chan string, 4)
+	s := queueWorkerService(t, func(ctx context.Context, job ImportJob) (meetingImportResult, error) {
+		ran <- job.ID
+		<-ctx.Done()
+		return meetingImportResult{}, ctx.Err()
+	})
+	s.importSlots = make(chan struct{}, 1)
+	if err := s.rt.store.CreateImportJobs(context.Background(), []ImportJob{queueTestJob("a1", "alice"), queueTestJob("b1", "bob")}); err != nil {
+		t.Fatal(err)
+	}
+	s.dispatch()
+	<-ran
+	deadline := time.Now().Add(5 * time.Second)
+	for !s.isRunning("a1") || !s.isRunning("b1") {
+		if time.Now().After(deadline) {
+			t.Fatal("workers never took both jobs")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	// Stop the operator: one import was running, the other waiting.
+	s.rt.cancel()
+	s.rt.workerWG.Wait()
+	for _, id := range []string{"a1", "b1"} {
+		if job, _, _ := s.rt.store.ImportJob(context.Background(), id); job.State != importStateQueued {
+			t.Fatalf("%s after shutdown: %s", id, job.State)
+		}
+	}
+}
+
+func TestAClaimThatCannotBeWrittenIsRetriedLater(t *testing.T) {
+	retryMin, retryMax := importClaimRetryMin, importClaimRetryMax
+	importClaimRetryMin, importClaimRetryMax = 20*time.Millisecond, 40*time.Millisecond
+	t.Cleanup(func() { importClaimRetryMin, importClaimRetryMax = retryMin, retryMax })
+	ran := make(chan string, 4)
+	s := queueWorkerService(t, func(ctx context.Context, job ImportJob) (meetingImportResult, error) {
+		ran <- job.ID
+		return meetingImportResult{}, errors.New("test import settled")
+	})
+	db := s.rt.store.db
+	// The database refuses every claim until the trigger is dropped.
+	if _, err := db.Exec(`CREATE TRIGGER refuse_claim BEFORE UPDATE OF state ON import_jobs WHEN NEW.state='fetching' BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.rt.store.CreateImportJobs(context.Background(), []ImportJob{queueTestJob("a1", "alice")}); err != nil {
+		t.Fatal(err)
+	}
+	s.dispatch()
+	time.Sleep(200 * time.Millisecond)
+	select {
+	case id := <-ran:
+		t.Fatalf("%s ran without a claim", id)
+	default:
+	}
+	// The worker stays, backing off, rather than being replaced every tick.
+	s.mu.Lock()
+	kept := s.userWorkers["alice"]
+	s.mu.Unlock()
+	if !kept {
+		t.Fatal("alice's worker gone while the claim fails")
+	}
+	if job, _, _ := s.rt.store.ImportJob(context.Background(), "a1"); job.State != importStateQueued {
+		t.Fatalf("a1: %s", job.State)
+	}
+	if _, err := db.Exec(`DROP TRIGGER refuse_claim`); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-ran:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a1 never ran once the claim could be written")
+	}
+	waitForImportState(t, s, "a1", importStateFailed)
 }
