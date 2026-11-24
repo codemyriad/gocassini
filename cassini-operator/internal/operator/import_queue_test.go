@@ -589,8 +589,8 @@ func TestImportWaitsForDiskThatRunningImportsHold(t *testing.T) {
 	savedRetry := importClaimRetryMin
 	importClaimRetryMin = 10 * time.Millisecond
 	t.Cleanup(func() { importClaimRetryMin = savedRetry })
-	// Room for one 1 GiB import (2 GiB with its validation copy), not two.
-	withImportDisk(t, func() (int64, error) { return importDiskReserve + 3<<30, nil })
+	// Room for one 1 GiB import (3 GiB at its peak), not two.
+	withImportDisk(t, func() (int64, error) { return importDiskReserve + 4<<30, nil })
 	started := make(chan string, 4)
 	releaseA := make(chan struct{})
 	s := queueWorkerService(t, func(ctx context.Context, job ImportJob) (meetingImportResult, error) {
@@ -698,5 +698,167 @@ func TestUnreadableFreeSpaceDoesNotStopImports(t *testing.T) {
 	case <-ran:
 	case <-time.After(5 * time.Second):
 		t.Fatal("the import did not run when the free space could not be read")
+	}
+}
+
+func TestALargeImportWaitingForDiskIsNotOvertaken(t *testing.T) {
+	savedRetry := importClaimRetryMin
+	importClaimRetryMin = 10 * time.Millisecond
+	t.Cleanup(func() { importClaimRetryMin = savedRetry })
+	// 7 GiB to use: Alice's 1 GiB import takes 3, Bob's 2 GiB needs 6 and
+	// waits. Carol's 1 GiB would fit beside Alice's, but must not take the
+	// space Bob is waiting for.
+	withImportDisk(t, func() (int64, error) { return importDiskReserve + 7<<30, nil })
+	started := make(chan string, 4)
+	release := map[string]chan struct{}{"a1": make(chan struct{}), "b1": make(chan struct{}), "c1": make(chan struct{})}
+	s := queueWorkerService(t, func(ctx context.Context, job ImportJob) (meetingImportResult, error) {
+		started <- job.ID
+		select {
+		case <-release[job.ID]:
+		case <-ctx.Done():
+			return meetingImportResult{}, ctx.Err()
+		}
+		return meetingImportResult{}, errors.New("test import settled")
+	})
+	s.importSlots = make(chan struct{}, 3)
+	create := func(job ImportJob) {
+		t.Helper()
+		if err := s.rt.store.CreateImportJobs(context.Background(), []ImportJob{job}); err != nil {
+			t.Fatal(err)
+		}
+		s.dispatch()
+	}
+	expect := func(want string) {
+		t.Helper()
+		select {
+		case id := <-started:
+			if id != want {
+				t.Fatalf("started %s, want %s", id, want)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s never started", want)
+		}
+	}
+	create(sizedQueueTestJob("a1", "alice", 1<<30))
+	expect("a1")
+	create(sizedQueueTestJob("b1", "bob", 2<<30))
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		s.mu.Lock()
+		_, waits := s.diskWaiting["b1"]
+		s.mu.Unlock()
+		if waits {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("b1 never waited for disk space")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	create(sizedQueueTestJob("c1", "carol", 1<<30))
+	select {
+	case id := <-started:
+		t.Fatalf("%s started while a larger import waited for the space", id)
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(release["a1"])
+	expect("b1")
+	close(release["b1"])
+	expect("c1")
+	close(release["c1"])
+	waitForImportState(t, s, "c1", importStateFailed)
+	s.mu.Lock()
+	left := len(s.diskWaiting) + len(s.diskReserved)
+	s.mu.Unlock()
+	if left != 0 {
+		t.Fatalf("%d disk holds left after every import settled", left)
+	}
+}
+
+func TestAWaitingImportThatIsCanceledStopsHoldingSpace(t *testing.T) {
+	savedRetry := importClaimRetryMin
+	importClaimRetryMin = 10 * time.Millisecond
+	t.Cleanup(func() { importClaimRetryMin = savedRetry })
+	withImportDisk(t, func() (int64, error) { return importDiskReserve + 4<<30, nil })
+	release := make(chan struct{})
+	s := queueWorkerService(t, func(ctx context.Context, job ImportJob) (meetingImportResult, error) {
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return meetingImportResult{}, ctx.Err()
+		}
+		return meetingImportResult{}, errors.New("test import settled")
+	})
+	s.importSlots = make(chan struct{}, 3)
+	if err := s.rt.store.CreateImportJobs(context.Background(), []ImportJob{sizedQueueTestJob("a1", "alice", 1<<30), sizedQueueTestJob("b1", "bob", 1<<30)}); err != nil {
+		t.Fatal(err)
+	}
+	s.dispatch()
+	waiting := func() bool {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return len(s.diskWaiting) > 0
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for !waiting() {
+		if time.Now().After(deadline) {
+			t.Fatal("neither import waited for disk space")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	// Cancel whichever one is waiting.
+	s.mu.Lock()
+	var waiter string
+	for id := range s.diskWaiting {
+		waiter = id
+	}
+	s.mu.Unlock()
+	if err := s.rt.store.SetImportJobState(context.Background(), waiter, importStateCanceled, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	deadline = time.Now().Add(5 * time.Second)
+	for waiting() {
+		if time.Now().After(deadline) {
+			t.Fatalf("canceled %s still holds disk space", waiter)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	close(release)
+}
+
+func TestAnImportThatLandsAtItsTimeLimitIsDone(t *testing.T) {
+	limit := importTimeLimit
+	importTimeLimit = func(ImportJob) time.Duration { return 50 * time.Millisecond }
+	t.Cleanup(func() { importTimeLimit = limit })
+	s := queueWorkerService(t, func(ctx context.Context, job ImportJob) (meetingImportResult, error) {
+		// The last, best-effort step runs out of time and swallows it: the
+		// meeting was delivered all the same.
+		<-ctx.Done()
+		return meetingImportResult{DeliveredName: job.ID + ".opus", FileID: 7}, nil
+	})
+	// Removing the staged copy afterwards fails here (no Nextcloud), which
+	// is logged and never fails a landed import.
+	s.client = &http.Client{Timeout: time.Second}
+	if err := s.rt.store.CreateImportJobs(context.Background(), []ImportJob{queueTestJob("landed", "alice")}); err != nil {
+		t.Fatal(err)
+	}
+	s.dispatch()
+	waitForImportState(t, s, "landed", importStateDone)
+}
+
+func TestAStagedFileReplacedByALargerOneIsRefused(t *testing.T) {
+	var mode atomic.Value
+	mode.Store("slow")
+	srv := stagedFileServer(t, &mode)
+	s := &importService{
+		exapp:  ExAppConfig{NextcloudURL: srv.URL, AppID: "cassini", AppVersion: "1", AppSecret: "secret"},
+		client: srv.Client(),
+		logger: log.New(testWriter{t}, "", 0),
+	}
+	// Confirmed at 1 KiB; the file in Files is now larger.
+	job := sizedQueueTestJob("swapped", "alice", 1024)
+	err := s.fetchStaged(context.Background(), job, filepath.Join(t.TempDir(), "staged"))
+	if err == nil || !strings.Contains(err.Error(), "changed after it was uploaded") {
+		t.Fatalf("fetch: %v", err)
 	}
 }

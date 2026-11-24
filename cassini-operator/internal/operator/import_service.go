@@ -77,6 +77,13 @@ type importService struct {
 	// may use (importDiskNeed). A new import starts only if the free space
 	// covers these, its own need and importDiskReserve.
 	diskReserved map[string]int64
+	// diskWaiting is the line of imports waiting for disk space, in the
+	// order they started waiting. Each import leaves room for every one ahead
+	// of it, so a stream of small imports cannot keep a large one waiting
+	// forever. The first in line competes only with running imports, so the
+	// line cannot jam: with nothing running, it runs or fails.
+	diskWaiting map[string]importDiskWaiter
+	diskWaitSeq uint64
 	// importSlots bounds how many imports run at once across all callers. A
 	// slot is held for the whole import, not just the download: the staged
 	// copy (up to maxImportUploadBytes) stays on the work volume, and the
@@ -168,15 +175,17 @@ var importDiskFree = func(path string) (int64, error) {
 	return int64(st.Bavail) * int64(st.Bsize), nil
 }
 
-// importDiskNeed is what one import may write to the work volume: the staged
-// file it downloads and the copy the validating `cassini publish` writes. A
-// size it was not told is taken as the largest allowed.
+// importDiskNeed is what one import may write to the work volume at its peak:
+// the staged file it downloads, the copy the validating `cassini publish`
+// writes, and the delivered recording the sink downloads again to verify it
+// (newCarryDir), all three on disk at once. A size it was not told is taken as
+// the largest allowed.
 func importDiskNeed(job ImportJob) int64 {
 	size := job.ExpectedBytes
 	if size <= 0 || size > maxImportUploadBytes {
 		size = maxImportUploadBytes
 	}
-	return 2 * size
+	return 3 * size
 }
 
 // importDiskVerdict is whether an import's disk need fits right now.
@@ -205,19 +214,36 @@ func (s *importService) reserveImportDisk(job ImportJob) (release func(), verdic
 	if err != nil {
 		s.logf("import %s: free disk space unknown (%v); importing anyway", job.ID, err)
 	} else {
-		var promised int64
+		var promised, ahead int64
 		for _, n := range s.diskReserved {
 			promised += n
 		}
-		if free-promised-importDiskReserve < need {
+		// Room is left for every import ahead in the line: all of it for one
+		// not in the line yet, which would join at the back.
+		own, inLine := s.diskWaiting[job.ID]
+		for id, w := range s.diskWaiting {
+			if id != job.ID && (!inLine || w.seq < own.seq) {
+				ahead += w.need
+			}
+		}
+		if free-promised-ahead-importDiskReserve < need {
 			detail = fmt.Sprintf("it needs %s, and %s is free, of which %s is kept for recordings", formatGiB(need), formatGiB(free), formatGiB(importDiskReserve))
-			if promised > 0 {
-				detail += fmt.Sprintf(" and %s is in use by other imports", formatGiB(promised))
+			if promised > 0 || ahead > 0 {
+				detail += fmt.Sprintf(", %s is in use by other imports and %s is held for imports ahead of it", formatGiB(promised), formatGiB(ahead))
+				if !inLine {
+					if s.diskWaiting == nil {
+						s.diskWaiting = map[string]importDiskWaiter{}
+					}
+					s.diskWaitSeq++
+					s.diskWaiting[job.ID] = importDiskWaiter{need: need, seq: s.diskWaitSeq}
+				}
 				return nil, importDiskWait, detail
 			}
+			delete(s.diskWaiting, job.ID)
 			return nil, importDiskShort, detail
 		}
 	}
+	delete(s.diskWaiting, job.ID)
 	if s.diskReserved == nil {
 		s.diskReserved = map[string]int64{}
 	}
@@ -232,6 +258,12 @@ func (s *importService) reserveImportDisk(job ImportJob) (release func(), verdic
 // importDiskShortMessage is what the person importing reads when the server
 // cannot take their file. How much space the server has is not theirs to see.
 const importDiskShortMessage = "This file is too big to import right now. Please contact your administrator."
+
+// importDiskWaiter is one import's place in the line for disk space.
+type importDiskWaiter struct {
+	need int64
+	seq  uint64
+}
 
 // formatGiB renders a byte count for a person: "1.5 GiB".
 func formatGiB(n int64) string {
@@ -720,37 +752,72 @@ func (s *importService) drainUser(user string) {
 		delete(s.userWorkers, user)
 		s.mu.Unlock()
 	}()
+	// A job this worker left waiting for disk space stops holding space back
+	// from others once the worker moves on from it, whatever the reason.
+	var waitingID string
+	defer func() { s.stopDiskWait(waitingID) }()
 	backoff := importClaimRetryMin
+	// wait keeps this worker, so the dispatcher does not start another one a
+	// second later, and backs off before the next attempt.
+	wait := func() bool {
+		select {
+		case <-rt.ctx.Done():
+			return false
+		case <-time.After(backoff):
+		}
+		backoff = min(backoff*2, importClaimRetryMax)
+		return true
+	}
 	for rt.ctx.Err() == nil {
 		job, ok, err := rt.store.nextQueuedImportFor(rt.ctx, user)
 		if err != nil {
-			if rt.ctx.Err() == nil {
-				s.logf("import worker for %s: %v", user, err)
+			if rt.ctx.Err() != nil {
+				return
 			}
-			return
+			s.logf("import worker for %s: %v; trying again in %s", user, err, backoff)
+			if !wait() {
+				return
+			}
+			continue
 		}
 		if !ok {
 			return
 		}
-		switch s.runImportJob(job) {
+		if waitingID != job.ID {
+			s.stopDiskWait(waitingID)
+			waitingID = ""
+		}
+		outcome := s.runImportJob(job)
+		if outcome == importDeferred {
+			waitingID = job.ID
+		} else {
+			s.stopDiskWait(job.ID)
+			waitingID = ""
+		}
+		switch outcome {
 		case importNotStarted:
 			// The job moved on before this worker claimed it (a cancel), or
 			// could not be read: the next dispatch looks again.
 			return
 		case importClaimFailed, importDeferred:
-			// Keep this worker, so the dispatcher does not start another one
-			// a second later, and wait before trying the same job again.
 			s.logf("import %s: trying again in %s", job.ID, backoff)
-			select {
-			case <-rt.ctx.Done():
+			if !wait() {
 				return
-			case <-time.After(backoff):
 			}
-			backoff = min(backoff*2, importClaimRetryMax)
 		default:
 			backoff = importClaimRetryMin
 		}
 	}
+}
+
+// stopDiskWait drops a job's hold on disk space it was waiting for.
+func (s *importService) stopDiskWait(id string) {
+	if id == "" {
+		return
+	}
+	s.mu.Lock()
+	delete(s.diskWaiting, id)
+	s.mu.Unlock()
 }
 
 // runImportJob takes one queued job through a slot to a settled state, and
@@ -828,8 +895,10 @@ func (s *importService) runImportJob(job ImportJob) importRunOutcome {
 		s.settleInterrupted(job)
 		return importSettled
 	}
-	if runCtx.Err() != nil && errors.Is(context.Cause(runCtx), errTooLong) {
+	if err != nil && runCtx.Err() != nil && errors.Is(context.Cause(runCtx), errTooLong) {
 		// Its own time limit, not a cancel: a verdict the person can retry.
+		// Only a failure is reworded: an import whose last, best-effort step
+		// ran out of time still landed, and is recorded as done.
 		err = errTooLong
 	}
 	if err != nil {
@@ -925,9 +994,19 @@ func (s *importService) fetchStaged(ctx context.Context, job ImportJob, local st
 			}
 		}
 	}()
-	_, _, status, err := s.exapp.davDownloadFile(fetchCtx, s.client, job.CreatedBy, job.StagedPath, local, maxImportUploadBytes)
+	// The disk promise and the time limit were sized for the declared size,
+	// so a staged file replaced by a larger one after it was confirmed is
+	// refused rather than downloaded.
+	limit := maxImportUploadBytes
+	if job.ExpectedBytes > 0 && job.ExpectedBytes < limit {
+		limit = job.ExpectedBytes
+	}
+	_, written, status, err := s.exapp.davDownloadFile(fetchCtx, s.client, job.CreatedBy, job.StagedPath, local, limit)
 	if err == nil {
 		return nil
+	}
+	if written > limit {
+		return fmt.Errorf("the staged file %s changed after it was uploaded; upload it again", job.StagedPath)
 	}
 	if errors.Is(context.Cause(fetchCtx), errStalled) && ctx.Err() == nil {
 		return errStalled
