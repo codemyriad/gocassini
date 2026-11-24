@@ -1,0 +1,87 @@
+package operator
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
+	"testing"
+)
+
+// After the upload, the delivery check reads the recording back from
+// Nextcloud and hashes it as it arrives: nothing lands on the work volume
+// beside the file being delivered, and a read-back that differs is refused.
+func TestDeliveryCheckHashesTheReadBackWithoutWritingIt(t *testing.T) {
+	_, s, _, _ := asyncFixture(t)
+	ctx := context.Background()
+	data, _ := json.Marshal(annotateResult{Format: annotateResultFormat, AudioOpusSHA256: testAudioDigest, DurationMS: 60000})
+	dir := t.TempDir()
+	local := filepath.Join(dir, "sealed.opus")
+	if err := os.WriteFile(local, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var gets atomic.Int32
+	var corrupt atomic.Bool
+	transport := s.client.Transport
+	s.client.Transport = annotationRoundTripper(func(r *http.Request) (*http.Response, error) {
+		if r.Method == http.MethodGet {
+			gets.Add(1)
+			entries, err := os.ReadDir(dir)
+			if err != nil || len(entries) != 1 {
+				t.Errorf("work dir during the read-back: %v %v", entries, err)
+			}
+		}
+		resp, err := transport.RoundTrip(r)
+		if err == nil && r.Method == http.MethodGet && corrupt.Load() {
+			drainClose(resp.Body)
+			resp.Body = io.NopCloser(strings.NewReader("not what was uploaded"))
+		}
+		return resp, err
+	})
+	sink := &nextcloudFilesPublishSink{cfg: s.exapp, client: s.client, cassiniBin: s.bin, rt: s.rt}
+	item := upload{local: local, remote: annTestRecording, size: int64(len(data))}
+
+	if err := sink.putAssetBytes(ctx, item, ""); err != nil {
+		t.Fatalf("delivery: %v", err)
+	}
+	if gets.Load() == 0 {
+		t.Fatal("the delivery was never read back")
+	}
+	corrupt.Store(true)
+	if err := sink.putAssetBytes(ctx, item, ""); err == nil || !strings.Contains(err.Error(), "verification failed") {
+		t.Fatalf("a read-back that differs: %v", err)
+	}
+}
+
+func TestDAVHashFileHashesWithoutWriting(t *testing.T) {
+	body := "meeting bytes"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/missing.opus") {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = io.WriteString(w, body)
+	}))
+	t.Cleanup(srv.Close)
+	c := ExAppConfig{NextcloudURL: srv.URL, AppID: "cassini", AppVersion: "1", AppSecret: "secret"}
+	ctx := context.Background()
+
+	digest, written, err := c.davHashFile(ctx, srv.Client(), "alice", "m.opus", 0)
+	want := sha256.Sum256([]byte(body))
+	if err != nil || written != int64(len(body)) || digest != hex.EncodeToString(want[:]) {
+		t.Fatalf("hash: %q %d %v", digest, written, err)
+	}
+	if _, _, err := c.davHashFile(ctx, srv.Client(), "alice", "m.opus", 4); err == nil || !strings.Contains(err.Error(), "larger than") {
+		t.Fatalf("over the limit: %v", err)
+	}
+	if _, _, err := c.davHashFile(ctx, srv.Client(), "alice", "missing.opus", 0); err == nil || !strings.Contains(err.Error(), "404") {
+		t.Fatalf("missing: %v", err)
+	}
+}

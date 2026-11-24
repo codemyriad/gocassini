@@ -589,8 +589,8 @@ func TestImportWaitsForDiskThatRunningImportsHold(t *testing.T) {
 	savedRetry := importClaimRetryMin
 	importClaimRetryMin = 10 * time.Millisecond
 	t.Cleanup(func() { importClaimRetryMin = savedRetry })
-	// Room for one 1 GiB import (3 GiB at its peak), not two.
-	withImportDisk(t, func() (int64, error) { return importDiskReserve + 4<<30, nil })
+	// Room for one 1 GiB import (2 GiB at its peak), not two.
+	withImportDisk(t, func() (int64, error) { return importDiskReserve + 3<<30, nil })
 	started := make(chan string, 4)
 	releaseA := make(chan struct{})
 	s := queueWorkerService(t, func(ctx context.Context, job ImportJob) (meetingImportResult, error) {
@@ -705,10 +705,10 @@ func TestALargeImportWaitingForDiskIsNotOvertaken(t *testing.T) {
 	savedRetry := importClaimRetryMin
 	importClaimRetryMin = 10 * time.Millisecond
 	t.Cleanup(func() { importClaimRetryMin = savedRetry })
-	// 7 GiB to use: Alice's 1 GiB import takes 3, Bob's 2 GiB needs 6 and
+	// 5 GiB to use: Alice's 1 GiB import takes 2, Bob's 2 GiB needs 4 and
 	// waits. Carol's 1 GiB would fit beside Alice's, but must not take the
 	// space Bob is waiting for.
-	withImportDisk(t, func() (int64, error) { return importDiskReserve + 7<<30, nil })
+	withImportDisk(t, func() (int64, error) { return importDiskReserve + 5<<30, nil })
 	started := make(chan string, 4)
 	release := map[string]chan struct{}{"a1": make(chan struct{}), "b1": make(chan struct{}), "c1": make(chan struct{})}
 	s := queueWorkerService(t, func(ctx context.Context, job ImportJob) (meetingImportResult, error) {
@@ -779,7 +779,7 @@ func TestAWaitingImportThatIsCanceledStopsHoldingSpace(t *testing.T) {
 	savedRetry := importClaimRetryMin
 	importClaimRetryMin = 10 * time.Millisecond
 	t.Cleanup(func() { importClaimRetryMin = savedRetry })
-	withImportDisk(t, func() (int64, error) { return importDiskReserve + 4<<30, nil })
+	withImportDisk(t, func() (int64, error) { return importDiskReserve + 3<<30, nil })
 	release := make(chan struct{})
 	s := queueWorkerService(t, func(ctx context.Context, job ImportJob) (meetingImportResult, error) {
 		select {
@@ -860,5 +860,21 @@ func TestAStagedFileReplacedByALargerOneIsRefused(t *testing.T) {
 	err := s.fetchStaged(context.Background(), job, filepath.Join(t.TempDir(), "staged"))
 	if err == nil || !strings.Contains(err.Error(), "changed after it was uploaded") {
 		t.Fatalf("fetch: %v", err)
+	}
+}
+
+func TestImportTransportBoundsConnecting(t *testing.T) {
+	for _, withProxy := range []bool{true, false} {
+		tr := importTransport(time.Minute, withProxy)
+		if tr.ResponseHeaderTimeout != time.Minute || tr.TLSHandshakeTimeout == 0 || tr.DialContext == nil {
+			t.Fatalf("withProxy=%t: header %s, handshake %s, dialer set %t", withProxy, tr.ResponseHeaderTimeout, tr.TLSHandshakeTimeout, tr.DialContext != nil)
+		}
+		if (tr.Proxy != nil) != withProxy {
+			t.Fatalf("withProxy=%t: proxy set %t", withProxy, tr.Proxy != nil)
+		}
+	}
+	// The default transport itself is left alone.
+	if http.DefaultTransport.(*http.Transport).ResponseHeaderTimeout != 0 {
+		t.Fatal("the default transport was changed")
 	}
 }

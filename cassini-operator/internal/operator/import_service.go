@@ -176,16 +176,18 @@ var importDiskFree = func(path string) (int64, error) {
 }
 
 // importDiskNeed is what one import may write to the work volume at its peak:
-// the staged file it downloads, the copy the validating `cassini publish`
-// writes, and the delivered recording the sink downloads again to verify it
-// (newCarryDir), all three on disk at once. A size it was not told is taken as
-// the largest allowed.
+// the staged file it downloads plus the copy the validating `cassini publish`
+// writes, which the importer deletes as soon as it has read the catalog.
+// Delivery adds nothing: the file is hard-linked under its new name, and the
+// check that Nextcloud holds what was uploaded hashes the read-back as it
+// arrives (davHashFile). A size it was not told is taken as the largest
+// allowed.
 func importDiskNeed(job ImportJob) int64 {
 	size := job.ExpectedBytes
 	if size <= 0 || size > maxImportUploadBytes {
 		size = maxImportUploadBytes
 	}
-	return 3 * size
+	return 2 * size
 }
 
 // importDiskVerdict is whether an import's disk need fits right now.
@@ -337,7 +339,7 @@ func newImportService(rt *Runtime, exapp ExAppConfig, logger *log.Logger) *impor
 		exapp:       exapp,
 		logger:      logger,
 		importer:    newMeetingImporter(rt.cfg, exapp, rt, logger),
-		client:      &http.Client{Transport: &http.Transport{ResponseHeaderTimeout: ncFilesProxyHeadersTTL}},
+		client:      &http.Client{Transport: importTransport(ncFilesProxyHeadersTTL, false)},
 		importSlots: make(chan struct{}, slots),
 	}
 	if logger != nil {

@@ -195,18 +195,14 @@ func (s *nextcloudFilesPublishSink) putAssetBytes(ctx context.Context, item uplo
 		return fmt.Errorf("refusing to publish: %w; re-run the publish", err)
 	}
 	if store != nil && s.carriesMarks(item) {
-		dir, cleanup, err := newCarryDir(item)
+		// Read back what Nextcloud now holds and hash it as it arrives: the
+		// check needs only the digest, so nothing is written to disk.
+		digest, written, err := s.cfg.davHashFile(ctx, s.client, ncRecordingsOwner, item.remote, maxAnnotateRecordingBytes)
 		if err != nil {
 			return err
 		}
-		defer cleanup()
-		verified := filepath.Join(dir, "verified"+meetingExtension(item.remote))
-		if _, _, err = s.cfg.stageRecording(ctx, s.client, ncRecordingsOwner, item.remote, verified, maxAnnotateRecordingBytes); err != nil {
-			return err
-		}
-		digest, err := fileSHA256(verified)
-		if err != nil {
-			return err
+		if written == 0 {
+			return fmt.Errorf("GET %s returned an empty recording", item.remote)
 		}
 		if digest != delivered.ContainerSHA256 {
 			return fmt.Errorf("replacement recording content verification failed")

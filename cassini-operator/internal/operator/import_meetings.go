@@ -92,12 +92,25 @@ func newMeetingImporter(cfg Config, exapp ExAppConfig, rt *Runtime, logger *log.
 		// file, all the more with several imports sharing the link. A server
 		// that stops answering is caught by the header timeout, and every
 		// import runs under its own size-scaled time limit (importTimeLimit).
-		cfg: exapp, logger: logger, client: &http.Client{Transport: &http.Transport{
-			Proxy:                 http.ProxyFromEnvironment,
-			ResponseHeaderTimeout: ncFilesUploadTimeout,
-		}},
+		// It keeps the default transport's proxy, as the client it replaced did.
+		cfg: exapp, logger: logger, client: &http.Client{Transport: importTransport(ncFilesUploadTimeout, true)},
 		cassiniBin: cfg.CassiniBin, rt: rt,
 	}}
+}
+
+// importTransport is the default transport's connection handling — a 30 s
+// dial timeout, a 10 s TLS handshake timeout, idle-connection reuse — with a
+// bound on the wait for response headers. A bare http.Transport has none of
+// those, so a Nextcloud that accepts no connection, or stalls the handshake,
+// would hold an import until its overall time limit. withProxy keeps the
+// environment's proxy settings, for the clients that always had them.
+func importTransport(headerTimeout time.Duration, withProxy bool) *http.Transport {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.ResponseHeaderTimeout = headerTimeout
+	if !withProxy {
+		t.Proxy = nil
+	}
+	return t
 }
 
 // importCLITimeout bounds each cassini subprocess the engine runs. Validation
@@ -157,6 +170,12 @@ func (imp *meetingImporter) run(ctx context.Context, req meetingImportRequest, r
 	assets, err := catalogEntryAssets(entry)
 	if err != nil || len(assets) != 1 || assets[0] != filepath.Join("meetings", req.ImportID+ext) {
 		return result, fmt.Errorf("validation did not describe the staged recording")
+	}
+	// The site holds a full copy of the recording that nothing reads past
+	// this point; dropping it now keeps the import at one copy on the work
+	// volume while it delivers (importDiskNeed counts on that).
+	if err := os.RemoveAll(siteDir); err != nil {
+		return result, fmt.Errorf("remove the validation copy: %w", err)
 	}
 
 	// Retention anchors on the meeting's own dates (the standard policy), so a
