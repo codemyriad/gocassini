@@ -670,8 +670,9 @@ func TestImportTooBigForTheDiskFails(t *testing.T) {
 	s.dispatch()
 	waitForImportState(t, s, "a1", importStateFailed)
 	got, _, _ := s.rt.store.ImportJob(context.Background(), "a1")
-	if !strings.Contains(got.Error, "not have enough free disk space") || !strings.Contains(got.Error, "2.0 GiB") {
-		t.Fatalf("error %q does not say the disk is short and by how much", got.Error)
+	// The person sees that the file is too big, never the server's disk.
+	if got.Error != importDiskShortMessage || strings.Contains(got.Error, "GiB") {
+		t.Fatalf("error %q, want %q", got.Error, importDiskShortMessage)
 	}
 	deadline := time.Now().Add(5 * time.Second)
 	for len(s.importSlots) != 0 {

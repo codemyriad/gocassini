@@ -229,6 +229,10 @@ func (s *importService) reserveImportDisk(job ImportJob) (release func(), verdic
 	}, importDiskFits, ""
 }
 
+// importDiskShortMessage is what the person importing reads when the server
+// cannot take their file. How much space the server has is not theirs to see.
+const importDiskShortMessage = "This file is too big to import right now. Please contact your administrator."
+
 // formatGiB renders a byte count for a person: "1.5 GiB".
 func formatGiB(n int64) string {
 	return fmt.Sprintf("%.1f GiB", float64(n)/float64(1<<30))
@@ -797,9 +801,10 @@ func (s *importService) runImportJob(job ImportJob) importRunOutcome {
 		s.logf("import %s: waiting for disk space: %s", job.ID, detail)
 		return importDeferred
 	case importDiskShort:
-		msg := "the server does not have enough free disk space for this file: " + detail
-		s.logf("import %s (%s): %s", job.ID, job.SourceName, msg)
-		s.saveState(job.ID, importStateFailed, "", msg)
+		// The sizes are for the administrator's log; the person importing
+		// learns only what they can act on.
+		s.logf("import %s (%s): not enough free disk space: %s", job.ID, job.SourceName, detail)
+		s.saveState(job.ID, importStateFailed, "", importDiskShortMessage)
 		return importSettled
 	}
 	defer releaseDisk()
