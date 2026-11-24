@@ -564,3 +564,138 @@ func TestMaxConcurrentImportsReadsTheEnvironment(t *testing.T) {
 		}
 	}
 }
+
+// Tests see a disk with room for any import unless they set one: the real
+// disk of whatever machine runs them must not decide whether imports start.
+func init() {
+	importDiskFree = func(string) (int64, error) { return 1 << 50, nil }
+}
+
+// withImportDisk makes the work volume report free bytes for one test.
+func withImportDisk(t *testing.T, free func() (int64, error)) {
+	t.Helper()
+	saved := importDiskFree
+	importDiskFree = func(string) (int64, error) { return free() }
+	t.Cleanup(func() { importDiskFree = saved })
+}
+
+func sizedQueueTestJob(id, user string, size int64) ImportJob {
+	job := queueTestJob(id, user)
+	job.ExpectedBytes = size
+	return job
+}
+
+func TestImportWaitsForDiskThatRunningImportsHold(t *testing.T) {
+	savedRetry := importClaimRetryMin
+	importClaimRetryMin = 10 * time.Millisecond
+	t.Cleanup(func() { importClaimRetryMin = savedRetry })
+	// Room for one 1 GiB import (2 GiB with its validation copy), not two.
+	withImportDisk(t, func() (int64, error) { return importDiskReserve + 3<<30, nil })
+	started := make(chan string, 4)
+	releaseA := make(chan struct{})
+	s := queueWorkerService(t, func(ctx context.Context, job ImportJob) (meetingImportResult, error) {
+		started <- job.ID
+		if job.ID == "a1" {
+			select {
+			case <-releaseA:
+			case <-ctx.Done():
+				return meetingImportResult{}, ctx.Err()
+			}
+		}
+		return meetingImportResult{}, errors.New("test import settled")
+	})
+	s.importSlots = make(chan struct{}, 3)
+	if err := s.rt.store.CreateImportJobs(context.Background(), []ImportJob{sizedQueueTestJob("a1", "alice", 1<<30)}); err != nil {
+		t.Fatal(err)
+	}
+	s.dispatch()
+	if id := <-started; id != "a1" {
+		t.Fatalf("started %s, want a1", id)
+	}
+	if err := s.rt.store.CreateImportJobs(context.Background(), []ImportJob{sizedQueueTestJob("b1", "bob", 1<<30)}); err != nil {
+		t.Fatal(err)
+	}
+	s.dispatch()
+
+	// Bob's import does not fit while Alice's holds its space: it stays
+	// queued, without failing, and without keeping a slot.
+	select {
+	case id := <-started:
+		t.Fatalf("%s started without the disk space for it", id)
+	case <-time.After(200 * time.Millisecond):
+	}
+	if got, _, _ := s.rt.store.ImportJob(context.Background(), "b1"); got.State != importStateQueued {
+		t.Fatalf("b1 state %q, want queued", got.State)
+	}
+	// It takes a slot only for the moment each retry checks the disk, so
+	// most of the time just Alice's is held.
+	freed := false
+	for i := 0; i < 50 && !freed; i++ {
+		freed = len(s.importSlots) == 1
+		time.Sleep(time.Millisecond)
+	}
+	if !freed {
+		t.Fatalf("the waiting import keeps a slot: %d held", len(s.importSlots))
+	}
+
+	// When Alice's settles, Bob's gets the space.
+	close(releaseA)
+	select {
+	case id := <-started:
+		if id != "b1" {
+			t.Fatalf("started %s, want b1", id)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("b1 never started after a1 settled")
+	}
+	waitForImportState(t, s, "b1", importStateFailed)
+	s.mu.Lock()
+	left := len(s.diskReserved)
+	s.mu.Unlock()
+	if left != 0 {
+		t.Fatalf("%d disk reservations left after every import settled", left)
+	}
+}
+
+func TestImportTooBigForTheDiskFails(t *testing.T) {
+	withImportDisk(t, func() (int64, error) { return importDiskReserve + 1<<30, nil })
+	s := queueWorkerService(t, func(ctx context.Context, job ImportJob) (meetingImportResult, error) {
+		t.Errorf("%s ran without the disk space for it", job.ID)
+		return meetingImportResult{}, nil
+	})
+	s.importSlots = make(chan struct{}, 3)
+	if err := s.rt.store.CreateImportJobs(context.Background(), []ImportJob{sizedQueueTestJob("a1", "alice", 1<<30)}); err != nil {
+		t.Fatal(err)
+	}
+	s.dispatch()
+	waitForImportState(t, s, "a1", importStateFailed)
+	got, _, _ := s.rt.store.ImportJob(context.Background(), "a1")
+	if !strings.Contains(got.Error, "not have enough free disk space") || !strings.Contains(got.Error, "2.0 GiB") {
+		t.Fatalf("error %q does not say the disk is short and by how much", got.Error)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for len(s.importSlots) != 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("%d slots held after the import failed", len(s.importSlots))
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func TestUnreadableFreeSpaceDoesNotStopImports(t *testing.T) {
+	withImportDisk(t, func() (int64, error) { return 0, errors.New("statfs failed") })
+	ran := make(chan struct{}, 1)
+	s := queueWorkerService(t, func(ctx context.Context, job ImportJob) (meetingImportResult, error) {
+		ran <- struct{}{}
+		return meetingImportResult{}, errors.New("test import settled")
+	})
+	if err := s.rt.store.CreateImportJobs(context.Background(), []ImportJob{queueTestJob("a1", "alice")}); err != nil {
+		t.Fatal(err)
+	}
+	s.dispatch()
+	select {
+	case <-ran:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the import did not run when the free space could not be read")
+	}
+}
