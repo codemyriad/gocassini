@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -86,8 +87,32 @@ type importService struct {
 	userLocks keyedLocks
 }
 
-// maxConcurrentImports bounds imports running at once across all callers.
-const maxConcurrentImports = 3
+// envMaxConcurrentImports bounds how many imports run at once across all
+// callers. Each running import holds its staged file (up to
+// maxImportUploadBytes) and the validation copy on the work volume, which
+// recordings share, so raise it only with the disk to match.
+const (
+	envMaxConcurrentImports     = "CASSINI_MAX_CONCURRENT_IMPORTS"
+	defaultMaxConcurrentImports = 3
+)
+
+// maxConcurrentImports reads envMaxConcurrentImports. Unset, unparsable or
+// below 1 keeps the default: 0 would stop every import, and "unbounded" is not
+// offered because each import costs disk the recordings also need.
+func maxConcurrentImports(getenv func(string) string, logger *log.Logger) int {
+	raw := strings.TrimSpace(getenv(envMaxConcurrentImports))
+	if raw == "" {
+		return defaultMaxConcurrentImports
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 {
+		if logger != nil {
+			logger.Printf("imports: %s=%q is not a whole number of at least 1; using %d", envMaxConcurrentImports, raw, defaultMaxConcurrentImports)
+		}
+		return defaultMaxConcurrentImports
+	}
+	return n
+}
 
 // A staged-file download is abandoned when less than importFetchMinProgress
 // arrives within importFetchIdleTimeout: a Nextcloud that stalls, or trickles
@@ -181,13 +206,17 @@ func newImportService(rt *Runtime, exapp ExAppConfig, logger *log.Logger) *impor
 		}
 		return nil
 	}
+	slots := maxConcurrentImports(os.Getenv, logger)
 	service := &importService{
 		rt:          rt,
 		exapp:       exapp,
 		logger:      logger,
 		importer:    newMeetingImporter(rt.cfg, exapp, rt, logger),
 		client:      &http.Client{Transport: &http.Transport{ResponseHeaderTimeout: ncFilesProxyHeadersTTL}},
-		importSlots: make(chan struct{}, maxConcurrentImports),
+		importSlots: make(chan struct{}, slots),
+	}
+	if logger != nil {
+		logger.Printf("imports: up to %d run at once", slots)
 	}
 	service.startWorker()
 	service.startStagingGC()

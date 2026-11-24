@@ -539,3 +539,28 @@ func TestAClaimThatCannotBeWrittenIsRetriedLater(t *testing.T) {
 	}
 	waitForImportState(t, s, "a1", importStateFailed)
 }
+
+func TestMaxConcurrentImportsReadsTheEnvironment(t *testing.T) {
+	for _, tc := range []struct {
+		raw  string
+		want int
+	}{
+		{"", defaultMaxConcurrentImports},
+		{"  ", defaultMaxConcurrentImports},
+		{"1", 1},
+		{" 8 ", 8},
+		{"0", defaultMaxConcurrentImports},
+		{"-2", defaultMaxConcurrentImports},
+		{"three", defaultMaxConcurrentImports},
+	} {
+		getenv := func(key string) string {
+			if key == envMaxConcurrentImports {
+				return tc.raw
+			}
+			return ""
+		}
+		if got := maxConcurrentImports(getenv, nil); got != tc.want {
+			t.Errorf("%s=%q: got %d, want %d", envMaxConcurrentImports, tc.raw, got, tc.want)
+		}
+	}
+}
