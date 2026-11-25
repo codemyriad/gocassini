@@ -84,6 +84,9 @@ type importService struct {
 	// line cannot jam: with nothing running, it runs or fails.
 	diskWaiting map[string]importDiskWaiter
 	diskWaitSeq uint64
+	// diskNeverFitsSince is when each import waiting outside the line was
+	// first found unable to fit even once running imports finish.
+	diskNeverFitsSince map[string]time.Time
 	// importSlots bounds how many imports run at once across all callers. A
 	// slot is held for the whole import, not just the download: the staged
 	// copy (up to maxImportUploadBytes) stays on the work volume, and the
@@ -136,9 +139,10 @@ var (
 	importFetchIdlePoll          = 5 * time.Second
 )
 
-// importTimeLimit bounds one import from its claim to its settling, so that no
-// step — the download, `cassini publish`, the upload to Nextcloud, search
-// indexing — can hold an import slot indefinitely. It grows with the file:
+// importTimeLimit bounds one import from its claim to its delivery, so that
+// no step — the download, `cassini publish`, the upload to Nextcloud, sharing
+// — can hold an import slot indefinitely. The indexing that follows has its
+// own bound, importIndexTimeout. It grows with the file:
 // a base allowance plus the time to move the file several times (fetch,
 // publish copy, upload) at a slow 1 MiB/s. A 4 GiB file gets about 3h50m.
 // A variable so tests can shorten it.
@@ -164,6 +168,15 @@ var (
 // never starts if it could take the volume below it. Recordings write there
 // too, and a full disk breaks a live recording.
 var importDiskReserve int64 = 5 << 30
+
+// importDiskNeverFitsAfter is how long an import may keep looking unable to
+// fit, even once running imports finish, before it fails while others still
+// run. One reading can be wrong, taken while another import's files were
+// being deleted or before the filesystem returned their space; readings
+// that agree over this long are not. Without it, on a server that is never
+// idle, such an import would wait forever, and so would every later import
+// of the same person. A variable so tests can shorten it.
+var importDiskNeverFitsAfter = 30 * time.Second
 
 // importDiskFree reports the bytes an unprivileged writer can still use on
 // the filesystem holding path. A variable so tests can set the disk.
@@ -278,19 +291,30 @@ func (s *importService) reserveImportDisk(job ImportJob) (release func(), verdic
 				detail += fmt.Sprintf(", %s is in use by other imports and %s is held for imports ahead of it", formatGiB(promised), formatGiB(ahead))
 				// What running imports have written comes back when they
 				// settle. If even that would not make it fit, it waits outside
-				// the line, so no other import has to leave room for it; it
-				// fails once nothing else runs, when the count cannot shift
-				// under it. The estimate only decides where it waits, never
-				// that it fails: free space and the files are read a moment
-				// apart, and a filesystem may return space after a delete.
+				// the line, so no other import has to leave room for it, and
+				// fails once nothing else runs or once that has held for
+				// importDiskNeverFitsAfter. One reading alone never fails it:
+				// free space and the files are read a moment apart, and a
+				// filesystem may return space after a delete.
 				if heldErr != nil {
 					s.logf("import %s: disk held by imports unknown (%v)", job.ID, heldErr)
 					held = promised
 				}
 				if free+held-importDiskReserve < need {
 					delete(s.diskWaiting, job.ID)
+					since, seen := s.diskNeverFitsSince[job.ID]
+					if !seen {
+						if s.diskNeverFitsSince == nil {
+							s.diskNeverFitsSince = map[string]time.Time{}
+						}
+						s.diskNeverFitsSince[job.ID] = time.Now()
+					} else if time.Since(since) >= importDiskNeverFitsAfter {
+						delete(s.diskNeverFitsSince, job.ID)
+						return nil, importDiskShort, detail + fmt.Sprintf("; it would not fit even once they finish, and has not for %s", time.Since(since).Round(time.Second))
+					}
 					return nil, importDiskWait, detail + "; it would not fit even once they finish, so it waits outside the line"
 				}
+				delete(s.diskNeverFitsSince, job.ID)
 				if !inLine {
 					if s.diskWaiting == nil {
 						s.diskWaiting = map[string]importDiskWaiter{}
@@ -301,10 +325,12 @@ func (s *importService) reserveImportDisk(job ImportJob) (release func(), verdic
 				return nil, importDiskWait, detail
 			}
 			delete(s.diskWaiting, job.ID)
+			delete(s.diskNeverFitsSince, job.ID)
 			return nil, importDiskShort, detail
 		}
 	}
 	delete(s.diskWaiting, job.ID)
+	delete(s.diskNeverFitsSince, job.ID)
 	if s.diskReserved == nil {
 		s.diskReserved = map[string]int64{}
 	}
@@ -684,6 +710,10 @@ func (s *importService) cancel(w http.ResponseWriter, r *http.Request, job Impor
 		writeJSON(w, http.StatusOK, job)
 		return
 	}
+	if job.State == importStateIndexing {
+		writeJSONError(w, http.StatusConflict, "the meeting has already been added and shared; it can no longer be canceled")
+		return
+	}
 	if err := s.rt.store.CancelImportJob(r.Context(), job.ID); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -878,6 +908,7 @@ func (s *importService) stopDiskWait(id string) {
 	}
 	s.mu.Lock()
 	delete(s.diskWaiting, id)
+	delete(s.diskNeverFitsSince, id)
 	s.mu.Unlock()
 }
 

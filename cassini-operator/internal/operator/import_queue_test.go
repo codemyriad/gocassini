@@ -796,6 +796,45 @@ func TestAnImportThatCanNeverFitDoesNotHoldUpOthers(t *testing.T) {
 	}
 }
 
+// On a server that is never idle, an import that keeps looking unable to fit
+// fails once the readings have agreed for importDiskNeverFitsAfter, instead
+// of waiting, with every later import of its owner, for a quiet moment that
+// never comes.
+func TestAnImportThatCanNeverFitFailsOnABusyServer(t *testing.T) {
+	savedRetry, savedAfter := importClaimRetryMin, importDiskNeverFitsAfter
+	importClaimRetryMin, importDiskNeverFitsAfter = 10*time.Millisecond, 100*time.Millisecond
+	t.Cleanup(func() { importClaimRetryMin, importDiskNeverFitsAfter = savedRetry, savedAfter })
+	withImportDisk(t, func() (int64, error) { return importDiskReserve + 3<<30, nil })
+	started := make(chan string, 4)
+	s := queueWorkerService(t, func(ctx context.Context, job ImportJob) (meetingImportResult, error) {
+		started <- job.ID
+		<-ctx.Done() // Alice's import never ends.
+		return meetingImportResult{}, ctx.Err()
+	})
+	s.importSlots = make(chan struct{}, 3)
+	if err := s.rt.store.CreateImportJobs(context.Background(), []ImportJob{sizedQueueTestJob("a1", "alice", 1<<30)}); err != nil {
+		t.Fatal(err)
+	}
+	s.dispatch()
+	if id := <-started; id != "a1" {
+		t.Fatalf("started %s", id)
+	}
+	if err := s.rt.store.CreateImportJobs(context.Background(), []ImportJob{sizedQueueTestJob("b1", "bob", 2<<30)}); err != nil {
+		t.Fatal(err)
+	}
+	s.dispatch()
+	waitForImportState(t, s, "b1", importStateFailed)
+	if got, _, _ := s.rt.store.ImportJob(context.Background(), "a1"); got.State != importStateFetching {
+		t.Fatalf("a1 is %s; the test needs it still running", got.State)
+	}
+	s.mu.Lock()
+	left := len(s.diskNeverFitsSince)
+	s.mu.Unlock()
+	if left != 0 {
+		t.Fatalf("%d never-fits readings left after the import failed", left)
+	}
+}
+
 // What running imports have written counts towards what an import could get
 // by waiting: it decides whether an import waits in the line or outside it.
 func TestImportDiskHeldCountsImportFolders(t *testing.T) {
@@ -1013,5 +1052,23 @@ func TestImportTransportBoundsConnecting(t *testing.T) {
 	// The default transport itself is left alone.
 	if http.DefaultTransport.(*http.Transport).ResponseHeaderTimeout != 0 {
 		t.Fatal("the default transport was changed")
+	}
+}
+
+// Cancel over the API refuses an import that is indexing: its meeting is
+// already added and shared.
+func TestCancelRefusesAnIndexingImport(t *testing.T) {
+	s := importHandlerService(t)
+	if err := s.rt.store.CreateImportJobs(context.Background(), []ImportJob{queueTestJob("a1", "alice")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.rt.store.SetImportJobState(context.Background(), "a1", importStateIndexing, "indexing", ""); err != nil {
+		t.Fatal(err)
+	}
+	if w := importDo(t, s, http.MethodPost, importsURLPath+"/a1/cancel", "alice", ""); w.Code != http.StatusConflict {
+		t.Fatalf("cancel while indexing: %d %s", w.Code, w.Body.String())
+	}
+	if got, _, _ := s.rt.store.ImportJob(context.Background(), "a1"); got.State != importStateIndexing {
+		t.Fatalf("state %s, want indexing", got.State)
 	}
 }

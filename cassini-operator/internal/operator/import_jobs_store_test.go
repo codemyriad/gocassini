@@ -108,6 +108,26 @@ func TestImportJobCancelBeatsWorkerUpdates(t *testing.T) {
 	}
 }
 
+// Once an import is indexing, its meeting is added and shared, and the run
+// ends done: a cancel then would only show Canceled for a meeting that lands.
+func TestAnIndexingImportCannotBeCanceled(t *testing.T) {
+	s := openImportTestStore(t)
+	ctx := context.Background()
+	job := ImportJob{ID: "01TESTIMPORT0000000000000D", BatchID: "b", CreatedBy: "alice", SourceName: "a.opus", StagedPath: ".CassiniImports/a.opus"}
+	if err := s.CreateImportJobs(ctx, []ImportJob{job}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetImportJobState(ctx, job.ID, importStateIndexing, "indexing", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CancelImportJob(ctx, job.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got, _, _ := s.ImportJob(ctx, job.ID); got.State != importStateIndexing {
+		t.Fatalf("an indexing import was canceled: %s", got.State)
+	}
+}
+
 // A delivery that finished as the cancel arrived is recorded: the meeting is
 // in Nextcloud, and retention trusts it only through the done row.
 func TestImportJobOutcomeOverridesALateCancel(t *testing.T) {

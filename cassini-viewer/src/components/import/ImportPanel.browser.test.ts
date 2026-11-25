@@ -108,6 +108,16 @@ it("says whether an import is queued behind the person's own or being worked on"
  expect((await row("third")).textContent).toContain("Queued · 2 imports ahead");
 });
 
+it("offers Cancel until the meeting is added and shared, not while it is indexed", async () => {
+ const provider: DataProvider = Object.assign(new StaticCatalogProvider(), {
+  listImports: async () => [job("sharing", "sharing"), job("indexing", "indexing")],
+  cancelImport: vi.fn(async () => {}),
+ });
+ open(provider);
+ await expect.element(page.getByRole("button", { name: "Cancel sharing.json" })).toBeVisible();
+ await expect.element(page.getByText("indexing.json", { exact: true })).toBeVisible();
+ expect(page.getByRole("button", { name: "Cancel indexing.json" }).elements()).toHaveLength(0);
+});
 it.each(["failed", "canceled"] as const)("explains recovery for %s CLI imports without offering web Retry", async (state) => {
  const cli = { ...job("cli", state), stagedPath: "local:/tmp/source.json", origin: "cli" as const, error: "CLI import failed" };
  const provider: DataProvider = Object.assign(new StaticCatalogProvider(), {

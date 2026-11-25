@@ -348,12 +348,14 @@ func (s *Store) RequeueUnfinishedImports(ctx context.Context) (int64, error) {
 	return count, nil
 }
 
-// CancelImportJob marks a non-terminal job canceled. The worker's context is
-// the service's business; this only settles the durable state.
+// CancelImportJob marks a non-terminal job canceled, unless it is indexing:
+// by then its meeting is added and shared, and the run ends done. The
+// worker's context is the service's business; this only settles the durable
+// state.
 func (s *Store) CancelImportJob(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE import_jobs SET state=?,phase='',updated_at=? WHERE id=? AND state NOT IN (?,?,?)`,
-		importStateCanceled, nowUTCString(), id, importStateDone, importStateFailed, importStateCanceled)
+		`UPDATE import_jobs SET state=?,phase='',updated_at=? WHERE id=? AND state NOT IN (?,?,?,?)`,
+		importStateCanceled, nowUTCString(), id, importStateDone, importStateFailed, importStateCanceled, importStateIndexing)
 	return err
 }
 

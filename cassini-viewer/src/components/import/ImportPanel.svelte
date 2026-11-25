@@ -391,8 +391,8 @@
     persistSet(CLEARED_KEY, cleared);
   }
 
-  // What a running row says. The operator's stages after the upload are one
-  // step to the person importing: their meeting is being added.
+  // What a running row says: where it waits, then fetching and checking, and
+  // the operator's later stages as one step, the meeting being added.
   function runningLabel(job: ImportJobRecord): string {
     switch (importRunningStage(job)) {
       case "uploading":
@@ -643,7 +643,8 @@
                   {/if}
                 </div>
                 <span class="import-actions">
-                  {#if running && !fromCLI && job.state !== "uploading"}
+                  <!-- Indexing comes after the meeting is added and shared: too late to cancel. -->
+                  {#if running && !fromCLI && job.state !== "uploading" && job.state !== "indexing"}
                     <button type="button" class="btn btn-ghost btn-square btn-xs" aria-label={text.cancel_named({ name: job.sourceName })} on:click={() => void cancelJob(job)}>
                       <X size={14} aria-hidden="true" />
                     </button>
