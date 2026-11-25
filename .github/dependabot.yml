@@ -5,7 +5,11 @@
 version: 2
 updates:
   - package-ecosystem: github-actions
-    directory: /
+    # "/" covers .github/workflows only; the local composite actions are
+    # scanned separately.
+    directories:
+      - /
+      - /.github/actions/*
     schedule:
       interval: monthly
     labels:
