@@ -60,6 +60,21 @@ func TestDeliveryCheckHashesTheReadBackWithoutWritingIt(t *testing.T) {
 	}
 }
 
+// The read-back is bounded by the size just uploaded, not by the limit on
+// recordings staged for annotation: an import can be up to 4 GiB.
+func TestDeliveryReadBackIsBoundedByTheUploadedSize(t *testing.T) {
+	big := upload{size: maxImportUploadBytes}
+	if got := readBackLimit(big); got != maxImportUploadBytes {
+		t.Fatalf("a %d-byte upload is read back up to %d bytes", big.size, got)
+	}
+	if maxImportUploadBytes <= maxAnnotateRecordingBytes {
+		t.Fatal("this test no longer covers an upload above the recording limit")
+	}
+	if got := readBackLimit(upload{}); got != maxAnnotateRecordingBytes {
+		t.Fatalf("an upload of unknown size is read back up to %d bytes", got)
+	}
+}
+
 func TestDAVHashFileHashesWithoutWriting(t *testing.T) {
 	body := "meeting bytes"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

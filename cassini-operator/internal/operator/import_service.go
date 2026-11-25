@@ -175,6 +175,48 @@ var importDiskFree = func(path string) (int64, error) {
 	return int64(st.Bavail) * int64(st.Bsize), nil
 }
 
+// importDiskHeld is what imports have written to the work volume so far:
+// the files under every `.import-*` folder in dir, where fetches land and
+// the importer stages. Their space comes back when the imports settle. A file
+// linked under two names counts twice, which errs towards waiting.
+var importDiskHeld = measureImportDiskHeld
+
+func measureImportDiskHeld(dir string) (int64, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0, err
+	}
+	var held int64
+	for _, e := range entries {
+		if !strings.HasPrefix(e.Name(), ".import-") {
+			continue
+		}
+		err := filepath.WalkDir(filepath.Join(dir, e.Name()), func(_ string, d os.DirEntry, err error) error {
+			if errors.Is(err, os.ErrNotExist) {
+				return nil // an import settled while it was being counted
+			}
+			if err != nil {
+				return err
+			}
+			if d.Type().IsRegular() {
+				info, err := d.Info()
+				if errors.Is(err, os.ErrNotExist) {
+					return nil
+				}
+				if err != nil {
+					return err
+				}
+				held += info.Size()
+			}
+			return nil
+		})
+		if err != nil {
+			return 0, err
+		}
+	}
+	return held, nil
+}
+
 // importDiskNeed is what one import may write to the work volume at its peak:
 // the staged file it downloads plus the copy the validating `cassini publish`
 // writes, which the importer deletes as soon as it has read the catalog.
@@ -210,7 +252,9 @@ const (
 // failed check.
 func (s *importService) reserveImportDisk(job ImportJob) (release func(), verdict importDiskVerdict, detail string) {
 	need := importDiskNeed(job)
-	free, err := importDiskFree(rtWorkScratchDir(s.rt.cfg.WorkRoot))
+	scratch := rtWorkScratchDir(s.rt.cfg.WorkRoot)
+	free, err := importDiskFree(scratch)
+	held, heldErr := importDiskHeld(scratch)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err != nil {
@@ -230,7 +274,16 @@ func (s *importService) reserveImportDisk(job ImportJob) (release func(), verdic
 		}
 		if free-promised-ahead-importDiskReserve < need {
 			detail = fmt.Sprintf("it needs %s, and %s is free, of which %s is kept for recordings", formatGiB(need), formatGiB(free), formatGiB(importDiskReserve))
-			if promised > 0 || ahead > 0 {
+			// Waiting helps only if what running imports have written, which
+			// comes back when they settle, would make it fit. One that can
+			// never fit fails now rather than holding a place in the line
+			// that every later import must leave room for. If that cannot be
+			// counted, their whole promise stands in for it.
+			if heldErr != nil {
+				s.logf("import %s: disk held by imports unknown (%v)", job.ID, heldErr)
+				held = promised
+			}
+			if free+held-importDiskReserve >= need && (promised > 0 || ahead > 0) {
 				detail += fmt.Sprintf(", %s is in use by other imports and %s is held for imports ahead of it", formatGiB(promised), formatGiB(ahead))
 				if !inLine {
 					if s.diskWaiting == nil {

@@ -197,7 +197,7 @@ func (s *nextcloudFilesPublishSink) putAssetBytes(ctx context.Context, item uplo
 	if store != nil && s.carriesMarks(item) {
 		// Read back what Nextcloud now holds and hash it as it arrives: the
 		// check needs only the digest, so nothing is written to disk.
-		digest, written, err := s.cfg.davHashFile(ctx, s.client, ncRecordingsOwner, item.remote, maxAnnotateRecordingBytes)
+		digest, written, err := s.cfg.davHashFile(ctx, s.client, ncRecordingsOwner, item.remote, readBackLimit(item))
 		if err != nil {
 			return err
 		}
@@ -210,6 +210,16 @@ func (s *nextcloudFilesPublishSink) putAssetBytes(ctx context.Context, item uplo
 		return store.recordAnnotationDelivery(ctx, path.Base(item.remote), delivered)
 	}
 	return nil
+}
+
+// readBackLimit bounds the delivery check's read-back by the size just
+// uploaded, which verifyUploadedLeaf has confirmed: an import may be larger
+// than the limit on recordings staged for annotation.
+func readBackLimit(item upload) int64 {
+	if item.size > 0 {
+		return item.size
+	}
+	return maxAnnotateRecordingBytes
 }
 
 func (c ExAppConfig) verifyUploadedLeaf(ctx context.Context, client *http.Client, relPath string, size int64) error {

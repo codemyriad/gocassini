@@ -569,6 +569,7 @@ func TestMaxConcurrentImportsReadsTheEnvironment(t *testing.T) {
 // disk of whatever machine runs them must not decide whether imports start.
 func init() {
 	importDiskFree = func(string) (int64, error) { return 1 << 50, nil }
+	importDiskHeld = func(string) (int64, error) { return 0, nil }
 }
 
 // withImportDisk makes the work volume report free bytes for one test.
@@ -680,6 +681,94 @@ func TestImportTooBigForTheDiskFails(t *testing.T) {
 			t.Fatalf("%d slots held after the import failed", len(s.importSlots))
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// An import that would not fit even once every running import gave its space
+// back fails at once, so it never holds a place in the disk line that other
+// people's imports must leave room for.
+func TestAnImportThatCanNeverFitDoesNotHoldUpOthers(t *testing.T) {
+	savedRetry := importClaimRetryMin
+	importClaimRetryMin = 10 * time.Millisecond
+	t.Cleanup(func() { importClaimRetryMin = savedRetry })
+	// 3 GiB to use, and Alice's running 1 GiB import, promised 2, has written
+	// nothing yet, so finishing it frees nothing. Bob's 2 GiB needs 4, more
+	// than there will be. Carol's 256 MiB needs 512 MiB and fits now.
+	withImportDisk(t, func() (int64, error) { return importDiskReserve + 3<<30, nil })
+	started := make(chan string, 4)
+	releaseA := make(chan struct{})
+	s := queueWorkerService(t, func(ctx context.Context, job ImportJob) (meetingImportResult, error) {
+		started <- job.ID
+		if job.ID == "a1" {
+			select {
+			case <-releaseA:
+			case <-ctx.Done():
+				return meetingImportResult{}, ctx.Err()
+			}
+		}
+		return meetingImportResult{}, errors.New("test import settled")
+	})
+	s.importSlots = make(chan struct{}, 3)
+	t.Cleanup(func() { close(releaseA) })
+	create := func(job ImportJob) {
+		t.Helper()
+		if err := s.rt.store.CreateImportJobs(context.Background(), []ImportJob{job}); err != nil {
+			t.Fatal(err)
+		}
+		s.dispatch()
+	}
+	expect := func(want string) {
+		t.Helper()
+		select {
+		case id := <-started:
+			if id != want {
+				t.Fatalf("started %s, want %s", id, want)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s never started", want)
+		}
+	}
+	create(sizedQueueTestJob("a1", "alice", 1<<30))
+	expect("a1")
+	create(sizedQueueTestJob("b1", "bob", 2<<30))
+	// Bob fails while Alice's import is still running.
+	waitForImportState(t, s, "b1", importStateFailed)
+	got, _, _ := s.rt.store.ImportJob(context.Background(), "b1")
+	if got.Error != importDiskShortMessage {
+		t.Fatalf("error %q, want %q", got.Error, importDiskShortMessage)
+	}
+	create(sizedQueueTestJob("c1", "carol", 256<<20))
+	expect("c1")
+	s.mu.Lock()
+	_, bobWaits := s.diskWaiting["b1"]
+	s.mu.Unlock()
+	if bobWaits {
+		t.Fatal("b1 still holds a place in the disk line after failing")
+	}
+}
+
+// What running imports have written counts towards what an import could get
+// by waiting: an import that would fit once they settle waits, one that would
+// not fails.
+func TestImportDiskHeldCountsImportFolders(t *testing.T) {
+	dir := t.TempDir()
+	write := func(rel string, n int) {
+		t.Helper()
+		p := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, make([]byte, n), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(".import-fetch-1/staged", 100)
+	write(".import-fetch-1/.import-a1-x/site/m.opus", 50)
+	write(".import-fetch-2/staged", 7)
+	write("pipeline/other.opus", 1000)
+	got, err := measureImportDiskHeld(dir)
+	if err != nil || got != 157 {
+		t.Fatalf("held %d, %v; want 157", got, err)
 	}
 }
 
