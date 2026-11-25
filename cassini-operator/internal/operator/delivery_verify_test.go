@@ -100,3 +100,57 @@ func TestDAVHashFileHashesWithoutWriting(t *testing.T) {
 		t.Fatalf("missing: %v", err)
 	}
 }
+
+// An import re-run after its upload landed, but before the upload was
+// verified and its marks recorded, finds Nextcloud already holding the file.
+// It still checks Nextcloud's copy and records the delivery.
+func TestAnUploadThatLandedIsStillVerifiedAndRecorded(t *testing.T) {
+	_, s, _, store := asyncFixture(t)
+	ctx := context.Background()
+	data, _ := json.Marshal(annotateResult{Format: annotateResultFormat, AudioOpusSHA256: testAudioDigest, DurationMS: 60000})
+	local := filepath.Join(t.TempDir(), "sealed.opus")
+	if err := os.WriteFile(local, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var corrupt atomic.Bool
+	transport := s.client.Transport
+	s.client.Transport = annotationRoundTripper(func(r *http.Request) (*http.Response, error) {
+		resp, err := transport.RoundTrip(r)
+		if err == nil && r.Method == http.MethodGet && corrupt.Load() {
+			drainClose(resp.Body)
+			resp.Body = io.NopCloser(strings.NewReader("not what was uploaded"))
+		}
+		return resp, err
+	})
+	sink := &nextcloudFilesPublishSink{cfg: s.exapp, client: s.client, cassiniBin: s.bin, rt: s.rt}
+	item := upload{local: local, remote: annTestRecording, size: int64(len(data))}
+	pending := func() bool {
+		t.Helper()
+		var n int
+		if err := store.db.QueryRow(`SELECT COUNT(*) FROM annotation_head WHERE republish_json IS NOT NULL`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n > 0
+	}
+
+	// The first attempt uploads, then stops at the check.
+	corrupt.Store(true)
+	if err := sink.putAssetBytes(ctx, item, ""); err == nil {
+		t.Fatal("a read-back that differs was accepted")
+	}
+	if !pending() {
+		t.Fatal("the stopped attempt left no delivery to finish")
+	}
+	// A re-run that finds the file still refuses a copy that differs...
+	if err := sink.confirmAssetDelivery(ctx, item); err == nil || !strings.Contains(err.Error(), "verification failed") {
+		t.Fatalf("re-run with a read-back that differs: %v", err)
+	}
+	// ...and records the delivery once Nextcloud's copy checks out.
+	corrupt.Store(false)
+	if err := sink.confirmAssetDelivery(ctx, item); err != nil {
+		t.Fatalf("re-run: %v", err)
+	}
+	if pending() {
+		t.Fatal("the re-run left the delivery unrecorded")
+	}
+}

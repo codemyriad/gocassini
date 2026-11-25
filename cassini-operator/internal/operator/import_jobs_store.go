@@ -307,10 +307,13 @@ func (s *Store) SetImportJobProvenance(ctx context.Context, id, format, contentI
 }
 
 // SetImportJobOutcome records a successful delivery and moves the job done.
+// Unlike a state update it overrides a cancel: the meeting is in Nextcloud,
+// and the done row is what tells retention that this installation put it
+// there (doneImportDeliveries).
 func (s *Store) SetImportJobOutcome(ctx context.Context, id, deliveredName string, fileID int64, importedAt string) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE import_jobs SET state=?,phase='',error='',delivered_name=?,file_id=?,imported_at=?,updated_at=? WHERE id=? AND state!=?`,
-		importStateDone, deliveredName, fileID, importedAt, nowUTCString(), id, importStateCanceled)
+		`UPDATE import_jobs SET state=?,phase='',error='',delivered_name=?,file_id=?,imported_at=?,updated_at=? WHERE id=?`,
+		importStateDone, deliveredName, fileID, importedAt, nowUTCString(), id)
 	return err
 }
 

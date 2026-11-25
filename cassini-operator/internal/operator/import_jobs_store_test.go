@@ -95,9 +95,6 @@ func TestImportJobCancelBeatsWorkerUpdates(t *testing.T) {
 	if err := s.SetImportJobState(ctx, job.ID, importStateDelivering, "delivering", ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetImportJobOutcome(ctx, job.ID, job.ID+".opus", 7, "2026-10-15T10:00:00Z"); err != nil {
-		t.Fatal(err)
-	}
 	got, _, _ := s.ImportJob(ctx, job.ID)
 	if got.State != importStateCanceled {
 		t.Fatalf("cancel lost to worker update: %s", got.State)
@@ -108,6 +105,30 @@ func TestImportJobCancelBeatsWorkerUpdates(t *testing.T) {
 	}
 	if got, _, _ := s.ImportJob(ctx, job.ID); got.State != importStateQueued {
 		t.Fatalf("retry: %s", got.State)
+	}
+}
+
+// A delivery that finished as the cancel arrived is recorded: the meeting is
+// in Nextcloud, and retention trusts it only through the done row.
+func TestImportJobOutcomeOverridesALateCancel(t *testing.T) {
+	s := openImportTestStore(t)
+	ctx := context.Background()
+	job := ImportJob{ID: "01TESTIMPORT0000000000000C", BatchID: "b", CreatedBy: "alice", SourceName: "a.opus", StagedPath: ".CassiniImports/a.opus"}
+	if err := s.CreateImportJobs(ctx, []ImportJob{job}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CancelImportJob(ctx, job.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetImportJobOutcome(ctx, job.ID, job.ID+".opus", 7, "2026-10-15T10:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _, _ := s.ImportJob(ctx, job.ID); got.State != importStateDone {
+		t.Fatalf("delivered import left %s", got.State)
+	}
+	names, err := s.doneImportDeliveries(ctx)
+	if err != nil || len(names) != 1 || names[0] != job.ID+".opus" {
+		t.Fatalf("retention gate: %v %v", names, err)
 	}
 }
 

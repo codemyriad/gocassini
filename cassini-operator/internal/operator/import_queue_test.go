@@ -465,6 +465,43 @@ func TestWaitingForASlotCanBeCanceledAndIsPositioned(t *testing.T) {
 	}
 }
 
+// A cancel or shutdown that arrives while the last step of a successful run
+// finishes is too late: the meeting landed, so the import is done.
+func TestAnImportThatLandsAsItIsInterruptedIsDone(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		interrupt func(s *importService)
+	}{
+		{"cancel", func(s *importService) {
+			if w := importDo(t, s, http.MethodPost, importsURLPath+"/a1/cancel", "alice", ""); w.Code != http.StatusAccepted {
+				t.Fatalf("cancel: %d %s", w.Code, w.Body.String())
+			}
+		}},
+		{"shutdown", func(s *importService) { s.rt.cancel() }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			started := make(chan struct{})
+			s := queueWorkerService(t, func(ctx context.Context, job ImportJob) (meetingImportResult, error) {
+				close(started)
+				<-ctx.Done()
+				return meetingImportResult{DeliveredName: "a1.opus", FileID: 42, ImportedAtUTC: nowUTCString()}, nil
+			})
+			s.client = &http.Client{Timeout: time.Second}
+			if err := s.rt.store.CreateImportJobs(context.Background(), []ImportJob{queueTestJob("a1", "alice")}); err != nil {
+				t.Fatal(err)
+			}
+			s.dispatch()
+			<-started
+			tc.interrupt(s)
+			waitForImportState(t, s, "a1", importStateDone)
+			got, _, _ := s.rt.store.ImportJob(context.Background(), "a1")
+			if got.DeliveredName != "a1.opus" || got.FileID != 42 {
+				t.Fatalf("outcome not recorded: %+v", got)
+			}
+		})
+	}
+}
+
 func TestShutdownReturnsRunningAndWaitingImportsToTheQueue(t *testing.T) {
 	ran := make(chan string, 4)
 	s := queueWorkerService(t, func(ctx context.Context, job ImportJob) (meetingImportResult, error) {

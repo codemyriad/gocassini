@@ -946,7 +946,10 @@ func (s *importService) runImportJob(job ImportJob) importRunOutcome {
 	runCtx, cancelRun := context.WithTimeoutCause(ctx, limit, errTooLong)
 	defer cancelRun()
 	result, err := perform(runCtx, job)
-	if ctx.Err() != nil {
+	// A run that returned a result has put the meeting in Nextcloud: a
+	// cancel or shutdown that arrived meanwhile came too late to stop it, so
+	// the import is recorded as done rather than canceled or queued again.
+	if err != nil && ctx.Err() != nil {
 		s.settleInterrupted(job)
 		return importSettled
 	}

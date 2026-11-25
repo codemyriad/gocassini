@@ -235,12 +235,16 @@ func (imp *meetingImporter) run(ctx context.Context, req meetingImportRequest, r
 	// A pre-existing leaf under a minted stem can only be this import's own
 	// interrupted attempt, so equal bytes are already delivered and different
 	// bytes are a truncated upload to replace. Marks cannot have accrued on it
-	// before the import finished sharing it, so no carry is attempted.
+	// before the import finished sharing it, so no carry is attempted. An
+	// attempt can stop after its upload landed but before it was verified
+	// and its marks recorded, so a re-run still does those.
 	alreadyDelivered := before.Exists && strings.EqualFold(strings.TrimSpace(before.Checksum), localDigest)
-	if !alreadyDelivered {
-		if err := s.putAssetBytes(ctx, item, ""); err != nil {
+	if alreadyDelivered {
+		if err := s.confirmAssetDelivery(ctx, item); err != nil {
 			return result, err
 		}
+	} else if err := s.putAssetBytes(ctx, item, ""); err != nil {
+		return result, err
 	}
 	after, err := s.cfg.davPropfindLeafState(ctx, s.client, ncRecordingsOwner, remote)
 	if err != nil || !after.Exists || after.FileID <= 0 {
