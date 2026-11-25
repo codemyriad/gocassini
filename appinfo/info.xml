@@ -323,6 +323,14 @@ Summaries and questions use whichever language model you connect, so their ratin
         <verb>PUT,DELETE</verb>
         <access_level>ADMIN</access_level>
       </route>
+      <!-- ADMIN: Restore default for how many imports run at once (#509)
+           deletes the saved value. Ahead of the settings route, which does
+           not carry DELETE, for the same reason as the route above. -->
+      <route>
+        <url>^operator\/settings\/imports\/?$</url>
+        <verb>DELETE</verb>
+        <access_level>ADMIN</access_level>
+      </route>
       <!-- ADMIN: STT quality settings (read + update) driven by the operator
            surface's Settings panel (D-420 V3). Kept ADMIN like the rest of the
            operator API — a non-admin's PUT/GET 403s at the proxy boundary. -->

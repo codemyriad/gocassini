@@ -238,3 +238,15 @@ func TestImportSlotPoolCanceledWaiterHoldsNothing(t *testing.T) {
 		t.Fatalf("held %d, waiting %d", p.inUse(), len(p.waiters))
 	}
 }
+
+// Through Nextcloud the operator is reached only on routes info.xml declares
+// for that verb: Restore default (DELETE) needs its own route, since the
+// settings route carries GET and PUT only. All of it is ADMIN.
+func TestImportSettingsRoutesAreDeclaredForAdministrators(t *testing.T) {
+	routes := manifestRoutes(t)
+	for _, verb := range []string{"GET", "PUT", "DELETE"} {
+		if got := manifestAccess(routes, "operator/settings/imports", verb); got != "ADMIN" {
+			t.Errorf("%s operator/settings/imports = %q, want ADMIN", verb, got)
+		}
+	}
+}
