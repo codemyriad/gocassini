@@ -91,9 +91,10 @@ type importService struct {
 	// slot is held for the whole import, not just the download: the staged
 	// copy (up to maxImportUploadBytes) stays on the work volume, and the
 	// validating `cassini publish` writes a second one, until the import
-	// settles. Waiters are served in arrival order. Nil means unbounded
-	// (handler-only tests).
-	importSlots chan struct{}
+	// settles. Waiters are served in arrival order. The limit is the
+	// administrator's setting, shared with the runtime, which changes it
+	// live (import_settings.go). Nil means unbounded (handler-only tests).
+	importSlots *importSlotPool
 	// perform runs one import; nil means performImport. A seam for tests.
 	perform func(ctx context.Context, job ImportJob) (meetingImportResult, error)
 	// userLocks serializes one caller's staging work — registering uploads,
@@ -103,9 +104,10 @@ type importService struct {
 }
 
 // envMaxConcurrentImports bounds how many imports run at once across all
-// callers. Each running import holds its staged file (up to
-// maxImportUploadBytes) and the validation copy on the work volume, which
-// recordings share, so raise it only with the disk to match.
+// callers until an administrator saves the setting in the panel, which then
+// wins for good (import_settings.go). Each running import holds its staged
+// file (up to maxImportUploadBytes) and the validation copy on the work
+// volume, which recordings share.
 const (
 	envMaxConcurrentImports     = "CASSINI_MAX_CONCURRENT_IMPORTS"
 	defaultMaxConcurrentImports = 3
@@ -114,19 +116,19 @@ const (
 // maxConcurrentImports reads envMaxConcurrentImports. Unset, unparsable or
 // below 1 keeps the default: 0 would stop every import, and "unbounded" is not
 // offered because each import costs disk the recordings also need.
-func maxConcurrentImports(getenv func(string) string, logger *log.Logger) int {
+func maxConcurrentImports(getenv func(string) string, logger *log.Logger) (n int, fromEnv bool) {
 	raw := strings.TrimSpace(getenv(envMaxConcurrentImports))
 	if raw == "" {
-		return defaultMaxConcurrentImports
+		return defaultMaxConcurrentImports, false
 	}
 	n, err := strconv.Atoi(raw)
 	if err != nil || n < 1 {
 		if logger != nil {
 			logger.Printf("imports: %s=%q is not a whole number of at least 1; using %d", envMaxConcurrentImports, raw, defaultMaxConcurrentImports)
 		}
-		return defaultMaxConcurrentImports
+		return defaultMaxConcurrentImports, false
 	}
-	return n
+	return n, true
 }
 
 // A staged-file download is abandoned when less than importFetchMinProgress
@@ -418,17 +420,21 @@ func newImportService(rt *Runtime, exapp ExAppConfig, logger *log.Logger) *impor
 		}
 		return nil
 	}
-	slots := maxConcurrentImports(os.Getenv, logger)
+	slots := rt.importSlots
+	if slots == nil {
+		n, _ := maxConcurrentImports(os.Getenv, logger)
+		slots = newImportSlotPool(n)
+	}
 	service := &importService{
 		rt:          rt,
 		exapp:       exapp,
 		logger:      logger,
 		importer:    newMeetingImporter(rt.cfg, exapp, rt, logger),
 		client:      &http.Client{Transport: importTransport(ncFilesProxyHeadersTTL, false)},
-		importSlots: make(chan struct{}, slots),
+		importSlots: slots,
 	}
 	if logger != nil {
-		logger.Printf("imports: up to %d run at once", slots)
+		logger.Printf("imports: up to %d run at once", slots.limitNow())
 	}
 	service.startWorker()
 	service.startStagingGC()
@@ -1035,12 +1041,7 @@ func (s *importService) acquireImportSlot(ctx context.Context) (func(), error) {
 	if s.importSlots == nil {
 		return func() {}, nil
 	}
-	select {
-	case s.importSlots <- struct{}{}:
-		return func() { <-s.importSlots }, nil
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
+	return s.importSlots.acquire(ctx)
 }
 
 // fetchStaged downloads the caller's staged file to local, abandoning the

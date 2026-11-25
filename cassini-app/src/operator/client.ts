@@ -1,6 +1,14 @@
 import type { RecordingReadiness, RecordingSetupUpdate } from "./readiness";
 import type { LogStage } from "./attemptModels";
 import type { RetentionSettings } from "./retention";
+
+// GET/PUT operator/settings/imports. source: where the value comes from.
+export interface ImportSettings {
+  max_concurrent_imports: number;
+  source: "admin" | "deploy" | "default";
+  default: number;
+  max: number;
+}
 import { normalizeRecordedAtMigration, type RecordedAtMigration } from "./recordedAtMigration";
 import type {
   InsightTemplateDraft,
@@ -328,6 +336,18 @@ export class OperatorClient {
     return this.#request<RetentionSettings>("/storage/retention", {
       method: "PUT", headers: { "Content-Type": "application/json", "If-Match": `"${settings.revision}"` },
       body: JSON.stringify(settings),
+    });
+  }
+
+  // How many imports run at once: the administrator's value, saved on the
+  // operator's volume, applied without a restart and kept across redeploys.
+  getImportSettings(): Promise<ImportSettings> {
+    return this.#request<ImportSettings>("/settings/imports", { cache: "no-store" });
+  }
+  putImportSettings(maxConcurrentImports: number): Promise<ImportSettings> {
+    return this.#request<ImportSettings>("/settings/imports", {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ max_concurrent_imports: maxConcurrentImports }),
     });
   }
 

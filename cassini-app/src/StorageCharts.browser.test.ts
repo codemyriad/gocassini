@@ -53,6 +53,8 @@ beforeEach(() => {
   Object.assign(window, { __CASSINI_CONFIG__: { operatorBasePath: "/operator" } });
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(String(input), location.href).pathname;
+    // The Storage page also shows how many imports run at once.
+    if (path === "/operator/settings/imports") return Response.json({ max_concurrent_imports: 3, source: "default", default: 3, max: 10 });
     if (init?.method === "PUT") puts += 1;
     if (path === "/operator/storage/retention") return Response.json(settings);
     expect(path).toBe("/operator/storage/usage/details");

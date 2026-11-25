@@ -1121,6 +1121,20 @@
       "operator_unavailable": "Operatøren er ikke tilgængelig",
       "save_in_progress": "Indstillingerne for opbevaring er ved at blive gemt. Prøv igen."
     },
+    "imports": {
+      "heading": "",
+      "intro": "",
+      "limit_label": "",
+      "save_label": "",
+      "help": "",
+      "source_admin": "",
+      "source_deploy": "",
+      "source_default": "",
+      "saved": "",
+      "loading": "",
+      "load_failed": "",
+      "out_of_range": ""
+    },
     "retention_policy": {
       "keep_forever": "Opbevar for altid",
       "preset_days": "{count:number|num} {{dag|dage}}",

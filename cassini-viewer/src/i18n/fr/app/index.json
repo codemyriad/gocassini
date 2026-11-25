@@ -1121,6 +1121,20 @@
       "operator_unavailable": "Opérateur indisponible",
       "save_in_progress": "Les paramètres de conservation sont en cours de sauvegarde. Réessayez."
     },
+    "imports": {
+      "heading": "",
+      "intro": "",
+      "limit_label": "",
+      "save_label": "",
+      "help": "",
+      "source_admin": "",
+      "source_deploy": "",
+      "source_default": "",
+      "saved": "",
+      "loading": "",
+      "load_failed": "",
+      "out_of_range": ""
+    },
     "retention_policy": {
       "keep_forever": "Conserver indéfiniment",
       "preset_days": "{count:number|num} {{|jour|||jours|jours}}",

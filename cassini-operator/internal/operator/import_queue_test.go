@@ -219,7 +219,7 @@ func TestImportSlotsCapImportsAcrossCallers(t *testing.T) {
 		}
 		return meetingImportResult{}, errors.New("test import settled")
 	})
-	s.importSlots = make(chan struct{}, 3)
+	s.importSlots = newImportSlotPool(3)
 	const users = 10
 	var jobs []ImportJob
 	for i := 0; i < users; i++ {
@@ -265,7 +265,7 @@ func TestImportSlotsCapImportsAcrossCallers(t *testing.T) {
 }
 
 func TestImportSlotWaitEndsWithTheImport(t *testing.T) {
-	s := &importService{importSlots: make(chan struct{}, 1)}
+	s := &importService{importSlots: newImportSlotPool(1)}
 	ctx := context.Background()
 	held, err := s.acquireImportSlot(ctx)
 	if err != nil {
@@ -377,7 +377,7 @@ func TestImportOverItsTimeLimitFails(t *testing.T) {
 		<-ctx.Done()
 		return meetingImportResult{}, ctx.Err()
 	})
-	s.importSlots = make(chan struct{}, 1)
+	s.importSlots = newImportSlotPool(1)
 	if err := s.rt.store.CreateImportJobs(context.Background(), []ImportJob{queueTestJob("slow", "alice"), queueTestJob("next", "bob")}); err != nil {
 		t.Fatal(err)
 	}
@@ -404,7 +404,7 @@ func TestWaitingForASlotCanBeCanceledAndIsPositioned(t *testing.T) {
 		}
 		return meetingImportResult{}, errors.New("test import settled")
 	})
-	s.importSlots = make(chan struct{}, 1)
+	s.importSlots = newImportSlotPool(1)
 	ctx := context.Background()
 	if err := s.rt.store.CreateImportJobs(ctx, []ImportJob{queueTestJob("a1", "alice")}); err != nil {
 		t.Fatal(err)
@@ -509,7 +509,7 @@ func TestShutdownReturnsRunningAndWaitingImportsToTheQueue(t *testing.T) {
 		<-ctx.Done()
 		return meetingImportResult{}, ctx.Err()
 	})
-	s.importSlots = make(chan struct{}, 1)
+	s.importSlots = newImportSlotPool(1)
 	if err := s.rt.store.CreateImportJobs(context.Background(), []ImportJob{queueTestJob("a1", "alice"), queueTestJob("b1", "bob")}); err != nil {
 		t.Fatal(err)
 	}
@@ -596,7 +596,7 @@ func TestMaxConcurrentImportsReadsTheEnvironment(t *testing.T) {
 			}
 			return ""
 		}
-		if got := maxConcurrentImports(getenv, nil); got != tc.want {
+		if got, _ := maxConcurrentImports(getenv, nil); got != tc.want {
 			t.Errorf("%s=%q: got %d, want %d", envMaxConcurrentImports, tc.raw, got, tc.want)
 		}
 	}
@@ -642,7 +642,7 @@ func TestImportWaitsForDiskThatRunningImportsHold(t *testing.T) {
 		}
 		return meetingImportResult{}, errors.New("test import settled")
 	})
-	s.importSlots = make(chan struct{}, 3)
+	s.importSlots = newImportSlotPool(3)
 	if err := s.rt.store.CreateImportJobs(context.Background(), []ImportJob{sizedQueueTestJob("a1", "alice", 1<<30)}); err != nil {
 		t.Fatal(err)
 	}
@@ -669,11 +669,11 @@ func TestImportWaitsForDiskThatRunningImportsHold(t *testing.T) {
 	// most of the time just Alice's is held.
 	freed := false
 	for i := 0; i < 50 && !freed; i++ {
-		freed = len(s.importSlots) == 1
+		freed = s.importSlots.inUse() == 1
 		time.Sleep(time.Millisecond)
 	}
 	if !freed {
-		t.Fatalf("the waiting import keeps a slot: %d held", len(s.importSlots))
+		t.Fatalf("the waiting import keeps a slot: %d held", s.importSlots.inUse())
 	}
 
 	// When Alice's settles, Bob's gets the space.
@@ -701,7 +701,7 @@ func TestImportTooBigForTheDiskFails(t *testing.T) {
 		t.Errorf("%s ran without the disk space for it", job.ID)
 		return meetingImportResult{}, nil
 	})
-	s.importSlots = make(chan struct{}, 3)
+	s.importSlots = newImportSlotPool(3)
 	if err := s.rt.store.CreateImportJobs(context.Background(), []ImportJob{sizedQueueTestJob("a1", "alice", 1<<30)}); err != nil {
 		t.Fatal(err)
 	}
@@ -713,9 +713,9 @@ func TestImportTooBigForTheDiskFails(t *testing.T) {
 		t.Fatalf("error %q, want %q", got.Error, importDiskShortMessage)
 	}
 	deadline := time.Now().Add(5 * time.Second)
-	for len(s.importSlots) != 0 {
+	for s.importSlots.inUse() != 0 {
 		if time.Now().After(deadline) {
-			t.Fatalf("%d slots held after the import failed", len(s.importSlots))
+			t.Fatalf("%d slots held after the import failed", s.importSlots.inUse())
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
@@ -747,7 +747,7 @@ func TestAnImportThatCanNeverFitDoesNotHoldUpOthers(t *testing.T) {
 		}
 		return meetingImportResult{}, errors.New("test import settled")
 	})
-	s.importSlots = make(chan struct{}, 3)
+	s.importSlots = newImportSlotPool(3)
 	create := func(job ImportJob) {
 		t.Helper()
 		if err := s.rt.store.CreateImportJobs(context.Background(), []ImportJob{job}); err != nil {
@@ -811,7 +811,7 @@ func TestAnImportThatCanNeverFitFailsOnABusyServer(t *testing.T) {
 		<-ctx.Done() // Alice's import never ends.
 		return meetingImportResult{}, ctx.Err()
 	})
-	s.importSlots = make(chan struct{}, 3)
+	s.importSlots = newImportSlotPool(3)
 	if err := s.rt.store.CreateImportJobs(context.Background(), []ImportJob{sizedQueueTestJob("a1", "alice", 1<<30)}); err != nil {
 		t.Fatal(err)
 	}
@@ -896,7 +896,7 @@ func TestALargeImportWaitingForDiskIsNotOvertaken(t *testing.T) {
 		}
 		return meetingImportResult{}, errors.New("test import settled")
 	})
-	s.importSlots = make(chan struct{}, 3)
+	s.importSlots = newImportSlotPool(3)
 	create := func(job ImportJob) {
 		t.Helper()
 		if err := s.rt.store.CreateImportJobs(context.Background(), []ImportJob{job}); err != nil {
@@ -965,7 +965,7 @@ func TestAWaitingImportThatIsCanceledStopsHoldingSpace(t *testing.T) {
 		}
 		return meetingImportResult{}, errors.New("test import settled")
 	})
-	s.importSlots = make(chan struct{}, 3)
+	s.importSlots = newImportSlotPool(3)
 	if err := s.rt.store.CreateImportJobs(context.Background(), []ImportJob{sizedQueueTestJob("a1", "alice", 1<<30), sizedQueueTestJob("b1", "bob", 1<<30)}); err != nil {
 		t.Fatal(err)
 	}

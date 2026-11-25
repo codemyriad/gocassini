@@ -1121,6 +1121,20 @@
       "operator_unavailable": "Operador indisponível",
       "save_in_progress": "As definições de retenção estão a ser guardadas. Tente novamente."
     },
+    "imports": {
+      "heading": "",
+      "intro": "",
+      "limit_label": "",
+      "save_label": "",
+      "help": "",
+      "source_admin": "",
+      "source_deploy": "",
+      "source_default": "",
+      "saved": "",
+      "loading": "",
+      "load_failed": "",
+      "out_of_range": ""
+    },
     "retention_policy": {
       "keep_forever": "Guardar para sempre",
       "preset_days": "{count:number|num} {{|dia|||dias|dias}}",

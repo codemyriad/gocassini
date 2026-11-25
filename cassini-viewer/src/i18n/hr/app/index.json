@@ -1121,6 +1121,20 @@
       "operator_unavailable": "Operater nije dostupan",
       "save_in_progress": "Postavke zadržavanja upravo se spremaju. Pokušaj ponovno."
     },
+    "imports": {
+      "heading": "",
+      "intro": "",
+      "limit_label": "",
+      "save_label": "",
+      "help": "",
+      "source_admin": "",
+      "source_deploy": "",
+      "source_default": "",
+      "saved": "",
+      "loading": "",
+      "load_failed": "",
+      "out_of_range": ""
+    },
     "retention_policy": {
       "keep_forever": "Čuvaj zauvijek",
       "preset_days": "{count:number|num} {{|dan||dana||dana}}",

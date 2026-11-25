@@ -15,6 +15,7 @@
   import SettingsPanel from "./SettingsPanel.svelte";
   import StorageUsagePanel from "./StorageUsagePanel.svelte";
   import RetentionPanel from "./RetentionPanel.svelte";
+  import ImportSettingsPanel from "./ImportSettingsPanel.svelte";
   import RecordingSetup from "./RecordingSetup.svelte";
   import RecordedAtMigration from "./RecordedAtMigration.svelte";
   import LLMSettingsPanel from "./LLMSettingsPanel.svelte";
@@ -84,6 +85,8 @@
   {:else if panel === "storage"}
     <StorageUsagePanel {operatorClient} />
     <RetentionPanel {operatorClient} />
+    <!-- Imports share the work disk with recordings, so their limit sits here. -->
+    <ImportSettingsPanel {operatorClient} />
   {:else if panel === "templates"}
     <InsightTemplatesPanel
       {operatorClient}

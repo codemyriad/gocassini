@@ -179,8 +179,14 @@ type Runtime struct {
 
 	// eventWebhook is the delivery worker, nil while delivery is off.
 	// eventWebhookMu serialises settings changes and guards the fields below.
-	eventWebhook             atomic.Pointer[eventWebhook]
-	eventWebhookMu           sync.Mutex
+	eventWebhook   atomic.Pointer[eventWebhook]
+	eventWebhookMu sync.Mutex
+	// importSlots is how many imports run at once, set from the panel and
+	// applied live; importSettingsMu orders its saves (import_settings.go).
+	importSlots              *importSlotPool
+	importLimitSource        string
+	importSettingsPath       string
+	importSettingsMu         sync.Mutex
 	eventWebhookSettings     EventWebhookSettings
 	eventWebhookSettingsPath string
 	eventWebhookLoadError    string
@@ -999,6 +1005,12 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, journal *supportJ
 			logger.Printf("%s was not found; using detected defaults (transcription off) until an administrator saves Settings", filepath.Base(rt.settingsPath))
 		}
 	}
+	// How many imports run at once: the administrator's saved value, else the
+	// deploy env, else the default. Never written here, so a deploy env set
+	// later still applies until an administrator saves a value.
+	rt.importSettingsPath = importSettingsPath(cfg)
+	importLimit, importLimitSource := loadImportLimit(rt.importSettingsPath, os.Getenv, logger)
+	rt.importSlots, rt.importLimitSource = newImportSlotPool(importLimit), importLimitSource
 	// Same for the LLM policy: seed from the deploy env on first start; on a
 	// load failure keep running on the deploy env rather than refusing to start.
 	llmExisted := fileExists(rt.llmSettingsPath)
@@ -1154,6 +1166,9 @@ func operatorAPIRoutes(rt *Runtime, exappCfg ExAppConfig) []struct {
 		// The lifecycle event receiver (docs/events.md); exact, so it wins
 		// over the prefix below.
 		{"/settings/webhook", http.HandlerFunc(rt.eventWebhookSettingsHandler)},
+		// How many imports run at once (import_settings.go); exact, so it
+		// wins over the prefix below.
+		{"/settings/imports", http.HandlerFunc(rt.importSettingsHandler)},
 		{"/settings/", http.HandlerFunc(rt.llmSettingsHandler)},
 		{"/storage/usage", exappCfg.storageUsageHandler(rt)},
 		{"/storage/usage/details", exappCfg.detailedStorageUsageHandler(rt)},
