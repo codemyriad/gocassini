@@ -4405,6 +4405,11 @@ export type NamespaceAppTranslation = {
 			 */
 			limit_label: string
 			/**
+			 * 1​ ​t​o​ ​{​m​a​x​}
+			 * @param {unknown} max
+			 */
+			range: RequiredParams<'max'>
+			/**
 			 * S​a​v​e​ ​i​m​p​o​r​t​ ​s​e​t​t​i​n​g​s
 			 */
 			save_label: string
@@ -4417,7 +4422,7 @@ export type NamespaceAppTranslation = {
 			 */
 			source_admin: string
 			/**
-			 * S​e​t​ ​w​h​e​n​ ​t​h​e​ ​a​p​p​ ​w​a​s​ ​d​e​p​l​o​y​e​d​ ​(​C​A​S​S​I​N​I​_​M​A​X​_​C​O​N​C​U​R​R​E​N​T​_​I​M​P​O​R​T​S​)​.​ ​A​ ​v​a​l​u​e​ ​s​a​v​e​d​ ​h​e​r​e​ ​r​e​p​l​a​c​e​s​ ​i​t​,​ ​a​n​d​ ​r​e​d​e​p​l​o​y​i​n​g​ ​k​e​e​p​s​ ​i​t​.
+			 * T​h​e​ ​d​e​f​a​u​l​t​,​ ​s​e​t​ ​w​h​e​n​ ​t​h​e​ ​a​p​p​ ​w​a​s​ ​d​e​p​l​o​y​e​d​ ​(​C​A​S​S​I​N​I​_​M​A​X​_​C​O​N​C​U​R​R​E​N​T​_​I​M​P​O​R​T​S​)​.​ ​A​ ​v​a​l​u​e​ ​s​a​v​e​d​ ​h​e​r​e​ ​r​e​p​l​a​c​e​s​ ​i​t​,​ ​a​n​d​ ​r​e​d​e​p​l​o​y​i​n​g​ ​k​e​e​p​s​ ​i​t​.
 			 */
 			source_deploy: string
 			/**
@@ -4425,9 +4430,22 @@ export type NamespaceAppTranslation = {
 			 */
 			source_default: string
 			/**
+			 * R​e​s​t​o​r​e​ ​d​e​f​a​u​l​t​ ​(​{​v​a​l​u​e​}​)
+			 * @param {unknown} value
+			 */
+			restore_default: RequiredParams<'value'>
+			/**
+			 * T​h​e​ ​d​e​f​a​u​l​t​ ​i​s​ ​t​h​e​ ​v​a​l​u​e​ ​s​e​t​ ​w​h​e​n​ ​t​h​e​ ​a​p​p​ ​w​a​s​ ​d​e​p​l​o​y​e​d​ ​(​C​A​S​S​I​N​I​_​M​A​X​_​C​O​N​C​U​R​R​E​N​T​_​I​M​P​O​R​T​S​)​.
+			 */
+			default_from_deploy: string
+			/**
 			 * S​a​v​e​d​.​ ​R​u​n​n​i​n​g​ ​i​m​p​o​r​t​s​ ​f​i​n​i​s​h​;​ ​n​e​w​ ​o​n​e​s​ ​s​t​a​r​t​ ​w​i​t​h​i​n​ ​t​h​e​ ​n​e​w​ ​l​i​m​i​t​.
 			 */
 			saved: string
+			/**
+			 * D​e​f​a​u​l​t​ ​r​e​s​t​o​r​e​d​.​ ​R​u​n​n​i​n​g​ ​i​m​p​o​r​t​s​ ​f​i​n​i​s​h​;​ ​n​e​w​ ​o​n​e​s​ ​s​t​a​r​t​ ​w​i​t​h​i​n​ ​t​h​e​ ​n​e​w​ ​l​i​m​i​t​.
+			 */
+			restored: string
 			/**
 			 * L​o​a​d​i​n​g​ ​i​m​p​o​r​t​ ​s​e​t​t​i​n​g​s​…
 			 */
@@ -4438,10 +4456,10 @@ export type NamespaceAppTranslation = {
 			 */
 			load_failed: RequiredParams<'detail'>
 			/**
-			 * C​h​o​o​s​e​ ​a​ ​w​h​o​l​e​ ​n​u​m​b​e​r​ ​f​r​o​m​ ​1​ ​t​o​ ​{​m​a​x​}​.
+			 * C​h​o​o​s​e​ ​a​ ​w​h​o​l​e​ ​n​u​m​b​e​r​ ​f​r​o​m​ ​1​ ​t​o​ ​{​m​a​x​}​.​ ​{​m​a​x​}​ ​i​s​ ​t​h​e​ ​m​o​s​t​ ​t​h​e​ ​s​e​r​v​e​r​ ​a​l​l​o​w​s​.
 			 * @param {unknown} max
 			 */
-			out_of_range: RequiredParams<'max'>
+			out_of_range: RequiredParams<'max' | 'max'>
 		}
 		retention_policy: {
 			/**
@@ -12888,6 +12906,10 @@ export type TranslationFunctions = {
 				 */
 				limit_label: () => LocalizedString
 				/**
+				 * 1 to {max}
+				 */
+				range: (arg: { max: unknown }) => LocalizedString
+				/**
 				 * Save import settings
 				 */
 				save_label: () => LocalizedString
@@ -12900,7 +12922,7 @@ export type TranslationFunctions = {
 				 */
 				source_admin: () => LocalizedString
 				/**
-				 * Set when the app was deployed (CASSINI_MAX_CONCURRENT_IMPORTS). A value saved here replaces it, and redeploying keeps it.
+				 * The default, set when the app was deployed (CASSINI_MAX_CONCURRENT_IMPORTS). A value saved here replaces it, and redeploying keeps it.
 				 */
 				source_deploy: () => LocalizedString
 				/**
@@ -12908,9 +12930,21 @@ export type TranslationFunctions = {
 				 */
 				source_default: () => LocalizedString
 				/**
+				 * Restore default ({value})
+				 */
+				restore_default: (arg: { value: unknown }) => LocalizedString
+				/**
+				 * The default is the value set when the app was deployed (CASSINI_MAX_CONCURRENT_IMPORTS).
+				 */
+				default_from_deploy: () => LocalizedString
+				/**
 				 * Saved. Running imports finish; new ones start within the new limit.
 				 */
 				saved: () => LocalizedString
+				/**
+				 * Default restored. Running imports finish; new ones start within the new limit.
+				 */
+				restored: () => LocalizedString
 				/**
 				 * Loading import settings…
 				 */
@@ -12920,7 +12954,7 @@ export type TranslationFunctions = {
 				 */
 				load_failed: (arg: { detail: unknown }) => LocalizedString
 				/**
-				 * Choose a whole number from 1 to {max}.
+				 * Choose a whole number from 1 to {max}. {max} is the most the server allows.
 				 */
 				out_of_range: (arg: { max: unknown }) => LocalizedString
 			}

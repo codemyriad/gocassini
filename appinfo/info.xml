@@ -214,7 +214,7 @@ Summaries and questions use whichever language model you connect, so their ratin
       <variable>
         <name>CASSINI_MAX_CONCURRENT_IMPORTS</name>
         <display-name>Imports run at once (optional)</display-name>
-        <description>How many meeting imports run at the same time across all users, until an administrator sets it in Settings › Storage, which then wins and is kept across redeploys. Leave empty for the default of 3 (at most 10). Each running import keeps its file (up to 4 GiB) and a working copy on the app's disk, which recordings also use. An import starts only if it fits while 5 GiB stay free for recordings, so raising this lets more imports run only when there is room. Each person's own imports still run one at a time.</description>
+        <description>The default number of meeting imports that run at the same time across all users: from 1 to 10, the maximum (a higher value counts as 10). Leave empty for 3. A value an administrator saves in Settings › Storage wins and is kept across redeploys; Restore default there goes back to this one. Each running import keeps its file (up to 4 GiB) and a working copy on the app's disk, which recordings also use. An import starts only if it fits while 5 GiB stay free for recordings, so raising this lets more imports run only when there is room. Each person's own imports still run one at a time.</description>
       </variable>
     </environment-variables>
 

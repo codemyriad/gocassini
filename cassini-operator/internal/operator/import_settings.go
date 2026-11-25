@@ -18,10 +18,9 @@ import (
 //
 // The value an administrator saves is the one used, and a redeploy never
 // resets it: it lives in import-settings.json on the persistent volume. Until
-// one is saved there is no file, and the deploy environment's
-// CASSINI_MAX_CONCURRENT_IMPORTS applies, or the default without it. So the
-// variable keeps working on a deployment whose administrator never opens the
-// panel, and stops mattering the moment one does.
+// one is saved there is no file, and the default applies: the deploy
+// environment's CASSINI_MAX_CONCURRENT_IMPORTS, or 3 without it. Restoring the
+// default in the panel deletes the file, so the deploy setting applies again.
 const (
 	importSettingsFileName = "import-settings.json"
 	// maxConcurrentImportsLimit bounds the setting. Each running import holds
@@ -42,35 +41,47 @@ type importSettingsResponse struct {
 	MaxConcurrentImports int `json:"max_concurrent_imports"`
 	// Source is where the value comes from: "admin" (saved in the panel),
 	// "deploy" (CASSINI_MAX_CONCURRENT_IMPORTS) or "default".
-	Source  string `json:"source"`
-	Default int    `json:"default"`
-	Max     int    `json:"max"`
+	Source string `json:"source"`
+	// Default is what restoring the default gives: the deploy setting, or 3
+	// without one. DefaultSource says which ("deploy" or "default").
+	Default       int    `json:"default"`
+	DefaultSource string `json:"default_source"`
+	Max           int    `json:"max"`
+}
+
+// importLimit is the limit a server starts with, and the default a restore
+// goes back to. The deploy environment is fixed for the container's life, so
+// the default is read once, at start.
+type importLimit struct {
+	n             int
+	source        string
+	deflt         int
+	defaultSource string
 }
 
 func importSettingsPath(cfg Config) string {
 	return filepath.Join(filepath.Dir(cfg.DBPath), importSettingsFileName)
 }
 
-// loadImportLimit reads the saved setting, or, without one, the deploy
-// environment. A file that cannot be read or holds a value out of bounds is
-// logged and passed over for the environment, rather than stopping imports.
-func loadImportLimit(path string, getenv func(string) string, logger *log.Logger) (int, string) {
-	fallback := func() (int, string) {
-		n, fromEnv := maxConcurrentImports(getenv, logger)
-		if n > maxConcurrentImportsLimit {
-			if logger != nil {
-				logger.Printf("imports: %s=%d is above the limit of %d; using %d", envMaxConcurrentImports, n, maxConcurrentImportsLimit, maxConcurrentImportsLimit)
-			}
-			n = maxConcurrentImportsLimit
+// loadImportLimit reads the saved setting, or, without one, the default: the
+// deploy environment, else 3. A file that cannot be read or holds a value out
+// of bounds is kept as import-settings.json.rejected-N, logged and passed over
+// for the default, rather than stopping imports.
+func loadImportLimit(path string, getenv func(string) string, logger *log.Logger) importLimit {
+	n, fromEnv := maxConcurrentImports(getenv, logger)
+	if n > maxConcurrentImportsLimit {
+		if logger != nil {
+			logger.Printf("imports: %s=%d is above the maximum of %d; using %d", envMaxConcurrentImports, n, maxConcurrentImportsLimit, maxConcurrentImportsLimit)
 		}
-		if fromEnv {
-			return n, importLimitSourceDeploy
-		}
-		return n, importLimitSourceDefault
+		n = maxConcurrentImportsLimit
+	}
+	limit := importLimit{n: n, source: importLimitSourceDefault, deflt: n, defaultSource: importLimitSourceDefault}
+	if fromEnv {
+		limit.source, limit.defaultSource = importLimitSourceDeploy, importLimitSourceDeploy
 	}
 	raw, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return fallback()
+		return limit
 	}
 	var s importSettings
 	if err == nil {
@@ -81,11 +92,12 @@ func loadImportLimit(path string, getenv func(string) string, logger *log.Logger
 	}
 	if err != nil {
 		if logger != nil {
-			logger.Printf("imports: %s cannot be used (%v); using the deploy environment until an administrator saves the setting again", filepath.Base(path), err)
+			logger.Print(settingsLoadFailedMessage("import_settings", path, fmt.Sprintf("running up to %d imports at once, the default", limit.n), "Settings › Storage › Imports", err))
 		}
-		return fallback()
+		return limit
 	}
-	return s.MaxConcurrentImports, importLimitSourceAdmin
+	limit.n, limit.source = s.MaxConcurrentImports, importLimitSourceAdmin
+	return limit
 }
 
 func validMaxConcurrentImports(n int) error {
@@ -95,16 +107,18 @@ func validMaxConcurrentImports(n int) error {
 	return nil
 }
 
-// importSettingsHandler serves GET and PUT operator/settings/imports (ADMIN at
-// the proxy, under ^operator\/settings). A PUT is saved first and applied
-// after: a change that cannot be kept is never applied.
+// importSettingsHandler serves GET, PUT and DELETE operator/settings/imports
+// (ADMIN at the proxy, under ^operator\/settings). A PUT is saved first and
+// applied after: a change that cannot be kept is never applied. A DELETE
+// restores the default by removing the saved value. On a server that does not
+// serve imports it answers 404, and the panel hides the setting.
 func (rt *Runtime) importSettingsHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet && r.Method != http.MethodPut {
-		writeMethodNotAllowed(w, http.MethodGet+", "+http.MethodPut)
+	if r.Method != http.MethodGet && r.Method != http.MethodPut && r.Method != http.MethodDelete {
+		writeMethodNotAllowed(w, http.MethodGet+", "+http.MethodPut+", "+http.MethodDelete)
 		return
 	}
-	if rt.importSlots == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "imports are not available on this server")
+	if !rt.importsServed || rt.importSlots == nil {
+		writeJSONError(w, http.StatusNotFound, "imports are not available on this server")
 		return
 	}
 	rt.importSettingsMu.Lock()
@@ -132,16 +146,28 @@ func (rt *Runtime) importSettingsHandler(w http.ResponseWriter, r *http.Request)
 			writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("save import settings: %v", err))
 			return
 		}
-		rt.importLimitSource = importLimitSourceAdmin
+		rt.importLimit.source = importLimitSourceAdmin
 		rt.importSlots.setLimit(n)
 		if rt.logger != nil {
 			rt.logger.Printf("imports: an administrator set up to %d to run at once", n)
 		}
 	}
+	if r.Method == http.MethodDelete {
+		if err := os.Remove(rt.importSettingsPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("restore the default: %v", err))
+			return
+		}
+		rt.importLimit.source = rt.importLimit.defaultSource
+		rt.importSlots.setLimit(rt.importLimit.deflt)
+		if rt.logger != nil {
+			rt.logger.Printf("imports: an administrator restored the default of %d at once", rt.importLimit.deflt)
+		}
+	}
 	writeJSON(w, http.StatusOK, importSettingsResponse{
 		MaxConcurrentImports: rt.importSlots.limitNow(),
-		Source:               rt.importLimitSource,
-		Default:              defaultMaxConcurrentImports,
+		Source:               rt.importLimit.source,
+		Default:              rt.importLimit.deflt,
+		DefaultSource:        rt.importLimit.defaultSource,
 		Max:                  maxConcurrentImportsLimit,
 	})
 }

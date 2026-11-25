@@ -183,8 +183,11 @@ type Runtime struct {
 	eventWebhookMu sync.Mutex
 	// importSlots is how many imports run at once, set from the panel and
 	// applied live; importSettingsMu orders its saves (import_settings.go).
-	importSlots              *importSlotPool
-	importLimitSource        string
+	importSlots *importSlotPool
+	importLimit importLimit
+	// importsServed is set once the import routes are mounted; without them
+	// the setting is not offered.
+	importsServed            bool
 	importSettingsPath       string
 	importSettingsMu         sync.Mutex
 	eventWebhookSettings     EventWebhookSettings
@@ -1009,8 +1012,8 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, journal *supportJ
 	// deploy env, else the default. Never written here, so a deploy env set
 	// later still applies until an administrator saves a value.
 	rt.importSettingsPath = importSettingsPath(cfg)
-	importLimit, importLimitSource := loadImportLimit(rt.importSettingsPath, os.Getenv, logger)
-	rt.importSlots, rt.importLimitSource = newImportSlotPool(importLimit), importLimitSource
+	rt.importLimit = loadImportLimit(rt.importSettingsPath, os.Getenv, logger)
+	rt.importSlots = newImportSlotPool(rt.importLimit.n)
 	// Same for the LLM policy: seed from the deploy env on first start; on a
 	// load failure keep running on the deploy env rather than refusing to start.
 	llmExisted := fileExists(rt.llmSettingsPath)
@@ -1253,6 +1256,7 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	// wherever an import could not be performed (see newImportService).
 	if imports := newImportService(rt, exappCfg, logger); imports != nil {
 		imports.register(root)
+		rt.importsServed = true
 	}
 	// Tags and marks (D-737): a sibling of insights on the ROOT mux, for the same
 	// reason — appinfo/info.xml declares `^annotations\/…` at that level. Nil, and

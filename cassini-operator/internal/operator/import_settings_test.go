@@ -3,6 +3,7 @@ package operator
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -22,69 +23,122 @@ func importLimitEnv(value string) func(string) string {
 }
 
 // The value an administrator saved wins over the deploy environment, which
-// applies only until one is saved; nothing is written on start, so a deploy
-// env set later still applies to a server whose administrator never saved.
+// is the default: it applies until a value is saved, and again after a
+// restore. Nothing is written on start.
 func TestImportLimitPrefersTheSavedValueOverTheDeployEnv(t *testing.T) {
 	path := filepath.Join(t.TempDir(), importSettingsFileName)
-	if n, source := loadImportLimit(path, importLimitEnv(""), nil); n != defaultMaxConcurrentImports || source != importLimitSourceDefault {
-		t.Fatalf("no file, no env: %d %s", n, source)
+	check := func(name string, got importLimit, n int, source string, deflt int, defaultSource string) {
+		t.Helper()
+		if got.n != n || got.source != source || got.deflt != deflt || got.defaultSource != defaultSource {
+			t.Fatalf("%s: got %+v, want %d %s (default %d %s)", name, got, n, source, deflt, defaultSource)
+		}
 	}
-	if n, source := loadImportLimit(path, importLimitEnv("5"), nil); n != 5 || source != importLimitSourceDeploy {
-		t.Fatalf("no file, env 5: %d %s", n, source)
-	}
-	if n, source := loadImportLimit(path, importLimitEnv("50"), nil); n != maxConcurrentImportsLimit || source != importLimitSourceDeploy {
-		t.Fatalf("env above the limit: %d %s", n, source)
-	}
+	check("no file, no env", loadImportLimit(path, importLimitEnv(""), nil), defaultMaxConcurrentImports, importLimitSourceDefault, defaultMaxConcurrentImports, importLimitSourceDefault)
+	check("no file, env 5", loadImportLimit(path, importLimitEnv("5"), nil), 5, importLimitSourceDeploy, 5, importLimitSourceDeploy)
+	check("env above the maximum", loadImportLimit(path, importLimitEnv("50"), nil), maxConcurrentImportsLimit, importLimitSourceDeploy, maxConcurrentImportsLimit, importLimitSourceDeploy)
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("loading wrote the settings file: %v", err)
 	}
 	if err := os.WriteFile(path, []byte(`{"max_concurrent_imports": 2}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if n, source := loadImportLimit(path, importLimitEnv("5"), nil); n != 2 || source != importLimitSourceAdmin {
-		t.Fatalf("saved 2, env 5: %d %s", n, source)
-	}
-	// A file that cannot be used falls back to the environment, not to a stop.
+	check("saved 2, env 5", loadImportLimit(path, importLimitEnv("5"), nil), 2, importLimitSourceAdmin, 5, importLimitSourceDeploy)
+}
+
+// A saved file that cannot be used is kept as a .rejected-N copy, like the
+// other settings files, and the default runs until an administrator saves.
+func TestAnUnusableImportSettingsFileIsKeptAndPassedOver(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, importSettingsFileName)
 	if err := os.WriteFile(path, []byte(`{"max_concurrent_imports": 0}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if n, source := loadImportLimit(path, importLimitEnv("5"), nil); n != 5 || source != importLimitSourceDeploy {
-		t.Fatalf("unusable file, env 5: %d %s", n, source)
+	var logged strings.Builder
+	got := loadImportLimit(path, importLimitEnv("5"), log.New(&logged, "", 0))
+	if got.n != 5 || got.source != importLimitSourceDeploy {
+		t.Fatalf("unusable file, env 5: %+v", got)
+	}
+	kept, _ := filepath.Glob(path + ".rejected-*")
+	if len(kept) != 1 {
+		t.Fatalf("rejected copies: %v", kept)
+	}
+	if raw, _ := os.ReadFile(kept[0]); string(raw) != `{"max_concurrent_imports": 0}` {
+		t.Fatalf("the kept copy holds %q", raw)
+	}
+	if !strings.Contains(logged.String(), filepath.Base(kept[0])) {
+		t.Fatalf("the log does not name the kept copy: %s", logged.String())
 	}
 }
 
-func TestImportSettingsHandlerSavesAndAppliesTheLimit(t *testing.T) {
+func TestImportSettingsHandlerSavesAndRestoresTheLimit(t *testing.T) {
 	path := filepath.Join(t.TempDir(), importSettingsFileName)
-	rt := &Runtime{importSlots: newImportSlotPool(3), importLimitSource: importLimitSourceDeploy, importSettingsPath: path}
-	do := func(method, body string) *httptest.ResponseRecorder {
+	rt := &Runtime{
+		importSlots:        newImportSlotPool(4),
+		importLimit:        importLimit{n: 4, source: importLimitSourceDeploy, deflt: 4, defaultSource: importLimitSourceDeploy},
+		importsServed:      true,
+		importSettingsPath: path,
+	}
+	do := func(method, body string) (*httptest.ResponseRecorder, importSettingsResponse) {
 		t.Helper()
 		w := httptest.NewRecorder()
 		rt.importSettingsHandler(w, httptest.NewRequest(method, "/settings/imports", strings.NewReader(body)))
-		return w
+		var got importSettingsResponse
+		_ = json.Unmarshal(w.Body.Bytes(), &got)
+		return w, got
 	}
-	var got importSettingsResponse
-	w := do(http.MethodGet, "")
-	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || got.MaxConcurrentImports != 3 || got.Source != importLimitSourceDeploy || got.Max != maxConcurrentImportsLimit {
-		t.Fatalf("GET: %d %s", w.Code, w.Body.String())
+	want := func(name string, w *httptest.ResponseRecorder, got importSettingsResponse, n int, source string) {
+		t.Helper()
+		if w.Code != http.StatusOK || got.MaxConcurrentImports != n || got.Source != source || got.Default != 4 || got.DefaultSource != importLimitSourceDeploy || got.Max != maxConcurrentImportsLimit {
+			t.Fatalf("%s: %d %s", name, w.Code, w.Body.String())
+		}
+		if rt.importSlots.limitNow() != n {
+			t.Fatalf("%s: the running limit is %d, want %d", name, rt.importSlots.limitNow(), n)
+		}
 	}
+	w, got := do(http.MethodGet, "")
+	want("GET", w, got, 4, importLimitSourceDeploy)
 	for _, bad := range []string{`{"max_concurrent_imports": 0}`, `{"max_concurrent_imports": 11}`, `{}`, `{"max_concurrent_imports": 2, "other": 1}`} {
-		if w := do(http.MethodPut, bad); w.Code != http.StatusBadRequest {
+		if w, _ := do(http.MethodPut, bad); w.Code != http.StatusBadRequest {
 			t.Fatalf("PUT %s: %d", bad, w.Code)
 		}
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatal("a refused PUT wrote the settings file")
 	}
-	w = do(http.MethodPut, `{"max_concurrent_imports": 5}`)
-	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || w.Code != http.StatusOK || got.MaxConcurrentImports != 5 || got.Source != importLimitSourceAdmin {
-		t.Fatalf("PUT 5: %d %s", w.Code, w.Body.String())
-	}
-	if rt.importSlots.limitNow() != 5 {
-		t.Fatalf("the running limit is %d, want 5", rt.importSlots.limitNow())
-	}
+	w, got = do(http.MethodPut, `{"max_concurrent_imports": 7}`)
+	want("PUT 7", w, got, 7, importLimitSourceAdmin)
 	// What was saved is what the next start uses, whatever the deploy env says.
-	if n, source := loadImportLimit(path, importLimitEnv("2"), nil); n != 5 || source != importLimitSourceAdmin {
-		t.Fatalf("after a restart: %d %s", n, source)
+	if l := loadImportLimit(path, importLimitEnv("2"), nil); l.n != 7 || l.source != importLimitSourceAdmin {
+		t.Fatalf("after a restart: %+v", l)
+	}
+	// Restoring the default goes back to the deploy setting, now and after a
+	// restart.
+	w, got = do(http.MethodDelete, "")
+	want("DELETE", w, got, 4, importLimitSourceDeploy)
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("restoring the default left the settings file: %v", err)
+	}
+	if l := loadImportLimit(path, importLimitEnv("4"), nil); l.n != 4 || l.source != importLimitSourceDeploy {
+		t.Fatalf("after a restore and a restart: %+v", l)
+	}
+	w, got = do(http.MethodDelete, "")
+	want("DELETE again", w, got, 4, importLimitSourceDeploy)
+}
+
+// Where imports are not served (no AppAPI, no Nextcloud archive, no CLI) the
+// setting is not offered: the panel hides on 404, and nothing is saved.
+func TestImportSettingsAreNotOfferedWhereImportsAreOff(t *testing.T) {
+	path := filepath.Join(t.TempDir(), importSettingsFileName)
+	rt := &Runtime{importSlots: newImportSlotPool(3), importLimit: importLimit{n: 3, source: importLimitSourceDefault, deflt: 3, defaultSource: importLimitSourceDefault}, importSettingsPath: path}
+	for _, method := range []string{http.MethodGet, http.MethodPut, http.MethodDelete} {
+		w := httptest.NewRecorder()
+		rt.importSettingsHandler(w, httptest.NewRequest(method, "/settings/imports", strings.NewReader(`{"max_concurrent_imports": 5}`)))
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("%s: %d %s", method, w.Code, w.Body.String())
+		}
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatal("a server without imports saved the setting")
 	}
 }
 

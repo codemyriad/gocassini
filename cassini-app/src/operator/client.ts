@@ -2,11 +2,15 @@ import type { RecordingReadiness, RecordingSetupUpdate } from "./readiness";
 import type { LogStage } from "./attemptModels";
 import type { RetentionSettings } from "./retention";
 
-// GET/PUT operator/settings/imports. source: where the value comes from.
+// GET/PUT/DELETE operator/settings/imports. source: where the value comes
+// from. default: what restoring the default gives (the deploy setting, or 3
+// without one); default_source says which. A 404 means the server does not
+// serve imports.
 export interface ImportSettings {
   max_concurrent_imports: number;
   source: "admin" | "deploy" | "default";
   default: number;
+  default_source: "deploy" | "default";
   max: number;
 }
 import { normalizeRecordedAtMigration, type RecordedAtMigration } from "./recordedAtMigration";
@@ -349,6 +353,10 @@ export class OperatorClient {
       method: "PUT", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ max_concurrent_imports: maxConcurrentImports }),
     });
+  }
+  // Forgets the saved value: the deploy setting, or the default, applies again.
+  resetImportSettings(): Promise<ImportSettings> {
+    return this.#request<ImportSettings>("/settings/imports", { method: "DELETE" });
   }
 
   // Re-probe Nextcloud after browser-side account creation.
