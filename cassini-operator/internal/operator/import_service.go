@@ -274,17 +274,23 @@ func (s *importService) reserveImportDisk(job ImportJob) (release func(), verdic
 		}
 		if free-promised-ahead-importDiskReserve < need {
 			detail = fmt.Sprintf("it needs %s, and %s is free, of which %s is kept for recordings", formatGiB(need), formatGiB(free), formatGiB(importDiskReserve))
-			// Waiting helps only if what running imports have written, which
-			// comes back when they settle, would make it fit. One that can
-			// never fit fails now rather than holding a place in the line
-			// that every later import must leave room for. If that cannot be
-			// counted, their whole promise stands in for it.
-			if heldErr != nil {
-				s.logf("import %s: disk held by imports unknown (%v)", job.ID, heldErr)
-				held = promised
-			}
-			if free+held-importDiskReserve >= need && (promised > 0 || ahead > 0) {
+			if promised > 0 || ahead > 0 {
 				detail += fmt.Sprintf(", %s is in use by other imports and %s is held for imports ahead of it", formatGiB(promised), formatGiB(ahead))
+				// What running imports have written comes back when they
+				// settle. If even that would not make it fit, it waits outside
+				// the line, so no other import has to leave room for it; it
+				// fails once nothing else runs, when the count cannot shift
+				// under it. The estimate only decides where it waits, never
+				// that it fails: free space and the files are read a moment
+				// apart, and a filesystem may return space after a delete.
+				if heldErr != nil {
+					s.logf("import %s: disk held by imports unknown (%v)", job.ID, heldErr)
+					held = promised
+				}
+				if free+held-importDiskReserve < need {
+					delete(s.diskWaiting, job.ID)
+					return nil, importDiskWait, detail + "; it would not fit even once they finish, so it waits outside the line"
+				}
 				if !inLine {
 					if s.diskWaiting == nil {
 						s.diskWaiting = map[string]importDiskWaiter{}

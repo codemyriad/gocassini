@@ -722,8 +722,10 @@ func TestImportTooBigForTheDiskFails(t *testing.T) {
 }
 
 // An import that would not fit even once every running import gave its space
-// back fails at once, so it never holds a place in the disk line that other
-// people's imports must leave room for.
+// back waits outside the disk line, so other people's imports need not leave
+// room for it, and fails once nothing else runs. It never fails while others
+// run: the estimate of what they free is read a moment apart from the free
+// space, and must not turn a wait into a failure.
 func TestAnImportThatCanNeverFitDoesNotHoldUpOthers(t *testing.T) {
 	savedRetry := importClaimRetryMin
 	importClaimRetryMin = 10 * time.Millisecond
@@ -746,7 +748,6 @@ func TestAnImportThatCanNeverFitDoesNotHoldUpOthers(t *testing.T) {
 		return meetingImportResult{}, errors.New("test import settled")
 	})
 	s.importSlots = make(chan struct{}, 3)
-	t.Cleanup(func() { close(releaseA) })
 	create := func(job ImportJob) {
 		t.Helper()
 		if err := s.rt.store.CreateImportJobs(context.Background(), []ImportJob{job}); err != nil {
@@ -768,25 +769,35 @@ func TestAnImportThatCanNeverFitDoesNotHoldUpOthers(t *testing.T) {
 	create(sizedQueueTestJob("a1", "alice", 1<<30))
 	expect("a1")
 	create(sizedQueueTestJob("b1", "bob", 2<<30))
-	// Bob fails while Alice's import is still running.
-	waitForImportState(t, s, "b1", importStateFailed)
+	create(sizedQueueTestJob("c1", "carol", 256<<20))
+	expect("c1")
+	// While Alice runs, Bob waits, outside the line.
 	got, _, _ := s.rt.store.ImportJob(context.Background(), "b1")
+	if got.State != importStateQueued {
+		t.Fatalf("b1 is %s while another import runs, want queued", got.State)
+	}
+	s.mu.Lock()
+	_, bobInLine := s.diskWaiting["b1"]
+	s.mu.Unlock()
+	if bobInLine {
+		t.Fatal("b1 holds a place in the disk line it can never use")
+	}
+	// Once nothing else runs, Bob fails.
+	close(releaseA)
+	waitForImportState(t, s, "b1", importStateFailed)
+	got, _, _ = s.rt.store.ImportJob(context.Background(), "b1")
 	if got.Error != importDiskShortMessage {
 		t.Fatalf("error %q, want %q", got.Error, importDiskShortMessage)
 	}
-	create(sizedQueueTestJob("c1", "carol", 256<<20))
-	expect("c1")
-	s.mu.Lock()
-	_, bobWaits := s.diskWaiting["b1"]
-	s.mu.Unlock()
-	if bobWaits {
-		t.Fatal("b1 still holds a place in the disk line after failing")
+	select {
+	case id := <-started:
+		t.Fatalf("%s ran without the disk space for it", id)
+	default:
 	}
 }
 
 // What running imports have written counts towards what an import could get
-// by waiting: an import that would fit once they settle waits, one that would
-// not fails.
+// by waiting: it decides whether an import waits in the line or outside it.
 func TestImportDiskHeldCountsImportFolders(t *testing.T) {
 	dir := t.TempDir()
 	write := func(rel string, n int) {

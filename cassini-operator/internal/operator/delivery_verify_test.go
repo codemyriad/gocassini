@@ -154,3 +154,17 @@ func TestAnUploadThatLandedIsStillVerifiedAndRecorded(t *testing.T) {
 		t.Fatal("the re-run left the delivery unrecorded")
 	}
 }
+
+// A cancel or shutdown that arrives while a delivered import is being
+// indexed does not stop the indexing: the import is recorded as done, and a
+// done meeting must be searchable.
+func TestIndexingADeliveredImportOutlivesACancel(t *testing.T) {
+	bin := fakeCassini(t, `printf '%s' '{"segments":[{"speaker":"S1","words":[{"text":"budget","startMs":0,"endMs":400}]}]}'`)
+	imp := &meetingImporter{sink: &nextcloudFilesPublishSink{cassiniBin: bin, rt: &Runtime{searchStore: newTestSearchStore(t)}}}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	item := upload{local: "MEETING1.opus", remote: annTestRecording}
+	if !imp.indexDelivered(ctx, item, "MEETING1.opus", "MEETING1.opus", "digest") {
+		t.Fatal("a canceled import's delivered meeting was left out of search")
+	}
+}

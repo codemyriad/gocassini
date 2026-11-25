@@ -310,9 +310,26 @@ func (imp *meetingImporter) run(ctx context.Context, req meetingImportRequest, r
 
 	// --- index ------------------------------------------------------------
 	report(importStateIndexing, "indexing")
-	s.indexDeliveredMarks(ctx, []upload{item}, nil)
-	result.SearchIndexed = imp.ingestSearchRows(ctx, name, staged, localDigest)
+	result.SearchIndexed = imp.indexDelivered(ctx, item, name, staged, localDigest)
 	return result, nil
+}
+
+// importIndexTimeout bounds the indexing that finishes an import once its
+// meeting is delivered and shared.
+const importIndexTimeout = 2 * time.Minute
+
+// indexDelivered makes a delivered, shared meeting's marks and words
+// searchable. By now a cancel or a shutdown comes too late to undo the
+// import, which is recorded as done, so the indexing runs to the end through
+// either, bounded by importIndexTimeout: stopped halfway, it would leave a
+// done meeting that search cannot find until an administrator repairs the
+// index. A process killed meanwhile leaves the row unfinished, and the
+// startup requeue re-runs the whole import, which is idempotent.
+func (imp *meetingImporter) indexDelivered(ctx context.Context, item upload, name, staged, digest string) bool {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), importIndexTimeout)
+	defer cancel()
+	imp.sink.indexDeliveredMarks(ctx, []upload{item}, nil)
+	return imp.ingestSearchRows(ctx, name, staged, digest)
 }
 
 // ingestSearchRows makes the imported meeting searchable from its own words —
