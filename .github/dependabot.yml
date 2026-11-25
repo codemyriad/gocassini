@@ -1,0 +1,15 @@
+# Keeps the commit-SHA pins of third-party GitHub Actions current (#521):
+# Dependabot bumps the SHA and its version comment together. Actions on a
+# major tag (actions/*, docker/*) only get a PR when a new major comes out.
+# Base images are not managed here: version tags are enough for them (#521).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    labels:
+      - skip-changelog
+    groups:
+      github-actions:
+        patterns: ["*"]
