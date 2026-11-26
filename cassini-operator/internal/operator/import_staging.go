@@ -36,7 +36,7 @@ func (s *importService) stagingAction(w http.ResponseWriter, r *http.Request, jo
 		case "heartbeat":
 			touched, err := s.rt.store.TouchImportUpload(ctx, job.ID)
 			if err == nil && !touched {
-				writeJSONError(w, 409, "upload is no longer active")
+				writeImportRefusal(w, 409, importRefusalAddAgain, "upload is no longer active")
 				return nil
 			}
 			if err != nil {
@@ -49,7 +49,7 @@ func (s *importService) stagingAction(w http.ResponseWriter, r *http.Request, jo
 				return nil
 			}
 			if job.State != importStateUploading {
-				writeJSONError(w, 409, "upload is no longer active")
+				writeImportRefusal(w, 409, importRefusalAddAgain, "upload is no longer active")
 				return nil
 			}
 			if err := s.inspectUpload(ctx, job); err != nil {
@@ -62,7 +62,7 @@ func (s *importService) stagingAction(w http.ResponseWriter, r *http.Request, jo
 				return nil
 			}
 			if current.State != importStateStaged {
-				writeJSONError(w, 409, "upload is incomplete; add the file again")
+				writeImportRefusal(w, 409, importRefusalAddAgain, "upload is incomplete; add the file again")
 				return nil
 			}
 		case "upload-failed":
@@ -74,7 +74,7 @@ func (s *importService) stagingAction(w http.ResponseWriter, r *http.Request, jo
 			}
 		case "remove":
 			if importUsesStaging(job) || s.isRunning(job.ID) {
-				writeJSONError(w, 409, "upload or import is still active")
+				writeImportRefusal(w, 409, importRefusalUploading, "upload or import is still active")
 				return nil
 			}
 			if _, pathErr := sanitizeStagedImportPath(job.StagedPath); pathErr != nil {
@@ -90,7 +90,7 @@ func (s *importService) stagingAction(w http.ResponseWriter, r *http.Request, jo
 		return nil
 	})
 	if lockErr != nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "staging is busy; try again")
+		writeImportRefusal(w, http.StatusServiceUnavailable, importRefusalBusy, "staging is busy; try again")
 	}
 }
 

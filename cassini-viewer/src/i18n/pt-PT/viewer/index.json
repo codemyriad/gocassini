@@ -238,6 +238,7 @@
       "share_all_with": "Partilhar tudo com",
       "share_all_placeholder": "Uma pessoa, grupo ou equipa",
       "files_label": "Ficheiros a importar",
+      "not_a_meeting": "Não é um ficheiro de reunião do Cassini, por isso foi ignorado.",
       "reading": "A ler…",
       "uploading_percent": "A enviar {percent}%",
       "shared": "Partilhada",
@@ -296,7 +297,7 @@
       "sharee_none": "Ninguém corresponde a isso.",
       "file_empty": "O ficheiro está vazio.",
       "file_too_large": "",
-      "file_not_cassini": "",
+      "file_unreadable": "",
       "file_damaged": "",
       "file_newer": "",
       "untitled": "Reunião sem título"

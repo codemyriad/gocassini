@@ -336,7 +336,7 @@ export type NamespaceAppTranslation = {
 			 */
 			refused_add_again: string
 			/**
-			 * T​h​i​s​ ​f​i​l​e​ ​i​s​ ​s​t​i​l​l​ ​u​p​l​o​a​d​i​n​g​.​ ​T​r​y​ ​a​g​a​i​n​ ​w​h​e​n​ ​i​t​ ​h​a​s​ ​f​i​n​i​s​h​e​d​.
+			 * T​h​i​s​ ​f​i​l​e​ ​i​s​ ​s​t​i​l​l​ ​u​p​l​o​a​d​i​n​g​ ​o​r​ ​i​m​p​o​r​t​i​n​g​.​ ​T​r​y​ ​a​g​a​i​n​ ​w​h​e​n​ ​i​t​ ​h​a​s​ ​f​i​n​i​s​h​e​d​.
 			 */
 			refused_uploading: string
 			/**
@@ -6549,6 +6549,10 @@ export type NamespaceViewerTranslation = {
 			 */
 			files_label: string
 			/**
+			 * N​o​t​ ​a​ ​m​e​e​t​i​n​g​ ​f​i​l​e​ ​f​r​o​m​ ​C​a​s​s​i​n​i​,​ ​s​o​ ​i​t​ ​w​a​s​ ​s​k​i​p​p​e​d​.
+			 */
+			not_a_meeting: string
+			/**
 			 * R​e​a​d​i​n​g​…
 			 */
 			reading: string
@@ -6794,9 +6798,9 @@ export type NamespaceViewerTranslation = {
 			 */
 			file_too_large: string
 			/**
-			 * T​h​i​s​ ​i​s​n​'​t​ ​a​ ​m​e​e​t​i​n​g​ ​f​i​l​e​ ​f​r​o​m​ ​C​a​s​s​i​n​i​,​ ​s​o​ ​i​t​ ​w​a​s​ ​s​k​i​p​p​e​d​.
+			 * T​h​i​s​ ​f​i​l​e​ ​c​o​u​l​d​n​'​t​ ​b​e​ ​r​e​a​d​,​ ​s​o​ ​i​t​ ​w​a​s​ ​s​k​i​p​p​e​d​.​ ​T​r​y​ ​a​d​d​i​n​g​ ​i​t​ ​a​g​a​i​n​.
 			 */
-			file_not_cassini: string
+			file_unreadable: string
 			/**
 			 * T​h​i​s​ ​f​i​l​e​ ​i​s​ ​d​a​m​a​g​e​d​ ​o​r​ ​i​n​c​o​m​p​l​e​t​e​,​ ​s​o​ ​i​t​ ​w​a​s​ ​s​k​i​p​p​e​d​.​ ​I​f​ ​i​t​ ​c​a​m​e​ ​f​r​o​m​ ​C​a​s​s​i​n​i​,​ ​d​o​w​n​l​o​a​d​ ​i​t​ ​a​g​a​i​n​ ​a​n​d​ ​r​e​t​r​y​.
 			 */
@@ -9127,7 +9131,7 @@ export type TranslationFunctions = {
 				 */
 				refused_add_again: () => LocalizedString
 				/**
-				 * This file is still uploading. Try again when it has finished.
+				 * This file is still uploading or importing. Try again when it has finished.
 				 */
 				refused_uploading: () => LocalizedString
 				/**
@@ -14938,6 +14942,10 @@ export type TranslationFunctions = {
 				 */
 				files_label: () => LocalizedString
 				/**
+				 * Not a meeting file from Cassini, so it was skipped.
+				 */
+				not_a_meeting: () => LocalizedString
+				/**
 				 * Reading…
 				 */
 				reading: () => LocalizedString
@@ -15170,9 +15178,9 @@ export type TranslationFunctions = {
 				 */
 				file_too_large: () => LocalizedString
 				/**
-				 * This isn't a meeting file from Cassini, so it was skipped.
+				 * This file couldn't be read, so it was skipped. Try adding it again.
 				 */
-				file_not_cassini: () => LocalizedString
+				file_unreadable: () => LocalizedString
 				/**
 				 * This file is damaged or incomplete, so it was skipped. If it came from Cassini, download it again and retry.
 				 */

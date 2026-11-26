@@ -366,13 +366,14 @@ const (
 	importRefusalBusy          = "import_busy"            // try again in a moment
 	importRefusalTooLarge      = "import_too_large"       // over maxImportUploadBytes
 	importRefusalAddAgain      = "import_add_again"       // the upload cannot be used: add the file again
-	importRefusalUploading     = "import_uploading"       // the file is still uploading
+	importRefusalUploading     = "import_uploading"       // the file is still uploading or importing
 	importRefusalCancelTooLate = "import_cancel_too_late" // the meeting is already added and shared
 )
 
 // writeImportRefusal answers with the error and its code, in the shape
-// writeCodedJSONError uses. The codes are worded by the Import sheet, not
-// by the operator panel's doctor catalog.
+// writeCodedJSONError uses. It does not call that: doctor_catalog_test reads
+// every writeCodedJSONError code as one the operator panel words, and these
+// are worded by the Import sheet instead.
 func writeImportRefusal(w http.ResponseWriter, status int, code, message string) {
 	writeJSON(w, status, map[string]string{"error": message, "error_code": code})
 }
@@ -649,8 +650,12 @@ func (s *importService) create(w http.ResponseWriter, r *http.Request, caller st
 		if sourceName == "" {
 			sourceName = path.Base(staged)
 		}
-		if request.Prepare && (file.ExpectedBytes <= 0 || file.ExpectedBytes > maxImportUploadBytes) {
+		if request.Prepare && file.ExpectedBytes > maxImportUploadBytes {
 			writeImportRefusal(w, http.StatusBadRequest, importRefusalTooLarge, "upload must be between 1 byte and 4 GiB")
+			return
+		}
+		if request.Prepare && file.ExpectedBytes <= 0 {
+			writeJSONError(w, http.StatusBadRequest, "upload must be between 1 byte and 4 GiB")
 			return
 		}
 		state, stagingState := "", ""

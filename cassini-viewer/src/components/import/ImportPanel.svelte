@@ -221,7 +221,7 @@
     } catch (error) {
       patch(item.key, {
         status: "invalid",
-        problem: error instanceof ImportFileError ? error.problem : "damaged",
+        problem: error instanceof ImportFileError ? error.problem : "unreadable",
         detail: error instanceof ImportFileError ? error.detail : error instanceof Error ? error.message : String(error),
       });
     }
@@ -271,7 +271,8 @@
   $: fileProblemText = {
     empty: text.file_empty,
     too_large: text.file_too_large,
-    not_cassini: text.file_not_cassini,
+    unreadable: text.file_unreadable,
+    not_cassini: text.not_a_meeting,
     newer: text.file_newer,
     damaged: text.file_damaged,
   } satisfies Record<ImportFileProblem, () => string>;
@@ -379,8 +380,10 @@
   }
 
   const isCLI = (job: ImportJobRecord) => job.origin === "cli" || job.stagedPath.startsWith("local:");
+  // A file the server found invalid would fail the same way again.
   const canRetry = (job: ImportJobRecord) =>
-    !isCLI(job) && (job.state === "failed" || job.state === "canceled" || job.state === "staged") && job.stagingState !== "removed";
+    !isCLI(job) && (job.state === "failed" || job.state === "canceled" || job.state === "staged") && job.stagingState !== "removed" &&
+    !(job.state === "failed" && job.errorCode === "invalid_file");
   const canRemove = (job: ImportJobRecord) =>
     !!dataProvider.removeImport &&
     (job.state === "upload_failed" || job.state === "failed" || job.state === "canceled" || job.state === "staged") &&

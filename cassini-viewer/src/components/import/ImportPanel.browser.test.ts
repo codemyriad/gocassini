@@ -174,6 +174,10 @@ it("says why the server failed an import when it knows", async () => {
  expect(line("long.json")).toBe("The import took too long. Try again.");
  expect(line("odd.json")).toBe("Not a valid meeting file from Cassini");
  expect(line("new.json")).toBe("Couldn't import this file");
+ // Retrying an invalid file would fail the same way; the others may succeed.
+ const row = (name: string) => Array.from(host.querySelectorAll(".import-item")).find((r) => r.textContent?.includes(name))!;
+ expect(row("odd.json").textContent).not.toContain("Retry");
+ expect(row("slow.json").textContent).toContain("Retry");
  await expect.element(page.getByText(/less than 64 KiB/)).not.toBeInTheDocument();
 });
 
@@ -186,10 +190,10 @@ it("says why a dropped file was skipped", async () => {
  transfer.items.add(new File([JSON.stringify({ kind: "cassini-transcription", version: 2 })], "future.json"));
  const input = host.querySelector('input[type="file"]') as HTMLInputElement;
  input.files = transfer.files; input.dispatchEvent(new Event("change", { bubbles: true }));
- await expect.element(page.getByText("This isn't a meeting file from Cassini, so it was skipped.")).toBeVisible();
+ await expect.element(page.getByText("Not a meeting file from Cassini, so it was skipped.")).toBeVisible();
  await expect.element(page.getByText(/^This file was made by a newer version of Cassini/)).toBeVisible();
  // The parser's words stay on hover.
- expect(page.getByText("This isn't a meeting file from Cassini, so it was skipped.").element().getAttribute("title")).toMatch(/neither an Ogg\/Opus/);
+ expect(page.getByText("Not a meeting file from Cassini, so it was skipped.").element().getAttribute("title")).toMatch(/neither an Ogg\/Opus/);
 });
 
 it("imports a 51-file selection without hitting the server batch limit", async () => {

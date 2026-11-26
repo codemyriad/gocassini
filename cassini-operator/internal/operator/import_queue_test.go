@@ -444,7 +444,7 @@ func TestWaitingForASlotCanBeCanceledAndIsPositioned(t *testing.T) {
 		t.Fatalf("positions: %v", positions)
 	}
 	// While b1 waits, it cannot be retried or removed out from under its worker.
-	if w := importDo(t, s, http.MethodPost, importsURLPath+"/b1/remove", "bob", ""); w.Code != http.StatusConflict {
+	if w := importDo(t, s, http.MethodPost, importsURLPath+"/b1/remove", "bob", ""); w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), `"error_code":"`+importRefusalUploading+`"`) {
 		t.Fatalf("remove while waiting: %d %s", w.Code, w.Body.String())
 	}
 

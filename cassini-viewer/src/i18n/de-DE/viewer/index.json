@@ -238,6 +238,7 @@
       "share_all_with": "Alle teilen mit",
       "share_all_placeholder": "Eine Person, Gruppe oder ein Team",
       "files_label": "Zu importierende Dateien",
+      "not_a_meeting": "Keine Besprechungsdatei von Cassini, daher übersprungen.",
       "reading": "Wird gelesen…",
       "uploading_percent": "Wird hochgeladen, {percent} %",
       "shared": "Geteilt",
@@ -296,7 +297,7 @@
       "sharee_none": "Niemand passt dazu.",
       "file_empty": "Die Datei ist leer.",
       "file_too_large": "",
-      "file_not_cassini": "",
+      "file_unreadable": "",
       "file_damaged": "",
       "file_newer": "",
       "untitled": "Besprechung ohne Titel"

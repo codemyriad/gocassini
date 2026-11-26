@@ -238,6 +238,7 @@
       "share_all_with": "Podijeli sve s",
       "share_all_placeholder": "Osoba, grupa ili tim",
       "files_label": "Datoteke za uvoz",
+      "not_a_meeting": "Nije datoteka sastanka iz Cassinija, pa je preskočena.",
       "reading": "Čitanje…",
       "uploading_percent": "Prijenos {percent} %",
       "shared": "Dijeljeno",
@@ -296,7 +297,7 @@
       "sharee_none": "Nitko ne odgovara.",
       "file_empty": "Datoteka je prazna.",
       "file_too_large": "",
-      "file_not_cassini": "",
+      "file_unreadable": "",
       "file_damaged": "",
       "file_newer": "",
       "untitled": "Sastanak bez naslova"

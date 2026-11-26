@@ -65,15 +65,17 @@ describe("parseImportPreview", () => {
   // the parser's words stay as the detail.
   it.each<[string, File, ImportFileProblem, RegExp, RegExp | ""]>([
     ["an empty file", fileOf("a.opus", new Uint8Array()), "empty", /^This file is empty/, ""],
+    ["a file the browser cannot read", { name: "moved.opus", size: 10, arrayBuffer: () => Promise.reject(new DOMException("gone", "NotReadableError")) } as unknown as File, "unreadable", /^This file couldn't be read/, /gone/],
+    ["a Cassini transcription cut short", fileOf("half.json", JSON.stringify({ kind: "cassini-transcription", version: 1, source: {} }).slice(0, 40)), "damaged", /damaged or incomplete/, ""],
     // Never read: a stand-in that would fail if it were.
     ["a file over 4 GiB", { name: "huge.opus", size: 4 * 2 ** 30 + 1, arrayBuffer: () => Promise.reject(new Error("read")) } as unknown as File, "too_large", /^This file is larger than 4 GiB/, ""],
-    ["neither Ogg nor JSON, whatever its name says", fileOf("meeting.opus", "RIFF....WAVE"), "not_cassini", /^This isn't a meeting file from Cassini/, /neither an Ogg\/Opus/],
-    ["an ordinary Opus recording", fileOf("song.opus", oggOf({ TITLE: "A song" })), "not_cassini", /^This isn't a meeting file from Cassini/, /missing CASSINI_FORMAT/],
-    ["an Ogg stream that is not Opus", fileOf("song.ogg", oggOf(new TextEncoder().encode("\u0003vorbis-comments"))), "not_cassini", /^This isn't/, /OpusTags/],
+    ["neither Ogg nor JSON, whatever its name says", fileOf("meeting.opus", "RIFF....WAVE"), "not_cassini", /^Not a meeting file from Cassini/, /neither an Ogg\/Opus/],
+    ["an ordinary Opus recording", fileOf("song.opus", oggOf({ TITLE: "A song" })), "not_cassini", /^Not a meeting file from Cassini/, /missing CASSINI_FORMAT/],
+    ["an Ogg stream that is not Opus", fileOf("song.ogg", oggOf(new TextEncoder().encode("\u0003vorbis-comments"))), "not_cassini", /^Not a meeting file from Cassini/, /OpusTags/],
     ["a newer portable format", fileOf("m.opus", oggOf({ CASSINI_FORMAT: "org.cassini.portable-meeting/2" })), "newer", /^This file was made by a newer version of Cassini/, /CASSINI_FORMAT=org.cassini.portable-meeting\/2/],
     ["a Cassini file missing its other tags", fileOf("m.opus", oggOf({ CASSINI_FORMAT: "org.cassini.portable-meeting/1" })), "damaged", /^This file is damaged or incomplete/, /CASSINI_PROFILE/],
     ["a truncated Ogg stream", fileOf("renamed.json", new TextEncoder().encode("OggS\u0000\u0002not-really-a-page")), "damaged", /damaged or incomplete/, ""],
-    ["another kind of JSON, under a BOM and an .opus name", fileOf("renamed.opus", "\ufeff" + JSON.stringify({ kind: "something-else", version: 1 })), "not_cassini", /^This isn't/, /unsupported transcription document/i],
+    ["another kind of JSON, under a BOM and an .opus name", fileOf("renamed.opus", "\ufeff" + JSON.stringify({ kind: "something-else", version: 1 })), "not_cassini", /^Not a meeting file from Cassini/, /unsupported transcription document/i],
     ["a newer transcription document", fileOf("m.json", JSON.stringify({ kind: "cassini-transcription", version: 2 })), "newer", /newer version of Cassini/, /version 2/],
     ["a transcription document with no meeting in it", fileOf("m.json", JSON.stringify({ kind: "cassini-transcription", version: 1 })), "damaged", /damaged or incomplete/, /unsupported transcription document/i],
   ])("refuses %s", async (_name, file, problem, message, detail) => {

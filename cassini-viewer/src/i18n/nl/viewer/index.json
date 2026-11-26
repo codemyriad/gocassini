@@ -238,6 +238,7 @@
       "share_all_with": "Alles delen met",
       "share_all_placeholder": "Een persoon, groep of team",
       "files_label": "Te importeren bestanden",
+      "not_a_meeting": "Geen vergaderingsbestand van Cassini, dus overgeslagen.",
       "reading": "Lezen…",
       "uploading_percent": "Uploaden {percent}%",
       "shared": "Gedeeld",
@@ -296,7 +297,7 @@
       "sharee_none": "Niemand gevonden.",
       "file_empty": "Het bestand is leeg.",
       "file_too_large": "",
-      "file_not_cassini": "",
+      "file_unreadable": "",
       "file_damaged": "",
       "file_newer": "",
       "untitled": "Vergadering zonder titel"

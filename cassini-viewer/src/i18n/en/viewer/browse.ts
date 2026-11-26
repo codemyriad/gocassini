@@ -329,6 +329,9 @@ const browse = {
     share_all_with: "Share all with",
     share_all_placeholder: "A person, group or team",
     files_label: "Files to import",
+    // Why a dropped file was skipped: it is not a meeting file from Cassini.
+    // The other reasons are the file_* strings below.
+    not_a_meeting: "Not a meeting file from Cassini, so it was skipped.",
     reading: "Reading…",
     // {percent} is a number from 0 to 100.
     uploading_percent: "Uploading {percent}%",
@@ -414,7 +417,7 @@ const browse = {
     // Why a dropped file was skipped, on its row in the list.
     file_empty: "This file is empty, so it was skipped.",
     file_too_large: "This file is larger than 4 GiB, so it was skipped.",
-    file_not_cassini: "This isn't a meeting file from Cassini, so it was skipped.",
+    file_unreadable: "This file couldn't be read, so it was skipped. Try adding it again.",
     file_damaged: "This file is damaged or incomplete, so it was skipped. If it came from Cassini, download it again and retry.",
     file_newer: "This file was made by a newer version of Cassini, so it was skipped. Ask your administrator to update Cassini.",
     untitled: "Untitled meeting",

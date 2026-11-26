@@ -238,6 +238,7 @@
       "share_all_with": "Condividi tutte con",
       "share_all_placeholder": "Una persona, un gruppo o un team",
       "files_label": "File da importare",
+      "not_a_meeting": "Non è un file di riunione di Cassini, quindi è stato saltato.",
       "reading": "Lettura…",
       "uploading_percent": "Caricamento {percent}%",
       "shared": "Condivisa",
@@ -296,7 +297,7 @@
       "sharee_none": "Nessuno corrisponde.",
       "file_empty": "Il file è vuoto.",
       "file_too_large": "",
-      "file_not_cassini": "",
+      "file_unreadable": "",
       "file_damaged": "",
       "file_newer": "",
       "untitled": "Riunione senza titolo"

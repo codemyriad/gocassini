@@ -119,7 +119,7 @@ export interface ImportPreview {
 
 // Why a dropped file was refused: empty, not a Cassini meeting file, written
 // by a newer Cassini, or a Cassini file that is damaged or incomplete.
-export type ImportFileProblem = "empty" | "too_large" | "not_cassini" | "newer" | "damaged";
+export type ImportFileProblem = "empty" | "too_large" | "unreadable" | "not_cassini" | "newer" | "damaged";
 
 // The largest file the server takes (maxImportUploadBytes in the operator).
 export const maxImportFileBytes = 4 * 2 ** 30;
@@ -144,8 +144,10 @@ export function importFileProblemText(problem: ImportFileProblem): string {
       return text.file_empty();
     case "too_large":
       return text.file_too_large();
+    case "unreadable":
+      return text.file_unreadable();
     case "not_cassini":
-      return text.file_not_cassini();
+      return text.not_a_meeting();
     case "newer":
       return text.file_newer();
     default:
@@ -164,7 +166,14 @@ export async function parseImportPreview(file: File): Promise<ImportPreview> {
   if (file.size > maxImportFileBytes) {
     throw new ImportFileError("too_large");
   }
-  const bytes = new Uint8Array(await file.arrayBuffer());
+  // A file that cannot be read (moved since it was picked, or too large for
+  // this browser to hold) says so, rather than being called damaged.
+  let bytes: Uint8Array;
+  try {
+    bytes = new Uint8Array(await file.arrayBuffer());
+  } catch (error) {
+    throw new ImportFileError("unreadable", error instanceof Error ? error.message : String(error));
+  }
   if (bytes.length === 0) {
     throw new ImportFileError("empty");
   }
@@ -173,10 +182,16 @@ export async function parseImportPreview(file: File): Promise<ImportPreview> {
       const { manifest } = await extractPortableManifestFromArrayBuffer(bytes);
       return describePortableManifest(manifest, "opus");
     }
+    const text = stripUTF8BOM(new TextDecoder().decode(bytes));
     let parsed: unknown;
     try {
-      parsed = JSON.parse(stripUTF8BOM(new TextDecoder().decode(bytes)));
-    } catch {
+      parsed = JSON.parse(text);
+    } catch (error) {
+      // A Cassini transcription cut short (a half-finished download) names its
+      // kind near the start: damaged, not some other file.
+      if (/^\s*\{/.test(text) && text.slice(0, 4096).includes('"cassini-transcription"')) {
+        throw new ImportFileError("damaged", error instanceof Error ? error.message : String(error));
+      }
       throw new ImportFileError("not_cassini", "neither an Ogg/Opus recording nor a JSON transcription document");
     }
     const { manifest } = await extractTranscriptionDocument(parsed);

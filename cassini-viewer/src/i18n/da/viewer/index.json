@@ -238,6 +238,7 @@
       "share_all_with": "Del alle med",
       "share_all_placeholder": "En person, gruppe eller et team",
       "files_label": "Filer, der skal importeres",
+      "not_a_meeting": "Ikke en mødefil fra Cassini, så den blev sprunget over.",
       "reading": "Læser…",
       "uploading_percent": "Overfører {percent} %",
       "shared": "Delt",
@@ -296,7 +297,7 @@
       "sharee_none": "Ingen matcher det.",
       "file_empty": "Filen er tom.",
       "file_too_large": "",
-      "file_not_cassini": "",
+      "file_unreadable": "",
       "file_damaged": "",
       "file_newer": "",
       "untitled": "Møde uden titel"
