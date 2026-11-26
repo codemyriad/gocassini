@@ -140,6 +140,27 @@ it("keeps the insight and the refusal when Escape is pressed while the delete is
     .toBeVisible();
 });
 
+it("treats a refused delete of a run that is no longer listed as deleted", async () => {
+  // Deleted from another tab: the operator answers 404, and its listing no
+  // longer carries the run.
+  let gone = false;
+  const { provider } = fixture({
+    deleteInsight: async () => {
+      gone = true;
+      throw new Error("That insight is no longer there, or this deployment cannot delete insights.");
+    },
+  });
+  provider.listInsights.mockImplementation(async () => (gone ? [] : [insight]));
+  app = mount(App, { target: host, props: { dataProvider: provider } });
+  await expect.poll(() => card()).not.toBeNull();
+
+  await openDeleteDialog();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Delete insight", exact: true }).click();
+  await expect.poll(() => host.querySelector(".confirm-dialog")).toBeNull();
+  await expect.poll(() => card()).toBeNull();
+  expect(host.textContent).not.toContain("That insight is no longer there");
+});
+
 it("keeps the insight open with the reason when the delete is refused", async () => {
   const { provider } = fixture({
     deleteInsight: async () => {
