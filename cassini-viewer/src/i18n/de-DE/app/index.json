@@ -1388,6 +1388,7 @@
       "delete_unavailable": "",
       "insight_unavailable": "Diese Erkenntnis steht Ihnen nicht zur Verfügung, oder diese Installation kann keine Erkenntnisse erstellen.",
       "already_running": "Diese Erkenntnis läuft bereits.",
+      "delete_running": "",
       "unreachable": {
         "create": "Cassini war nicht erreichbar, um die Erkenntnis zu starten{detail}.",
         "list": "Cassini war nicht erreichbar, um Ihre Erkenntnisse aufzulisten{detail}.",

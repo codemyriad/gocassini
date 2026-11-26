@@ -607,6 +607,13 @@
     if (rootEl?.querySelector("dialog[open]")) {
       return;
     }
+    // A confirmation answers its own Escape, but only while focus is inside it.
+    // While its request is in flight its buttons are disabled and focus falls
+    // out, so Escape lands here; closing the sheet under it would also drop a
+    // refusal that arrives afterwards.
+    if (deleteConfirm || insightDeleteConfirm) {
+      return;
+    }
     if (railOpen) {
       railOpen = false;
       return;
@@ -1259,12 +1266,21 @@
       if (destroyed) {
         return;
       }
-      deletedInsightIds.add(record.id);
-      insights = insights.filter((row) => row.id !== record.id);
-      if (selectedInsightId === record.id) {
-        closeSheet();
-      }
+      forgetDeletedInsight(record.id);
     } catch (error) {
+      if (destroyed) {
+        return;
+      }
+      // A refused delete may be for a run that is already gone: deleted from
+      // another tab, or by an earlier request whose answer was lost. A 404
+      // cannot say so on its own, since an operator without the route answers
+      // the same way, so the listing settles it.
+      if (await insightNoLongerListed(record.id)) {
+        if (!destroyed) {
+          forgetDeletedInsight(record.id);
+        }
+        return;
+      }
       if (destroyed) {
         return;
       }
@@ -1277,6 +1293,30 @@
       insightDeleteConfirm = null;
     }
     void refreshInsights();
+  }
+
+  function forgetDeletedInsight(id: string) {
+    deletedInsightIds.add(id);
+    insights = insights.filter((row) => row.id !== id);
+    if (selectedInsightId === id) {
+      closeSheet();
+    }
+  }
+
+  // insightNoLongerListed is true only when a fresh listing answered and does
+  // not carry the run. A listing that fails proves nothing.
+  async function insightNoLongerListed(id: string): Promise<boolean> {
+    const provider = dataProvider;
+    if (!provider.listInsights) {
+      return false;
+    }
+    try {
+      const listed = await provider.listInsights();
+      return !listed.some((row) => row.id === id);
+    } catch (error) {
+      console.warn("cassini: could not check whether a refused insight delete had already landed", error);
+      return false;
+    }
   }
 
   $: if (insightDeleteError && insightDeleteError.id !== selectedInsightId) {

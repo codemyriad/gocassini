@@ -1388,6 +1388,7 @@
       "delete_unavailable": "",
       "insight_unavailable": "Taj ti uvid nije dostupan ili ova instalacija ne može stvarati uvide.",
       "already_running": "Ovaj je uvid već u tijeku.",
+      "delete_running": "",
       "unreachable": {
         "create": "Nije moguće doći do Cassinija radi pokretanja uvida{detail}.",
         "list": "Nije moguće doći do Cassinija radi prikaza tvojih uvida{detail}.",

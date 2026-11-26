@@ -1388,6 +1388,7 @@
       "delete_unavailable": "",
       "insight_unavailable": "Ese análisis no está disponible para ti, o esta instalación no puede crear análisis.",
       "already_running": "Este análisis ya está en curso.",
+      "delete_running": "",
       "unreachable": {
         "create": "No se pudo acceder a Cassini para iniciar el análisis{detail}.",
         "list": "No se pudo acceder a Cassini para listar tus análisis{detail}.",

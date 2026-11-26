@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { get } from "svelte/store";
+
+import { LL } from "cassini-viewer/i18n";
 
 import {
   createInsight,
@@ -320,14 +323,11 @@ describe("deleteInsight", () => {
     expect(init.method).toBe("POST");
   });
 
-  it("repeats the operator's sentence for a run that is still running", async () => {
-    const fetchMock = respondWith(
-      JSON.stringify({ error: "This insight is still running. Delete it once it has finished." }),
-      { status: 409 },
-    );
+  it("words a run that is still running in the reader's language, not the operator's English", async () => {
+    const fetchMock = respondWith(JSON.stringify({ error: "operator sentence, in English" }), { status: 409 });
 
     await expect(deleteInsight("ins_0123456789abcdef", fetchMock)).rejects.toThrow(
-      "This insight is still running. Delete it once it has finished.",
+      get(LL).app.insights.client.delete_running(),
     );
   });
 
