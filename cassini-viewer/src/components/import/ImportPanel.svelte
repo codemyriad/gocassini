@@ -141,7 +141,11 @@
     // fresh jobs directly so retrying an idle job immediately restarts polling.
     const wanted = jobs.some((job) => !importJobTerminal(job.state)) || submitting;
     if (wanted && pollTimer === null) {
-      pollTimer = setInterval(() => void refreshJobs(), 2500);
+      // A hidden tab skips the poll: the server counts a recent poll as the
+      // person watching, and does not send them a notification (#523).
+      pollTimer = setInterval(() => {
+        if (typeof document === "undefined" || !document.hidden) void refreshJobs();
+      }, 2500);
     } else if (!wanted && pollTimer !== null) {
       clearInterval(pollTimer);
       pollTimer = null;
@@ -153,8 +157,17 @@
     void refreshJobs();
   }
 
-  onMount(() => void refreshJobs());
+  // Coming back to the tab catches up at once.
+  function onVisibility() {
+    if (!document.hidden && pollTimer !== null) void refreshJobs();
+  }
+
+  onMount(() => {
+    void refreshJobs();
+    document.addEventListener("visibilitychange", onVisibility);
+  });
   onDestroy(() => {
+    if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onVisibility);
     if (pollTimer !== null) clearInterval(pollTimer);
     if (justImportedTimer !== null) clearTimeout(justImportedTimer);
   });

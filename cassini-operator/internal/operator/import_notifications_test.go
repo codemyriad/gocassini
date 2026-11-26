@@ -45,13 +45,15 @@ func (n *notificationServer) serve(t *testing.T) *httptest.Server {
 				SubjectParams struct {
 					Subject string                       `json:"rich_subject"`
 					Params  map[string]map[string]string `json:"rich_subject_params"`
-					Message string                       `json:"rich_message"`
+					Message *string                      `json:"rich_message"`
 					Link    string                       `json:"link"`
 				} `json:"subject_params"`
 			} `json:"params"`
 		}
 		if r.Method != http.MethodPost || r.Header.Get("EX-APP-ID") != "cassini" || r.Header.Get("OCS-APIRequest") != "true" ||
-			json.NewDecoder(r.Body).Decode(&body) != nil || body.Params.Object != "app_api" || body.Params.SubjectType != "app_api_ex_app" || body.Params.ObjectID == "" {
+			json.NewDecoder(r.Body).Decode(&body) != nil || body.Params.Object != "app_api" || body.Params.SubjectType != "app_api_ex_app" || body.Params.ObjectID == "" ||
+			// Nextcloud refuses an empty message and then never shows the notification.
+			(body.Params.SubjectParams.Message != nil && *body.Params.SubjectParams.Message == "") {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
@@ -67,7 +69,11 @@ func (n *notificationServer) serve(t *testing.T) *httptest.Server {
 			return
 		}
 		p := body.Params.SubjectParams
-		n.got = append(n.got, sentNotification{user: user, subject: p.Subject, name: p.Params["meeting"]["name"], message: p.Message, link: p.Link})
+		message := ""
+		if p.Message != nil {
+			message = *p.Message
+		}
+		n.got = append(n.got, sentNotification{user: user, subject: p.Subject, name: p.Params["meeting"]["name"], message: message, link: p.Link})
 		_, _ = w.Write([]byte(`{"ocs":{"meta":{"statuscode":200},"data":{}}}`))
 	}))
 	t.Cleanup(server.Close)

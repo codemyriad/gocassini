@@ -65,7 +65,8 @@ func (w *importWatchers) watching(user string) bool {
 }
 
 // errNotificationsAppOff is AppAPI saying the Notifications app is disabled:
-// nothing can be delivered, and nothing is wrong with the import.
+// nothing can be delivered, and nothing is wrong with the import. Only newer
+// AppAPI releases say so; older ones accept the request and drop it.
 var errNotificationsAppOff = fmt.Errorf("the Notifications app is not enabled")
 
 // sendUserNotification asks AppAPI to notify user. subject may hold
@@ -75,8 +76,12 @@ func (c ExAppConfig) sendUserNotification(ctx context.Context, client *http.Clie
 	subjectParams := map[string]any{
 		"rich_subject":        subject,
 		"rich_subject_params": params,
-		"rich_message":        message,
-		"rich_message_params": map[string]any{},
+	}
+	// AppAPI before Nextcloud 35 hands an empty message to Nextcloud, which
+	// refuses it and then never shows the notification: leave it out.
+	if message != "" {
+		subjectParams["rich_message"] = message
+		subjectParams["rich_message_params"] = map[string]any{}
 	}
 	if link != "" {
 		subjectParams["link"] = link
@@ -150,9 +155,12 @@ func (s *importService) notifySettled(job ImportJob, done bool, errText string) 
 		return
 	}
 	rt := s.rt
-	ctx := rt.ctx
-	if ctx == nil {
-		ctx = context.Background()
+	ctx := context.Background()
+	if rt.ctx != nil {
+		// An import that lands as the operator stops is still done, and is
+		// not run again: tell its importer anyway. Shutdown waits for workerWG,
+		// at most importNotifyTimeout longer.
+		ctx = context.WithoutCancel(rt.ctx)
 	}
 	name := strings.TrimSpace(job.SourceName)
 	var subject, message, link string
