@@ -51,7 +51,7 @@ jobs:
       app_version: ${{ steps.version.outputs.version }}
       ffmpeg_version: ${{ steps.ffmpeg.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Classify changed paths
@@ -200,7 +200,7 @@ jobs:
       # anonymous reads are rate-limited.
       - name: Log in to the container registry
         if: steps.changes.outputs.relevant == 'true'
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -308,14 +308,14 @@ jobs:
       tags: ${{ steps.meta.outputs.tags }}
       digest: ${{ steps.build-push.outputs.digest || steps.build-pr.outputs.digest }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Log in to ghcr.io
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -378,7 +378,7 @@ jobs:
       - name: Build image (local load, PR)
         if: github.event_name == 'pull_request'
         id: build-pr
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: deployment/Dockerfile.exapp
@@ -397,7 +397,7 @@ jobs:
       - name: Push amd64 image by digest (non-PR)
         if: github.event_name != 'pull_request'
         id: build-push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: deployment/Dockerfile.exapp
@@ -422,7 +422,7 @@ jobs:
 
       - name: Upload image artifact
         if: github.event_name == 'pull_request'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: exapp-image
           path: /tmp/exapp-image.tar
@@ -446,10 +446,10 @@ jobs:
       digest: ${{ steps.merge.outputs.digest }}
     steps:
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Log in to ghcr.io
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -486,7 +486,7 @@ jobs:
       max-parallel: 3
       matrix: ${{ fromJSON(needs.prepare.outputs.compatibility-matrix) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/compatibility-tools
       - name: Load exact built image
         id: load
@@ -511,7 +511,7 @@ jobs:
             echo 'Compatibility did not reach execution; no qualifying evidence.' >> "$GITHUB_STEP_SUMMARY"
           fi
           python3 scripts/ci_phase_timings.py summary "${REPORT%/*}/phase-timings.jsonl" >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: compatibility-${{ matrix.baseline }}-${{ github.run_attempt }}
@@ -552,7 +552,7 @@ jobs:
     # that every other job is listed.
     if: always()
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Every job in the workflow passed or was not needed
         env:
           NEEDS: ${{ toJSON(needs) }}
@@ -575,7 +575,7 @@ jobs:
             echo 'Invalid applicability result' >&2
             exit 1
           fi
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         if: needs.prepare.outputs.relevant == 'true'
         with:
           pattern: compatibility-*-${{ github.run_attempt }}
@@ -592,14 +592,14 @@ jobs:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: [prepare, build-image, build-image-arm64, build-image-cuda, faithful-installed-exapp-talk-cpu, container-checks, e2e-talk-record-cuda, transcribe-smoke-cuda]
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: compatibility-*-${{ github.run_attempt }}
           path: evidence
@@ -607,7 +607,7 @@ jobs:
         env:
           COMPAT_BUILD_JOBS: ${{ toJSON(needs) }}
         run: python3 scripts/compatibility_evidence.py index --records evidence --out qualified/release-evidence.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-evidence-${{ github.run_attempt }}
           path: qualified/
@@ -633,9 +633,9 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' && !cancelled() && needs.build-image-amd64.result == 'success' && needs.build-image.result == 'success' }}
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: cassini-go-recorder/go.mod
 
@@ -712,7 +712,7 @@ jobs:
 
       - name: Upload D-403 sensitivity control evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: d403-sensitivity-control-${{ github.run_attempt }}
           path: ${{ runner.temp }}/d403-sensitivity-control
@@ -732,7 +732,7 @@ jobs:
     if: ${{ !cancelled() && needs.build-image-amd64.result == 'success' && (needs.build-image.result == 'success' || github.event_name == 'pull_request') }}
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Load ExApp image
         id: load
@@ -786,14 +786,14 @@ jobs:
     outputs:
       digest: ${{ steps.push.outputs.digest }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Log in to ghcr.io
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -801,7 +801,7 @@ jobs:
 
       - name: Build ARM64 ExApp image
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: deployment/Dockerfile.exapp
@@ -838,7 +838,7 @@ jobs:
       - name: Push arm64 image by digest (non-PR)
         if: github.event_name != 'pull_request'
         id: push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: deployment/Dockerfile.exapp
@@ -870,13 +870,13 @@ jobs:
     outputs:
       base_ref: ${{ steps.base.outputs.base_ref }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Log in to ghcr.io
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -927,7 +927,7 @@ jobs:
 
       - name: Build + push base image
         if: steps.base.outputs.build == 'true'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: deployment/Dockerfile.exapp.cuda.base
@@ -957,7 +957,7 @@ jobs:
       primary:   ${{ steps.meta.outputs.primary }}
       digest:    ${{ steps.build.outputs.digest }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Runner disk sizes vary. Reclaim tools only when build space is low;
       # a large runner should not spend minutes deleting an unused SDK tree.
@@ -965,10 +965,10 @@ jobs:
         run: ./scripts/ci-cuda-build-space.sh
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Log in to ghcr.io
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -1021,7 +1021,7 @@ jobs:
       # not_found" seen on PR #59); PRs read the cache, only pushes write it.
       - name: Build and push CUDA image
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: deployment/Dockerfile.exapp.cuda
@@ -1079,7 +1079,7 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           "$HOME/.local/bin/git-lfs" install --skip-repo
           "$HOME/.local/bin/git-lfs" --version
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Load ExApp image
         id: load
@@ -1169,7 +1169,7 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           "$HOME/.local/bin/git-lfs" install --skip-repo
           "$HOME/.local/bin/git-lfs" --version
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           lfs: true
       - name: Force LFS smudge
@@ -1177,7 +1177,7 @@ jobs:
         # so checkout@v4 may leave stale pointer files; `git lfs pull` is
         # the idempotent recovery.
         run: git lfs pull
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: cassini-go-recorder/go.mod
       - name: Confirm bot media fixture is materialized
@@ -1262,12 +1262,12 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           "$HOME/.local/bin/git-lfs" install --skip-repo
           "$HOME/.local/bin/git-lfs" --version
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           lfs: true
       - name: Force LFS smudge
         run: git lfs pull
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: cassini-go-recorder/go.mod
       - name: Confirm bot media fixture is materialized

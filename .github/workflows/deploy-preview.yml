@@ -57,7 +57,7 @@ jobs:
       should_process: ${{ steps.detect.outputs.should_process }}
       preview_count: ${{ steps.detect.outputs.preview_count }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -222,10 +222,10 @@ jobs:
       RCLONE_CONFIG_CODEMYRIAD_ENDPOINT: ${{ secrets.R2_S3_ENDPOINT }}
       RCLONE_CONFIG_CODEMYRIAD_ACL: private
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -318,16 +318,16 @@ jobs:
       RCLONE_CONFIG_CODEMYRIAD_ENDPOINT: ${{ secrets.R2_S3_ENDPOINT }}
       RCLONE_CONFIG_CODEMYRIAD_ACL: private
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: cassini-go-recorder/go.mod
           cache-dependency-path: cassini-go-recorder/go.sum
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm

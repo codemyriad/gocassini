@@ -56,7 +56,7 @@ jobs:
     name: shellcheck + actionlint + script tests
     runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -128,7 +128,7 @@ jobs:
       # out), so a split floor would mean formatting depended on which module you
       # were in. Keep them unified, or this step has to become a matrix.
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: cassini-operator/go.mod
       - name: gofmt (every Go module)
