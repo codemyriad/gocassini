@@ -76,8 +76,8 @@ const shareLimitWindow = 10*time.Minute + 30*time.Second
 
 // shareLimitClock remembers when Nextcloud last refused a share for its
 // limit, whoever asked (a recording or an import), since every share counts
-// against the same account. Imports read it so they do not spend refused
-// attempts while the limit holds (#484).
+// against the same account. Imports read it so they do not ask while the
+// limit holds (#484): a refused attempt gains nothing, and may count too.
 type shareLimitClock struct {
 	mu   sync.Mutex
 	last time.Time
@@ -404,8 +404,8 @@ const (
 // an error, the starter included — for an administrator's re-share to reach
 // later, or, for an import, Cassini's own completion pass (#484). Nothing is
 // retried after it, since every attempt, a refused one too, counts against
-// the same limit; for the same reason an import that starts while the limit
-// holds (ncShareLimit) defers everyone not yet covered without trying.
+// the same limit; an import that starts while the limit holds (ncShareLimit)
+// likewise defers everyone not yet covered without trying.
 //
 // note goes on every share made here; see meetingFacts.shareNote.
 func (c ExAppConfig) reconcileRecordingShares(ctx context.Context, client *http.Client, relPath string, audience []sharePrincipal, public bool, mode shareMode, note string) ([]skippedShare, error) {

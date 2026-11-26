@@ -142,10 +142,22 @@ describe("describeImportSharing", () => {
     });
     expect(got.line).toBe("Shared with 1 recipient · 2 waiting · 1 not shared");
     expect(got.title.split("\n")).toEqual([
-      "you, Bob Lee, Design (group), eve",
+      "you",
       "Nextcloud lets Cassini create only 20 shares every 10 minutes. Cassini will share this meeting with Bob Lee, Design (group) as soon as it can; nobody needs to do anything.",
       "Nextcloud refused to share it with eve (Sharing is only allowed with group members).",
     ]);
+  });
+  it("counts each recipient once, the importer listed again included", () => {
+    const got = describeImportSharing({
+      createdBy: "alice",
+      sharing: {
+        share: true,
+        audience: [{ type: "user", id: "alice" }, { type: "user", id: "bob" }, { type: "user", id: "bob" }],
+        waiting: [{ type: "user", id: "alice" }, { type: "user", id: "bob" }],
+      },
+    });
+    expect(got.line).toBe("Not shared yet · 2 waiting");
+    expect(got.title).not.toMatch(/^you,/);
   });
   it("says a meeting nobody can open yet is not shared yet", () => {
     const got = describeImportSharing({ createdBy: "alice", sharing: { share: false, waiting: [{ type: "user", id: "alice" }] } });

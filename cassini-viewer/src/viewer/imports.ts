@@ -286,19 +286,29 @@ export function describeImportSharing(job: Pick<ImportJobRecord, "sharing"> & { 
     const name = (who.label ?? known?.label ?? "").trim() || who.id;
     return who.type === "group" ? text.sharee_group({ name }) : who.type === "circle" ? text.sharee_team({ name }) : name;
   };
+  // Who it is meant for, each once: the importer, then the audience as
+  // chosen (a repeat, or the importer listed again, counts once).
+  const key = (who: { type: string; id: string }) => `${who.type}\u0000${who.id}`;
+  const intended = new Map<string, { type: string; id: string; label?: string }>();
+  if (job.createdBy) intended.set(key({ type: "user", id: job.createdBy }), { type: "user", id: job.createdBy });
+  for (const sharee of audience) if (!intended.has(key(sharee))) intended.set(key(sharee), sharee);
+  const notYet = new Set([...waiting, ...notShared].map(key));
+  // Without createdBy (older callers), the importer is counted as before.
+  const shared = [...intended.values()].filter((who) => !notYet.has(key(who)));
+  const sharedCount = shared.length + (job.createdBy ? 0 : 1);
   let line: string;
   let title: string;
   if (!job.sharing.share) {
     line = text.sharing_only_you();
     title = text.sharing_only_you_title();
   } else {
-    title = [text.sharing_you(), ...audience.map(nameOf)].join(", ");
-    const shared = audience.length + 1 - waiting.length - notShared.length;
-    line = shared > 0 ? text.sharing_shared_with({ count: shared }) : text.sharing_not_yet();
+    // On hover, only who can open it now; who is waiting or refused follows.
+    title = (job.createdBy ? shared.map(nameOf) : [text.sharing_you(), ...shared.map(nameOf)]).join(", ");
+    line = sharedCount > 0 ? text.sharing_shared_with({ count: sharedCount }) : text.sharing_not_yet();
   }
   // #484: who is still waiting for Nextcloud's limit, and whom it refused.
   const parts = [line];
-  const titles = [title];
+  const titles = title ? [title] : [];
   if (waiting.length > 0) {
     if (!job.sharing.share) parts[0] = text.sharing_not_yet();
     parts.push(text.sharing_waiting({ count: waiting.length }));

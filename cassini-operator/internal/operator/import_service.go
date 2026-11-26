@@ -100,6 +100,10 @@ type importService struct {
 	// confirming them, removing files, sweeping the folder — so two tabs cannot
 	// race on one folder, while callers stay independent of each other.
 	userLocks keyedLocks
+	// shareRetries backs off a completion pass that keeps failing for an
+	// import, by import ID; guarded by mu. Lost on restart, which only
+	// starts the tries over.
+	shareRetries map[string]shareCompletionRetry
 }
 
 // defaultMaxConcurrentImports is how many imports run at once across all
@@ -873,6 +877,26 @@ func (s *importService) startShareCompletion() {
 	}()
 }
 
+// A completion that fails for another reason than the limit (the meeting's
+// file moved in Files, Nextcloud answering 5xx) is tried again later and
+// later, and given up after shareCompletionTries: those still waiting are then
+// recorded as not shared, with the error, so the row stops saying "waiting"
+// and nobody spends the share budget on it every minute.
+const shareCompletionTries = 8
+
+// shareCompletionBackoff is how long a completion that failed waits before
+// its next try: twice as long each time, from shareCompletionEvery, at most an
+// hour.
+func shareCompletionBackoff(fails int) time.Duration {
+	wait := shareCompletionEvery << min(fails, 6)
+	return min(wait, time.Hour)
+}
+
+type shareCompletionRetry struct {
+	fails int
+	next  time.Time
+}
+
 // completeWaitingShares is one completion pass.
 func (s *importService) completeWaitingShares(ctx context.Context) {
 	if ncShareLimit.holding() {
@@ -889,12 +913,35 @@ func (s *importService) completeWaitingShares(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		waiting, refused, err := s.importer.completeShares(ctx, job)
-		if err != nil {
-			// Left waiting: the next pass tries again.
-			s.logf("import %s: finish sharing: %v", job.ID, err)
+		s.mu.Lock()
+		retry := s.shareRetries[job.ID]
+		s.mu.Unlock()
+		if time.Now().Before(retry.next) {
 			continue
 		}
+		waiting, refused, err := s.importer.completeShares(ctx, job)
+		if err != nil {
+			retry.fails++
+			if retry.fails < shareCompletionTries {
+				retry.next = time.Now().Add(shareCompletionBackoff(retry.fails))
+				s.mu.Lock()
+				if s.shareRetries == nil {
+					s.shareRetries = map[string]shareCompletionRetry{}
+				}
+				s.shareRetries[job.ID] = retry
+				s.mu.Unlock()
+				s.logf("import %s: finish sharing (try %d of %d): %v", job.ID, retry.fails, shareCompletionTries, err)
+				continue
+			}
+			s.logf("import %s: finish sharing failed %d times, giving up: %v", job.ID, retry.fails, err)
+			waiting, refused = nil, nil
+			for _, principal := range job.Sharing.Waiting {
+				refused = append(refused, skippedShare{Type: principal.Type, ID: principal.ID, Reason: "Cassini could not share it: " + err.Error()})
+			}
+		}
+		s.mu.Lock()
+		delete(s.shareRetries, job.ID)
+		s.mu.Unlock()
 		if err := s.rt.store.RecordImportShares(context.Background(), job.ID, waiting, refused); err != nil {
 			s.logf("import %s: record sharing: %v", job.ID, err)
 			continue
@@ -1109,11 +1156,14 @@ func (s *importService) runImportJob(job ImportJob) importRunOutcome {
 	// Who is still waiting is written before the row is done, so a done row
 	// never shows everyone shared with for a moment; the completion pass
 	// reads done rows only.
+	// Written every time, empty too, so a re-run after a restart replaces what
+	// an interrupted run recorded. Not written, the row is left undone, like a
+	// failed outcome below: the startup requeue re-runs the import, which is
+	// idempotent, rather than a done row silently dropping who is waiting.
 	waiting, refused := deferredShares(result.NotSharedWith), refusedShares(result.NotSharedWith)
-	if len(waiting) > 0 || len(refused) > 0 {
-		if err := rt.store.RecordImportShares(context.Background(), job.ID, waiting, refused); err != nil {
-			s.logf("import %s: record who is not shared with yet: %v", job.ID, err)
-		}
+	if err := rt.store.RecordImportShares(context.Background(), job.ID, waiting, refused); err != nil {
+		s.logf("import %s: record who is not shared with yet: %v", job.ID, err)
+		return importSettled
 	}
 	if err := rt.store.SetImportJobOutcome(context.Background(), job.ID, result.DeliveredName, result.FileID, result.ImportedAtUTC); err != nil {
 		s.logf("import %s: persist outcome: %v", job.ID, err)

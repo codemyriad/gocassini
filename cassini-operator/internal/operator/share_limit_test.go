@@ -203,6 +203,9 @@ type shareServer struct {
 	allow  int
 	posts  []string
 	shares map[string]bool // "type/id"
+	// broken makes every call fail with a 500, and counts them.
+	broken bool
+	calls  int
 }
 
 func (f *shareServer) serve(t *testing.T) (*httptest.Server, ExAppConfig) {
@@ -214,6 +217,11 @@ func (f *shareServer) serve(t *testing.T) (*httptest.Server, ExAppConfig) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
+		f.calls++
+		if f.broken {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
 		if r.Method == http.MethodPost {
 			_ = r.ParseForm()
 			kind := map[string]string{"0": "user", "1": "group", "7": "circle"}[r.Form.Get("shareType")]
@@ -470,5 +478,60 @@ func TestAnImportHeldBackByTheLimitIsDoneAndSaysWhoIsWaiting(t *testing.T) {
 	if len(job.Sharing.Waiting) != 1 || job.Sharing.Waiting[0].ID != "bob" ||
 		len(job.Sharing.NotShared) != 1 || job.Sharing.NotShared[0].ID != "eve" || job.Sharing.NotShared[0].Reason == "" {
 		t.Fatalf("sharing: %+v", job.Sharing)
+	}
+}
+
+// A completion that keeps failing for another reason than the limit backs
+// off, and is given up after shareCompletionTries: the row then names those
+// it could not reach instead of saying "waiting" for ever.
+func TestACompletionThatKeepsFailingBacksOffAndGivesUp(t *testing.T) {
+	f := &shareServer{broken: true, shares: map[string]bool{}}
+	server, cfg := f.serve(t)
+	store, err := OpenStore(filepath.Join(t.TempDir(), "jobs.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	cfg.lifecycle = store
+	rt := &Runtime{store: store, ctx: ctx, logger: log.New(testWriter{t}, "", 0)}
+	s := &importService{rt: rt, logger: rt.logger, importer: &meetingImporter{sink: &nextcloudFilesPublishSink{cfg: cfg, client: server.Client(), rt: rt}}}
+	job := ImportJob{ID: "IMP", BatchID: "b", CreatedBy: "alice", SourceName: "a.opus", StagedPath: ".CassiniImports/a.opus",
+		Sharing: importAudience{Share: true, Audience: []importPrincipal{{Type: "user", ID: "bob"}}}}
+	if err := store.CreateImportJobs(ctx, []ImportJob{job}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetImportJobOutcome(ctx, "IMP", "IMP.opus", 7, nowUTCString()); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordImportShares(ctx, "IMP", []skippedShare{{Type: "user", ID: "bob", ShareLimit: shareLimitDeferred}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	// A failed try is not repeated before its backoff.
+	s.completeWaitingShares(ctx)
+	first := f.calls
+	s.completeWaitingShares(ctx)
+	if first == 0 || f.calls != first {
+		t.Fatalf("calls %d then %d: a failed completion was retried at once", first, f.calls)
+	}
+	// Each try past its backoff, until the last.
+	for try := 2; try <= shareCompletionTries; try++ {
+		s.mu.Lock()
+		retry := s.shareRetries["IMP"]
+		retry.next = time.Time{}
+		s.shareRetries["IMP"] = retry
+		s.mu.Unlock()
+		s.completeWaitingShares(ctx)
+	}
+	got, _, err := store.ImportJob(ctx, "IMP")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Sharing.Waiting) != 0 || len(got.Sharing.NotShared) != 1 || got.Sharing.NotShared[0].ID != "bob" ||
+		!strings.Contains(got.Sharing.NotShared[0].Reason, "Cassini could not share it") {
+		t.Fatalf("after giving up: %+v", got.Sharing)
+	}
+	if left, _ := store.ImportsWaitingToShare(ctx); len(left) != 0 {
+		t.Fatalf("still waiting: %v", left)
 	}
 }
