@@ -62,7 +62,7 @@ services:
   # only NC's PHP and the ExApp container resolve "reverse-proxy" via
   # the compose network.
   reverse-proxy:
-    image: ${COMPAT_PROXY_IMAGE:-nginx:alpine}
+    image: ${COMPAT_PROXY_IMAGE:-nginx:1.31-alpine}
     restart: unless-stopped
     depends_on:
       - nextcloud
@@ -74,6 +74,10 @@ services:
   # them via FRP tunnels. HaRP injects HP_FRP_ADDRESS/PORT/SHARED_KEY at
   # deploy; the Cassini entrypoint starts its frpc tunnel when those are
   # present and runs tunnel-less otherwise.
+  #
+  # `:release` floats on purpose: it is what admins install (our docs and
+  # upstream's), so the Integration jobs follow the HaRP people actually run.
+  # The compatibility matrix pins its own HaRP digest via COMPAT_HARP_IMAGE.
   appapi-harp:
     image: ${COMPAT_HARP_IMAGE:-ghcr.io/nextcloud/nextcloud-appapi-harp:release}
     restart: unless-stopped
@@ -136,7 +140,7 @@ services:
       - ${SIGNALING_CONF:-./config/signaling.conf}:/config/server.conf:ro
 
   signaling-public-proxy:
-    image: ${COMPAT_PROXY_IMAGE:-nginx:alpine}
+    image: ${COMPAT_PROXY_IMAGE:-nginx:1.31-alpine}
     profiles: ["remote"]
     restart: unless-stopped
     depends_on:

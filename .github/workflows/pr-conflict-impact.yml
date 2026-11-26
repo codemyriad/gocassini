@@ -29,6 +29,6 @@ jobs:
     timeout-minutes: 15
     steps:
       # Trusted action only: never check out or execute code from a PR here.
-      - uses: codemyriad/pr-conflict-impact-action@v1
+      - uses: codemyriad/pr-conflict-impact-action@0071beeeb169240b4bd1d27c1ddfc93b4247fb49 # v1.0.2
         with:
           merge-method: merge
