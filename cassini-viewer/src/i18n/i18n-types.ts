@@ -4391,6 +4391,56 @@ export type NamespaceAppTranslation = {
 			 */
 			save_in_progress: string
 		}
+		imports: {
+			/**
+			 * I​m​p​o​r​t​s
+			 */
+			heading: string
+			/**
+			 * H​o​w​ ​m​a​n​y​ ​m​e​e​t​i​n​g​ ​i​m​p​o​r​t​s​ ​r​u​n​ ​a​t​ ​t​h​e​ ​s​a​m​e​ ​t​i​m​e​,​ ​a​c​r​o​s​s​ ​e​v​e​r​y​o​n​e​.​ ​E​a​c​h​ ​p​e​r​s​o​n​'​s​ ​o​w​n​ ​i​m​p​o​r​t​s​ ​s​t​i​l​l​ ​r​u​n​ ​o​n​e​ ​a​t​ ​a​ ​t​i​m​e​.
+			 */
+			intro: string
+			/**
+			 * I​m​p​o​r​t​s​ ​a​t​ ​o​n​c​e
+			 */
+			limit_label: string
+			/**
+			 * 1​ ​t​o​ ​{​m​a​x​}
+			 * @param {unknown} max
+			 */
+			range: RequiredParams<'max'>
+			/**
+			 * S​a​v​e​ ​i​m​p​o​r​t​ ​s​e​t​t​i​n​g​s
+			 */
+			save_label: string
+			/**
+			 * E​a​c​h​ ​r​u​n​n​i​n​g​ ​i​m​p​o​r​t​ ​k​e​e​p​s​ ​i​t​s​ ​f​i​l​e​,​ ​u​p​ ​t​o​ ​4​ ​G​i​B​,​ ​a​n​d​ ​a​ ​w​o​r​k​i​n​g​ ​c​o​p​y​ ​o​n​ ​t​h​i​s​ ​s​e​r​v​e​r​'​s​ ​d​i​s​k​,​ ​w​h​i​c​h​ ​r​e​c​o​r​d​i​n​g​s​ ​a​l​s​o​ ​u​s​e​.​ ​A​n​ ​i​m​p​o​r​t​ ​s​t​a​r​t​s​ ​o​n​l​y​ ​w​h​e​n​ ​i​t​ ​f​i​t​s​ ​w​h​i​l​e​ ​5​ ​G​i​B​ ​s​t​a​y​ ​f​r​e​e​ ​f​o​r​ ​r​e​c​o​r​d​i​n​g​s​.
+			 */
+			help: string
+			/**
+			 * T​h​e​ ​d​e​f​a​u​l​t​ ​i​s​ ​{​v​a​l​u​e​}​.​ ​A​ ​v​a​l​u​e​ ​s​a​v​e​d​ ​h​e​r​e​ ​a​p​p​l​i​e​s​ ​a​t​ ​o​n​c​e​ ​a​n​d​ ​i​s​ ​k​e​p​t​ ​w​h​e​n​ ​t​h​e​ ​a​p​p​ ​i​s​ ​r​e​d​e​p​l​o​y​e​d​.
+			 * @param {unknown} value
+			 */
+			default_hint: RequiredParams<'value'>
+			/**
+			 * S​a​v​e​d​.​ ​R​u​n​n​i​n​g​ ​i​m​p​o​r​t​s​ ​f​i​n​i​s​h​;​ ​n​e​w​ ​o​n​e​s​ ​s​t​a​r​t​ ​w​i​t​h​i​n​ ​t​h​e​ ​n​e​w​ ​l​i​m​i​t​.
+			 */
+			saved: string
+			/**
+			 * L​o​a​d​i​n​g​ ​i​m​p​o​r​t​ ​s​e​t​t​i​n​g​s​…
+			 */
+			loading: string
+			/**
+			 * I​m​p​o​r​t​ ​s​e​t​t​i​n​g​s​ ​c​o​u​l​d​n​'​t​ ​b​e​ ​l​o​a​d​e​d​:​ ​{​d​e​t​a​i​l​}
+			 * @param {unknown} detail
+			 */
+			load_failed: RequiredParams<'detail'>
+			/**
+			 * C​h​o​o​s​e​ ​a​ ​w​h​o​l​e​ ​n​u​m​b​e​r​ ​f​r​o​m​ ​1​ ​t​o​ ​{​m​a​x​}​.​ ​{​m​a​x​}​ ​i​s​ ​t​h​e​ ​m​o​s​t​ ​t​h​e​ ​s​e​r​v​e​r​ ​a​l​l​o​w​s​.
+			 * @param {unknown} max
+			 */
+			out_of_range: RequiredParams<'max' | 'max'>
+		}
 		retention_policy: {
 			/**
 			 * K​e​e​p​ ​f​o​r​e​v​e​r
@@ -6585,6 +6635,23 @@ export type NamespaceViewerTranslation = {
 			 * U​p​l​o​a​d​i​n​g​…
 			 */
 			running_uploading: string
+			/**
+			 * W​a​i​t​i​n​g​ ​f​o​r​ ​t​h​e​ ​s​e​r​v​e​r​…
+			 */
+			running_waiting: string
+			/**
+			 * Q​u​e​u​e​d​ ​·​ ​{​c​o​u​n​t​|​n​u​m​}​ ​{​{​i​m​p​o​r​t​|​i​m​p​o​r​t​s​}​}​ ​a​h​e​a​d
+			 * @param {number} count
+			 */
+			running_queued: RequiredParams<'count|num'>
+			/**
+			 * F​e​t​c​h​i​n​g​…
+			 */
+			running_fetching: string
+			/**
+			 * C​h​e​c​k​i​n​g​…
+			 */
+			running_checking: string
 			/**
 			 * A​d​d​i​n​g​…
 			 */
@@ -12805,6 +12872,52 @@ export type TranslationFunctions = {
 				 */
 				save_in_progress: () => LocalizedString
 			}
+			imports: {
+				/**
+				 * Imports
+				 */
+				heading: () => LocalizedString
+				/**
+				 * How many meeting imports run at the same time, across everyone. Each person's own imports still run one at a time.
+				 */
+				intro: () => LocalizedString
+				/**
+				 * Imports at once
+				 */
+				limit_label: () => LocalizedString
+				/**
+				 * 1 to {max}
+				 */
+				range: (arg: { max: unknown }) => LocalizedString
+				/**
+				 * Save import settings
+				 */
+				save_label: () => LocalizedString
+				/**
+				 * Each running import keeps its file, up to 4 GiB, and a working copy on this server's disk, which recordings also use. An import starts only when it fits while 5 GiB stay free for recordings.
+				 */
+				help: () => LocalizedString
+				/**
+				 * The default is {value}. A value saved here applies at once and is kept when the app is redeployed.
+				 */
+				default_hint: (arg: { value: unknown }) => LocalizedString
+				/**
+				 * Saved. Running imports finish; new ones start within the new limit.
+				 */
+				saved: () => LocalizedString
+				/**
+				 * Loading import settings…
+				 */
+				loading: () => LocalizedString
+				/**
+				 * Import settings couldn't be loaded: {detail}
+				 */
+				load_failed: (arg: { detail: unknown }) => LocalizedString
+				/**
+				 * Choose a whole number from 1 to {max}. {max} is the most the server allows.
+				 */
+				out_of_range: (arg: { max: unknown }) => LocalizedString
+			}
 			retention_policy: {
 				/**
 				 * Keep forever
@@ -14860,6 +14973,22 @@ export type TranslationFunctions = {
 				 * Uploading…
 				 */
 				running_uploading: () => LocalizedString
+				/**
+				 * Waiting for the server…
+				 */
+				running_waiting: () => LocalizedString
+				/**
+				 * Queued · {count|num} {{import|imports}} ahead
+				 */
+				running_queued: (arg: { count: number }) => LocalizedString
+				/**
+				 * Fetching…
+				 */
+				running_fetching: () => LocalizedString
+				/**
+				 * Checking…
+				 */
+				running_checking: () => LocalizedString
 				/**
 				 * Adding…
 				 */

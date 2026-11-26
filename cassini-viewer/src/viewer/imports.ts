@@ -74,6 +74,26 @@ export interface ImportJobRecord {
   importedAt?: string;
   createdAt: string;
   updatedAt: string;
+  // Set on a queued import: how many of the caller's own imports run before it.
+  queuePosition?: number;
+}
+
+// Which step a running import is at, as its row says it.
+export type ImportRunningStage = "uploading" | "waiting" | "queued" | "fetching" | "checking" | "adding";
+
+export function importRunningStage(job: Pick<ImportJobRecord, "state" | "queuePosition">): ImportRunningStage {
+  switch (job.state) {
+    case "uploading":
+      return "uploading";
+    case "queued":
+      return (job.queuePosition ?? 0) > 0 ? "queued" : "waiting";
+    case "fetching":
+      return "fetching";
+    case "validating":
+      return "checking";
+    default:
+      return "adding";
+  }
 }
 
 export function importJobTerminal(state: ImportJobRecord["state"]): boolean {

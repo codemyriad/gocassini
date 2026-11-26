@@ -88,9 +88,29 @@ type meetingImporter struct {
 
 func newMeetingImporter(cfg Config, exapp ExAppConfig, rt *Runtime, logger *log.Logger) *meetingImporter {
 	return &meetingImporter{sink: &nextcloudFilesPublishSink{
-		cfg: exapp, logger: logger, client: &http.Client{Timeout: ncFilesUploadTimeout},
+		// No whole-request timeout: one would cut off the upload of a large
+		// file, all the more with several imports sharing the link. A server
+		// that stops answering is caught by the header timeout, and every
+		// import runs under its own size-scaled time limit (importTimeLimit).
+		// It keeps the default transport's proxy, as the client it replaced did.
+		cfg: exapp, logger: logger, client: &http.Client{Transport: importTransport(ncFilesUploadTimeout, true)},
 		cassiniBin: cfg.CassiniBin, rt: rt,
 	}}
+}
+
+// importTransport is the default transport's connection handling — a 30 s
+// dial timeout, a 10 s TLS handshake timeout, idle-connection reuse — with a
+// bound on the wait for response headers. A bare http.Transport has none of
+// those, so a Nextcloud that accepts no connection, or stalls the handshake,
+// would hold an import until its overall time limit. withProxy keeps the
+// environment's proxy settings, for the clients that always had them.
+func importTransport(headerTimeout time.Duration, withProxy bool) *http.Transport {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.ResponseHeaderTimeout = headerTimeout
+	if !withProxy {
+		t.Proxy = nil
+	}
+	return t
 }
 
 // importCLITimeout bounds each cassini subprocess the engine runs. Validation
@@ -151,6 +171,12 @@ func (imp *meetingImporter) run(ctx context.Context, req meetingImportRequest, r
 	if err != nil || len(assets) != 1 || assets[0] != filepath.Join("meetings", req.ImportID+ext) {
 		return result, fmt.Errorf("validation did not describe the staged recording")
 	}
+	// The site holds a full copy of the recording that nothing reads past
+	// this point; dropping it now keeps the import at one copy on the work
+	// volume while it delivers (importDiskNeed counts on that).
+	if err := os.RemoveAll(siteDir); err != nil {
+		return result, fmt.Errorf("remove the validation copy: %w", err)
+	}
 
 	// Retention anchors on the meeting's own dates (the standard policy), so a
 	// file that cannot state them cannot be managed and is refused up front.
@@ -209,12 +235,16 @@ func (imp *meetingImporter) run(ctx context.Context, req meetingImportRequest, r
 	// A pre-existing leaf under a minted stem can only be this import's own
 	// interrupted attempt, so equal bytes are already delivered and different
 	// bytes are a truncated upload to replace. Marks cannot have accrued on it
-	// before the import finished sharing it, so no carry is attempted.
+	// before the import finished sharing it, so no carry is attempted. An
+	// attempt can stop after its upload landed but before it was verified
+	// and its marks recorded, so a re-run still does those.
 	alreadyDelivered := before.Exists && strings.EqualFold(strings.TrimSpace(before.Checksum), localDigest)
-	if !alreadyDelivered {
-		if err := s.putAssetBytes(ctx, item, ""); err != nil {
+	if alreadyDelivered {
+		if err := s.confirmAssetDelivery(ctx, item); err != nil {
 			return result, err
 		}
+	} else if err := s.putAssetBytes(ctx, item, ""); err != nil {
+		return result, err
 	}
 	after, err := s.cfg.davPropfindLeafState(ctx, s.client, ncRecordingsOwner, remote)
 	if err != nil || !after.Exists || after.FileID <= 0 {
@@ -280,9 +310,26 @@ func (imp *meetingImporter) run(ctx context.Context, req meetingImportRequest, r
 
 	// --- index ------------------------------------------------------------
 	report(importStateIndexing, "indexing")
-	s.indexDeliveredMarks(ctx, []upload{item}, nil)
-	result.SearchIndexed = imp.ingestSearchRows(ctx, name, staged, localDigest)
+	result.SearchIndexed = imp.indexDelivered(ctx, item, name, staged, localDigest)
 	return result, nil
+}
+
+// importIndexTimeout bounds the indexing that finishes an import once its
+// meeting is delivered and shared.
+const importIndexTimeout = 2 * time.Minute
+
+// indexDelivered makes a delivered, shared meeting's marks and words
+// searchable. By now a cancel or a shutdown comes too late to undo the
+// import, which is recorded as done, so the indexing runs to the end through
+// either, bounded by importIndexTimeout: stopped halfway, it would leave a
+// done meeting that search cannot find until an administrator repairs the
+// index. A process killed meanwhile leaves the row unfinished, and the
+// startup requeue re-runs the whole import, which is idempotent.
+func (imp *meetingImporter) indexDelivered(ctx context.Context, item upload, name, staged, digest string) bool {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), importIndexTimeout)
+	defer cancel()
+	imp.sink.indexDeliveredMarks(ctx, []upload{item}, nil)
+	return imp.ingestSearchRows(ctx, name, staged, digest)
 }
 
 // ingestSearchRows makes the imported meeting searchable from its own words —

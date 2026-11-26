@@ -1121,6 +1121,19 @@
       "operator_unavailable": "Operator niedostępny",
       "save_in_progress": "Ustawienia przechowywania są właśnie zapisywane. Spróbuj ponownie."
     },
+    "imports": {
+      "heading": "",
+      "intro": "",
+      "limit_label": "",
+      "range": "",
+      "save_label": "",
+      "help": "",
+      "default_hint": "",
+      "saved": "",
+      "loading": "",
+      "load_failed": "",
+      "out_of_range": ""
+    },
     "retention_policy": {
       "keep_forever": "Przechowuj bezterminowo",
       "preset_days": "{count:number|num} {{|dzień||dni|dni|dnia}}",

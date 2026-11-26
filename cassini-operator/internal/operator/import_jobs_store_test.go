@@ -30,7 +30,7 @@ func TestImportJobLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	queued, ok, err := s.nextQueuedImport(ctx)
+	queued, ok, err := s.nextQueuedImportFor(ctx, "alice")
 	if err != nil || !ok || queued.ID != job.ID || queued.State != importStateQueued {
 		t.Fatalf("queued claim: %+v ok=%v err=%v", queued, ok, err)
 	}
@@ -95,9 +95,6 @@ func TestImportJobCancelBeatsWorkerUpdates(t *testing.T) {
 	if err := s.SetImportJobState(ctx, job.ID, importStateDelivering, "delivering", ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetImportJobOutcome(ctx, job.ID, job.ID+".opus", 7, "2026-10-15T10:00:00Z"); err != nil {
-		t.Fatal(err)
-	}
 	got, _, _ := s.ImportJob(ctx, job.ID)
 	if got.State != importStateCanceled {
 		t.Fatalf("cancel lost to worker update: %s", got.State)
@@ -108,6 +105,50 @@ func TestImportJobCancelBeatsWorkerUpdates(t *testing.T) {
 	}
 	if got, _, _ := s.ImportJob(ctx, job.ID); got.State != importStateQueued {
 		t.Fatalf("retry: %s", got.State)
+	}
+}
+
+// Once an import is indexing, its meeting is added and shared, and the run
+// ends done: a cancel then would only show Canceled for a meeting that lands.
+func TestAnIndexingImportCannotBeCanceled(t *testing.T) {
+	s := openImportTestStore(t)
+	ctx := context.Background()
+	job := ImportJob{ID: "01TESTIMPORT0000000000000D", BatchID: "b", CreatedBy: "alice", SourceName: "a.opus", StagedPath: ".CassiniImports/a.opus"}
+	if err := s.CreateImportJobs(ctx, []ImportJob{job}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetImportJobState(ctx, job.ID, importStateIndexing, "indexing", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CancelImportJob(ctx, job.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got, _, _ := s.ImportJob(ctx, job.ID); got.State != importStateIndexing {
+		t.Fatalf("an indexing import was canceled: %s", got.State)
+	}
+}
+
+// A delivery that finished as the cancel arrived is recorded: the meeting is
+// in Nextcloud, and retention trusts it only through the done row.
+func TestImportJobOutcomeOverridesALateCancel(t *testing.T) {
+	s := openImportTestStore(t)
+	ctx := context.Background()
+	job := ImportJob{ID: "01TESTIMPORT0000000000000C", BatchID: "b", CreatedBy: "alice", SourceName: "a.opus", StagedPath: ".CassiniImports/a.opus"}
+	if err := s.CreateImportJobs(ctx, []ImportJob{job}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CancelImportJob(ctx, job.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetImportJobOutcome(ctx, job.ID, job.ID+".opus", 7, "2026-10-15T10:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _, _ := s.ImportJob(ctx, job.ID); got.State != importStateDone {
+		t.Fatalf("delivered import left %s", got.State)
+	}
+	names, err := s.doneImportDeliveries(ctx)
+	if err != nil || len(names) != 1 || names[0] != job.ID+".opus" {
+		t.Fatalf("retention gate: %v %v", names, err)
 	}
 }
 
@@ -242,7 +283,7 @@ func TestInterruptedCLIImportsAreNotRequeuedAsWebUploads(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Queue selection itself excludes CLI jobs, even before startup recovery.
-	if next, ok, err := s.nextQueuedImport(ctx); err != nil || !ok || next.ID != upload.ID {
+	if next, ok, err := s.nextQueuedImportFor(ctx, "alice"); err != nil || !ok || next.ID != upload.ID {
 		t.Fatal(next, ok, err)
 	}
 	if n, err := s.RequeueUnfinishedImports(ctx); err != nil || n != 1 {

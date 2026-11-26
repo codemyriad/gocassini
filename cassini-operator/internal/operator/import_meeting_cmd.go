@@ -118,8 +118,9 @@ Flags:
 	failures := 0
 	for _, file := range fs.Args() {
 		local, err := filepath.Abs(file)
+		var info os.FileInfo
 		if err == nil {
-			_, err = os.Stat(local)
+			info, err = os.Stat(local)
 		}
 		if err != nil {
 			fmt.Fprintf(stderr, "%s: %v\n", file, err)
@@ -134,11 +135,15 @@ Flags:
 		if err := store.CreateImportJobs(ctx, []ImportJob{job}); err != nil {
 			return fail(err)
 		}
-		result, err := importer.run(ctx, meetingImportRequest{
+		// The same size-scaled time limit as an uploaded import: the
+		// importer's client has no whole-request timeout of its own.
+		runCtx, cancelRun := context.WithTimeout(ctx, importTimeLimit(ImportJob{ExpectedBytes: info.Size()}))
+		result, err := importer.run(runCtx, meetingImportRequest{
 			ImportID: job.ID, CreatedBy: job.CreatedBy, LocalPath: local, Audience: audience,
 		}, func(state, phase string) {
 			_ = store.SetImportJobState(ctx, job.ID, state, phase, "")
 		})
+		cancelRun()
 		if err != nil {
 			_ = store.SetImportJobState(ctx, job.ID, importStateFailed, "", err.Error())
 			fmt.Fprintf(stderr, "%s: %v\n", file, err)

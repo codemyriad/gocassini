@@ -195,25 +195,53 @@ func (s *nextcloudFilesPublishSink) putAssetBytes(ctx context.Context, item uplo
 		return fmt.Errorf("refusing to publish: %w; re-run the publish", err)
 	}
 	if store != nil && s.carriesMarks(item) {
-		dir, cleanup, err := newCarryDir(item)
-		if err != nil {
-			return err
-		}
-		defer cleanup()
-		verified := filepath.Join(dir, "verified"+meetingExtension(item.remote))
-		if _, _, err = s.cfg.stageRecording(ctx, s.client, ncRecordingsOwner, item.remote, verified, maxAnnotateRecordingBytes); err != nil {
-			return err
-		}
-		digest, err := fileSHA256(verified)
-		if err != nil {
-			return err
-		}
-		if digest != delivered.ContainerSHA256 {
-			return fmt.Errorf("replacement recording content verification failed")
-		}
-		return store.recordAnnotationDelivery(ctx, path.Base(item.remote), delivered)
+		return s.recordVerifiedDelivery(ctx, store, item, delivered)
 	}
 	return nil
+}
+
+// confirmAssetDelivery is the bookkeeping half of putAssetBytes for a file
+// Nextcloud already holds, as when an import is re-run after its upload
+// landed: Nextcloud's copy is checked and recorded as the marks' delivered
+// baseline, exactly as after a fresh upload. Without it the marks of a
+// re-run import would never be indexed.
+func (s *nextcloudFilesPublishSink) confirmAssetDelivery(ctx context.Context, item upload) error {
+	store := s.rt.annotationReads()
+	if store == nil || !s.carriesMarks(item) {
+		return nil
+	}
+	delivered, err := runAnnotateShow(ctx, s.cassiniBin, item.local)
+	if err != nil || delivered.Unsupported {
+		return fmt.Errorf("cannot inspect delivered annotations: %v", err)
+	}
+	return s.recordVerifiedDelivery(ctx, store, item, delivered)
+}
+
+// recordVerifiedDelivery reads back what Nextcloud holds and hashes it as it
+// arrives (the check needs only the digest, so nothing is written to disk),
+// then records it as the delivered baseline of its marks.
+func (s *nextcloudFilesPublishSink) recordVerifiedDelivery(ctx context.Context, store *annotationStore, item upload, delivered annotateResult) error {
+	digest, written, err := s.cfg.davHashFile(ctx, s.client, ncRecordingsOwner, item.remote, readBackLimit(item))
+	if err != nil {
+		return err
+	}
+	if written == 0 {
+		return fmt.Errorf("GET %s returned an empty recording", item.remote)
+	}
+	if digest != delivered.ContainerSHA256 {
+		return fmt.Errorf("replacement recording content verification failed")
+	}
+	return store.recordAnnotationDelivery(ctx, path.Base(item.remote), delivered)
+}
+
+// readBackLimit bounds the delivery check's read-back by the size just
+// uploaded, which verifyUploadedLeaf has confirmed: an import may be larger
+// than the limit on recordings staged for annotation.
+func readBackLimit(item upload) int64 {
+	if item.size > 0 {
+		return item.size
+	}
+	return maxAnnotateRecordingBytes
 }
 
 func (c ExAppConfig) verifyUploadedLeaf(ctx context.Context, client *http.Client, relPath string, size int64) error {

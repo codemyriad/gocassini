@@ -179,8 +179,16 @@ type Runtime struct {
 
 	// eventWebhook is the delivery worker, nil while delivery is off.
 	// eventWebhookMu serialises settings changes and guards the fields below.
-	eventWebhook             atomic.Pointer[eventWebhook]
-	eventWebhookMu           sync.Mutex
+	eventWebhook   atomic.Pointer[eventWebhook]
+	eventWebhookMu sync.Mutex
+	// importSlots is how many imports run at once, set from the panel and
+	// applied live; importSettingsMu orders its saves (import_settings.go).
+	importSlots *importSlotPool
+	// importsServed is set once the import routes are mounted; without them
+	// the setting is not offered.
+	importsServed            bool
+	importSettingsPath       string
+	importSettingsMu         sync.Mutex
 	eventWebhookSettings     EventWebhookSettings
 	eventWebhookSettingsPath string
 	eventWebhookLoadError    string
@@ -999,7 +1007,11 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, journal *supportJ
 			logger.Printf("%s was not found; using detected defaults (transcription off) until an administrator saves Settings", filepath.Base(rt.settingsPath))
 		}
 	}
-	// Same for the LLM policy: seed from the deploy env on first start; on a
+	// How many imports run at once: the administrator's saved value, else the
+	// default. Only a save in the panel writes the file.
+	rt.importSettingsPath = importSettingsPath(cfg)
+	rt.importSlots = newImportSlotPool(loadImportLimit(rt.importSettingsPath, logger))
+	// The LLM policy: seed from the deploy env on first start; on a
 	// load failure keep running on the deploy env rather than refusing to start.
 	llmExisted := fileExists(rt.llmSettingsPath)
 	if llm, err := LoadOrInitLLMSettings(rt.llmSettingsPath, os.Getenv); err != nil {
@@ -1154,6 +1166,9 @@ func operatorAPIRoutes(rt *Runtime, exappCfg ExAppConfig) []struct {
 		// The lifecycle event receiver (docs/events.md); exact, so it wins
 		// over the prefix below.
 		{"/settings/webhook", http.HandlerFunc(rt.eventWebhookSettingsHandler)},
+		// How many imports run at once (import_settings.go); exact, so it
+		// wins over the prefix below.
+		{"/settings/imports", http.HandlerFunc(rt.importSettingsHandler)},
 		{"/settings/", http.HandlerFunc(rt.llmSettingsHandler)},
 		{"/storage/usage", exappCfg.storageUsageHandler(rt)},
 		{"/storage/usage/details", exappCfg.detailedStorageUsageHandler(rt)},
@@ -1238,6 +1253,7 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	// wherever an import could not be performed (see newImportService).
 	if imports := newImportService(rt, exappCfg, logger); imports != nil {
 		imports.register(root)
+		rt.importsServed = true
 	}
 	// Tags and marks (D-737): a sibling of insights on the ROOT mux, for the same
 	// reason — appinfo/info.xml declares `^annotations\/…` at that level. Nil, and

@@ -167,6 +167,25 @@ const settings = {
     // Shown when a second save starts while one is still running.
     save_in_progress: "Retention settings are being saved. Try again.",
   },
+  // Operator › Storage: how many meeting imports the server runs at once.
+  imports: {
+    heading: "Imports",
+    intro: "How many meeting imports run at the same time, across everyone. Each person's own imports still run one at a time.",
+    limit_label: "Imports at once",
+    // Next to the field. {max}: the highest value the server accepts, 10.
+    range: "1 to {max}",
+    // Accessible name of the Save button, which shares the Storage page with
+    // the retention settings' own Save.
+    save_label: "Save import settings",
+    // Under the field. The sizes are fixed by the server.
+    help: "Each running import keeps its file, up to 4 GiB, and a working copy on this server's disk, which recordings also use. An import starts only when it fits while 5 GiB stay free for recordings.",
+    // Under the field. {value}: the default, 3.
+    default_hint: "The default is {value}. A value saved here applies at once and is kept when the app is redeployed.",
+    saved: "Saved. Running imports finish; new ones start within the new limit.",
+    loading: "Loading import settings…",
+    load_failed: "Import settings couldn't be loaded: {detail}",
+    out_of_range: "Choose a whole number from 1 to {max}. {max} is the most the server allows.",
+  },
   // One retention policy: keep forever, a preset number of days, or a custom number.
   retention_policy: {
     keep_forever: "Keep forever",

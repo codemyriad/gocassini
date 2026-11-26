@@ -746,7 +746,9 @@ runs on defaults detected from the host. Cassini reads `settings.json` and
 restart. If `settings.json` cannot be loaded, Cassini runs on defaults
 (transcription off, new recordings shared with attendees only); if
 `llm-settings.json` cannot be loaded, Cassini uses the deploy environment.
-Either way the file is kept as `<name>.rejected-N` beside it, because the next
+`import-settings.json`, written by a save in **Settings › Storage › Imports**
+(how many meeting imports run at once, 1 to 10), works the same way: without
+it, or if it cannot be loaded, the default of 3 applies. Either way the file is kept as `<name>.rejected-N` beside it, because the next
 save replaces the original. A `*.rejected-N` file is a copy of a file Cassini
 could not load: to restore it, move that copy back over the original and
 restart. Delete the `llm-settings.json` copy when you are done: it holds API

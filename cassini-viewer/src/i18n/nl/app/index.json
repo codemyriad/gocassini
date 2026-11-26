@@ -1121,6 +1121,19 @@
       "operator_unavailable": "Operator niet beschikbaar",
       "save_in_progress": "De instellingen voor de bewaartermijn worden opgeslagen. Probeer het opnieuw."
     },
+    "imports": {
+      "heading": "",
+      "intro": "",
+      "limit_label": "",
+      "range": "",
+      "save_label": "",
+      "help": "",
+      "default_hint": "",
+      "saved": "",
+      "loading": "",
+      "load_failed": "",
+      "out_of_range": ""
+    },
     "retention_policy": {
       "keep_forever": "Voor altijd bewaren",
       "preset_days": "{count:number|num} {{dag|dagen}}",
