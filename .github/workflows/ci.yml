@@ -67,7 +67,7 @@ jobs:
       recorder-matrix: ${{ steps.matrix.outputs.value }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
           # A pull request checks out its merge commit, whose parents are the
@@ -125,7 +125,7 @@ jobs:
     if: needs.changes.outputs.suite == 'true'
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
       - name: Check compatibility contracts
@@ -188,11 +188,11 @@ jobs:
     if: needs.changes.outputs.suite == 'true'
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -226,7 +226,7 @@ jobs:
       # A failing browser test leaves a screenshot of the page (D-900).
       - name: Upload failure screenshots
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ui-failure-screenshots
           path: '*/node_modules/.cache/vitest-screenshots/'
@@ -249,11 +249,11 @@ jobs:
           - cassini-operator
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: ${{ matrix.module }}/go.mod
           cache-dependency-path: |
@@ -286,7 +286,7 @@ jobs:
       - name: Restore synthetic ASR models
         if: matrix.module == 'cassini-go-recorder'
         id: asr-models
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ${{ runner.temp }}/synthetic-asr-models
           key: synthetic-asr-fp32-v1-${{ hashFiles('deployment/models/fetch-models.sh', 'cassini-go-recorder/internal/transcribe/testdata/synthetic-boundary/models.sha256') }}
@@ -312,7 +312,7 @@ jobs:
       # must not force another multi-gigabyte download on the next run.
       - name: Cache verified synthetic ASR models
         if: matrix.module == 'cassini-go-recorder' && steps.asr-models.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: ${{ runner.temp }}/synthetic-asr-models
           key: ${{ steps.asr-models.outputs.cache-primary-key }}
@@ -340,7 +340,7 @@ jobs:
           "$ASR_TEST_BINARY" -test.run '^TestSynthetic' -test.count=1 -test.v -test.timeout=5m 2>&1 | tee "$ASR_TEST_LOG"
       - name: Upload synthetic ASR results
         if: always() && matrix.module == 'cassini-go-recorder'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: synthetic-asr-cpu-results
           path: ${{ runner.temp }}/synthetic-asr.log
@@ -372,11 +372,11 @@ jobs:
       matrix: ${{ fromJSON(needs.changes.outputs.recorder-matrix) }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: cassini-go-recorder/go.mod
           cache-dependency-path: |
@@ -399,7 +399,7 @@ jobs:
         run: ./harness/bin/${{ matrix.script }}
       - name: Upload capture policy evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: capture-evidence-${{ strategy.job-index }}
           path: |
@@ -426,11 +426,11 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: cassini-go-recorder/go.mod
           cache-dependency-path: |
@@ -456,7 +456,7 @@ jobs:
       # per-subscriber ICE transitions instead of re-rolling CI.
       - name: Upload mute integration diagnostics
         if: ${{ failure() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: mute-diagnostics
           path: |
@@ -479,7 +479,7 @@ jobs:
     needs: [changes, contracts, ui, unit, integration, integration-mute]
     if: always()
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           sparse-checkout: scripts/ci-require-jobs.sh
           sparse-checkout-cone-mode: false
