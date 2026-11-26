@@ -106,6 +106,8 @@ const (
 
 	openRouterBaseURL = "https://openrouter.ai/api/v1"
 
+	// Settings limits: see the review rule above maxTranscriptionTerms. A
+	// tighter limit here must trim on load, not reject llm-settings.json.
 	maxLLMProviders      = 20
 	maxLLMFieldRunes     = 200
 	llmDiscoveryMaxBytes = 8 << 20
@@ -234,7 +236,7 @@ func LoadOrInitLLMSettings(path string, getenv func(string) string) (LLMSettings
 		if os.IsNotExist(err) {
 			s := SeedLLMSettings(getenv)
 			if err := SaveLLMSettings(path, s); err != nil {
-				return LLMSettings{}, err
+				return LLMSettings{}, fmt.Errorf("the AI endpoint from the deploy environment cannot be saved: %w", err)
 			}
 			return s, nil
 		}
@@ -269,13 +271,9 @@ func SaveLLMSettings(path string, s LLMSettings) error {
 		return fmt.Errorf("marshal llm settings: %w", err)
 	}
 	data = append(data, '\n')
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return fmt.Errorf("write llm settings temp: %w", err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("rename llm settings: %w", err)
+	// Keep write-temp-then-rename: keepRejectedCopy's hard link relies on it.
+	if err := writeFileAtomic(path, data, 0o600); err != nil {
+		return fmt.Errorf("write llm settings: %w", err)
 	}
 	return nil
 }
@@ -753,16 +751,9 @@ func (rt *Runtime) llmSettingsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (rt *Runtime) handleGetLLMSettings(w http.ResponseWriter) {
-	// Re-read from disk so an out-of-band edit is reflected, and refresh the
-	// in-memory copy used at job spawn time; fall back to memory if the disk
-	// is unreadable so the admin can still see and re-set the policy.
-	s, err := LoadOrInitLLMSettings(rt.llmSettingsPath, os.Getenv)
-	if err != nil {
-		s = rt.currentLLMSettings()
-	} else {
-		rt.setLLMSettings(s)
-	}
-	writeJSON(w, http.StatusOK, s.view())
+	// A read never writes: the file is loaded once at start and replaced only
+	// by a save, which updates memory too.
+	writeJSON(w, http.StatusOK, rt.currentLLMSettings().view())
 }
 
 func (rt *Runtime) handlePutLLMSettings(w http.ResponseWriter, r *http.Request) {

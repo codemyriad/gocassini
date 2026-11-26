@@ -99,8 +99,8 @@ type statusRecordingsAccess struct {
 	State string `json:"state"`
 	OK    bool   `json:"ok"`
 	// Step names the provisioning step that stopped, in a stable machine-readable
-	// form a monitor or a test can key on: "owner_account",
-	// "administrator", "mount_mapping:everyone".
+	// form a monitor or a test can key on: "nextcloud_probe", "owner_account",
+	// "private_archive", "sharing_api".
 	Step   string `json:"step,omitempty"`
 	Detail string `json:"detail,omitempty"`
 	// Cause is the same failure said in one plain sentence, with no command, no
@@ -110,8 +110,8 @@ type statusRecordingsAccess struct {
 	// administrator reads is what is wrong rather than which step recorded it.
 	// Empty when this build has no sentence for the step.
 	Cause string `json:"cause,omitempty"`
-	// AdminUser is the account provisioning resolved and acted as. Its absence
-	// is itself the diagnosis when Step is "administrator".
+	// AdminUser is the account provisioning resolved and acted as. Empty when
+	// no administrator could be resolved (Step "nextcloud_probe").
 	AdminUser string `json:"admin_user,omitempty"`
 	Warning   string `json:"warning,omitempty"`
 	// Direct shares are the only recording model. Root names the owner archive.

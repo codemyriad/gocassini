@@ -219,9 +219,47 @@ func (c ExAppConfig) davPut(ctx context.Context, client *http.Client, userID, re
 // callers for whom an empty recording is an error say so themselves
 // (stageRecording).
 func (c ExAppConfig) davDownloadFile(ctx context.Context, client *http.Client, userID, relPath, destPath string, limit int64, expectedETag ...string) (digest string, written int64, status int, err error) {
+	resp, err := c.davGet(ctx, client, userID, relPath, expectedETag...)
+	if err != nil {
+		if resp != nil {
+			return "", 0, resp.StatusCode, err
+		}
+		return "", 0, 0, err
+	}
+	defer drainClose(resp.Body)
+	file, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return "", 0, resp.StatusCode, err
+	}
+	defer file.Close()
+	digest, written, err = readDAVBody(file, resp.Body, relPath, limit)
+	if err != nil {
+		return "", written, resp.StatusCode, err
+	}
+	if err := file.Sync(); err != nil {
+		return "", written, resp.StatusCode, err
+	}
+	return digest, written, resp.StatusCode, file.Close()
+}
+
+// davHashFile reads one file as the given user and gives its SHA-256 and
+// size without writing it anywhere: for a check that needs only the digest,
+// such as confirming what Nextcloud now holds is what was uploaded.
+func (c ExAppConfig) davHashFile(ctx context.Context, client *http.Client, userID, relPath string, limit int64) (digest string, written int64, err error) {
+	resp, err := c.davGet(ctx, client, userID, relPath)
+	if err != nil {
+		return "", 0, err
+	}
+	defer drainClose(resp.Body)
+	return readDAVBody(io.Discard, resp.Body, relPath, limit)
+}
+
+// davGet starts a GET of one file as the given user. On a non-2xx status it
+// returns the response (body already drained and closed) with the error.
+func (c ExAppConfig) davGet(ctx context.Context, client *http.Client, userID, relPath string, expectedETag ...string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.davFileURL(userID, relPath), nil)
 	if err != nil {
-		return "", 0, 0, err
+		return nil, err
 	}
 	c.setAppAPIDAVHeadersForUser(req, userID)
 	if len(expectedETag) > 0 {
@@ -229,33 +267,30 @@ func (c ExAppConfig) davDownloadFile(ctx context.Context, client *http.Client, u
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", 0, 0, err
+		return nil, err
 	}
-	defer drainClose(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", 0, resp.StatusCode, fmt.Errorf("GET %s -> %d", relPath, resp.StatusCode)
+		drainClose(resp.Body)
+		return resp, fmt.Errorf("GET %s -> %d", relPath, resp.StatusCode)
 	}
-	file, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
-		return "", 0, resp.StatusCode, err
-	}
-	defer file.Close()
-	var body io.Reader = resp.Body
+	return resp, nil
+}
+
+// readDAVBody copies a GET body to dst, hashing it, and refuses one larger
+// than limit (zero means no limit).
+func readDAVBody(dst io.Writer, body io.Reader, relPath string, limit int64) (digest string, written int64, err error) {
 	if limit > 0 {
-		body = io.LimitReader(resp.Body, limit+1)
+		body = io.LimitReader(body, limit+1)
 	}
 	sum := sha256.New()
-	written, err = io.Copy(io.MultiWriter(file, sum), body)
+	written, err = io.Copy(io.MultiWriter(dst, sum), body)
 	if err != nil {
-		return "", written, resp.StatusCode, fmt.Errorf("read %s: %w", relPath, err)
+		return "", written, fmt.Errorf("read %s: %w", relPath, err)
 	}
 	if limit > 0 && written > limit {
-		return "", written, resp.StatusCode, fmt.Errorf("GET %s: the recording is larger than the %d MiB limit", relPath, limit>>20)
+		return "", written, fmt.Errorf("GET %s: the recording is larger than the %d MiB limit", relPath, limit>>20)
 	}
-	if err := file.Sync(); err != nil {
-		return "", written, resp.StatusCode, err
-	}
-	return hex.EncodeToString(sum.Sum(nil)), written, resp.StatusCode, file.Close()
+	return hex.EncodeToString(sum.Sum(nil)), written, nil
 }
 
 // davDeleteUserFile removes one file acting as the given user. An already-gone

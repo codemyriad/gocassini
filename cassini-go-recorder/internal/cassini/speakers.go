@@ -189,7 +189,7 @@ func runSpeakersDiarize(ctx context.Context, args []string, stdout, stderr io.Wr
 	if *modelPath != "" {
 		model, err = loadDiarizationModelFn(*modelPath)
 	} else {
-		model, err = resolveDiarizationModelFn(defaultCassiniCacheRoot())
+		model, err = resolveDiarizationModelFn(transcribe.DefaultCacheDir())
 	}
 	if err != nil {
 		if errors.Is(err, transcribe.ErrDiarizationUnavailable) {
@@ -201,7 +201,7 @@ func runSpeakersDiarize(ctx context.Context, args []string, stdout, stderr io.Wr
 	}
 	// Diarizing is inference: it waits for a build or a model check using the
 	// same store to finish, and they wait for it, as they do for each other.
-	unlock, err := lockModelRuntimeFn(ctx, defaultCassiniCacheRoot())
+	unlock, err := lockModelRuntimeFn(ctx, transcribe.DefaultCacheDir())
 	if err != nil {
 		fmt.Fprintf(stderr, "cassini speakers diarize: model runtime lock: %v\n", err)
 		return speakersExitRuntime

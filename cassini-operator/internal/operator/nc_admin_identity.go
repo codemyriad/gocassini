@@ -155,7 +155,7 @@ func (c ExAppConfig) resolveAdminIdentity(ctx context.Context, client *http.Clie
 		return "", errNoAdminResolved
 	}
 	for _, candidate := range candidates {
-		status, body, err := c.apiGetAs(ctx, client, candidate, withFormatJSON(c.ocsURL("/cloud/groups/admin")))
+		status, body, err := c.apiGetAs(ctx, client, candidate, c.ocsURL("/cloud/groups/admin"))
 		switch {
 		case err != nil:
 			return "", fmt.Errorf("%w: acting as %q: %v", errAdminRouteMissing, candidate, err)

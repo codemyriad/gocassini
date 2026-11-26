@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -213,7 +214,7 @@ func transcribePrepared(ctx context.Context, mkvPath, outputDir, webmPath, recor
 		backend,
 		cfg.Device, cfg.ModelID, cfg.NumThreads, NormalizeQuality(string(cfg.Quality)))
 	if cfg.CacheDir == "" {
-		cfg.CacheDir = defaultCacheDir()
+		cfg.CacheDir = DefaultCacheDir()
 	}
 
 	unlock, err := lockModelRuntime(ctx, cfg.CacheDir)
@@ -1068,16 +1069,31 @@ func writeSummaryArtifact(outputDir string, streams []AudioStream, segments []Se
 	return status, workflow.Ref(), nil
 }
 
-// defaultCacheDir returns the default cache directory for models.
-func defaultCacheDir() string {
-	if v := os.Getenv("CASSINI_CACHE_ROOT"); v != "" {
-		return v
+// imageDefaultCacheRoot is the CASSINI_CACHE_ROOT the operator images bake.
+// It names a directory in the image layer, not on the AppAPI volume.
+const imageDefaultCacheRoot = "/var/lib/cassini-operator/models"
+
+// DefaultCacheDir is the model root a CLI command uses when it is given none.
+// Under an AppAPI deploy (APP_PERSISTENT_STORAGE set) with CASSINI_CACHE_ROOT
+// unset or still at the image default, it is the operator's own root on the
+// volume, so a `docker exec … cassini models …` reads and writes what the
+// operator uses. Otherwise CASSINI_CACHE_ROOT, then ~/.cache/cassini. The
+// operator always hands its children an explicit root.
+func DefaultCacheDir() string {
+	env := strings.TrimSpace(os.Getenv("CASSINI_CACHE_ROOT"))
+	if persist := strings.TrimSpace(os.Getenv("APP_PERSISTENT_STORAGE")); persist != "" && (env == "" || env == imageDefaultCacheRoot) {
+		return filepath.Join(persist, "operator", "models")
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return filepath.Join(".", ".cache", "cassini")
+	if env != "" {
+		return env
 	}
-	return filepath.Join(home, ".cache", "cassini")
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		return filepath.Join(home, ".cache", "cassini")
+	}
+	if u, err := user.Current(); err == nil && u.HomeDir != "" {
+		return filepath.Join(u.HomeDir, ".cache", "cassini")
+	}
+	return filepath.Join(".", ".cache", "cassini")
 }
 
 func envBool(name string) bool {

@@ -771,7 +771,7 @@ func TestNewRuntimeDoesNotGuessAPublishSink(t *testing.T) {
 		WorkRoot:    filepath.Join(tmp, "jobs"),
 		SiteRoot:    filepath.Join(tmp, "site"),
 		PublishSink: publishSinkNextcloudFiles,
-	}, logger, ioDiscard{}, ioDiscard{})
+	}, newSupportJournal(filepath.Join(tmp, "jobs")), logger, ioDiscard{}, ioDiscard{})
 	// Join the workers before reading their log buffer or removing their
 	// persistent diagnostic directory at the end of the test.
 	rt.Shutdown()

@@ -19,11 +19,11 @@ If an enabled model is missing or cannot run, Cassini preserves audio and record
 
 ## Persistent storage and upgrades
 
-The AppAPI default root is `$APP_PERSISTENT_STORAGE/operator/models`. The standalone operator defaults to `<data-root>/models`; `--model-cache-root` or `CASSINI_CACHE_ROOT` can override it. Use the operator's resolved root for all terminal operations. A direct CLI invocation otherwise uses `CASSINI_CACHE_ROOT` or `~/.cache/cassini`.
+The AppAPI default root is `$APP_PERSISTENT_STORAGE/operator/models`. The standalone operator defaults to `<data-root>/models`; `--model-cache-root` or `CASSINI_CACHE_ROOT` can override it. Use the operator's resolved root for all terminal operations. A direct CLI invocation without `--cache-root` uses the same AppAPI root when `APP_PERSISTENT_STORAGE` is set and `CASSINI_CACHE_ROOT` is unset or still the image default; otherwise it uses `CASSINI_CACHE_ROOT` or `~/.cache/cassini`.
 
 Keep this directory on a mounted persistent volume and preserve it when replacing the container. Also retain the operator database (installation intent/progress) and `settings.json` (Off/On and the active revision). CPU and CUDA images contain native runtimes but no weights or VAD.
 
-Models live at `models/<model-id>/<source-sha256>/`, with VAD at `vad/<vad-sha256>/`. The shipped catalogue pins both the model files and each speech model's VAD dependency. App versions never occur in weight paths. A new binary, native library change, or host reboot invalidates its small runtime-check receipt and rechecks local bytes without downloading them. Keep old catalogue entries when introducing a new revision; the active revision is explicitly pinned. There is no automatic model update or deletion.
+Models live at `models/<model-id>/<source-sha256>/`, with VAD at `vad/<vad-sha256>/`. The shipped catalogue pins both the model files and each speech model's VAD dependency. App versions never occur in weight paths. A new binary, native library change, or GPU driver change invalidates its small runtime-check receipt and rechecks local bytes without downloading them. Keep old catalogue entries when introducing a new revision; the active revision is explicitly pinned. There is no automatic model update or deletion.
 
 ## Model kinds and the voice separation model
 

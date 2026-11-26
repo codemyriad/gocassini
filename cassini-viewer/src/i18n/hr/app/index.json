@@ -37,7 +37,12 @@
       "imports_not_served": "Ova instalacija ne podržava uvoz sastanaka.",
       "identity_unverified": "Cassini nije mogao provjeriti tko si; ponovno učitaj stranicu i pokušaj ponovno.",
       "request_failed": "Zahtjev za uvoz nije uspio (HTTP {status}).",
-      "people_search_failed": "Pretraživanje osoba nije uspjelo (HTTP {status})."
+      "people_search_failed": "Pretraživanje osoba nije uspjelo (HTTP {status}).",
+      "refused_busy": "",
+      "refused_too_large": "",
+      "refused_add_again": "",
+      "refused_uploading": "",
+      "refused_cancel_too_late": ""
     },
     "data_provider": {
       "bundle_needs_meetings": "Najprije odaberi barem jedan sastanak.",
@@ -1120,6 +1125,19 @@
       "saved": "Postavke zadržavanja su spremljene.",
       "operator_unavailable": "Operater nije dostupan",
       "save_in_progress": "Postavke zadržavanja upravo se spremaju. Pokušaj ponovno."
+    },
+    "imports": {
+      "heading": "",
+      "intro": "",
+      "limit_label": "",
+      "range": "",
+      "save_label": "",
+      "help": "",
+      "default_hint": "",
+      "saved": "",
+      "loading": "",
+      "load_failed": "",
+      "out_of_range": ""
     },
     "retention_policy": {
       "keep_forever": "Čuvaj zauvijek",

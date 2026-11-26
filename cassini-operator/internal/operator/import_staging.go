@@ -14,8 +14,8 @@ const importUploadLease = 2 * time.Minute
 
 // Staging work — confirming an upload, removing a staged file, sweeping the
 // folder — is serialized per user through userLocks, bounded by a deadline so a
-// failed Nextcloud cannot hold a lock indefinitely. The service mutex is never
-// taken here: it guards only the worker's running job.
+// failed Nextcloud cannot hold a lock indefinitely. The service mutex is taken
+// here only for a moment, to read which jobs the workers are running.
 const stagingLockTimeout = 10 * time.Second
 
 func (s *importService) stagingAction(w http.ResponseWriter, r *http.Request, job ImportJob, action string) {
@@ -36,7 +36,7 @@ func (s *importService) stagingAction(w http.ResponseWriter, r *http.Request, jo
 		case "heartbeat":
 			touched, err := s.rt.store.TouchImportUpload(ctx, job.ID)
 			if err == nil && !touched {
-				writeJSONError(w, 409, "upload is no longer active")
+				writeImportRefusal(w, 409, importRefusalAddAgain, "upload is no longer active")
 				return nil
 			}
 			if err != nil {
@@ -49,7 +49,7 @@ func (s *importService) stagingAction(w http.ResponseWriter, r *http.Request, jo
 				return nil
 			}
 			if job.State != importStateUploading {
-				writeJSONError(w, 409, "upload is no longer active")
+				writeImportRefusal(w, 409, importRefusalAddAgain, "upload is no longer active")
 				return nil
 			}
 			if err := s.inspectUpload(ctx, job); err != nil {
@@ -62,7 +62,7 @@ func (s *importService) stagingAction(w http.ResponseWriter, r *http.Request, jo
 				return nil
 			}
 			if current.State != importStateStaged {
-				writeJSONError(w, 409, "upload is incomplete; add the file again")
+				writeImportRefusal(w, 409, importRefusalAddAgain, "upload is incomplete; add the file again")
 				return nil
 			}
 		case "upload-failed":
@@ -73,8 +73,8 @@ func (s *importService) stagingAction(w http.ResponseWriter, r *http.Request, jo
 				}
 			}
 		case "remove":
-			if importUsesStaging(job) || s.running() == job.ID {
-				writeJSONError(w, 409, "upload or import is still active")
+			if importUsesStaging(job) || s.isRunning(job.ID) {
+				writeImportRefusal(w, 409, importRefusalUploading, "upload or import is still active")
 				return nil
 			}
 			if _, pathErr := sanitizeStagedImportPath(job.StagedPath); pathErr != nil {
@@ -90,7 +90,7 @@ func (s *importService) stagingAction(w http.ResponseWriter, r *http.Request, jo
 		return nil
 	})
 	if lockErr != nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "staging is busy; try again")
+		writeImportRefusal(w, http.StatusServiceUnavailable, importRefusalBusy, "staging is busy; try again")
 	}
 }
 
@@ -284,13 +284,13 @@ func (s *importService) clearUserStaging(ctx context.Context, user string) error
 				paths[entry.relPath] = true
 			}
 		}
-		running := s.running()
+		running := s.runningIDs()
 		var firstErr error
 		for path := range paths {
 			jobs := byPath[path]
 			active := false
 			for _, job := range jobs {
-				if (job.ClearedAt == "" && importUsesStaging(job)) || running == job.ID {
+				if (job.ClearedAt == "" && importUsesStaging(job)) || running[job.ID] {
 					active = true
 				}
 			}

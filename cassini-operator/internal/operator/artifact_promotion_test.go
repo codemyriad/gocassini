@@ -113,7 +113,7 @@ func TestNewRuntimeReconcilesPromotionLeftoversAtStartup(t *testing.T) {
 		SiteRoot:         siteRoot,
 		MaxRecordWorkers: 1,
 		MaxBuildWorkers:  1,
-	}, log.New(io.Discard, "", 0), io.Discard, io.Discard)
+	}, newSupportJournal(workRoot), log.New(io.Discard, "", 0), io.Discard, io.Discard)
 	defer rt.Shutdown()
 
 	raw, err := os.ReadFile(filepath.Join(canonicalMeetingPath(workRoot, "job1"), "cassini.json"))

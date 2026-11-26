@@ -2,7 +2,7 @@ name: Deploy Preview
 
 # Branch-preview pipeline. Behavior:
 #   * UI-only changes always publish a per-branch viewer pointed at main's
-#     processed meetings (cheap, runs on ubuntu-latest, parallel across branches).
+#     processed meetings (cheap, runs on ubuntu-26.04, parallel across branches).
 #   * Processing changes (cassini-go-recorder, scripts/process-recordings.sh,
 #     bin/cassini, or this workflow) DO NOT auto-reprocess. They publish a
 #     UI-only preview unless the developer opts in by:
@@ -49,7 +49,7 @@ jobs:
       github.event_name != 'pull_request' ||
       (github.event.pull_request.head.repo.full_name == github.repository &&
        contains(github.event.pull_request.labels.*.name, 'preview'))
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       branch: ${{ steps.detect.outputs.branch }}
       encoded_branch: ${{ steps.detect.outputs.encoded_branch }}
@@ -57,7 +57,7 @@ jobs:
       should_process: ${{ steps.detect.outputs.should_process }}
       preview_count: ${{ steps.detect.outputs.preview_count }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -207,7 +207,7 @@ jobs:
       false &&
       needs.detect.outputs.should_run == 'true' &&
       needs.detect.outputs.should_process != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     concurrency:
       group: branch-ui-${{ github.ref }}
       cancel-in-progress: false
@@ -222,10 +222,10 @@ jobs:
       RCLONE_CONFIG_CODEMYRIAD_ENDPOINT: ${{ secrets.R2_S3_ENDPOINT }}
       RCLONE_CONFIG_CODEMYRIAD_ACL: private
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -234,16 +234,26 @@ jobs:
           cache-dependency-path: package-lock.json
 
       - name: Install rclone + ffmpeg
+        env:
+          RCLONE_VERSION: 1.76.0
+          RCLONE_SHA256: b00f00b3266c3764413afe599d3ec316f6f43b3e0ea8a0bc1d186d2133e46df7
         run: |
           set -euo pipefail
           # ffmpeg supplies ffprobe, which cassini-viewer's export-static-meetings
-          # invokes per .opus to read its tags. ubuntu-latest doesn't ship it on
+          # invokes per .opus to read its tags. ubuntu-26.04 doesn't ship it on
           # PATH by default for this action context.
           # ci-apt-update.sh, not a bare update: a vendor apt source we never
           # install from can fail it (exit 100) and take this step with it.
           sudo ./scripts/ci-apt-update.sh >/dev/null
           sudo apt-get install -y --no-install-recommends ffmpeg >/dev/null
-          curl -fsSL https://rclone.org/install.sh | sudo bash
+          # A pinned release with its checksum (from the release's SHA256SUMS),
+          # not rclone.org/install.sh piped to root, which installs the newest.
+          zip="rclone-v${RCLONE_VERSION}-linux-amd64.zip"
+          curl -sSfL "https://downloads.rclone.org/v${RCLONE_VERSION}/${zip}" -o "/tmp/${zip}"
+          echo "${RCLONE_SHA256}  /tmp/${zip}" | sha256sum -c -
+          unzip -q -j "/tmp/${zip}" "rclone-v${RCLONE_VERSION}-linux-amd64/rclone" -d /tmp/rclone-bin
+          sudo install -m 0755 /tmp/rclone-bin/rclone /usr/local/bin/rclone
+          rclone version
 
       - name: Prepare paths
         run: |
@@ -308,16 +318,16 @@ jobs:
       RCLONE_CONFIG_CODEMYRIAD_ENDPOINT: ${{ secrets.R2_S3_ENDPOINT }}
       RCLONE_CONFIG_CODEMYRIAD_ACL: private
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: cassini-go-recorder/go.mod
           cache-dependency-path: cassini-go-recorder/go.sum
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm

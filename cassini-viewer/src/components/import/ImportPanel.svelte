@@ -15,11 +15,14 @@
   import { LL } from "../../i18n";
   import type { DataProvider } from "../../viewer/dataProvider";
   import {
+    ImportFileError,
     describeImportSharing,
     formatImportDate,
     formatImportDuration,
     importJobTerminal,
+    importRunningStage,
     parseImportPreview,
+    type ImportFileProblem,
     type ImportJobRecord,
     type ImportPreview,
     type ImportSharee,
@@ -48,6 +51,9 @@
     file: File;
     status: PendingStatus;
     reason?: string;
+    // Set on an invalid file: why it was skipped, and the parser's own words.
+    problem?: ImportFileProblem;
+    detail?: string;
     preview?: ImportPreview;
     audience: ImportSharee[];
     sentBytes: number;
@@ -215,7 +221,8 @@
     } catch (error) {
       patch(item.key, {
         status: "invalid",
-        reason: error instanceof Error ? error.message : String(error),
+        problem: error instanceof ImportFileError ? error.problem : "unreadable",
+        detail: error instanceof ImportFileError ? error.detail : error instanceof Error ? error.message : String(error),
       });
     }
   }
@@ -261,6 +268,14 @@
   }
 
   $: text = $LL.viewer.browse.import;
+  $: fileProblemText = {
+    empty: text.file_empty,
+    too_large: text.file_too_large,
+    unreadable: text.file_unreadable,
+    not_cassini: text.not_a_meeting,
+    newer: text.file_newer,
+    damaged: text.file_damaged,
+  } satisfies Record<ImportFileProblem, () => string>;
 
   $: shareeGroups = [
     { type: "user", heading: text.group_people() },
@@ -365,8 +380,10 @@
   }
 
   const isCLI = (job: ImportJobRecord) => job.origin === "cli" || job.stagedPath.startsWith("local:");
+  // A file the server found invalid would fail the same way again.
   const canRetry = (job: ImportJobRecord) =>
-    !isCLI(job) && (job.state === "failed" || job.state === "canceled" || job.state === "staged") && job.stagingState !== "removed";
+    !isCLI(job) && (job.state === "failed" || job.state === "canceled" || job.state === "staged") && job.stagingState !== "removed" &&
+    !(job.state === "failed" && job.errorCode === "invalid_file");
   const canRemove = (job: ImportJobRecord) =>
     !!dataProvider.removeImport &&
     (job.state === "upload_failed" || job.state === "failed" || job.state === "canceled" || job.state === "staged") &&
@@ -390,10 +407,23 @@
     persistSet(CLEARED_KEY, cleared);
   }
 
-  // What a running row says. The operator's stages after the upload are one
-  // step to the person importing: their meeting is being added.
-  function runningLabel(state: ImportJobRecord["state"]): string {
-    return state === "uploading" ? text.running_uploading() : text.running_adding();
+  // What a running row says: where it waits, then fetching and checking, and
+  // the operator's later stages as one step, the meeting being added.
+  function runningLabel(job: ImportJobRecord): string {
+    switch (importRunningStage(job)) {
+      case "uploading":
+        return text.running_uploading();
+      case "waiting":
+        return text.running_waiting();
+      case "queued":
+        return text.running_queued({ count: job.queuePosition ?? 0 });
+      case "fetching":
+        return text.running_fetching();
+      case "checking":
+        return text.running_checking();
+      default:
+        return text.running_adding();
+    }
   }
 
   // One plain line per settled row. The operator's own error text is for
@@ -403,6 +433,16 @@
       case "upload_failed":
         return text.settled_upload_failed();
       case "failed":
+        switch (job.errorCode) {
+          case "disk_short":
+            return text.failed_disk_short();
+          case "stalled":
+            return text.failed_stalled();
+          case "timed_out":
+            return text.failed_timed_out();
+          case "invalid_file":
+            return text.failed_invalid_file();
+        }
         return isCLI(job) ? text.settled_server_failed() : text.settled_failed();
       case "staged":
         return text.settled_staged();
@@ -511,7 +551,7 @@
                 {#if item.status === "invalid"}
                   <!-- The parser's sentence is precise but technical; it stays
                        on hover for whoever needs it. -->
-                  <span class="import-meta import-meta-error" title={item.reason}>{text.not_a_meeting()}</span>
+                  <span class="import-meta import-meta-error" title={item.detail || undefined}>{fileProblemText[item.problem ?? "damaged"]()}</span>
                 {:else if bad}
                   <span class="import-meta import-meta-error">{item.reason}</span>
                 {:else if item.status === "parsing"}
@@ -605,8 +645,11 @@
                 <div class="import-text">
                   <span class="import-title">{job.sourceName}</span>
                   {#if running}
-                    <span class="import-meta">{runningLabel(job.state)}</span>
-                    <progress class="progress progress-primary import-bar"></progress>
+                    <span class="import-meta">{runningLabel(job)}</span>
+                    <!-- Only work in progress gets a bar: a queued row is waiting. -->
+                    {#if job.state !== "queued"}
+                      <progress class="progress progress-primary import-bar"></progress>
+                    {/if}
                   {:else if isFailure(job)}
                     <span class="import-meta">
                       <span class="text-error">{settledLine(job)}</span>
@@ -626,7 +669,8 @@
                   {/if}
                 </div>
                 <span class="import-actions">
-                  {#if running && !fromCLI && job.state !== "uploading"}
+                  <!-- Indexing comes after the meeting is added and shared: too late to cancel. -->
+                  {#if running && !fromCLI && job.state !== "uploading" && job.state !== "indexing"}
                     <button type="button" class="btn btn-ghost btn-square btn-xs" aria-label={text.cancel_named({ name: job.sourceName })} on:click={() => void cancelJob(job)}>
                       <X size={14} aria-hidden="true" />
                     </button>

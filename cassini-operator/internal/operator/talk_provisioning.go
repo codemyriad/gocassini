@@ -24,10 +24,11 @@ import (
 // first start and persists it, and it derives + publishes exactly what to
 // register in Talk.
 //
-// What it CANNOT do: write spreed's recording_servers itself. That config is
-// admin-only and has no OCS API an ExApp may call (AppAPI's app-config write is
-// hard-scoped to the ExApp's own app id; spreed writes recording_servers only
-// from its admin settings / occ). So the registration stays a single admin
+// What it does NOT do: write spreed's recording_servers itself. Cassini
+// deliberately does not write it: Talk's recorder choice belongs to the admin,
+// another recorder may be in use, and AIO rewrites it at startup. (AppAPI's
+// app-config write is also hard-scoped to the ExApp's own app id; spreed writes
+// recording_servers only from its admin settings / occ.) So the registration stays a single admin
 // action — but a secret-free one: the host reads the generated secret + backend
 // URL from the ADMIN-only provisioning endpoint and sets recording_servers in
 // one idempotent step. See docs/exapp-install.md and sandbox/wire-cassini.sh.
@@ -115,8 +116,8 @@ func (s *talkSecretStore) loadOrGenerate() (secret string, generated bool, err e
 	return fresh, true, nil
 }
 
-// save writes the provisioning state atomically (temp file + rename) with 0600
-// perms so a crash mid-write cannot truncate the persisted secret.
+// save writes the provisioning state atomically with 0600 perms so a crash
+// mid-write cannot truncate the persisted secret.
 func (s *talkSecretStore) save(st talkProvisioningState) error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
 		return fmt.Errorf("mkdir provisioning dir: %w", err)
@@ -125,14 +126,8 @@ func (s *talkSecretStore) save(st talkProvisioningState) error {
 	if err != nil {
 		return fmt.Errorf("marshal provisioning state: %w", err)
 	}
-	data = append(data, '\n')
-	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return fmt.Errorf("write provisioning temp: %w", err)
-	}
-	if err := os.Rename(tmp, s.path); err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("rename provisioning state: %w", err)
+	if err := writeFileAtomic(s.path, append(data, '\n'), 0o600); err != nil {
+		return fmt.Errorf("write provisioning state: %w", err)
 	}
 	return nil
 }
@@ -175,7 +170,7 @@ func resolveTalkProvisioning(dataDir, explicitSecret, nextcloudURL, appID string
 	prov.Secret = secret
 	prov.SecretSource = talkSecretSourceGenerated
 	if generated {
-		logger.Printf("talk provisioning: generated a Talk recording secret (persisted to %s); register it in spreed via the operator provisioning endpoint or wire-cassini.sh", filepath.Join(dataDir, talkProvisioningFile))
+		logger.Printf("talk provisioning: generated a Talk recording secret (persisted to %s); if Talk already used Cassini for recording, Talk still holds the old secret: press Connect Talk again", filepath.Join(dataDir, talkProvisioningFile))
 	}
 	return prov
 }

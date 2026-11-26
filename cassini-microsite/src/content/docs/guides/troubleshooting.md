@@ -30,10 +30,10 @@ storage state, and DB health. `/operator/setup` carries `ok`, a `state`, the
 sharing mode and a one-sentence cause, and nothing an unprivileged reader should not
 see.
 
-In the app itself, an administrator gets the cause in words with **Try again**
-and **Show details**; the disclosure behind **Show details** carries the step, the
-paths and the `occ` lines that fix it. Everybody else gets the same first
-sentence and no buttons.
+In the app itself, an administrator gets the cause in words and a button to
+**Operator › Doctor**, where the checks and the steps to fix them are. Everybody
+else gets a short note and a button that copies the page's address for an
+administrator.
 
 ## Install
 
@@ -85,8 +85,8 @@ These come from `recordings_access` on `/operator/status`.
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `/operator/status` answers 503 | Recordings cannot be published or served yet | Read `recordings_access.state` and `.step`. `unavailable` names a thing to create or enable; `degraded` means a call failed |
-| `state=unavailable`, `step=owner_account` | The `cassini` service account does not exist | Press **Create recordings account** in **Operator › Settings › Publish pipeline › Who can see recordings**, or run `occ group:add cassini` and `occ user:add --group=cassini cassini`, then re-enable Cassini |
-| `state=unavailable`, `step=sharing_api` | Nextcloud file sharing is unavailable to the `cassini` account | Enable the Files sharing app (`occ app:enable files_sharing`) and allow sharing under **Administration settings › Sharing**, then press **Check again** |
+| `state=unavailable`, `step=owner_account` | The `cassini` service account does not exist | Press **Create recordings account** in **Operator › Settings › Publish pipeline › Who can see recordings**, or run `occ group:add cassini` and `occ user:add --group=cassini cassini`, then press **Check again** |
+| `step=sharing_api` | `unavailable`: Nextcloud refused file sharing to the `cassini` account. `degraded`: the share API did not answer (a server error, a rate limit or a timeout), so recording continues and the next publish checks again | For `unavailable`, enable the Files sharing app (`occ app:enable files_sharing`) and allow sharing under **Administration settings › Sharing**, then press **Check again**. For `degraded`, check Nextcloud's health and logs, then press **Check again** |
 | `state=degraded`, `step=private_archive` | Cassini could not confirm its `CassiniRecordings` folder is private and writable | Check that nothing is mounted or shared at `CassiniRecordings` in the `cassini` account's Files, then press **Check again** |
 | `state=degraded`, `step=nextcloud_probe` | Nextcloud did not answer the setup check | Check container-to-Nextcloud connectivity, then press **Check again** |
 | `state=unknown` | No check has completed in this process, usually just after a restart | Look again after a few seconds. If it sticks, disable and re-enable Cassini |

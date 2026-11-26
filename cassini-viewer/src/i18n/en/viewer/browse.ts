@@ -329,6 +329,8 @@ const browse = {
     share_all_with: "Share all with",
     share_all_placeholder: "A person, group or team",
     files_label: "Files to import",
+    // Why a dropped file was skipped: it is not a meeting file from Cassini.
+    // The other reasons are the file_* strings below.
     not_a_meeting: "Not a meeting file from Cassini, so it was skipped.",
     reading: "Reading…",
     // {percent} is a number from 0 to 100.
@@ -364,11 +366,26 @@ const browse = {
     import_meetings: "Import {count:number|num} {{meeting|meetings}}",
     // What a running import says.
     running_uploading: "Uploading…",
+    // Queued and next in the person's own queue. It starts when the server has
+    // room: the server runs a few imports at a time, across everyone.
+    running_waiting: "Waiting for the server…",
+    // Plural; see the translator guide. {count}: the person's own imports that run before this one.
+    running_queued: "Queued · {count:number|num} {{import|imports}} ahead",
+    // The server is reading the uploaded file from the person's Files.
+    running_fetching: "Fetching…",
+    // The server is checking the file is a meeting it can import.
+    running_checking: "Checking…",
     running_adding: "Adding…",
     // What a finished import says.
     settled_upload_failed: "Upload didn't finish",
     settled_server_failed: "Import on the server didn't finish",
     settled_failed: "Couldn't import this file",
+    // Why the server could not import a file, when it knows (#510). Shown on
+    // the row, beside Retry where retrying can help.
+    failed_disk_short: "Too big to import right now. Ask your administrator.",
+    failed_stalled: "The download from your Files stopped. Try again.",
+    failed_timed_out: "The import took too long. Try again.",
+    failed_invalid_file: "Not a valid meeting file from Cassini",
     settled_staged: "Uploaded, not started",
     settled_canceled: "Canceled",
     settled_imported: "Imported",
@@ -397,8 +414,12 @@ const browse = {
     sharee_search_failed: "Could not search people right now.",
     sharee_searching: "Searching…",
     sharee_none: "Nobody matches that.",
-    file_empty: "The file is empty.",
-    not_portable: "Not a portable meeting: neither an Ogg/Opus recording nor a transcription document.",
+    // Why a dropped file was skipped, on its row in the list.
+    file_empty: "This file is empty, so it was skipped.",
+    file_too_large: "This file is larger than 4 GiB, so it was skipped.",
+    file_unreadable: "This file couldn't be read, so it was skipped. Try adding it again.",
+    file_damaged: "This file is damaged or incomplete, so it was skipped. If it came from Cassini, download it again and retry.",
+    file_newer: "This file was made by a newer version of Cassini, so it was skipped. Ask your administrator to update Cassini.",
     untitled: "Untitled meeting",
   },
 

@@ -15,12 +15,12 @@ concurrency:
 
 jobs:
   select:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       matrix: ${{ steps.select.outputs.matrix }}
       image: ${{ steps.select.outputs.image }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: select
         run: |
           python3 scripts/nextcloud_compatibility.py validate
@@ -30,16 +30,16 @@ jobs:
   canary:
     name: Upstream Nextcloud ${{ matrix.major }}
     needs: select
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
       max-parallel: 2
       matrix: ${{ fromJSON(needs.select.outputs.matrix) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/compatibility-tools
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
       - name: Load frozen Cassini artifact
         uses: ./.github/actions/load-exapp-image
         with:
@@ -81,7 +81,7 @@ jobs:
           fi
           python3 scripts/ci_phase_timings.py summary "${report%/*}/phase-timings.jsonl" >> "$GITHUB_STEP_SUMMARY"
           echo 'Replay using the downloaded candidate.json as COMPAT_STACK, info.xml as D453_MANIFEST_PATH, and the Cassini ref recorded in compatibility.json as IMAGE_REF; COMPAT_MODE=canary.' >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: upstream-nextcloud-${{ matrix.major }}-${{ github.run_attempt }}

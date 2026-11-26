@@ -37,7 +37,12 @@
       "imports_not_served": "This deployment does not serve meeting imports.",
       "identity_unverified": "Cassini could not verify who you are; reload and try again.",
       "request_failed": "The import request failed (HTTP {status}).",
-      "people_search_failed": "People search failed (HTTP {status})."
+      "people_search_failed": "People search failed (HTTP {status}).",
+      "refused_busy": "Cassini is busy right now. Try again in a moment.",
+      "refused_too_large": "This file is larger than 4 GiB and can't be imported.",
+      "refused_add_again": "This upload can't be used any more. Add the file again.",
+      "refused_uploading": "This file is still uploading or importing. Try again when it has finished.",
+      "refused_cancel_too_late": "The meeting has already been added and shared, so it can no longer be canceled."
     },
     "data_provider": {
       "bundle_needs_meetings": "Pick at least one meeting first.",
@@ -554,7 +559,7 @@
       },
       "backend": {
         "title": "Use Cassini as Talk’s recording backend",
-        "intro": "Talk needs Cassini's recording-server URL and its recording secret. Cassini generates the secret itself but cannot write Talk's configuration, so the values have to be given to Talk.",
+        "intro": "Talk needs Cassini's recording-server URL and its recording secret. Cassini generates the secret itself but cannot write Talk's configuration, so the values have to be given to Talk. On Nextcloud All-in-One, also turn off AIO's Talk Recording-server and set NEXTCLOUD_KEEP_DISABLED_APPS=true, or AIO removes these values every time Nextcloud starts. That setting also stops AIO removing other apps you disable later; see AIO restart persistence in Cassini's install guide.",
         "show_values": "Show both values"
       },
       "test": {
@@ -832,7 +837,7 @@
       "nextcloud_unexpected_response": "Something answered at the Nextcloud address, but not with Talk's settings.",
       "nextcloud_unreachable": "Could not read Talk settings. Check Nextcloud connectivity and TLS, then try again.",
       "probe_failed": "The connection check did not finish. Check the recorder installation and connectivity, then retry.",
-      "recording_auth_rejected": "Talk refused Cassini. Cassini is not set up as Talk's recording backend yet, or the recording secret Talk has does not match Cassini's.",
+      "recording_auth_rejected": "Talk refused Cassini. Cassini is not set up as Talk's recording backend yet, or the recording secret Talk has does not match Cassini's. If this comes back after every Nextcloud restart, update or backup, something in Nextcloud's startup is resetting Talk's recording backend. Nextcloud All-in-One does this by default.",
       "recording_auth_verified": "Talk accepted Cassini's recording credential.",
       "recording_secret_missing": "Cassini has no recording secret. It creates one when it starts and keeps it on its data volume, and that did not succeed.",
       "recording_secret_missing_connection": "Configure Cassini's recording credential and connect Talk first.",
@@ -1120,6 +1125,19 @@
       "saved": "Retention settings saved.",
       "operator_unavailable": "Operator unavailable",
       "save_in_progress": "Retention settings are being saved. Try again."
+    },
+    "imports": {
+      "heading": "Imports",
+      "intro": "How many meeting imports run at the same time, across everyone. Each person's own imports still run one at a time.",
+      "limit_label": "Imports at once",
+      "range": "1 to {max}",
+      "save_label": "Save import settings",
+      "help": "Each running import keeps its file, up to 4 GiB, and a working copy on this server's disk, which recordings also use. An import starts only when it fits while 5 GiB stay free for recordings.",
+      "default_hint": "The default is {value}. A value saved here applies at once and is kept when the app is redeployed.",
+      "saved": "Saved. Running imports finish; new ones start within the new limit.",
+      "loading": "Loading import settings…",
+      "load_failed": "Import settings couldn't be loaded: {detail}",
+      "out_of_range": "Choose a whole number from 1 to {max}. {max} is the most the server allows."
     },
     "retention_policy": {
       "keep_forever": "Keep forever",

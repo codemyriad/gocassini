@@ -323,6 +323,26 @@ export type NamespaceAppTranslation = {
 			 * @param {unknown} status
 			 */
 			people_search_failed: RequiredParams<'status'>
+			/**
+			 * C​a​s​s​i​n​i​ ​i​s​ ​b​u​s​y​ ​r​i​g​h​t​ ​n​o​w​.​ ​T​r​y​ ​a​g​a​i​n​ ​i​n​ ​a​ ​m​o​m​e​n​t​.
+			 */
+			refused_busy: string
+			/**
+			 * T​h​i​s​ ​f​i​l​e​ ​i​s​ ​l​a​r​g​e​r​ ​t​h​a​n​ ​4​ ​G​i​B​ ​a​n​d​ ​c​a​n​'​t​ ​b​e​ ​i​m​p​o​r​t​e​d​.
+			 */
+			refused_too_large: string
+			/**
+			 * T​h​i​s​ ​u​p​l​o​a​d​ ​c​a​n​'​t​ ​b​e​ ​u​s​e​d​ ​a​n​y​ ​m​o​r​e​.​ ​A​d​d​ ​t​h​e​ ​f​i​l​e​ ​a​g​a​i​n​.
+			 */
+			refused_add_again: string
+			/**
+			 * T​h​i​s​ ​f​i​l​e​ ​i​s​ ​s​t​i​l​l​ ​u​p​l​o​a​d​i​n​g​ ​o​r​ ​i​m​p​o​r​t​i​n​g​.​ ​T​r​y​ ​a​g​a​i​n​ ​w​h​e​n​ ​i​t​ ​h​a​s​ ​f​i​n​i​s​h​e​d​.
+			 */
+			refused_uploading: string
+			/**
+			 * T​h​e​ ​m​e​e​t​i​n​g​ ​h​a​s​ ​a​l​r​e​a​d​y​ ​b​e​e​n​ ​a​d​d​e​d​ ​a​n​d​ ​s​h​a​r​e​d​,​ ​s​o​ ​i​t​ ​c​a​n​ ​n​o​ ​l​o​n​g​e​r​ ​b​e​ ​c​a​n​c​e​l​e​d​.
+			 */
+			refused_cancel_too_late: string
 		}
 		data_provider: {
 			/**
@@ -2186,7 +2206,7 @@ export type NamespaceAppTranslation = {
 				 */
 				title: string
 				/**
-				 * T​a​l​k​ ​n​e​e​d​s​ ​C​a​s​s​i​n​i​'​s​ ​r​e​c​o​r​d​i​n​g​-​s​e​r​v​e​r​ ​U​R​L​ ​a​n​d​ ​i​t​s​ ​r​e​c​o​r​d​i​n​g​ ​s​e​c​r​e​t​.​ ​C​a​s​s​i​n​i​ ​g​e​n​e​r​a​t​e​s​ ​t​h​e​ ​s​e​c​r​e​t​ ​i​t​s​e​l​f​ ​b​u​t​ ​c​a​n​n​o​t​ ​w​r​i​t​e​ ​T​a​l​k​'​s​ ​c​o​n​f​i​g​u​r​a​t​i​o​n​,​ ​s​o​ ​t​h​e​ ​v​a​l​u​e​s​ ​h​a​v​e​ ​t​o​ ​b​e​ ​g​i​v​e​n​ ​t​o​ ​T​a​l​k​.
+				 * T​a​l​k​ ​n​e​e​d​s​ ​C​a​s​s​i​n​i​'​s​ ​r​e​c​o​r​d​i​n​g​-​s​e​r​v​e​r​ ​U​R​L​ ​a​n​d​ ​i​t​s​ ​r​e​c​o​r​d​i​n​g​ ​s​e​c​r​e​t​.​ ​C​a​s​s​i​n​i​ ​g​e​n​e​r​a​t​e​s​ ​t​h​e​ ​s​e​c​r​e​t​ ​i​t​s​e​l​f​ ​b​u​t​ ​c​a​n​n​o​t​ ​w​r​i​t​e​ ​T​a​l​k​'​s​ ​c​o​n​f​i​g​u​r​a​t​i​o​n​,​ ​s​o​ ​t​h​e​ ​v​a​l​u​e​s​ ​h​a​v​e​ ​t​o​ ​b​e​ ​g​i​v​e​n​ ​t​o​ ​T​a​l​k​.​ ​O​n​ ​N​e​x​t​c​l​o​u​d​ ​A​l​l​-​i​n​-​O​n​e​,​ ​a​l​s​o​ ​t​u​r​n​ ​o​f​f​ ​A​I​O​'​s​ ​T​a​l​k​ ​R​e​c​o​r​d​i​n​g​-​s​e​r​v​e​r​ ​a​n​d​ ​s​e​t​ ​N​E​X​T​C​L​O​U​D​_​K​E​E​P​_​D​I​S​A​B​L​E​D​_​A​P​P​S​=​t​r​u​e​,​ ​o​r​ ​A​I​O​ ​r​e​m​o​v​e​s​ ​t​h​e​s​e​ ​v​a​l​u​e​s​ ​e​v​e​r​y​ ​t​i​m​e​ ​N​e​x​t​c​l​o​u​d​ ​s​t​a​r​t​s​.​ ​T​h​a​t​ ​s​e​t​t​i​n​g​ ​a​l​s​o​ ​s​t​o​p​s​ ​A​I​O​ ​r​e​m​o​v​i​n​g​ ​o​t​h​e​r​ ​a​p​p​s​ ​y​o​u​ ​d​i​s​a​b​l​e​ ​l​a​t​e​r​;​ ​s​e​e​ ​A​I​O​ ​r​e​s​t​a​r​t​ ​p​e​r​s​i​s​t​e​n​c​e​ ​i​n​ ​C​a​s​s​i​n​i​'​s​ ​i​n​s​t​a​l​l​ ​g​u​i​d​e​.
 				 */
 				intro: string
 				/**
@@ -3188,7 +3208,7 @@ export type NamespaceAppTranslation = {
 			 */
 			probe_failed: string
 			/**
-			 * T​a​l​k​ ​r​e​f​u​s​e​d​ ​C​a​s​s​i​n​i​.​ ​C​a​s​s​i​n​i​ ​i​s​ ​n​o​t​ ​s​e​t​ ​u​p​ ​a​s​ ​T​a​l​k​'​s​ ​r​e​c​o​r​d​i​n​g​ ​b​a​c​k​e​n​d​ ​y​e​t​,​ ​o​r​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​ ​s​e​c​r​e​t​ ​T​a​l​k​ ​h​a​s​ ​d​o​e​s​ ​n​o​t​ ​m​a​t​c​h​ ​C​a​s​s​i​n​i​'​s​.
+			 * T​a​l​k​ ​r​e​f​u​s​e​d​ ​C​a​s​s​i​n​i​.​ ​C​a​s​s​i​n​i​ ​i​s​ ​n​o​t​ ​s​e​t​ ​u​p​ ​a​s​ ​T​a​l​k​'​s​ ​r​e​c​o​r​d​i​n​g​ ​b​a​c​k​e​n​d​ ​y​e​t​,​ ​o​r​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​ ​s​e​c​r​e​t​ ​T​a​l​k​ ​h​a​s​ ​d​o​e​s​ ​n​o​t​ ​m​a​t​c​h​ ​C​a​s​s​i​n​i​'​s​.​ ​I​f​ ​t​h​i​s​ ​c​o​m​e​s​ ​b​a​c​k​ ​a​f​t​e​r​ ​e​v​e​r​y​ ​N​e​x​t​c​l​o​u​d​ ​r​e​s​t​a​r​t​,​ ​u​p​d​a​t​e​ ​o​r​ ​b​a​c​k​u​p​,​ ​s​o​m​e​t​h​i​n​g​ ​i​n​ ​N​e​x​t​c​l​o​u​d​'​s​ ​s​t​a​r​t​u​p​ ​i​s​ ​r​e​s​e​t​t​i​n​g​ ​T​a​l​k​'​s​ ​r​e​c​o​r​d​i​n​g​ ​b​a​c​k​e​n​d​.​ ​N​e​x​t​c​l​o​u​d​ ​A​l​l​-​i​n​-​O​n​e​ ​d​o​e​s​ ​t​h​i​s​ ​b​y​ ​d​e​f​a​u​l​t​.
 			 */
 			recording_auth_rejected: string
 			/**
@@ -4390,6 +4410,56 @@ export type NamespaceAppTranslation = {
 			 * R​e​t​e​n​t​i​o​n​ ​s​e​t​t​i​n​g​s​ ​a​r​e​ ​b​e​i​n​g​ ​s​a​v​e​d​.​ ​T​r​y​ ​a​g​a​i​n​.
 			 */
 			save_in_progress: string
+		}
+		imports: {
+			/**
+			 * I​m​p​o​r​t​s
+			 */
+			heading: string
+			/**
+			 * H​o​w​ ​m​a​n​y​ ​m​e​e​t​i​n​g​ ​i​m​p​o​r​t​s​ ​r​u​n​ ​a​t​ ​t​h​e​ ​s​a​m​e​ ​t​i​m​e​,​ ​a​c​r​o​s​s​ ​e​v​e​r​y​o​n​e​.​ ​E​a​c​h​ ​p​e​r​s​o​n​'​s​ ​o​w​n​ ​i​m​p​o​r​t​s​ ​s​t​i​l​l​ ​r​u​n​ ​o​n​e​ ​a​t​ ​a​ ​t​i​m​e​.
+			 */
+			intro: string
+			/**
+			 * I​m​p​o​r​t​s​ ​a​t​ ​o​n​c​e
+			 */
+			limit_label: string
+			/**
+			 * 1​ ​t​o​ ​{​m​a​x​}
+			 * @param {unknown} max
+			 */
+			range: RequiredParams<'max'>
+			/**
+			 * S​a​v​e​ ​i​m​p​o​r​t​ ​s​e​t​t​i​n​g​s
+			 */
+			save_label: string
+			/**
+			 * E​a​c​h​ ​r​u​n​n​i​n​g​ ​i​m​p​o​r​t​ ​k​e​e​p​s​ ​i​t​s​ ​f​i​l​e​,​ ​u​p​ ​t​o​ ​4​ ​G​i​B​,​ ​a​n​d​ ​a​ ​w​o​r​k​i​n​g​ ​c​o​p​y​ ​o​n​ ​t​h​i​s​ ​s​e​r​v​e​r​'​s​ ​d​i​s​k​,​ ​w​h​i​c​h​ ​r​e​c​o​r​d​i​n​g​s​ ​a​l​s​o​ ​u​s​e​.​ ​A​n​ ​i​m​p​o​r​t​ ​s​t​a​r​t​s​ ​o​n​l​y​ ​w​h​e​n​ ​i​t​ ​f​i​t​s​ ​w​h​i​l​e​ ​5​ ​G​i​B​ ​s​t​a​y​ ​f​r​e​e​ ​f​o​r​ ​r​e​c​o​r​d​i​n​g​s​.
+			 */
+			help: string
+			/**
+			 * T​h​e​ ​d​e​f​a​u​l​t​ ​i​s​ ​{​v​a​l​u​e​}​.​ ​A​ ​v​a​l​u​e​ ​s​a​v​e​d​ ​h​e​r​e​ ​a​p​p​l​i​e​s​ ​a​t​ ​o​n​c​e​ ​a​n​d​ ​i​s​ ​k​e​p​t​ ​w​h​e​n​ ​t​h​e​ ​a​p​p​ ​i​s​ ​r​e​d​e​p​l​o​y​e​d​.
+			 * @param {unknown} value
+			 */
+			default_hint: RequiredParams<'value'>
+			/**
+			 * S​a​v​e​d​.​ ​R​u​n​n​i​n​g​ ​i​m​p​o​r​t​s​ ​f​i​n​i​s​h​;​ ​n​e​w​ ​o​n​e​s​ ​s​t​a​r​t​ ​w​i​t​h​i​n​ ​t​h​e​ ​n​e​w​ ​l​i​m​i​t​.
+			 */
+			saved: string
+			/**
+			 * L​o​a​d​i​n​g​ ​i​m​p​o​r​t​ ​s​e​t​t​i​n​g​s​…
+			 */
+			loading: string
+			/**
+			 * I​m​p​o​r​t​ ​s​e​t​t​i​n​g​s​ ​c​o​u​l​d​n​'​t​ ​b​e​ ​l​o​a​d​e​d​:​ ​{​d​e​t​a​i​l​}
+			 * @param {unknown} detail
+			 */
+			load_failed: RequiredParams<'detail'>
+			/**
+			 * C​h​o​o​s​e​ ​a​ ​w​h​o​l​e​ ​n​u​m​b​e​r​ ​f​r​o​m​ ​1​ ​t​o​ ​{​m​a​x​}​.​ ​{​m​a​x​}​ ​i​s​ ​t​h​e​ ​m​o​s​t​ ​t​h​e​ ​s​e​r​v​e​r​ ​a​l​l​o​w​s​.
+			 * @param {unknown} max
+			 */
+			out_of_range: RequiredParams<'max' | 'max'>
 		}
 		retention_policy: {
 			/**
@@ -6608,6 +6678,23 @@ export type NamespaceViewerTranslation = {
 			 */
 			running_uploading: string
 			/**
+			 * W​a​i​t​i​n​g​ ​f​o​r​ ​t​h​e​ ​s​e​r​v​e​r​…
+			 */
+			running_waiting: string
+			/**
+			 * Q​u​e​u​e​d​ ​·​ ​{​c​o​u​n​t​|​n​u​m​}​ ​{​{​i​m​p​o​r​t​|​i​m​p​o​r​t​s​}​}​ ​a​h​e​a​d
+			 * @param {number} count
+			 */
+			running_queued: RequiredParams<'count|num'>
+			/**
+			 * F​e​t​c​h​i​n​g​…
+			 */
+			running_fetching: string
+			/**
+			 * C​h​e​c​k​i​n​g​…
+			 */
+			running_checking: string
+			/**
 			 * A​d​d​i​n​g​…
 			 */
 			running_adding: string
@@ -6623,6 +6710,22 @@ export type NamespaceViewerTranslation = {
 			 * C​o​u​l​d​n​'​t​ ​i​m​p​o​r​t​ ​t​h​i​s​ ​f​i​l​e
 			 */
 			settled_failed: string
+			/**
+			 * T​o​o​ ​b​i​g​ ​t​o​ ​i​m​p​o​r​t​ ​r​i​g​h​t​ ​n​o​w​.​ ​A​s​k​ ​y​o​u​r​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​.
+			 */
+			failed_disk_short: string
+			/**
+			 * T​h​e​ ​d​o​w​n​l​o​a​d​ ​f​r​o​m​ ​y​o​u​r​ ​F​i​l​e​s​ ​s​t​o​p​p​e​d​.​ ​T​r​y​ ​a​g​a​i​n​.
+			 */
+			failed_stalled: string
+			/**
+			 * T​h​e​ ​i​m​p​o​r​t​ ​t​o​o​k​ ​t​o​o​ ​l​o​n​g​.​ ​T​r​y​ ​a​g​a​i​n​.
+			 */
+			failed_timed_out: string
+			/**
+			 * N​o​t​ ​a​ ​v​a​l​i​d​ ​m​e​e​t​i​n​g​ ​f​i​l​e​ ​f​r​o​m​ ​C​a​s​s​i​n​i
+			 */
+			failed_invalid_file: string
 			/**
 			 * U​p​l​o​a​d​e​d​,​ ​n​o​t​ ​s​t​a​r​t​e​d
 			 */
@@ -6709,13 +6812,25 @@ export type NamespaceViewerTranslation = {
 			 */
 			sharee_none: string
 			/**
-			 * T​h​e​ ​f​i​l​e​ ​i​s​ ​e​m​p​t​y​.
+			 * T​h​i​s​ ​f​i​l​e​ ​i​s​ ​e​m​p​t​y​,​ ​s​o​ ​i​t​ ​w​a​s​ ​s​k​i​p​p​e​d​.
 			 */
 			file_empty: string
 			/**
-			 * N​o​t​ ​a​ ​p​o​r​t​a​b​l​e​ ​m​e​e​t​i​n​g​:​ ​n​e​i​t​h​e​r​ ​a​n​ ​O​g​g​/​O​p​u​s​ ​r​e​c​o​r​d​i​n​g​ ​n​o​r​ ​a​ ​t​r​a​n​s​c​r​i​p​t​i​o​n​ ​d​o​c​u​m​e​n​t​.
+			 * T​h​i​s​ ​f​i​l​e​ ​i​s​ ​l​a​r​g​e​r​ ​t​h​a​n​ ​4​ ​G​i​B​,​ ​s​o​ ​i​t​ ​w​a​s​ ​s​k​i​p​p​e​d​.
 			 */
-			not_portable: string
+			file_too_large: string
+			/**
+			 * T​h​i​s​ ​f​i​l​e​ ​c​o​u​l​d​n​'​t​ ​b​e​ ​r​e​a​d​,​ ​s​o​ ​i​t​ ​w​a​s​ ​s​k​i​p​p​e​d​.​ ​T​r​y​ ​a​d​d​i​n​g​ ​i​t​ ​a​g​a​i​n​.
+			 */
+			file_unreadable: string
+			/**
+			 * T​h​i​s​ ​f​i​l​e​ ​i​s​ ​d​a​m​a​g​e​d​ ​o​r​ ​i​n​c​o​m​p​l​e​t​e​,​ ​s​o​ ​i​t​ ​w​a​s​ ​s​k​i​p​p​e​d​.​ ​I​f​ ​i​t​ ​c​a​m​e​ ​f​r​o​m​ ​C​a​s​s​i​n​i​,​ ​d​o​w​n​l​o​a​d​ ​i​t​ ​a​g​a​i​n​ ​a​n​d​ ​r​e​t​r​y​.
+			 */
+			file_damaged: string
+			/**
+			 * T​h​i​s​ ​f​i​l​e​ ​w​a​s​ ​m​a​d​e​ ​b​y​ ​a​ ​n​e​w​e​r​ ​v​e​r​s​i​o​n​ ​o​f​ ​C​a​s​s​i​n​i​,​ ​s​o​ ​i​t​ ​w​a​s​ ​s​k​i​p​p​e​d​.​ ​A​s​k​ ​y​o​u​r​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​ ​t​o​ ​u​p​d​a​t​e​ ​C​a​s​s​i​n​i​.
+			 */
+			file_newer: string
 			/**
 			 * U​n​t​i​t​l​e​d​ ​m​e​e​t​i​n​g
 			 */
@@ -9057,6 +9172,26 @@ export type TranslationFunctions = {
 				 * People search failed (HTTP {status}).
 				 */
 				people_search_failed: (arg: { status: unknown }) => LocalizedString
+				/**
+				 * Cassini is busy right now. Try again in a moment.
+				 */
+				refused_busy: () => LocalizedString
+				/**
+				 * This file is larger than 4 GiB and can't be imported.
+				 */
+				refused_too_large: () => LocalizedString
+				/**
+				 * This upload can't be used any more. Add the file again.
+				 */
+				refused_add_again: () => LocalizedString
+				/**
+				 * This file is still uploading or importing. Try again when it has finished.
+				 */
+				refused_uploading: () => LocalizedString
+				/**
+				 * The meeting has already been added and shared, so it can no longer be canceled.
+				 */
+				refused_cancel_too_late: () => LocalizedString
 			}
 			data_provider: {
 				/**
@@ -10795,7 +10930,7 @@ export type TranslationFunctions = {
 					 */
 					title: () => LocalizedString
 					/**
-					 * Talk needs Cassini's recording-server URL and its recording secret. Cassini generates the secret itself but cannot write Talk's configuration, so the values have to be given to Talk.
+					 * Talk needs Cassini's recording-server URL and its recording secret. Cassini generates the secret itself but cannot write Talk's configuration, so the values have to be given to Talk. On Nextcloud All-in-One, also turn off AIO's Talk Recording-server and set NEXTCLOUD_KEEP_DISABLED_APPS=true, or AIO removes these values every time Nextcloud starts. That setting also stops AIO removing other apps you disable later; see AIO restart persistence in Cassini's install guide.
 					 */
 					intro: () => LocalizedString
 					/**
@@ -11772,7 +11907,7 @@ export type TranslationFunctions = {
 				 */
 				probe_failed: () => LocalizedString
 				/**
-				 * Talk refused Cassini. Cassini is not set up as Talk's recording backend yet, or the recording secret Talk has does not match Cassini's.
+				 * Talk refused Cassini. Cassini is not set up as Talk's recording backend yet, or the recording secret Talk has does not match Cassini's. If this comes back after every Nextcloud restart, update or backup, something in Nextcloud's startup is resetting Talk's recording backend. Nextcloud All-in-One does this by default.
 				 */
 				recording_auth_rejected: () => LocalizedString
 				/**
@@ -12858,6 +12993,52 @@ export type TranslationFunctions = {
 				 * Retention settings are being saved. Try again.
 				 */
 				save_in_progress: () => LocalizedString
+			}
+			imports: {
+				/**
+				 * Imports
+				 */
+				heading: () => LocalizedString
+				/**
+				 * How many meeting imports run at the same time, across everyone. Each person's own imports still run one at a time.
+				 */
+				intro: () => LocalizedString
+				/**
+				 * Imports at once
+				 */
+				limit_label: () => LocalizedString
+				/**
+				 * 1 to {max}
+				 */
+				range: (arg: { max: unknown }) => LocalizedString
+				/**
+				 * Save import settings
+				 */
+				save_label: () => LocalizedString
+				/**
+				 * Each running import keeps its file, up to 4 GiB, and a working copy on this server's disk, which recordings also use. An import starts only when it fits while 5 GiB stay free for recordings.
+				 */
+				help: () => LocalizedString
+				/**
+				 * The default is {value}. A value saved here applies at once and is kept when the app is redeployed.
+				 */
+				default_hint: (arg: { value: unknown }) => LocalizedString
+				/**
+				 * Saved. Running imports finish; new ones start within the new limit.
+				 */
+				saved: () => LocalizedString
+				/**
+				 * Loading import settings…
+				 */
+				loading: () => LocalizedString
+				/**
+				 * Import settings couldn't be loaded: {detail}
+				 */
+				load_failed: (arg: { detail: unknown }) => LocalizedString
+				/**
+				 * Choose a whole number from 1 to {max}. {max} is the most the server allows.
+				 */
+				out_of_range: (arg: { max: unknown }) => LocalizedString
 			}
 			retention_policy: {
 				/**
@@ -14935,6 +15116,22 @@ export type TranslationFunctions = {
 				 */
 				running_uploading: () => LocalizedString
 				/**
+				 * Waiting for the server…
+				 */
+				running_waiting: () => LocalizedString
+				/**
+				 * Queued · {count|num} {{import|imports}} ahead
+				 */
+				running_queued: (arg: { count: number }) => LocalizedString
+				/**
+				 * Fetching…
+				 */
+				running_fetching: () => LocalizedString
+				/**
+				 * Checking…
+				 */
+				running_checking: () => LocalizedString
+				/**
 				 * Adding…
 				 */
 				running_adding: () => LocalizedString
@@ -14950,6 +15147,22 @@ export type TranslationFunctions = {
 				 * Couldn't import this file
 				 */
 				settled_failed: () => LocalizedString
+				/**
+				 * Too big to import right now. Ask your administrator.
+				 */
+				failed_disk_short: () => LocalizedString
+				/**
+				 * The download from your Files stopped. Try again.
+				 */
+				failed_stalled: () => LocalizedString
+				/**
+				 * The import took too long. Try again.
+				 */
+				failed_timed_out: () => LocalizedString
+				/**
+				 * Not a valid meeting file from Cassini
+				 */
+				failed_invalid_file: () => LocalizedString
 				/**
 				 * Uploaded, not started
 				 */
@@ -15031,13 +15244,25 @@ export type TranslationFunctions = {
 				 */
 				sharee_none: () => LocalizedString
 				/**
-				 * The file is empty.
+				 * This file is empty, so it was skipped.
 				 */
 				file_empty: () => LocalizedString
 				/**
-				 * Not a portable meeting: neither an Ogg/Opus recording nor a transcription document.
+				 * This file is larger than 4 GiB, so it was skipped.
 				 */
-				not_portable: () => LocalizedString
+				file_too_large: () => LocalizedString
+				/**
+				 * This file couldn't be read, so it was skipped. Try adding it again.
+				 */
+				file_unreadable: () => LocalizedString
+				/**
+				 * This file is damaged or incomplete, so it was skipped. If it came from Cassini, download it again and retry.
+				 */
+				file_damaged: () => LocalizedString
+				/**
+				 * This file was made by a newer version of Cassini, so it was skipped. Ask your administrator to update Cassini.
+				 */
+				file_newer: () => LocalizedString
 				/**
 				 * Untitled meeting
 				 */

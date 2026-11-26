@@ -37,7 +37,12 @@
       "imports_not_served": "Esta instalação não disponibiliza importações de reuniões.",
       "identity_unverified": "O Cassini não conseguiu verificar a sua identidade; recarregue a página e tente novamente.",
       "request_failed": "O pedido de importação falhou (HTTP {status}).",
-      "people_search_failed": "A pesquisa de pessoas falhou (HTTP {status})."
+      "people_search_failed": "A pesquisa de pessoas falhou (HTTP {status}).",
+      "refused_busy": "",
+      "refused_too_large": "",
+      "refused_add_again": "",
+      "refused_uploading": "",
+      "refused_cancel_too_late": ""
     },
     "data_provider": {
       "bundle_needs_meetings": "Escolha primeiro pelo menos uma reunião.",
@@ -1120,6 +1125,19 @@
       "saved": "Definições de retenção guardadas.",
       "operator_unavailable": "Operador indisponível",
       "save_in_progress": "As definições de retenção estão a ser guardadas. Tente novamente."
+    },
+    "imports": {
+      "heading": "",
+      "intro": "",
+      "limit_label": "",
+      "range": "",
+      "save_label": "",
+      "help": "",
+      "default_hint": "",
+      "saved": "",
+      "loading": "",
+      "load_failed": "",
+      "out_of_range": ""
     },
     "retention_policy": {
       "keep_forever": "Guardar para sempre",

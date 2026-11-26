@@ -37,7 +37,12 @@
       "imports_not_served": "Denne installation understøtter ikke import af møder.",
       "identity_unverified": "Cassini kunne ikke bekræfte, hvem du er; genindlæs, og prøv igen.",
       "request_failed": "Importanmodningen mislykkedes (HTTP {status}).",
-      "people_search_failed": "Søgningen efter personer mislykkedes (HTTP {status})."
+      "people_search_failed": "Søgningen efter personer mislykkedes (HTTP {status}).",
+      "refused_busy": "",
+      "refused_too_large": "",
+      "refused_add_again": "",
+      "refused_uploading": "",
+      "refused_cancel_too_late": ""
     },
     "data_provider": {
       "bundle_needs_meetings": "Vælg mindst ét møde først.",
@@ -1120,6 +1125,19 @@
       "saved": "Indstillingerne for opbevaring er gemt.",
       "operator_unavailable": "Operatøren er ikke tilgængelig",
       "save_in_progress": "Indstillingerne for opbevaring er ved at blive gemt. Prøv igen."
+    },
+    "imports": {
+      "heading": "",
+      "intro": "",
+      "limit_label": "",
+      "range": "",
+      "save_label": "",
+      "help": "",
+      "default_hint": "",
+      "saved": "",
+      "loading": "",
+      "load_failed": "",
+      "out_of_range": ""
     },
     "retention_policy": {
       "keep_forever": "Opbevar for altid",

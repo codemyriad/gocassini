@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { stageImportUpload } from "./client";
+import { cancelImport, stageImportUpload, startImports } from "./client";
 
 afterEach(() => vi.unstubAllGlobals());
 function mockUpload(putStatus = 201, prepareStatus = 202) {
@@ -41,4 +41,20 @@ it("reports a failed PUT to its durable record",async()=>{
  const mock=mockUpload(507);
  await expect(stageImportUpload(new File(["123"],"test.json"))).rejects.toMatchObject({importJobId:"job-1",message:"Not enough space in your Nextcloud Files for this upload."});
  expect(mock.events).toEqual(["prepare","mkdir","put","upload-failed"]);
+});
+
+// #510: a refusal the operator coded reads in the reader's language; any
+// other keeps the operator's own sentence.
+const refuse = (body: object, status = 409) => vi.fn(async () => Response.json(body, { status }));
+
+it("words a refusal the operator coded", async () => {
+  vi.stubGlobal("fetch", refuse({ error: "the meeting has already been added and shared; it can no longer be canceled", error_code: "import_cancel_too_late" }));
+  await expect(cancelImport("a1")).rejects.toThrow("The meeting has already been added and shared, so it can no longer be canceled.");
+  vi.stubGlobal("fetch", refuse({ error: "staging is busy; try again", error_code: "import_busy" }, 503));
+  await expect(startImports([{ stagedPath: ".CassiniImports/a.opus" }])).rejects.toThrow("Cassini is busy right now. Try again in a moment.");
+});
+
+it("keeps the operator's sentence for a refusal it has no words for", async () => {
+  vi.stubGlobal("fetch", refuse({ error: "something new", error_code: "import_something_new" }));
+  await expect(cancelImport("a1")).rejects.toThrow("something new");
 });

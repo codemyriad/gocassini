@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -32,6 +33,45 @@ const (
 	importStateCanceled     = "canceled"
 )
 
+// setImportQueuePositions fills QueuePosition on one caller's queued web
+// imports. running is the set of jobs a worker is on right now — not the rows
+// in a processing state, which a failed write can leave behind with no worker.
+// The caller's worker runs one job at a time, so whatever it is on comes
+// first (position 0 if that job is itself still queued, waiting for a slot),
+// then the rest of their queue, oldest first.
+func setImportQueuePositions(jobs []ImportJob, running map[string]bool) {
+	order := make([]int, len(jobs))
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(a, b int) bool {
+		ja, jb := jobs[order[a]], jobs[order[b]]
+		if ja.CreatedAt != jb.CreatedAt {
+			return ja.CreatedAt < jb.CreatedAt
+		}
+		return ja.ID < jb.ID
+	})
+	ahead := 0
+	for _, i := range order {
+		if !running[jobs[i].ID] {
+			continue
+		}
+		if jobs[i].State == importStateQueued {
+			position := 0
+			jobs[i].QueuePosition = &position
+		}
+		ahead++
+	}
+	for _, i := range order {
+		if jobs[i].State != importStateQueued || jobs[i].isCLI() || running[jobs[i].ID] {
+			continue
+		}
+		position := ahead
+		jobs[i].QueuePosition = &position
+		ahead++
+	}
+}
+
 func importStateTerminal(state string) bool {
 	return state == importStateUploadFailed || state == importStateDone || state == importStateFailed || state == importStateCanceled
 }
@@ -57,20 +97,24 @@ type importPrincipal struct {
 const importCLIRecovery = "This import uses a local CLI file. Run import-meeting again with the source file, or upload it as a new import."
 
 type ImportJob struct {
-	Origin        string         `json:"origin"`
-	ExpectedBytes int64          `json:"expectedBytes,omitempty"`
-	StagingState  string         `json:"stagingState,omitempty"`
-	ClearedAt     string         `json:"clearedAt,omitempty"`
-	ID            string         `json:"id"`
-	BatchID       string         `json:"batchId"`
-	CreatedBy     string         `json:"createdBy"`
-	SourceName    string         `json:"sourceName"`
-	StagedPath    string         `json:"stagedPath"`
-	Format        string         `json:"format,omitempty"`
-	State         string         `json:"state"`
-	Phase         string         `json:"phase,omitempty"`
-	Error         string         `json:"error,omitempty"`
-	Sharing       importAudience `json:"sharing"`
+	Origin        string `json:"origin"`
+	ExpectedBytes int64  `json:"expectedBytes,omitempty"`
+	StagingState  string `json:"stagingState,omitempty"`
+	ClearedAt     string `json:"clearedAt,omitempty"`
+	ID            string `json:"id"`
+	BatchID       string `json:"batchId"`
+	CreatedBy     string `json:"createdBy"`
+	SourceName    string `json:"sourceName"`
+	StagedPath    string `json:"stagedPath"`
+	Format        string `json:"format,omitempty"`
+	State         string `json:"state"`
+	Phase         string `json:"phase,omitempty"`
+	Error         string `json:"error,omitempty"`
+	// ErrorCode says what kind of failure Error describes, so the sheet can
+	// say it in the reader's language. Not stored: read from Error, which the
+	// operator writes from fixed wording (importFailureCode).
+	ErrorCode string         `json:"errorCode,omitempty"`
+	Sharing   importAudience `json:"sharing"`
 	// Provenance read from the file at validation.
 	ContentID              string `json:"contentId,omitempty"`
 	SourceRoomID           string `json:"sourceRoomId,omitempty"`
@@ -81,6 +125,10 @@ type ImportJob struct {
 	ImportedAt             string `json:"importedAt,omitempty"`
 	CreatedAt              string `json:"createdAt"`
 	UpdatedAt              string `json:"updatedAt"`
+	// QueuePosition is set on queued web imports in the caller's listing: how
+	// many of the caller's own imports will run before this one. Imports from
+	// other people never count; each person's queue runs on its own.
+	QueuePosition *int `json:"queuePosition,omitempty"`
 }
 
 // The persisted local: marker already distinguishes CLI sources, including
@@ -101,6 +149,9 @@ func scanImportJob(scan func(dest ...any) error) (ImportJob, error) {
 	}
 	if err := json.Unmarshal([]byte(audience), &j.Sharing); err != nil {
 		return ImportJob{}, fmt.Errorf("import job %s: decode sharing: %w", j.ID, err)
+	}
+	if j.State == importStateFailed {
+		j.ErrorCode = importFailureCode(j.Error)
 	}
 	j.Origin = "upload"
 	if j.isCLI() {
@@ -209,11 +260,31 @@ func (s *Store) ImportJob(ctx context.Context, id string) (ImportJob, bool, erro
 	return j, true, nil
 }
 
-// nextQueuedImport claims nothing; it reports the oldest queued row for the
-// single worker to run. Claiming happens by moving the state off `queued`.
-func (s *Store) nextQueuedImport(ctx context.Context) (ImportJob, bool, error) {
+// queuedImportCreators lists the callers with web imports waiting to run.
+func (s *Store) queuedImportCreators(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT DISTINCT created_by FROM import_jobs WHERE state=? AND staged_path NOT GLOB 'local:*'`, importStateQueued)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var users []string
+	for rows.Next() {
+		var user string
+		if err := rows.Scan(&user); err != nil {
+			return nil, err
+		}
+		users = append(users, user)
+	}
+	return users, rows.Err()
+}
+
+// nextQueuedImportFor claims nothing; it reports one caller's oldest queued
+// row for that caller's worker to run. Claiming happens by moving the state
+// off `queued`, and only that caller's worker reads their queue.
+func (s *Store) nextQueuedImportFor(ctx context.Context, user string) (ImportJob, bool, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT `+importJobColumns+` FROM import_jobs WHERE state=? AND staged_path NOT GLOB 'local:*' ORDER BY created_at, id LIMIT 1`, importStateQueued)
+		`SELECT `+importJobColumns+` FROM import_jobs WHERE created_by=? AND state=? AND staged_path NOT GLOB 'local:*' ORDER BY created_at, id LIMIT 1`, user, importStateQueued)
 	j, err := scanImportJob(row.Scan)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ImportJob{}, false, nil
@@ -243,10 +314,13 @@ func (s *Store) SetImportJobProvenance(ctx context.Context, id, format, contentI
 }
 
 // SetImportJobOutcome records a successful delivery and moves the job done.
+// Unlike a state update it overrides a cancel: the meeting is in Nextcloud,
+// and the done row is what tells retention that this installation put it
+// there (doneImportDeliveries).
 func (s *Store) SetImportJobOutcome(ctx context.Context, id, deliveredName string, fileID int64, importedAt string) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE import_jobs SET state=?,phase='',error='',delivered_name=?,file_id=?,imported_at=?,updated_at=? WHERE id=? AND state!=?`,
-		importStateDone, deliveredName, fileID, importedAt, nowUTCString(), id, importStateCanceled)
+		`UPDATE import_jobs SET state=?,phase='',error='',delivered_name=?,file_id=?,imported_at=?,updated_at=? WHERE id=?`,
+		importStateDone, deliveredName, fileID, importedAt, nowUTCString(), id)
 	return err
 }
 
@@ -281,12 +355,14 @@ func (s *Store) RequeueUnfinishedImports(ctx context.Context) (int64, error) {
 	return count, nil
 }
 
-// CancelImportJob marks a non-terminal job canceled. The worker's context is
-// the service's business; this only settles the durable state.
+// CancelImportJob marks a non-terminal job canceled, unless it is indexing:
+// by then its meeting is added and shared, and the run ends done. The
+// worker's context is the service's business; this only settles the durable
+// state.
 func (s *Store) CancelImportJob(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE import_jobs SET state=?,phase='',updated_at=? WHERE id=? AND state NOT IN (?,?,?)`,
-		importStateCanceled, nowUTCString(), id, importStateDone, importStateFailed, importStateCanceled)
+		`UPDATE import_jobs SET state=?,phase='',updated_at=? WHERE id=? AND state NOT IN (?,?,?,?)`,
+		importStateCanceled, nowUTCString(), id, importStateDone, importStateFailed, importStateCanceled, importStateIndexing)
 	return err
 }
 

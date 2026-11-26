@@ -18,6 +18,8 @@
 #    is the default that surfaces in doctor output.
 
 ARG BASE_IMAGE
+# Bumping it means updating the per-arch SHA-256s in the frpc-fetcher stage
+# (from the release's frp_sha256_checksums.txt).
 ARG FRP_VERSION=0.61.1
 ARG FFMPEG_VERSION=latest
 ARG FFMPEG_BUILD_JOBS=2
@@ -79,12 +81,13 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 RUN set -eux; \
  case "${TARGETARCH:-amd64}" in \
-   amd64) frp_arch=amd64 ;; \
-   arm64) frp_arch=arm64 ;; \
-   arm)   frp_arch=arm ;; \
+   amd64) frp_arch=amd64; frp_sha256=bff260b68ca7b1461182a46c4f34e9709ba32764eed30a15dd94ac97f50a2c40 ;; \
+   arm64) frp_arch=arm64; frp_sha256=af6366f2b43920ebfe6235dba6060770399ed1fb18601e5818552bd46a7621f8 ;; \
+   arm)   frp_arch=arm; frp_sha256=8c7ebb07916e69d959d2a90f80900850c41b6dc1decdb87ccba4bc2f3574f855 ;; \
    *) echo "unsupported TARGETARCH: ${TARGETARCH:-amd64}" >&2; exit 1 ;; \
  esac; \
  curl -fSL "https://github.com/fatedier/frp/releases/download/v${FRP_VERSION}/frp_${FRP_VERSION}_linux_${frp_arch}.tar.gz" -o /tmp/frp.tgz; \
+ echo "${frp_sha256}  /tmp/frp.tgz" | sha256sum -c -; \
  mkdir -p /out; \
  tar -xzf /tmp/frp.tgz -C /tmp; \
  cp "/tmp/frp_${FRP_VERSION}_linux_${frp_arch}/frpc" /out/frpc; \
@@ -114,6 +117,7 @@ WORKDIR /var/lib/cassini-operator
 ENV CASSINI_BIN=/usr/local/bin/cassini \
     CASSINI_LIB_DIR=/opt/cassini/lib \
     LD_LIBRARY_PATH=/opt/cassini/lib \
+    ORT_DISABLE_TELEMETRY=1 \
     CASSINI_EXPORTER_RUNNER=/opt/cassini/cassini-publisher/bin/export-static-meetings.sh \
     CASSINI_OPERATOR_DB_PATH=/var/lib/cassini-operator/jobs.sqlite3 \
     CASSINI_OPERATOR_WORK_ROOT=/var/lib/cassini-operator/jobs \

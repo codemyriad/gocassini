@@ -30,7 +30,7 @@ func TestImportJobLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	queued, ok, err := s.nextQueuedImport(ctx)
+	queued, ok, err := s.nextQueuedImportFor(ctx, "alice")
 	if err != nil || !ok || queued.ID != job.ID || queued.State != importStateQueued {
 		t.Fatalf("queued claim: %+v ok=%v err=%v", queued, ok, err)
 	}
@@ -95,9 +95,6 @@ func TestImportJobCancelBeatsWorkerUpdates(t *testing.T) {
 	if err := s.SetImportJobState(ctx, job.ID, importStateDelivering, "delivering", ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetImportJobOutcome(ctx, job.ID, job.ID+".opus", 7, "2026-10-15T10:00:00Z"); err != nil {
-		t.Fatal(err)
-	}
 	got, _, _ := s.ImportJob(ctx, job.ID)
 	if got.State != importStateCanceled {
 		t.Fatalf("cancel lost to worker update: %s", got.State)
@@ -108,6 +105,50 @@ func TestImportJobCancelBeatsWorkerUpdates(t *testing.T) {
 	}
 	if got, _, _ := s.ImportJob(ctx, job.ID); got.State != importStateQueued {
 		t.Fatalf("retry: %s", got.State)
+	}
+}
+
+// Once an import is indexing, its meeting is added and shared, and the run
+// ends done: a cancel then would only show Canceled for a meeting that lands.
+func TestAnIndexingImportCannotBeCanceled(t *testing.T) {
+	s := openImportTestStore(t)
+	ctx := context.Background()
+	job := ImportJob{ID: "01TESTIMPORT0000000000000D", BatchID: "b", CreatedBy: "alice", SourceName: "a.opus", StagedPath: ".CassiniImports/a.opus"}
+	if err := s.CreateImportJobs(ctx, []ImportJob{job}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetImportJobState(ctx, job.ID, importStateIndexing, "indexing", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CancelImportJob(ctx, job.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got, _, _ := s.ImportJob(ctx, job.ID); got.State != importStateIndexing {
+		t.Fatalf("an indexing import was canceled: %s", got.State)
+	}
+}
+
+// A delivery that finished as the cancel arrived is recorded: the meeting is
+// in Nextcloud, and retention trusts it only through the done row.
+func TestImportJobOutcomeOverridesALateCancel(t *testing.T) {
+	s := openImportTestStore(t)
+	ctx := context.Background()
+	job := ImportJob{ID: "01TESTIMPORT0000000000000C", BatchID: "b", CreatedBy: "alice", SourceName: "a.opus", StagedPath: ".CassiniImports/a.opus"}
+	if err := s.CreateImportJobs(ctx, []ImportJob{job}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CancelImportJob(ctx, job.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetImportJobOutcome(ctx, job.ID, job.ID+".opus", 7, "2026-10-15T10:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _, _ := s.ImportJob(ctx, job.ID); got.State != importStateDone {
+		t.Fatalf("delivered import left %s", got.State)
+	}
+	names, err := s.doneImportDeliveries(ctx)
+	if err != nil || len(names) != 1 || names[0] != job.ID+".opus" {
+		t.Fatalf("retention gate: %v %v", names, err)
 	}
 }
 
@@ -242,7 +283,7 @@ func TestInterruptedCLIImportsAreNotRequeuedAsWebUploads(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Queue selection itself excludes CLI jobs, even before startup recovery.
-	if next, ok, err := s.nextQueuedImport(ctx); err != nil || !ok || next.ID != upload.ID {
+	if next, ok, err := s.nextQueuedImportFor(ctx, "alice"); err != nil || !ok || next.ID != upload.ID {
 		t.Fatal(next, ok, err)
 	}
 	if n, err := s.RequeueUnfinishedImports(ctx); err != nil || n != 1 {
@@ -267,5 +308,52 @@ func TestInterruptedCLIImportsAreNotRequeuedAsWebUploads(t *testing.T) {
 	jobs, err := s.ImportJobsFor(ctx, "alice")
 	if err != nil || len(jobs) != len(states)+1 {
 		t.Fatal(jobs, err)
+	}
+}
+
+// #510: a failed import's code is read from its error, which the operator
+// words itself. The stall, time-limit, disk and invalid-file tests check the
+// errors the pipeline really writes; this pins the reading, and that only a
+// failed row has a code.
+func TestImportFailureCodes(t *testing.T) {
+	for errText, want := range map[string]string{
+		importDiskShortMessage: importFailDiskShort,
+		"the download from your Files stalled: less than 64 KiB arrived in 2m0s": importFailStalled,
+		"the import did not finish within 3h50m0s":                               importFailTimedOut,
+		"not a valid portable meeting: exit status 1":                            importFailInvalidFile,
+		errNotPortableMeeting.Error():                                            importFailInvalidFile,
+		"mkdir /seed/.import-x: read-only file system":                           "",
+		"": "",
+	} {
+		if got := importFailureCode(errText); got != want {
+			t.Errorf("%q: code %q, want %q", errText, got, want)
+		}
+	}
+	store, err := OpenStore(filepath.Join(t.TempDir(), "jobs.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	if err := store.CreateImportJobs(ctx, []ImportJob{{ID: "a", BatchID: "b", CreatedBy: "alice", SourceName: "a.opus", StagedPath: ".CassiniImports/a.opus"}}); err != nil {
+		t.Fatal(err)
+	}
+	code := func() string {
+		t.Helper()
+		job, _, err := store.ImportJob(ctx, "a")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return job.ErrorCode
+	}
+	if err := store.SetImportJobState(ctx, "a", importStateFailed, "", importDiskShortMessage); err != nil || code() != importFailDiskShort {
+		t.Fatalf("failed: %v %q", err, code())
+	}
+	if err := store.RetryImportJob(ctx, "a"); err != nil || code() != "" {
+		t.Fatalf("retried: %v %q", err, code())
+	}
+	// A row that is not failed has no code, whatever its error says.
+	if err := store.SetImportJobState(ctx, "a", importStateFetching, "fetching", importDiskShortMessage); err != nil || code() != "" {
+		t.Fatalf("fetching: %v %q", err, code())
 	}
 }

@@ -77,7 +77,7 @@ it.each(["staged", "failed", "canceled"] as const)("polls a retried %s import th
  });
  open(provider);
  await page.getByRole("button", { name: "Retry", exact: true }).click();
- await expect.element(page.getByText("Adding…", { exact: true })).toBeVisible();
+ await expect.element(page.getByText("Waiting for the server…", { exact: true })).toBeVisible();
  // The server completes after the immediate post-Retry refresh. Only polling
  // can discover this transition; do not remount or navigate the workbench.
  current = { ...current, state: "done" };
@@ -85,6 +85,39 @@ it.each(["staged", "failed", "canceled"] as const)("polls a retried %s import th
  expect(host.querySelector(".import-item progress")).toBeNull();
 });
 
+it("says whether an import is queued behind the person's own or being worked on", async () => {
+ const provider: DataProvider = Object.assign(new StaticCatalogProvider(), {
+  listImports: async () => [
+   { ...job("third", "queued"), queuePosition: 2 },
+   { ...job("second", "queued"), queuePosition: 1 },
+   job("first", "validating"),
+  ],
+ });
+ open(provider);
+ const row = async (name: string) => {
+  await expect.element(page.getByText(`${name}.json`, { exact: true })).toBeVisible();
+  return Array.from(host.querySelectorAll(".import-item")).find((item) => item.textContent?.includes(`${name}.json`))!;
+ };
+ const first = await row("first");
+ expect(first.textContent).toContain("Checking…");
+ expect(first.querySelector("progress")).not.toBeNull();
+ const second = await row("second");
+ expect(second.textContent).toContain("Queued · 1 import ahead");
+ // A queued row is waiting, not working: no progress bar.
+ expect(second.querySelector("progress")).toBeNull();
+ expect((await row("third")).textContent).toContain("Queued · 2 imports ahead");
+});
+
+it("offers Cancel until the meeting is added and shared, not while it is indexed", async () => {
+ const provider: DataProvider = Object.assign(new StaticCatalogProvider(), {
+  listImports: async () => [job("sharing", "sharing"), job("indexing", "indexing")],
+  cancelImport: vi.fn(async () => {}),
+ });
+ open(provider);
+ await expect.element(page.getByRole("button", { name: "Cancel sharing.json" })).toBeVisible();
+ await expect.element(page.getByText("indexing.json", { exact: true })).toBeVisible();
+ expect(page.getByRole("button", { name: "Cancel indexing.json" }).elements()).toHaveLength(0);
+});
 it.each(["failed", "canceled"] as const)("explains recovery for %s CLI imports without offering web Retry", async (state) => {
  const cli = { ...job("cli", state), stagedPath: "local:/tmp/source.json", origin: "cli" as const, error: "CLI import failed" };
  const provider: DataProvider = Object.assign(new StaticCatalogProvider(), {
@@ -117,6 +150,50 @@ it("keeps the operator's error behind Details", async () => {
  await expect.element(page.getByText(/read-only file system/)).not.toBeInTheDocument();
  await page.getByRole("button", { name: "Details" }).click();
  await expect.element(page.getByText(/read-only file system/)).toBeVisible();
+});
+
+// #510: a failure the server classified says what happened, and what to do,
+// in the reader's language; the operator's words stay behind Details.
+it("says why the server failed an import when it knows", async () => {
+ const failed = (id: string, errorCode: string, error: string) => ({ ...job(id, "failed"), errorCode, error });
+ const provider: DataProvider = Object.assign(new StaticCatalogProvider(), {
+  listImports: async () => [
+   failed("big", "disk_short", "This file is too big to import right now. Please contact your administrator."),
+   failed("slow", "stalled", "the download from your Files stalled: less than 64 KiB arrived in 2m0s"),
+   failed("long", "timed_out", "the import did not finish within 3h50m0s"),
+   failed("odd", "invalid_file", "not a valid portable meeting: exit status 1"),
+   failed("new", "a_code_from_a_newer_server", "something new"),
+  ],
+  retryImport: vi.fn(async () => {}),
+ });
+ open(provider);
+ const line = (name: string) => Array.from(host.querySelectorAll(".import-item")).find((r) => r.textContent?.includes(name))?.querySelector("span.text-error")?.textContent;
+ await expect.element(page.getByText("big.json", { exact: true })).toBeVisible();
+ expect(line("big.json")).toBe("Too big to import right now. Ask your administrator.");
+ expect(line("slow.json")).toBe("The download from your Files stopped. Try again.");
+ expect(line("long.json")).toBe("The import took too long. Try again.");
+ expect(line("odd.json")).toBe("Not a valid meeting file from Cassini");
+ expect(line("new.json")).toBe("Couldn't import this file");
+ // Retrying an invalid file would fail the same way; the others may succeed.
+ const row = (name: string) => Array.from(host.querySelectorAll(".import-item")).find((r) => r.textContent?.includes(name))!;
+ expect(row("odd.json").textContent).not.toContain("Retry");
+ expect(row("slow.json").textContent).toContain("Retry");
+ await expect.element(page.getByText(/less than 64 KiB/)).not.toBeInTheDocument();
+});
+
+// A dropped file that cannot be imported says why, in the reader's language.
+it("says why a dropped file was skipped", async () => {
+ const provider: DataProvider = Object.assign(new StaticCatalogProvider(), { listImports: async () => [] });
+ open(provider);
+ const transfer = new DataTransfer();
+ transfer.items.add(new File(["RIFF....WAVE"], "song.opus"));
+ transfer.items.add(new File([JSON.stringify({ kind: "cassini-transcription", version: 2 })], "future.json"));
+ const input = host.querySelector('input[type="file"]') as HTMLInputElement;
+ input.files = transfer.files; input.dispatchEvent(new Event("change", { bubbles: true }));
+ await expect.element(page.getByText("Not a meeting file from Cassini, so it was skipped.")).toBeVisible();
+ await expect.element(page.getByText(/^This file was made by a newer version of Cassini/)).toBeVisible();
+ // The parser's words stay on hover.
+ expect(page.getByText("Not a meeting file from Cassini, so it was skipped.").element().getAttribute("title")).toMatch(/neither an Ogg\/Opus/);
 });
 
 it("imports a 51-file selection without hitting the server batch limit", async () => {

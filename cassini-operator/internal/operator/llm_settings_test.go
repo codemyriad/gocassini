@@ -380,8 +380,9 @@ func TestPutLLMSettingsRejectsEnabledStepWithoutProvider(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400: %s", rec.Code, rec.Body.String())
 	}
-	if _, err := os.Stat(rt.llmSettingsPath + ".tmp"); err == nil {
-		t.Fatalf("rejected update left a temp file behind")
+	leftovers, err := filepath.Glob(filepath.Join(filepath.Dir(rt.llmSettingsPath), "."+filepath.Base(rt.llmSettingsPath)+"-*.tmp"))
+	if err != nil || len(leftovers) != 0 {
+		t.Fatalf("rejected update left a temp file behind: %v, %v", leftovers, err)
 	}
 }
 

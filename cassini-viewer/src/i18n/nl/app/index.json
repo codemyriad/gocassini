@@ -37,7 +37,12 @@
       "imports_not_served": "Deze installatie ondersteunt geen import van vergaderingen.",
       "identity_unverified": "Cassini kon niet controleren wie je bent; laad de pagina opnieuw en probeer het nog eens.",
       "request_failed": "Het importverzoek is mislukt (HTTP {status}).",
-      "people_search_failed": "Zoeken naar personen is mislukt (HTTP {status})."
+      "people_search_failed": "Zoeken naar personen is mislukt (HTTP {status}).",
+      "refused_busy": "",
+      "refused_too_large": "",
+      "refused_add_again": "",
+      "refused_uploading": "",
+      "refused_cancel_too_late": ""
     },
     "data_provider": {
       "bundle_needs_meetings": "Kies eerst minstens één vergadering.",
@@ -1120,6 +1125,19 @@
       "saved": "Instellingen voor de bewaartermijn opgeslagen.",
       "operator_unavailable": "Operator niet beschikbaar",
       "save_in_progress": "De instellingen voor de bewaartermijn worden opgeslagen. Probeer het opnieuw."
+    },
+    "imports": {
+      "heading": "",
+      "intro": "",
+      "limit_label": "",
+      "range": "",
+      "save_label": "",
+      "help": "",
+      "default_hint": "",
+      "saved": "",
+      "loading": "",
+      "load_failed": "",
+      "out_of_range": ""
     },
     "retention_policy": {
       "keep_forever": "Voor altijd bewaren",

@@ -162,13 +162,8 @@ func saveEventWebhookSettings(path string, s EventWebhookSettings) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("mkdir settings dir: %w", err)
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, append(data, '\n'), 0o600); err != nil {
-		return fmt.Errorf("write event webhook settings temp: %w", err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("rename event webhook settings: %w", err)
+	if err := writeFileAtomic(path, append(data, '\n'), 0o600); err != nil {
+		return fmt.Errorf("write event webhook settings: %w", err)
 	}
 	return nil
 }
