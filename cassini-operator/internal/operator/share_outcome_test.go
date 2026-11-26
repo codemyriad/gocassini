@@ -89,6 +89,9 @@ func newDirectPublishFixture(t *testing.T, audience []sharePrincipal, refuse ...
 	ctx := context.Background()
 	rt, cleanup := newBarePublishRuntime(t, log.New(io.Discard, "", 0))
 	t.Cleanup(cleanup)
+	// The limit clock is process-wide; a test that reaches the limit must not
+	// make a later test's imports wait.
+	t.Cleanup(resetShareLimit)
 	insertJob(t, rt.store.db, directPublishJob, "2026-11-01T10:00:00Z")
 	if err := rt.store.SetJobTalkBinding(ctx, directPublishJob, `{"backend_url":"https://talk.example","room_token":"room1","owner":"alice","room_public":false}`); err != nil {
 		t.Fatal(err)

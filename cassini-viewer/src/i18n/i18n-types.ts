@@ -6774,6 +6774,30 @@ export type NamespaceViewerTranslation = {
 			 */
 			sharing_shared_with: RequiredParams<'count|num'>
 			/**
+			 * N​o​t​ ​s​h​a​r​e​d​ ​y​e​t
+			 */
+			sharing_not_yet: string
+			/**
+			 * {​c​o​u​n​t​|​n​u​m​}​ ​w​a​i​t​i​n​g
+			 * @param {number} count
+			 */
+			sharing_waiting: RequiredParams<'count|num'>
+			/**
+			 * N​e​x​t​c​l​o​u​d​ ​l​e​t​s​ ​C​a​s​s​i​n​i​ ​c​r​e​a​t​e​ ​o​n​l​y​ ​2​0​ ​s​h​a​r​e​s​ ​e​v​e​r​y​ ​1​0​ ​m​i​n​u​t​e​s​.​ ​C​a​s​s​i​n​i​ ​w​i​l​l​ ​s​h​a​r​e​ ​t​h​i​s​ ​m​e​e​t​i​n​g​ ​w​i​t​h​ ​{​n​a​m​e​s​}​ ​a​s​ ​s​o​o​n​ ​a​s​ ​i​t​ ​c​a​n​;​ ​n​o​b​o​d​y​ ​n​e​e​d​s​ ​t​o​ ​d​o​ ​a​n​y​t​h​i​n​g​.
+			 * @param {unknown} names
+			 */
+			sharing_waiting_title: RequiredParams<'names'>
+			/**
+			 * {​c​o​u​n​t​|​n​u​m​}​ ​n​o​t​ ​s​h​a​r​e​d
+			 * @param {number} count
+			 */
+			sharing_not_shared: RequiredParams<'count|num'>
+			/**
+			 * N​e​x​t​c​l​o​u​d​ ​r​e​f​u​s​e​d​ ​t​o​ ​s​h​a​r​e​ ​i​t​ ​w​i​t​h​ ​{​n​a​m​e​s​}​.
+			 * @param {unknown} names
+			 */
+			sharing_not_shared_title: RequiredParams<'names'>
+			/**
 			 * y​o​u
 			 */
 			sharing_you: string
@@ -15207,6 +15231,26 @@ export type TranslationFunctions = {
 				 * Shared with {count|num} {{recipient|recipients}}
 				 */
 				sharing_shared_with: (arg: { count: number }) => LocalizedString
+				/**
+				 * Not shared yet
+				 */
+				sharing_not_yet: () => LocalizedString
+				/**
+				 * {count|num} waiting
+				 */
+				sharing_waiting: (arg: { count: number }) => LocalizedString
+				/**
+				 * Nextcloud lets Cassini create only 20 shares every 10 minutes. Cassini will share this meeting with {names} as soon as it can; nobody needs to do anything.
+				 */
+				sharing_waiting_title: (arg: { names: unknown }) => LocalizedString
+				/**
+				 * {count|num} not shared
+				 */
+				sharing_not_shared: (arg: { count: number }) => LocalizedString
+				/**
+				 * Nextcloud refused to share it with {names}.
+				 */
+				sharing_not_shared_title: (arg: { names: unknown }) => LocalizedString
 				/**
 				 * you
 				 */

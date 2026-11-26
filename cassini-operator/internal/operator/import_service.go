@@ -467,6 +467,7 @@ func newImportService(rt *Runtime, exapp ExAppConfig, logger *log.Logger) *impor
 	}
 	service.startWorker()
 	service.startStagingGC()
+	service.startShareCompletion()
 	return service
 }
 
@@ -844,6 +845,68 @@ func (s *importService) startWorker() {
 	}()
 }
 
+// shareCompletionEvery is how often the completion pass looks for imported
+// meetings still waiting to be shared; it runs only while Nextcloud's limit on
+// new shares is not holding (ncShareLimit).
+var shareCompletionEvery = time.Minute
+
+// startShareCompletion finishes the shares Nextcloud's limit on new shares
+// held back when imports were added (#484): once the limit allows, it shares
+// each such meeting with those still waiting, oldest import first, and stops
+// the pass as soon as the limit holds again. Nobody has to press anything,
+// and the importer's row says who is still waiting meanwhile.
+func (s *importService) startShareCompletion() {
+	rt := s.rt
+	rt.workerWG.Add(1)
+	go func() {
+		defer rt.workerWG.Done()
+		tick := time.NewTicker(shareCompletionEvery)
+		defer tick.Stop()
+		for {
+			select {
+			case <-rt.ctx.Done():
+				return
+			case <-tick.C:
+			}
+			s.completeWaitingShares(rt.ctx)
+		}
+	}()
+}
+
+// completeWaitingShares is one completion pass.
+func (s *importService) completeWaitingShares(ctx context.Context) {
+	if ncShareLimit.holding() {
+		return
+	}
+	jobs, err := s.rt.store.ImportsWaitingToShare(ctx)
+	if err != nil {
+		if ctx.Err() == nil {
+			s.logf("imports: list meetings waiting to be shared: %v", err)
+		}
+		return
+	}
+	for _, job := range jobs {
+		if ctx.Err() != nil {
+			return
+		}
+		waiting, refused, err := s.importer.completeShares(ctx, job)
+		if err != nil {
+			// Left waiting: the next pass tries again.
+			s.logf("import %s: finish sharing: %v", job.ID, err)
+			continue
+		}
+		if err := s.rt.store.RecordImportShares(context.Background(), job.ID, waiting, refused); err != nil {
+			s.logf("import %s: record sharing: %v", job.ID, err)
+			continue
+		}
+		s.logf("import %s: finished sharing with %d, %d still waiting, %d refused", job.ID, len(job.Sharing.Waiting)-len(waiting)-len(refused), len(waiting), len(refused))
+		if len(waiting) > 0 {
+			// The limit holds again: the rest wait for the next window.
+			return
+		}
+	}
+}
+
 // dispatch gives every caller with queued imports a worker, unless they
 // already have one. It runs on the dispatcher goroutine, which holds a
 // workerWG count of its own, so adding to the group here is safe.
@@ -1043,12 +1106,21 @@ func (s *importService) runImportJob(job ImportJob) importRunOutcome {
 	if err := rt.store.SetImportJobProvenance(context.Background(), job.ID, result.Format, result.ContentID, result.SourceRoomID, result.CreatedAtUTC, result.RecordedAtLocal); err != nil {
 		s.logf("import %s: persist provenance: %v", job.ID, err)
 	}
+	// Who is still waiting is written before the row is done, so a done row
+	// never shows everyone shared with for a moment; the completion pass
+	// reads done rows only.
+	waiting, refused := deferredShares(result.NotSharedWith), refusedShares(result.NotSharedWith)
+	if len(waiting) > 0 || len(refused) > 0 {
+		if err := rt.store.RecordImportShares(context.Background(), job.ID, waiting, refused); err != nil {
+			s.logf("import %s: record who is not shared with yet: %v", job.ID, err)
+		}
+	}
 	if err := rt.store.SetImportJobOutcome(context.Background(), job.ID, result.DeliveredName, result.FileID, result.ImportedAtUTC); err != nil {
 		s.logf("import %s: persist outcome: %v", job.ID, err)
 		return importSettled
 	}
-	s.logf("import succeeded id=%s source=%q delivered=%s file_id=%d shared_with=%d not_shared_with=%d searchable=%t",
-		job.ID, job.SourceName, result.DeliveredName, result.FileID, result.SharedWith, len(result.NotSharedWith), result.SearchIndexed)
+	s.logf("import succeeded id=%s source=%q delivered=%s file_id=%d shared_with=%d not_shared_with=%d waiting_for_share_limit=%d searchable=%t",
+		job.ID, job.SourceName, result.DeliveredName, result.FileID, result.SharedWith, len(refused), len(waiting), result.SearchIndexed)
 	// The staged copy is spent. Best effort: a leftover costs the caller some
 	// quota and is theirs to see; it never fails a landed import.
 	if err := s.exapp.davDeleteUserFile(context.Background(), s.client, job.CreatedBy, job.StagedPath); err != nil {

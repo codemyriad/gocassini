@@ -402,6 +402,17 @@ const browse = {
     sharing_only_you_title: "Only you can open this meeting.",
     // Plural; see the translator guide. {count}: people or groups, the importer included.
     sharing_shared_with: "Shared with {count:number|num} {{recipient|recipients}}",
+    // Nobody can open it yet: Cassini is still waiting to share it.
+    sharing_not_yet: "Not shared yet",
+    // After the sharing line, when Nextcloud's limit on new shares held some
+    // recipients back (#484). Plural; see the translator guide.
+    sharing_waiting: "{count:number|num} waiting",
+    // On hover. {names} is a list of people and groups.
+    sharing_waiting_title: "Nextcloud lets Cassini create only 20 shares every 10 minutes. Cassini will share this meeting with {names} as soon as it can; nobody needs to do anything.",
+    // After the sharing line, when Nextcloud refused some recipients. Plural; see the translator guide.
+    sharing_not_shared: "{count:number|num} not shared",
+    // On hover. {names}: people or groups, each with Nextcloud's reason in brackets.
+    sharing_not_shared_title: "Nextcloud refused to share it with {names}.",
     // The first name in the list of who can open it.
     sharing_you: "you",
     // {name} is a Nextcloud group's name.
