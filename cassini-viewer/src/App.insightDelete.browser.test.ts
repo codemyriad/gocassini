@@ -116,6 +116,30 @@ it("deletes behind a confirmation that holds while the request is in flight, and
   expect(card()).toBeNull();
 });
 
+it("keeps the insight and the refusal when Escape is pressed while the delete is in flight", async () => {
+  let refuse: (error: Error) => void = () => {};
+  const { provider } = fixture({ deleteInsight: () => new Promise<void>((_resolve, reject) => (refuse = reject)) });
+  app = mount(App, { target: host, props: { dataProvider: provider } });
+  await expect.poll(() => card()).not.toBeNull();
+
+  await openDeleteDialog();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Delete insight", exact: true }).click();
+  await expect.poll(() => provider.deleteInsight.mock.calls.length).toBe(1);
+
+  // The dialog's buttons are disabled while it is busy, so focus is no longer
+  // inside it: this Escape reaches the shell, which must not close the insight
+  // under the dialog.
+  await userEvent.keyboard("{Escape}");
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  expect(host.querySelector(".confirm-dialog")).not.toBeNull();
+
+  refuse(new Error("Cassini could not delete the insight. Its document may still be in your Files."));
+  await expect.poll(() => host.querySelector(".confirm-dialog")).toBeNull();
+  await expect
+    .element(page.getByText("Cassini could not delete the insight. Its document may still be in your Files."))
+    .toBeVisible();
+});
+
 it("keeps the insight open with the reason when the delete is refused", async () => {
   const { provider } = fixture({
     deleteInsight: async () => {

@@ -607,6 +607,13 @@
     if (rootEl?.querySelector("dialog[open]")) {
       return;
     }
+    // A confirmation answers its own Escape, but only while focus is inside it.
+    // While its request is in flight its buttons are disabled and focus falls
+    // out, so Escape lands here; closing the sheet under it would also drop a
+    // refusal that arrives afterwards.
+    if (deleteConfirm || insightDeleteConfirm) {
+      return;
+    }
     if (railOpen) {
       railOpen = false;
       return;
