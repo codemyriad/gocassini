@@ -1403,28 +1403,33 @@
       "create_unavailable": "Uma destas reuniões não está disponível para si, ou esta instalação não consegue criar análises.",
       "list_unavailable": "Não foi possível listar as análises.",
       "rename_unavailable": "Essa análise não está disponível para si, ou esta instalação não consegue mudar o nome de análises.",
+      "delete_unavailable": "",
       "insight_unavailable": "Essa análise não está disponível para si, ou esta instalação não consegue criar análises.",
       "already_running": "Esta análise já está em curso.",
+      "delete_running": "",
       "unreachable": {
         "create": "Não foi possível contactar o Cassini para iniciar a análise{detail}.",
         "list": "Não foi possível contactar o Cassini para listar as suas análises{detail}.",
         "read": "Não foi possível contactar o Cassini para ler a análise{detail}.",
         "retry": "Não foi possível contactar o Cassini para tentar a análise novamente{detail}.",
-        "rename": "Não foi possível contactar o Cassini para mudar o nome da análise{detail}."
+        "rename": "Não foi possível contactar o Cassini para mudar o nome da análise{detail}.",
+        "delete": ""
       },
       "cassini_failed": {
         "create": "O Cassini não conseguiu iniciar a análise.",
         "list": "O Cassini não conseguiu listar as suas análises.",
         "read": "O Cassini não conseguiu ler a análise.",
         "retry": "O Cassini não conseguiu tentar a análise novamente.",
-        "rename": "O Cassini não conseguiu mudar o nome da análise."
+        "rename": "O Cassini não conseguiu mudar o nome da análise.",
+        "delete": ""
       },
       "failed_status": {
         "create": "Não foi possível iniciar a análise (HTTP {status}).",
         "list": "Não foi possível listar as suas análises (HTTP {status}).",
         "read": "Não foi possível ler a análise (HTTP {status}).",
         "retry": "Não foi possível tentar a análise novamente (HTTP {status}).",
-        "rename": "Não foi possível mudar o nome da análise (HTTP {status})."
+        "rename": "Não foi possível mudar o nome da análise (HTTP {status}).",
+        "delete": ""
       }
     },
     "summary_action": {

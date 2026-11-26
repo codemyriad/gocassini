@@ -1403,28 +1403,33 @@
       "create_unavailable": "Jedno z tych spotkań nie jest dla ciebie dostępne albo to wdrożenie nie potrafi tworzyć analiz.",
       "list_unavailable": "Nie udało się wyświetlić listy analiz.",
       "rename_unavailable": "Ta analiza nie jest dla ciebie dostępna albo to wdrożenie nie potrafi zmieniać nazw analiz.",
+      "delete_unavailable": "",
       "insight_unavailable": "Ta analiza nie jest dla ciebie dostępna albo to wdrożenie nie potrafi tworzyć analiz.",
       "already_running": "Ta analiza jest już uruchomiona.",
+      "delete_running": "",
       "unreachable": {
         "create": "Nie udało się połączyć z Cassini, aby uruchomić analizę{detail}.",
         "list": "Nie udało się połączyć z Cassini, aby wyświetlić twoje analizy{detail}.",
         "read": "Nie udało się połączyć z Cassini, aby odczytać analizę{detail}.",
         "retry": "Nie udało się połączyć z Cassini, aby ponowić analizę{detail}.",
-        "rename": "Nie udało się połączyć z Cassini, aby zmienić nazwę analizy{detail}."
+        "rename": "Nie udało się połączyć z Cassini, aby zmienić nazwę analizy{detail}.",
+        "delete": ""
       },
       "cassini_failed": {
         "create": "Cassini nie mógł uruchomić analizy.",
         "list": "Cassini nie mógł wyświetlić twoich analiz.",
         "read": "Cassini nie mógł odczytać analizy.",
         "retry": "Cassini nie mógł ponowić analizy.",
-        "rename": "Cassini nie mógł zmienić nazwy analizy."
+        "rename": "Cassini nie mógł zmienić nazwy analizy.",
+        "delete": ""
       },
       "failed_status": {
         "create": "Nie udało się uruchomić analizy (HTTP {status}).",
         "list": "Nie udało się wyświetlić twoich analiz (HTTP {status}).",
         "read": "Nie udało się odczytać analizy (HTTP {status}).",
         "retry": "Nie udało się ponowić analizy (HTTP {status}).",
-        "rename": "Nie udało się zmienić nazwy analizy (HTTP {status})."
+        "rename": "Nie udało się zmienić nazwy analizy (HTTP {status}).",
+        "delete": ""
       }
     },
     "summary_action": {

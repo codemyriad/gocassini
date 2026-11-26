@@ -752,13 +752,16 @@
     },
     "card": {
       "kind": "Indsigt",
-      "meetings": "{count:number|num} {{møde|møder}}"
+      "meetings": "{count:number|num} {{møde|møder}}",
+      "sources_unavailable": ""
     },
     "document": {
       "region_label": "Indsigt",
       "name_input_label": "Indsigtens navn",
       "rename_button_label": "Omdøb indsigten",
       "rename_tooltip": "Omdøb",
+      "delete_button_label": "",
+      "delete_tooltip": "",
       "close_label": "Luk indsigten",
       "rooms": "{count:number|num} {{samtale|samtaler}}",
       "export_label": "Eksportér denne indsigt",
@@ -784,6 +787,12 @@
       "template_label": "Skabelon",
       "provider_label": "Udbyder",
       "attempt_label": "Forsøg"
+    },
+    "delete": {
+      "confirm_title": "",
+      "confirm_body": "",
+      "confirm_body_no_document": "",
+      "confirm_button": ""
     },
     "export": {
       "written_by": "Skrevet af Cassini den {date}",

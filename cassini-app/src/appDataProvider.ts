@@ -34,6 +34,7 @@ import {
 import {
   listInsights as fetchInsightRuns,
   readInsight,
+  deleteInsight as postInsightDelete,
   renameInsight as postInsightName,
   retryInsight as postInsightRetry,
 } from "./insights/client";
@@ -240,6 +241,11 @@ export class AppDataProvider extends StaticCatalogProvider {
   // empty name clears it.
   async renameInsight(id: string, name: string): Promise<InsightRecord> {
     return postInsightName(id, name);
+  }
+
+  // POST insights/<id>/delete (#499). No body back: success is the status.
+  async deleteInsight(id: string): Promise<void> {
+    return postInsightDelete(id);
   }
 
   // The document in Nextcloud Files (D-792), selected by the file id the

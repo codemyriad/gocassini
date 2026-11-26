@@ -691,3 +691,44 @@ func TestInsightRunsAreUntouchedByTheJobMachinery(t *testing.T) {
 		t.Fatalf("the job restart sweep moved a running insight to %q", run.Status)
 	}
 }
+
+// DeleteRun removes a finished run with its attempts, refuses one an attempt
+// holds, and answers sql.ErrNoRows for one that is not there (#499).
+func TestInsightStoreDeletesOnlyAFinishedRun(t *testing.T) {
+	ctx := context.Background()
+	store := newInsightTestStore(t)
+	run := InsightRun{
+		ID: "ins_0123456789abcdef", CreatedBy: "alice", WorkflowID: "summarise",
+		MeetingIDs: []string{"mtg_1111111111111111"},
+	}
+	if err := store.CreateRun(ctx, run); err != nil {
+		t.Fatalf("CreateRun() error = %v", err)
+	}
+	if err := store.DeleteRun(ctx, run.ID); !errors.Is(err, errInsightRunBusy) {
+		t.Fatalf("DeleteRun(queued) error = %v, want errInsightRunBusy", err)
+	}
+	if _, err := store.BeginAttempt(ctx, run.ID); err != nil {
+		t.Fatalf("BeginAttempt() error = %v", err)
+	}
+	if err := store.DeleteRun(ctx, run.ID); !errors.Is(err, errInsightRunBusy) {
+		t.Fatalf("DeleteRun(running) error = %v, want errInsightRunBusy", err)
+	}
+	if err := store.FinishAttempt(ctx, run.ID, InsightOutcome{Status: insightStatusFailed, Error: insightReasonTimeout}); err != nil {
+		t.Fatalf("FinishAttempt() error = %v", err)
+	}
+	if err := store.DeleteRun(ctx, run.ID); err != nil {
+		t.Fatalf("DeleteRun(failed) error = %v", err)
+	}
+	if _, err := store.GetRun(ctx, run.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("GetRun() after delete error = %v, want sql.ErrNoRows", err)
+	}
+	if attempts, err := store.ListAttempts(ctx, run.ID); err != nil || len(attempts) != 0 {
+		t.Errorf("ListAttempts() after delete = %+v, %v; want none", attempts, err)
+	}
+	if listed, err := store.ListRuns(ctx, "alice"); err != nil || len(listed) != 0 {
+		t.Errorf("ListRuns() after delete = %+v, %v; want none", listed, err)
+	}
+	if err := store.DeleteRun(ctx, run.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("DeleteRun(absent) error = %v, want sql.ErrNoRows", err)
+	}
+}

@@ -4,7 +4,7 @@
   import { around } from "./ui/richText";
   import { marked } from "marked";
   import DOMPurify from "dompurify";
-  import { Calendar, ExternalLink, FileText, FileX, MessageSquare, Pencil } from "@lucide/svelte";
+  import { Calendar, ExternalLink, FileText, FileX, MessageSquare, Pencil, Trash2 } from "@lucide/svelte";
   import CloseButton from "./ui/CloseButton.svelte";
   import { LL } from "../i18n";
   import ExportMenu from "./ExportMenu.svelte";
@@ -66,6 +66,12 @@
   // retry: the provider offers it, the shell sends it. This is the one place an
   // insight is renamed; the card and the list only show the name.
   export let canRename = false;
+  // Delete (#499): offered where the provider can perform it, and only once the
+  // run has finished — a queued or running run is about to write its document,
+  // and the operator refuses to delete it. The shell owns the confirmation and
+  // the request; deleteError is its answer when the delete failed.
+  export let canDelete = false;
+  export let deleteError = "";
   export let renaming = false;
   export let renameError = "";
   // Where the document's folder opens in Nextcloud Files, or "" in a build
@@ -83,6 +89,7 @@
     // The editor was closed without a save, so a refusal shown in it is over:
     // the shell drops it, and the next opening starts clean.
     renameCancel: void;
+    delete: void;
   }>();
 
   // The heading turns into its own input, pre-filled with what it says, with
@@ -170,6 +177,7 @@
     }
   }
   $: renameErrorId = `ins-rename-error-${insight.id}`;
+  $: deletable = canDelete && (insight.status === "succeeded" || insight.status === "failed");
 
   $: question = insight.question?.trim() ?? "";
   $: headline = insightHeadline(insight);
@@ -352,11 +360,25 @@
             <Pencil size={14} aria-hidden="true" />
           </button>
         {/if}
+        {#if !editingName && deletable}
+          <button
+            type="button"
+            class="ins-delete btn btn-sm btn-square btn-quiet"
+            aria-label={$LL.viewer.insights.document.delete_button_label()}
+            title={$LL.viewer.insights.document.delete_tooltip()}
+            on:click={() => dispatch("delete")}
+          >
+            <Trash2 size={14} aria-hidden="true" />
+          </button>
+        {/if}
         <CloseButton label={$LL.viewer.insights.document.close_label()} on:click={() => dispatch("close")} />
       </div>
     </div>
     {#if editingName && renameError}
       <p class="ins-rename-error" id={renameErrorId} role="status">{renameError}</p>
+    {/if}
+    {#if deleteError}
+      <p class="ins-rename-error" role="status">{deleteError}</p>
     {/if}
     <!-- The run's facts on the left and, on the same row, the ways out of
          Cassini (D-792): a markdown copy under one Export control, as the
@@ -610,7 +632,8 @@
     margin-top: -0.25rem;
   }
   /* Quieter than the heading it sits by until it is wanted. */
-  .ins-rename {
+  .ins-rename,
+  .ins-delete {
     color: color-mix(in oklch, var(--color-base-content) 55%, transparent);
   }
   /* Renaming: the input and the 32px controls are the same height, so the

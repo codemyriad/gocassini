@@ -119,6 +119,20 @@ func (f *fakeInsightStore) RenameRun(_ context.Context, id, name string) (Insigh
 	return run, nil
 }
 
+func (f *fakeInsightStore) DeleteRun(_ context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	run, ok := f.runs[id]
+	if !ok {
+		return sql.ErrNoRows
+	}
+	if run.Status != insightStatusSucceeded && run.Status != insightStatusFailed {
+		return errInsightRunBusy
+	}
+	delete(f.runs, id)
+	return nil
+}
+
 func (f *fakeInsightStore) BeginAttempt(_ context.Context, id string) (InsightRun, error) {
 	if f.beginErr != nil {
 		return InsightRun{}, f.beginErr
@@ -830,5 +844,241 @@ func TestRenameInsightRefusesANameThatCannotBeATitle(t *testing.T) {
 	}
 	if w := harness.do(t, http.MethodGet, "/insights/ins_00000000000000a1/name", "alice", ""); w.Code != http.StatusMethodNotAllowed {
 		t.Errorf("GET name = %d, want 405", w.Code)
+	}
+}
+
+// --- delete (#499) -------------------------------------------------------------
+
+const deleteTestDocPath = ncInsightsRoot + "/Hiring themes.md"
+
+// A finished insight is deleted: its document goes from the caller's own files,
+// as them, and the run leaves their list.
+func TestDeleteInsightRemovesTheDocumentAndTheRun(t *testing.T) {
+	harness := newInsightHandlerHarness(t,
+		InsightRun{
+			ID: "ins_00000000000000a1", CreatedBy: "alice", Status: insightStatusSucceeded,
+			MeetingIDs: []string{"MEETING1"}, DocumentPath: deleteTestDocPath, DocumentFileID: "4001",
+		},
+	)
+	harness.dav.holdDocument("alice/"+deleteTestDocPath, "# Themes\n")
+	harness.dav.fileIDs["alice/"+deleteTestDocPath] = 4001
+
+	w := harness.do(t, http.MethodPost, "/insights/ins_00000000000000a1/delete", "alice", "")
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("code = %d, want 204 (%s)", w.Code, w.Body.String())
+	}
+	if got := harness.dav.deletes(); len(got) != 1 || got[0] != "alice/"+deleteTestDocPath {
+		t.Errorf("deletes = %v, want the document deleted as alice", got)
+	}
+	if _, still := harness.store.runs["ins_00000000000000a1"]; still {
+		t.Error("the run is still listed after its delete")
+	}
+}
+
+// A document the caller already moved or deleted does not block deleting the
+// insight: what they asked to remove is the insight.
+func TestDeleteInsightWhoseDocumentIsAlreadyGone(t *testing.T) {
+	for _, fileID := range []string{"4001", ""} {
+		harness := newInsightHandlerHarness(t,
+			InsightRun{
+				ID: "ins_00000000000000a1", CreatedBy: "alice", Status: insightStatusSucceeded,
+				MeetingIDs: []string{"MEETING1"}, DocumentPath: deleteTestDocPath, DocumentFileID: fileID,
+			},
+		)
+		w := harness.do(t, http.MethodPost, "/insights/ins_00000000000000a1/delete", "alice", "")
+		if w.Code != http.StatusNoContent {
+			t.Fatalf("file id %q: code = %d, want 204 (%s)", fileID, w.Code, w.Body.String())
+		}
+		if _, still := harness.store.runs["ins_00000000000000a1"]; still {
+			t.Errorf("file id %q: the run is still listed", fileID)
+		}
+	}
+}
+
+// The caller owns the folder and may have put another file under the
+// document's name. Deleting an insight must not delete a file it did not write.
+func TestDeleteInsightLeavesADifferentFileAtTheDocumentPath(t *testing.T) {
+	harness := newInsightHandlerHarness(t,
+		InsightRun{
+			ID: "ins_00000000000000a1", CreatedBy: "alice", Status: insightStatusSucceeded,
+			MeetingIDs: []string{"MEETING1"}, DocumentPath: deleteTestDocPath, DocumentFileID: "4001",
+		},
+	)
+	harness.dav.holdDocument("alice/"+deleteTestDocPath, "my own notes\n")
+	harness.dav.fileIDs["alice/"+deleteTestDocPath] = 9999
+
+	w := harness.do(t, http.MethodPost, "/insights/ins_00000000000000a1/delete", "alice", "")
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("code = %d, want 204 (%s)", w.Code, w.Body.String())
+	}
+	if got := harness.dav.deletes(); len(got) != 0 {
+		t.Errorf("deletes = %v, want the unrelated file left alone", got)
+	}
+	if _, still := harness.store.runs["ins_00000000000000a1"]; still {
+		t.Error("the run is still listed")
+	}
+}
+
+// A run delivered before file ids were kept cannot tell its document from a
+// file the caller later saved under the same name, so the file stays and only
+// the insight goes.
+func TestDeleteInsightWithoutAFileIDLeavesTheFile(t *testing.T) {
+	harness := newInsightHandlerHarness(t,
+		InsightRun{
+			ID: "ins_00000000000000a1", CreatedBy: "alice", Status: insightStatusSucceeded,
+			MeetingIDs: []string{"MEETING1"}, DocumentPath: deleteTestDocPath,
+		},
+	)
+	harness.dav.holdDocument("alice/"+deleteTestDocPath, "my own notes\n")
+	harness.dav.fileIDs["alice/"+deleteTestDocPath] = 9999
+
+	w := harness.do(t, http.MethodPost, "/insights/ins_00000000000000a1/delete", "alice", "")
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("code = %d, want 204 (%s)", w.Code, w.Body.String())
+	}
+	if got := harness.dav.deletes(); len(got) != 0 {
+		t.Errorf("deletes = %v, want a run without a file id to leave the file alone", got)
+	}
+	if _, still := harness.store.runs["ins_00000000000000a1"]; still {
+		t.Error("the run is still listed")
+	}
+}
+
+// A failed run has no document; deleting it touches nothing in Files.
+func TestDeleteFailedInsightMakesNoFilesCall(t *testing.T) {
+	harness := newInsightHandlerHarness(t,
+		InsightRun{ID: "ins_00000000000000a1", CreatedBy: "alice", Status: insightStatusFailed, MeetingIDs: []string{"MEETING1"}},
+	)
+	before := harness.dav.requestCount()
+	w := harness.do(t, http.MethodPost, "/insights/ins_00000000000000a1/delete", "alice", "")
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("code = %d, want 204 (%s)", w.Code, w.Body.String())
+	}
+	if harness.dav.requestCount() != before {
+		t.Error("deleting a run with no document called Nextcloud")
+	}
+}
+
+// A queued or running run is about to deliver a file; deleting it now would
+// leave that file with nothing in Cassini pointing at it.
+func TestDeleteInsightRefusesARunThatIsNotFinished(t *testing.T) {
+	for _, status := range []string{insightStatusQueued, insightStatusRunning} {
+		harness := newInsightHandlerHarness(t,
+			InsightRun{ID: "ins_00000000000000a1", CreatedBy: "alice", Status: status, MeetingIDs: []string{"MEETING1"}},
+		)
+		w := harness.do(t, http.MethodPost, "/insights/ins_00000000000000a1/delete", "alice", "")
+		if w.Code != http.StatusConflict {
+			t.Errorf("%s: code = %d, want 409 (%s)", status, w.Code, w.Body.String())
+		}
+		if _, still := harness.store.runs["ins_00000000000000a1"]; !still {
+			t.Errorf("%s: the run was deleted", status)
+		}
+	}
+}
+
+// Somebody else's run answers as an absent one, and is not touched.
+func TestDeleteInsightHidesAnotherCallersRun(t *testing.T) {
+	harness := newInsightHandlerHarness(t,
+		InsightRun{ID: "ins_00000000000000b2", CreatedBy: "bob", Status: insightStatusSucceeded, MeetingIDs: []string{"MEETING1"}},
+	)
+	theirs := harness.do(t, http.MethodPost, "/insights/ins_00000000000000b2/delete", "alice", "")
+	absent := harness.do(t, http.MethodPost, "/insights/ins_0000000000000fff/delete", "alice", "")
+	if theirs.Code != http.StatusNotFound || absent.Code != http.StatusNotFound {
+		t.Errorf("another caller's run = %d, an absent one = %d; both must be 404", theirs.Code, absent.Code)
+	}
+	if _, still := harness.store.runs["ins_00000000000000b2"]; !still {
+		t.Error("another caller's run was deleted")
+	}
+}
+
+// Nextcloud refusing the document's delete keeps the insight listed, so the
+// caller can try again rather than lose track of a file still in their Files.
+func TestDeleteInsightKeepsTheRunWhenTheDocumentCannotBeDeleted(t *testing.T) {
+	harness := newInsightHandlerHarness(t,
+		InsightRun{
+			ID: "ins_00000000000000a1", CreatedBy: "alice", Status: insightStatusSucceeded,
+			MeetingIDs: []string{"MEETING1"}, DocumentPath: deleteTestDocPath, DocumentFileID: "4001",
+		},
+	)
+	harness.dav.holdDocument("alice/"+deleteTestDocPath, "# Themes\n")
+	harness.dav.fileIDs["alice/"+deleteTestDocPath] = 4001
+	harness.dav.failDelete = true
+
+	w := harness.do(t, http.MethodPost, "/insights/ins_00000000000000a1/delete", "alice", "")
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("code = %d, want 502 (%s)", w.Code, w.Body.String())
+	}
+	if _, still := harness.store.runs["ins_00000000000000a1"]; !still {
+		t.Error("the run was deleted although its document is still in Files")
+	}
+}
+
+func TestDeleteInsightIsAPost(t *testing.T) {
+	harness := newInsightHandlerHarness(t,
+		InsightRun{ID: "ins_00000000000000a1", CreatedBy: "alice", Status: insightStatusSucceeded, MeetingIDs: []string{"MEETING1"}},
+	)
+	w := harness.do(t, http.MethodGet, "/insights/ins_00000000000000a1/delete", "alice", "")
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("code = %d, want 405", w.Code)
+	}
+}
+
+// Where Nextcloud cannot say which file sits at the document's path — no file
+// id, or the PROPFIND failed — the insight stays listed and nothing is deleted:
+// dropping the row would leave the document behind with nothing pointing at it.
+func TestDeleteInsightKeepsTheRunWhenTheDocumentCannotBeIdentified(t *testing.T) {
+	cases := map[string]func(*insightDAV){
+		"no file id":      func(d *insightDAV) {},
+		"PROPFIND failed": func(d *insightDAV) { d.failPropfind = true },
+	}
+	for name, breakIt := range cases {
+		t.Run(name, func(t *testing.T) {
+			harness := newInsightHandlerHarness(t,
+				InsightRun{
+					ID: "ins_00000000000000a1", CreatedBy: "alice", Status: insightStatusSucceeded,
+					MeetingIDs: []string{"MEETING1"}, DocumentPath: deleteTestDocPath, DocumentFileID: "4001",
+				},
+			)
+			harness.dav.holdDocument("alice/"+deleteTestDocPath, "# Themes\n")
+			breakIt(harness.dav)
+
+			w := harness.do(t, http.MethodPost, "/insights/ins_00000000000000a1/delete", "alice", "")
+			if w.Code != http.StatusBadGateway {
+				t.Fatalf("code = %d, want 502 (%s)", w.Code, w.Body.String())
+			}
+			if got := harness.dav.deletes(); len(got) != 0 {
+				t.Errorf("deletes = %v, want nothing deleted", got)
+			}
+			if _, still := harness.store.runs["ins_00000000000000a1"]; !still {
+				t.Error("the run was deleted although its document may still be in Files")
+			}
+		})
+	}
+}
+
+// The operator only delivers into its own folder; a row naming a path outside
+// it is not trusted to delete there.
+func TestDeleteInsightRefusesADocumentPathOutsideTheInsightsFolder(t *testing.T) {
+	for _, docPath := range []string{
+		"Documents/taxes.md",
+		ncInsightsRoot + "/../Documents/taxes.md",
+		ncInsightsRoot + "/./Hiring themes.md",
+	} {
+		harness := newInsightHandlerHarness(t,
+			InsightRun{
+				ID: "ins_00000000000000a1", CreatedBy: "alice", Status: insightStatusSucceeded,
+				MeetingIDs: []string{"MEETING1"}, DocumentPath: docPath, DocumentFileID: "4001",
+			},
+		)
+		harness.dav.holdDocument("alice/Documents/taxes.md", "private\n")
+		harness.dav.fileIDs["alice/Documents/taxes.md"] = 4001
+
+		w := harness.do(t, http.MethodPost, "/insights/ins_00000000000000a1/delete", "alice", "")
+		if w.Code != http.StatusBadGateway {
+			t.Errorf("%s: code = %d, want 502 (%s)", docPath, w.Code, w.Body.String())
+		}
+		if got := harness.dav.deletes(); len(got) != 0 {
+			t.Errorf("%s: deletes = %v, want nothing outside the insights folder deleted", docPath, got)
+		}
 	}
 }

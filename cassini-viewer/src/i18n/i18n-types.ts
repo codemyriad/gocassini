@@ -5466,6 +5466,10 @@ export type NamespaceAppTranslation = {
 			 */
 			rename_unavailable: string
 			/**
+			 * T​h​a​t​ ​i​n​s​i​g​h​t​ ​i​s​ ​n​o​ ​l​o​n​g​e​r​ ​t​h​e​r​e​,​ ​o​r​ ​t​h​i​s​ ​d​e​p​l​o​y​m​e​n​t​ ​c​a​n​n​o​t​ ​d​e​l​e​t​e​ ​i​n​s​i​g​h​t​s​.
+			 */
+			delete_unavailable: string
+			/**
 			 * T​h​a​t​ ​i​n​s​i​g​h​t​ ​i​s​ ​n​o​t​ ​a​v​a​i​l​a​b​l​e​ ​t​o​ ​y​o​u​,​ ​o​r​ ​t​h​i​s​ ​d​e​p​l​o​y​m​e​n​t​ ​c​a​n​n​o​t​ ​c​r​e​a​t​e​ ​i​n​s​i​g​h​t​s​.
 			 */
 			insight_unavailable: string
@@ -5473,6 +5477,10 @@ export type NamespaceAppTranslation = {
 			 * T​h​i​s​ ​i​n​s​i​g​h​t​ ​i​s​ ​a​l​r​e​a​d​y​ ​r​u​n​n​i​n​g​.
 			 */
 			already_running: string
+			/**
+			 * T​h​i​s​ ​i​n​s​i​g​h​t​ ​i​s​ ​s​t​i​l​l​ ​r​u​n​n​i​n​g​.​ ​D​e​l​e​t​e​ ​i​t​ ​o​n​c​e​ ​i​t​ ​h​a​s​ ​f​i​n​i​s​h​e​d​.
+			 */
+			delete_running: string
 			unreachable: {
 				/**
 				 * C​o​u​l​d​ ​n​o​t​ ​r​e​a​c​h​ ​C​a​s​s​i​n​i​ ​t​o​ ​s​t​a​r​t​ ​t​h​e​ ​i​n​s​i​g​h​t​{​d​e​t​a​i​l​}​.
@@ -5499,6 +5507,11 @@ export type NamespaceAppTranslation = {
 				 * @param {unknown} detail
 				 */
 				rename: RequiredParams<'detail'>
+				/**
+				 * C​o​u​l​d​ ​n​o​t​ ​r​e​a​c​h​ ​C​a​s​s​i​n​i​ ​t​o​ ​d​e​l​e​t​e​ ​t​h​e​ ​i​n​s​i​g​h​t​{​d​e​t​a​i​l​}​.
+				 * @param {unknown} detail
+				 */
+				'delete': RequiredParams<'detail'>
 			}
 			cassini_failed: {
 				/**
@@ -5521,6 +5534,10 @@ export type NamespaceAppTranslation = {
 				 * C​a​s​s​i​n​i​ ​c​o​u​l​d​ ​n​o​t​ ​r​e​n​a​m​e​ ​t​h​e​ ​i​n​s​i​g​h​t​.
 				 */
 				rename: string
+				/**
+				 * C​a​s​s​i​n​i​ ​c​o​u​l​d​ ​n​o​t​ ​d​e​l​e​t​e​ ​t​h​e​ ​i​n​s​i​g​h​t​.​ ​I​t​s​ ​d​o​c​u​m​e​n​t​ ​m​a​y​ ​s​t​i​l​l​ ​b​e​ ​i​n​ ​y​o​u​r​ ​F​i​l​e​s​.
+				 */
+				'delete': string
 			}
 			failed_status: {
 				/**
@@ -5548,6 +5565,11 @@ export type NamespaceAppTranslation = {
 				 * @param {unknown} status
 				 */
 				rename: RequiredParams<'status'>
+				/**
+				 * C​o​u​l​d​ ​n​o​t​ ​d​e​l​e​t​e​ ​t​h​e​ ​i​n​s​i​g​h​t​ ​(​H​T​T​P​ ​{​s​t​a​t​u​s​}​)​.
+				 * @param {unknown} status
+				 */
+				'delete': RequiredParams<'status'>
 			}
 		}
 		summary_action: {
@@ -8459,6 +8481,11 @@ export type NamespaceViewerTranslation = {
 			 * @param {number} count
 			 */
 			meetings: RequiredParams<'count|num'>
+			/**
+			 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​s​o​u​r​c​e​|​s​o​u​r​c​e​s​}​}​ ​u​n​a​v​a​i​l​a​b​l​e
+			 * @param {number} count
+			 */
+			sources_unavailable: RequiredParams<'count|num'>
 		}
 		document: {
 			/**
@@ -8477,6 +8504,14 @@ export type NamespaceViewerTranslation = {
 			 * R​e​n​a​m​e
 			 */
 			rename_tooltip: string
+			/**
+			 * D​e​l​e​t​e​ ​t​h​e​ ​i​n​s​i​g​h​t
+			 */
+			delete_button_label: string
+			/**
+			 * D​e​l​e​t​e
+			 */
+			delete_tooltip: string
 			/**
 			 * C​l​o​s​e​ ​t​h​e​ ​i​n​s​i​g​h​t
 			 */
@@ -8584,6 +8619,25 @@ export type NamespaceViewerTranslation = {
 			 * A​t​t​e​m​p​t
 			 */
 			attempt_label: string
+		}
+		'delete': {
+			/**
+			 * D​e​l​e​t​e​ ​“​{​n​a​m​e​}​”​?
+			 * @param {unknown} name
+			 */
+			confirm_title: RequiredParams<'name'>
+			/**
+			 * R​e​m​o​v​e​s​ ​t​h​i​s​ ​i​n​s​i​g​h​t​ ​f​r​o​m​ ​y​o​u​r​ ​l​i​s​t​ ​a​n​d​ ​m​o​v​e​s​ ​i​t​s​ ​d​o​c​u​m​e​n​t​ ​t​o​ ​y​o​u​r​ ​N​e​x​t​c​l​o​u​d​ ​t​r​a​s​h​ ​b​i​n​.​ ​T​h​e​ ​m​e​e​t​i​n​g​s​ ​i​t​ ​w​a​s​ ​m​a​d​e​ ​f​r​o​m​ ​a​r​e​ ​n​o​t​ ​a​f​f​e​c​t​e​d​.
+			 */
+			confirm_body: string
+			/**
+			 * R​e​m​o​v​e​s​ ​t​h​i​s​ ​i​n​s​i​g​h​t​ ​f​r​o​m​ ​y​o​u​r​ ​l​i​s​t​.​ ​T​h​e​ ​m​e​e​t​i​n​g​s​ ​i​t​ ​w​a​s​ ​m​a​d​e​ ​f​r​o​m​ ​a​r​e​ ​n​o​t​ ​a​f​f​e​c​t​e​d​.
+			 */
+			confirm_body_no_document: string
+			/**
+			 * D​e​l​e​t​e​ ​i​n​s​i​g​h​t
+			 */
+			confirm_button: string
 		}
 		'export': {
 			/**
@@ -13936,6 +13990,10 @@ export type TranslationFunctions = {
 				 */
 				rename_unavailable: () => LocalizedString
 				/**
+				 * That insight is no longer there, or this deployment cannot delete insights.
+				 */
+				delete_unavailable: () => LocalizedString
+				/**
 				 * That insight is not available to you, or this deployment cannot create insights.
 				 */
 				insight_unavailable: () => LocalizedString
@@ -13943,6 +14001,10 @@ export type TranslationFunctions = {
 				 * This insight is already running.
 				 */
 				already_running: () => LocalizedString
+				/**
+				 * This insight is still running. Delete it once it has finished.
+				 */
+				delete_running: () => LocalizedString
 				unreachable: {
 					/**
 					 * Could not reach Cassini to start the insight{detail}.
@@ -13964,6 +14026,10 @@ export type TranslationFunctions = {
 					 * Could not reach Cassini to rename the insight{detail}.
 					 */
 					rename: (arg: { detail: unknown }) => LocalizedString
+					/**
+					 * Could not reach Cassini to delete the insight{detail}.
+					 */
+					'delete': (arg: { detail: unknown }) => LocalizedString
 				}
 				cassini_failed: {
 					/**
@@ -13986,6 +14052,10 @@ export type TranslationFunctions = {
 					 * Cassini could not rename the insight.
 					 */
 					rename: () => LocalizedString
+					/**
+					 * Cassini could not delete the insight. Its document may still be in your Files.
+					 */
+					'delete': () => LocalizedString
 				}
 				failed_status: {
 					/**
@@ -14008,6 +14078,10 @@ export type TranslationFunctions = {
 					 * Could not rename the insight (HTTP {status}).
 					 */
 					rename: (arg: { status: unknown }) => LocalizedString
+					/**
+					 * Could not delete the insight (HTTP {status}).
+					 */
+					'delete': (arg: { status: unknown }) => LocalizedString
 				}
 			}
 			summary_action: {
@@ -16725,6 +16799,10 @@ export type TranslationFunctions = {
 				 * {count|num} {{meeting|meetings}}
 				 */
 				meetings: (arg: { count: number }) => LocalizedString
+				/**
+				 * {count|num} {{source|sources}} unavailable
+				 */
+				sources_unavailable: (arg: { count: number }) => LocalizedString
 			}
 			document: {
 				/**
@@ -16743,6 +16821,14 @@ export type TranslationFunctions = {
 				 * Rename
 				 */
 				rename_tooltip: () => LocalizedString
+				/**
+				 * Delete the insight
+				 */
+				delete_button_label: () => LocalizedString
+				/**
+				 * Delete
+				 */
+				delete_tooltip: () => LocalizedString
 				/**
 				 * Close the insight
 				 */
@@ -16843,6 +16929,24 @@ export type TranslationFunctions = {
 				 * Attempt
 				 */
 				attempt_label: () => LocalizedString
+			}
+			'delete': {
+				/**
+				 * Delete “{name}”?
+				 */
+				confirm_title: (arg: { name: unknown }) => LocalizedString
+				/**
+				 * Removes this insight from your list and moves its document to your Nextcloud trash bin. The meetings it was made from are not affected.
+				 */
+				confirm_body: () => LocalizedString
+				/**
+				 * Removes this insight from your list. The meetings it was made from are not affected.
+				 */
+				confirm_body_no_document: () => LocalizedString
+				/**
+				 * Delete insight
+				 */
+				confirm_button: () => LocalizedString
 			}
 			'export': {
 				/**

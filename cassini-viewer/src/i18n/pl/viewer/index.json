@@ -752,13 +752,16 @@
     },
     "card": {
       "kind": "Analiza",
-      "meetings": "{count:number|num} {{|spotkanie||spotkania|spotkań|spotkania}}"
+      "meetings": "{count:number|num} {{|spotkanie||spotkania|spotkań|spotkania}}",
+      "sources_unavailable": ""
     },
     "document": {
       "region_label": "Analiza",
       "name_input_label": "Nazwa analizy",
       "rename_button_label": "Zmień nazwę analizy",
       "rename_tooltip": "Zmień nazwę",
+      "delete_button_label": "",
+      "delete_tooltip": "",
       "close_label": "Zamknij analizę",
       "rooms": "{count:number|num} {{|pokój||pokoje|pokoi|pokoju}}",
       "export_label": "Eksportuj tę analizę",
@@ -784,6 +787,12 @@
       "template_label": "Szablon",
       "provider_label": "Dostawca",
       "attempt_label": "Próba"
+    },
+    "delete": {
+      "confirm_title": "",
+      "confirm_body": "",
+      "confirm_body_no_document": "",
+      "confirm_button": ""
     },
     "export": {
       "written_by": "Napisane przez Cassini, {date}",

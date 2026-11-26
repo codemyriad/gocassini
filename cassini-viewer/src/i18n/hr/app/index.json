@@ -1403,28 +1403,33 @@
       "create_unavailable": "Jedan od ovih sastanaka nije ti dostupan ili ova instalacija ne može stvarati uvide.",
       "list_unavailable": "Nije moguće prikazati popis uvida.",
       "rename_unavailable": "Taj ti uvid nije dostupan ili ova instalacija ne može preimenovati uvide.",
+      "delete_unavailable": "",
       "insight_unavailable": "Taj ti uvid nije dostupan ili ova instalacija ne može stvarati uvide.",
       "already_running": "Ovaj je uvid već u tijeku.",
+      "delete_running": "",
       "unreachable": {
         "create": "Nije moguće doći do Cassinija radi pokretanja uvida{detail}.",
         "list": "Nije moguće doći do Cassinija radi prikaza tvojih uvida{detail}.",
         "read": "Nije moguće doći do Cassinija radi čitanja uvida{detail}.",
         "retry": "Nije moguće doći do Cassinija radi ponovnog pokušaja uvida{detail}.",
-        "rename": "Nije moguće doći do Cassinija radi preimenovanja uvida{detail}."
+        "rename": "Nije moguće doći do Cassinija radi preimenovanja uvida{detail}.",
+        "delete": ""
       },
       "cassini_failed": {
         "create": "Cassini nije mogao pokrenuti uvid.",
         "list": "Cassini nije mogao prikazati tvoje uvide.",
         "read": "Cassini nije mogao pročitati uvid.",
         "retry": "Cassini nije mogao ponovno pokušati uvid.",
-        "rename": "Cassini nije mogao preimenovati uvid."
+        "rename": "Cassini nije mogao preimenovati uvid.",
+        "delete": ""
       },
       "failed_status": {
         "create": "Nije moguće pokrenuti uvid (HTTP {status}).",
         "list": "Nije moguće prikazati tvoje uvide (HTTP {status}).",
         "read": "Nije moguće pročitati uvid (HTTP {status}).",
         "retry": "Nije moguće ponovno pokušati uvid (HTTP {status}).",
-        "rename": "Nije moguće preimenovati uvid (HTTP {status})."
+        "rename": "Nije moguće preimenovati uvid (HTTP {status}).",
+        "delete": ""
       }
     },
     "summary_action": {

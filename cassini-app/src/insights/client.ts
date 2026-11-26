@@ -1,13 +1,14 @@
 // The insight routes, from the app (D-700).
 //
 // One question asked of several meetings, and the run record that answers it
-// over the minutes it takes. Five calls:
+// over the minutes it takes. Six calls:
 //
 //	POST insights            create a run          201 {run}
 //	GET  insights            the caller's runs     200 {"insights":[{run}, …]}
 //	GET  insights/<id>       one run + document    200 {run, "document": "…"}
 //	POST insights/<id>/retry retry a FAILED run    200 {run}   409 otherwise
 //	POST insights/<id>/name  rename a run          200 {run}
+//	POST insights/<id>/delete delete a finished run 204          409 while it runs
 //
 // They live under `insights` and not under `published/`, which is the archive's
 // prefix and is declared GET,HEAD: these are the app's first mutating USER
@@ -327,7 +328,7 @@ export function resolveInsightsUrl(path = ""): string {
   return new URL(relative, publishedRoot).toString();
 }
 
-type InsightAction = "create" | "list" | "read" | "retry" | "rename";
+type InsightAction = "create" | "list" | "read" | "retry" | "rename" | "delete";
 
 export async function createInsight(
   request: CreateInsightRequest,
@@ -421,6 +422,17 @@ export async function renameInsight(
   );
 }
 
+// deleteInsight removes a finished run and its document, which the operator
+// deletes from the caller's Files as them, so it lands in their trash bin
+// (#499). A queued or running run is refused with 409 and the operator's
+// sentence. Only the run's creator may, and anybody else is told the run is not
+// there (404).
+export async function deleteInsight(id: string, fetchImpl: typeof fetch = fetch): Promise<void> {
+  await send("delete", resolveInsightsUrl(`${insightIDSegment(id)}/delete`), fetchImpl, {
+    method: "POST",
+  });
+}
+
 function insightIDSegment(id: string): string {
   if (!INSIGHT_ID_PATTERN.test(id)) {
     throw new InsightRequestError(null, `Not an insight id: ${id}`);
@@ -452,6 +464,10 @@ async function send(
       response.status,
       describeRequestFailure(action, response.status, await readServedMessage(response)),
     );
+  }
+  if (response.status === 204) {
+    // Delete answers with no body: success is the status line.
+    return null;
   }
   try {
     return await response.json();
@@ -553,10 +569,17 @@ export function describeRequestFailure(
           // reads insights can still lack it, and "cannot create insights"
           // would be false in exactly that case.
           return t.rename_unavailable();
+        case "delete":
+          return t.delete_unavailable();
         default:
           return t.insight_unavailable();
       }
     case 409:
+      // A delete is refused for one reason only, a run still in flight, so it
+      // is worded here in the reader's language.
+      if (action === "delete") {
+        return t.delete_running();
+      }
       // The operator says which state refused the retry: still running, or
       // already answered. Its sentence is the answer, so it is repeated.
       return served || t.already_running();

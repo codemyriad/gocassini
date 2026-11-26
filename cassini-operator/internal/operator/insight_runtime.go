@@ -208,6 +208,7 @@ type insightRunStore interface {
 	GetRun(ctx context.Context, id string) (InsightRun, error)
 	ListRuns(ctx context.Context, createdBy string) ([]InsightRun, error)
 	RenameRun(ctx context.Context, id, name string) (InsightRun, error)
+	DeleteRun(ctx context.Context, id string) error
 	BeginAttempt(ctx context.Context, id string) (InsightRun, error)
 	ResumeAttempt(ctx context.Context, id string, attempt int) (InsightRun, error)
 	FinishAttempt(ctx context.Context, id string, outcome InsightOutcome) error

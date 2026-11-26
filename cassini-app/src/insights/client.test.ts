@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { get } from "svelte/store";
+
+import { LL } from "cassini-viewer/i18n";
 
 import {
   createInsight,
+  deleteInsight,
   describeAIFailure,
   isTerminalStatus,
   listAIProviderModels,
@@ -50,7 +54,7 @@ function run(overrides: Partial<InsightRun> = {}): InsightRun {
   });
 }
 
-function respondWith(body: string, init?: ResponseInit) {
+function respondWith(body: string | null, init?: ResponseInit) {
   return vi.fn(() => Promise.resolve(new Response(body, init)));
 }
 
@@ -304,6 +308,42 @@ describe("renameInsight", () => {
 
     await expect(renameInsight("ins_0123456789abcdef", "x", fetchMock)).rejects.toThrow(
       "That insight is not available to you, or this deployment cannot rename insights.",
+    );
+  });
+});
+
+describe("deleteInsight", () => {
+  it("posts to the run's own delete path and takes the empty 204 as success", async () => {
+    const fetchMock = respondWith(null, { status: 204 });
+
+    await expect(deleteInsight("ins_0123456789abcdef", fetchMock)).resolves.toBeUndefined();
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${PROXY_BASE}insights/ins_0123456789abcdef/delete`);
+    expect(init.method).toBe("POST");
+  });
+
+  it("words a run that is still running in the reader's language, not the operator's English", async () => {
+    const fetchMock = respondWith(JSON.stringify({ error: "operator sentence, in English" }), { status: 409 });
+
+    await expect(deleteInsight("ins_0123456789abcdef", fetchMock)).rejects.toThrow(
+      get(LL).app.insights.client.delete_running(),
+    );
+  });
+
+  it("says the document may still be in Files when Cassini could not delete it", async () => {
+    const fetchMock = respondWith("", { status: 502 });
+
+    await expect(deleteInsight("ins_0123456789abcdef", fetchMock)).rejects.toThrow(
+      "Cassini could not delete the insight. Its document may still be in your Files.",
+    );
+  });
+
+  it("does not blame creating on a 404", async () => {
+    const fetchMock = respondWith("404 page not found\n", { status: 404 });
+
+    await expect(deleteInsight("ins_0123456789abcdef", fetchMock)).rejects.toThrow(
+      "That insight is no longer there, or this deployment cannot delete insights.",
     );
   });
 });

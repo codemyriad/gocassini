@@ -23,6 +23,12 @@
   // insight.meetingIds.length: a source they may not read is absent, and a
   // count is a disclosure that it existed.
   export let sourceCount = 0;
+  // How many of the run's recorded sources are gone from this caller's catalog
+  // (deleted, or no longer shared — the shell cannot tell which). Shown as a
+  // pill so an insight that lost a meeting is visible from the list, not only
+  // once opened (#499). The pill says "unavailable" for the same reason the
+  // sheet's note does: "deleted" would be a guess.
+  export let missingSourceCount = 0;
   // Whether this insight is the one the sheet is holding.
   export let selected = false;
   // Whether a failed run can be retried from the card (D-749). Only where the
@@ -62,6 +68,15 @@
         {#if pending}
           <span class="insight-status" data-status={insight.status}>
             {formatInsightStatus(insight.status)}
+          </span>
+        {/if}
+        {#if missingSourceCount > 0}
+          <span
+            class="insight-status"
+            data-status="sources-missing"
+            title={$LL.viewer.insights.document.missing_sources({ count: missingSourceCount })}
+          >
+            {$LL.viewer.insights.card.sources_unavailable({ count: missingSourceCount })}
           </span>
         {/if}
       </span>
@@ -199,6 +214,11 @@
   /* A run that failed is not a quieter version of one that worked. */
   .insight-status[data-status="failed"] {
     background-color: color-mix(in oklch, var(--color-error) 22%, transparent);
+    color: var(--color-base-content);
+  }
+  /* Lost a source: worth a glance, not an alarm. */
+  .insight-status[data-status="sources-missing"] {
+    background-color: color-mix(in oklch, var(--color-warning) 24%, transparent);
     color: var(--color-base-content);
   }
 

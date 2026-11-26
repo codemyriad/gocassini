@@ -44,6 +44,7 @@
   import {
     ALL_BROWSE_TYPES,
     filterInsightsByRoom,
+    insightHeadline,
     insightsForMeeting,
     missingInsightSources,
     resolveInsightSources,
@@ -209,7 +210,7 @@
   // a screen reader wanders into a page the reader cannot see for the drawer
   // over it. Prepare and Connect an agent share a level: each is opened from a
   // control the other makes inert, so they are never open together.
-  $: topLayer = deleteConfirm ? 5 : tagManagerOpen ? 4 : railOpen ? 3 : prepareOpen || agentOpen || supportOpen ? 2 : selectedInsight || selectedMeetingId ? 1 : 0;
+  $: topLayer = deleteConfirm || insightDeleteConfirm ? 5 : tagManagerOpen ? 4 : railOpen ? 3 : prepareOpen || agentOpen || supportOpen ? 2 : selectedInsight || selectedMeetingId ? 1 : 0;
   $: dispatch("overlay", overlayOpen);
   $: if (prepareOpen) {
     dispatch("prepareOpen");
@@ -604,6 +605,13 @@
       return;
     }
     if (rootEl?.querySelector("dialog[open]")) {
+      return;
+    }
+    // A confirmation answers its own Escape, but only while focus is inside it.
+    // While its request is in flight its buttons are disabled and focus falls
+    // out, so Escape lands here; closing the sheet under it would also drop a
+    // refusal that arrives afterwards.
+    if (deleteConfirm || insightDeleteConfirm) {
       return;
     }
     if (railOpen) {
@@ -1128,7 +1136,8 @@
       if (destroyed) {
         return;
       }
-      insights = listed;
+      // A listing fetched before a delete landed would put the insight back.
+      insights = listed.filter((record) => !deletedInsightIds.has(record.id));
       insightsLoaded = true;
       insightsError = "";
     } catch (error) {
@@ -1225,6 +1234,93 @@
     } finally {
       renamingInsightId = "";
     }
+  }
+
+  // Deleting an insight (#499) goes through a confirmation, like deleting a
+  // meeting. Not optimistic: the dialog stays up, busy, until the operator has
+  // answered, so a refusal (still running, or Files would not let go of the
+  // document) is shown on the insight that is still open rather than as a card
+  // that vanished and came back. Once deleted, the id is remembered so a
+  // listing already in flight cannot bring it back.
+  const deletedInsightIds = new Set<string>();
+  let insightDeleteConfirm: InsightRecord | null = null;
+  let insightDeleteBusy = false;
+  let insightDeleteError: { id: string; message: string } | null = null;
+
+  function requestDeleteSelectedInsight() {
+    if (selectedInsight && canDeleteInsight && !insightDeleteBusy) {
+      insightDeleteError = null;
+      insightDeleteConfirm = selectedInsight;
+    }
+  }
+
+  async function confirmDeleteInsight() {
+    const record = insightDeleteConfirm;
+    const provider = dataProvider;
+    if (!record || !provider.deleteInsight || insightDeleteBusy) {
+      return;
+    }
+    insightDeleteBusy = true;
+    try {
+      await provider.deleteInsight(record.id);
+      if (destroyed) {
+        return;
+      }
+      forgetDeletedInsight(record.id);
+    } catch (error) {
+      if (destroyed) {
+        return;
+      }
+      // A refused delete may be for a run that is already gone: deleted from
+      // another tab, or by an earlier request whose answer was lost. A 404
+      // cannot say so on its own, since an operator without the route answers
+      // the same way, so the listing settles it.
+      if (await insightNoLongerListed(record.id)) {
+        if (!destroyed) {
+          forgetDeletedInsight(record.id);
+        }
+        return;
+      }
+      if (destroyed) {
+        return;
+      }
+      insightDeleteError = {
+        id: record.id,
+        message: error instanceof Error ? error.message : String(error),
+      };
+    } finally {
+      insightDeleteBusy = false;
+      insightDeleteConfirm = null;
+    }
+    void refreshInsights();
+  }
+
+  function forgetDeletedInsight(id: string) {
+    deletedInsightIds.add(id);
+    insights = insights.filter((row) => row.id !== id);
+    if (selectedInsightId === id) {
+      closeSheet();
+    }
+  }
+
+  // insightNoLongerListed is true only when a fresh listing answered and does
+  // not carry the run. A listing that fails proves nothing.
+  async function insightNoLongerListed(id: string): Promise<boolean> {
+    const provider = dataProvider;
+    if (!provider.listInsights) {
+      return false;
+    }
+    try {
+      const listed = await provider.listInsights();
+      return !listed.some((row) => row.id === id);
+    } catch (error) {
+      console.warn("cassini: could not check whether a refused insight delete had already landed", error);
+      return false;
+    }
+  }
+
+  $: if (insightDeleteError && insightDeleteError.id !== selectedInsightId) {
+    insightDeleteError = null;
   }
 
   function renameSelectedInsight(event: CustomEvent<string>) {
@@ -1427,6 +1523,7 @@
   // sheet render the control only when the provider has the method.
   $: canRetryInsight = typeof dataProvider.retryInsight === "function";
   $: canRenameInsight = typeof dataProvider.renameInsight === "function";
+  $: canDeleteInsight = typeof dataProvider.deleteInsight === "function";
   // The offline copy (D-792). Files is only where there is a Nextcloud to open
   // it in; a source links to its own sheet in this viewer, wherever this is.
   $: insightFilesUrl =
@@ -1441,6 +1538,14 @@
   $: insightSourceCounts = new Map(
     [...insightSources].map(([id, sources]) => [id, sources.length]),
   );
+  // Only against a catalog that has actually arrived: before one has (or when
+  // the first fetch failed) every source would read as gone, and every card
+  // would say so.
+  $: insightMissingSourceCounts = catalogMode
+    ? new Map(
+        insights.map((record) => [record.id, missingInsightSources(record, insightSources.get(record.id) ?? [])]),
+      )
+    : new Map<string, number>();
   // An insight carries no tags, so a tag filter leaves none of them.
   $: roomInsights = activeTagIds.length > 0 ? [] : filterInsightsByRoom(insights, selectedRoomKey);
   // Called from a reactive statement rather than being one, for the reason
@@ -1675,6 +1780,7 @@
       {insightsLoaded}
       {insightsError}
       {insightSourceCounts}
+      {insightMissingSourceCounts}
       {listEmptyFilled}
       insightsRetryable={canRetryInsight}
       {retryingInsightId}
@@ -1852,6 +1958,9 @@
             on:retry={retrySelectedInsight}
             on:rename={renameSelectedInsight}
             on:renameCancel={() => (insightRenameError = null)}
+            canDelete={canDeleteInsight}
+            deleteError={insightDeleteError?.id === selectedInsight.id ? insightDeleteError.message : ""}
+            on:delete={requestDeleteSelectedInsight}
           />
         {:else}
           <!-- The other direction (D-721): a meeting says which insights read
@@ -1999,6 +2108,18 @@
         busy={deleteBusy}
         on:cancel={() => (deleteConfirm = null)}
         on:confirm={confirmDeleteMeetings}
+      />
+    {/if}
+    {#if insightDeleteConfirm}
+      <ConfirmDialog
+        title={$LL.viewer.insights.delete.confirm_title({ name: insightHeadline(insightDeleteConfirm) })}
+        body={insightDeleteConfirm.documentPath
+          ? $LL.viewer.insights.delete.confirm_body()
+          : $LL.viewer.insights.delete.confirm_body_no_document()}
+        confirmLabel={$LL.viewer.insights.delete.confirm_button()}
+        busy={insightDeleteBusy}
+        on:cancel={() => (insightDeleteConfirm = null)}
+        on:confirm={() => void confirmDeleteInsight()}
       />
     {/if}
   </div>

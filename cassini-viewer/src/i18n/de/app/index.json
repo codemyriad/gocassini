@@ -1403,28 +1403,33 @@
       "create_unavailable": "Eine dieser Besprechungen steht dir nicht zur Verfügung, oder diese Installation kann keine Erkenntnisse erstellen.",
       "list_unavailable": "Die Erkenntnisse konnten nicht aufgelistet werden.",
       "rename_unavailable": "Diese Erkenntnis steht dir nicht zur Verfügung, oder diese Installation kann keine Erkenntnisse umbenennen.",
+      "delete_unavailable": "",
       "insight_unavailable": "Diese Erkenntnis steht dir nicht zur Verfügung, oder diese Installation kann keine Erkenntnisse erstellen.",
       "already_running": "Diese Erkenntnis läuft bereits.",
+      "delete_running": "",
       "unreachable": {
         "create": "Cassini war nicht erreichbar, um die Erkenntnis zu starten{detail}.",
         "list": "Cassini war nicht erreichbar, um deine Erkenntnisse aufzulisten{detail}.",
         "read": "Cassini war nicht erreichbar, um die Erkenntnis zu lesen{detail}.",
         "retry": "Cassini war nicht erreichbar, um die Erkenntnis erneut zu versuchen{detail}.",
-        "rename": "Cassini war nicht erreichbar, um die Erkenntnis umzubenennen{detail}."
+        "rename": "Cassini war nicht erreichbar, um die Erkenntnis umzubenennen{detail}.",
+        "delete": ""
       },
       "cassini_failed": {
         "create": "Cassini konnte die Erkenntnis nicht starten.",
         "list": "Cassini konnte deine Erkenntnisse nicht auflisten.",
         "read": "Cassini konnte die Erkenntnis nicht lesen.",
         "retry": "Cassini konnte die Erkenntnis nicht erneut versuchen.",
-        "rename": "Cassini konnte die Erkenntnis nicht umbenennen."
+        "rename": "Cassini konnte die Erkenntnis nicht umbenennen.",
+        "delete": ""
       },
       "failed_status": {
         "create": "Die Erkenntnis konnte nicht gestartet werden (HTTP {status}).",
         "list": "Deine Erkenntnisse konnten nicht aufgelistet werden (HTTP {status}).",
         "read": "Die Erkenntnis konnte nicht gelesen werden (HTTP {status}).",
         "retry": "Die Erkenntnis konnte nicht erneut versucht werden (HTTP {status}).",
-        "rename": "Die Erkenntnis konnte nicht umbenannt werden (HTTP {status})."
+        "rename": "Die Erkenntnis konnte nicht umbenannt werden (HTTP {status}).",
+        "delete": ""
       }
     },
     "summary_action": {

@@ -752,13 +752,16 @@
     },
     "card": {
       "kind": "Uvid",
-      "meetings": "{count:number|num} {{|sastanak||sastanka||sastanaka}}"
+      "meetings": "{count:number|num} {{|sastanak||sastanka||sastanaka}}",
+      "sources_unavailable": ""
     },
     "document": {
       "region_label": "Uvid",
       "name_input_label": "Naziv uvida",
       "rename_button_label": "Preimenuj uvid",
       "rename_tooltip": "Preimenuj",
+      "delete_button_label": "",
+      "delete_tooltip": "",
       "close_label": "Zatvori uvid",
       "rooms": "{count:number|num} {{|soba||sobe||soba}}",
       "export_label": "Izvezi ovaj uvid",
@@ -784,6 +787,12 @@
       "template_label": "Predložak",
       "provider_label": "Pružatelj",
       "attempt_label": "Pokušaj"
+    },
+    "delete": {
+      "confirm_title": "",
+      "confirm_body": "",
+      "confirm_body_no_document": "",
+      "confirm_button": ""
     },
     "export": {
       "written_by": "Napisao Cassini, {date}",
