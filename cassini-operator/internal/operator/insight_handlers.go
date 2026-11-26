@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
 	"unicode"
@@ -745,7 +746,9 @@ func (s *insightService) deleteInsightDocument(ctx context.Context, run InsightR
 	}
 	// The operator only ever delivers into its own folder (see deliver). A path
 	// outside it is not one this run wrote, whatever the row says.
-	if !strings.HasPrefix(relPath, ncInsightsRoot+"/") {
+	// Cleaned first, so a ".." cannot climb out of the folder after the prefix
+	// has matched.
+	if path.Clean(relPath) != relPath || !strings.HasPrefix(relPath, ncInsightsRoot+"/") {
 		return fmt.Errorf("document path %q is outside %s", relPath, ncInsightsRoot)
 	}
 	wantID := strings.TrimSpace(run.DocumentFileID)

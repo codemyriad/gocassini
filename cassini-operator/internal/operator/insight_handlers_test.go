@@ -1059,19 +1059,26 @@ func TestDeleteInsightKeepsTheRunWhenTheDocumentCannotBeIdentified(t *testing.T)
 // The operator only delivers into its own folder; a row naming a path outside
 // it is not trusted to delete there.
 func TestDeleteInsightRefusesADocumentPathOutsideTheInsightsFolder(t *testing.T) {
-	harness := newInsightHandlerHarness(t,
-		InsightRun{
-			ID: "ins_00000000000000a1", CreatedBy: "alice", Status: insightStatusSucceeded,
-			MeetingIDs: []string{"MEETING1"}, DocumentPath: "Documents/taxes.md",
-		},
-	)
-	harness.dav.holdDocument("alice/Documents/taxes.md", "private\n")
+	for _, docPath := range []string{
+		"Documents/taxes.md",
+		ncInsightsRoot + "/../Documents/taxes.md",
+		ncInsightsRoot + "/./Hiring themes.md",
+	} {
+		harness := newInsightHandlerHarness(t,
+			InsightRun{
+				ID: "ins_00000000000000a1", CreatedBy: "alice", Status: insightStatusSucceeded,
+				MeetingIDs: []string{"MEETING1"}, DocumentPath: docPath, DocumentFileID: "4001",
+			},
+		)
+		harness.dav.holdDocument("alice/Documents/taxes.md", "private\n")
+		harness.dav.fileIDs["alice/Documents/taxes.md"] = 4001
 
-	w := harness.do(t, http.MethodPost, "/insights/ins_00000000000000a1/delete", "alice", "")
-	if w.Code != http.StatusBadGateway {
-		t.Fatalf("code = %d, want 502 (%s)", w.Code, w.Body.String())
-	}
-	if got := harness.dav.deletes(); len(got) != 0 {
-		t.Errorf("deletes = %v, want nothing outside the insights folder deleted", got)
+		w := harness.do(t, http.MethodPost, "/insights/ins_00000000000000a1/delete", "alice", "")
+		if w.Code != http.StatusBadGateway {
+			t.Errorf("%s: code = %d, want 502 (%s)", docPath, w.Code, w.Body.String())
+		}
+		if got := harness.dav.deletes(); len(got) != 0 {
+			t.Errorf("%s: deletes = %v, want nothing outside the insights folder deleted", docPath, got)
+		}
 	}
 }
