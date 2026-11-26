@@ -727,8 +727,14 @@ func (s *insightService) delete(w http.ResponseWriter, r *http.Request, caller, 
 // have moved the document away and put something else under its name. Where the
 // run kept the file id (D-792), the file at the path is checked against it, and
 // a different file is left alone: deleting an insight must never delete a file
-// it did not write. A run delivered before the id was kept has only its path to
-// go on, and that is what it deletes.
+// it did not write. A run delivered before the id was kept (before 0.2.0) has
+// only its path to go on, which cannot tell its document from a file the caller
+// later saved under the same name, so its file is left in place and only the
+// insight goes; the caller can still delete the document from Files.
+//
+// The check and the DELETE are two requests by path. A file swapped in between
+// them would be deleted; that window is the length of one round trip, and the
+// DELETE goes to the caller's trash bin, so it is accepted rather than closed.
 //
 // A document that is no longer at its path counts as deleted. The insight is
 // what the caller asked to remove, and a file they already moved is theirs.
@@ -742,25 +748,28 @@ func (s *insightService) deleteInsightDocument(ctx context.Context, run InsightR
 	if !strings.HasPrefix(relPath, ncInsightsRoot+"/") {
 		return fmt.Errorf("document path %q is outside %s", relPath, ncInsightsRoot)
 	}
-	if wantID := strings.TrimSpace(run.DocumentFileID); wantID != "" {
-		leaf, err := s.exapp.davPropfindLeafState(ctx, s.client, run.CreatedBy, relPath)
-		if err != nil {
-			return err
-		}
-		if !leaf.Exists {
-			return nil
-		}
-		if leaf.FileID == 0 {
-			// Nextcloud did not say which file this is, so it cannot be told
-			// apart from somebody else's. Refusing keeps the insight listed and
-			// the delete retryable, rather than dropping the row and leaving the
-			// document behind with nothing pointing at it.
-			return fmt.Errorf("PROPFIND %s returned no file id", relPath)
-		}
-		if strconv.FormatInt(leaf.FileID, 10) != wantID {
-			s.logf("insights: run=%s document path %s now holds a different file (id %d, run wrote %s); leaving it in caller=%s's files", run.ID, relPath, leaf.FileID, wantID, run.CreatedBy)
-			return nil
-		}
+	wantID := strings.TrimSpace(run.DocumentFileID)
+	if wantID == "" {
+		s.logf("insights: run=%s predates document file ids; leaving %s in caller=%s's files", run.ID, relPath, run.CreatedBy)
+		return nil
+	}
+	leaf, err := s.exapp.davPropfindLeafState(ctx, s.client, run.CreatedBy, relPath)
+	if err != nil {
+		return err
+	}
+	if !leaf.Exists {
+		return nil
+	}
+	if leaf.FileID == 0 {
+		// Nextcloud did not say which file this is, so it cannot be told
+		// apart from somebody else's. Refusing keeps the insight listed and
+		// the delete retryable, rather than dropping the row and leaving the
+		// document behind with nothing pointing at it.
+		return fmt.Errorf("PROPFIND %s returned no file id", relPath)
+	}
+	if strconv.FormatInt(leaf.FileID, 10) != wantID {
+		s.logf("insights: run=%s document path %s now holds a different file (id %d, run wrote %s); leaving it in caller=%s's files", run.ID, relPath, leaf.FileID, wantID, run.CreatedBy)
+		return nil
 	}
 	return s.exapp.davDeleteUserFile(ctx, s.client, run.CreatedBy, relPath)
 }

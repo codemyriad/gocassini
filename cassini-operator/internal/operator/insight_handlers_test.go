@@ -919,6 +919,31 @@ func TestDeleteInsightLeavesADifferentFileAtTheDocumentPath(t *testing.T) {
 	}
 }
 
+// A run delivered before file ids were kept cannot tell its document from a
+// file the caller later saved under the same name, so the file stays and only
+// the insight goes.
+func TestDeleteInsightWithoutAFileIDLeavesTheFile(t *testing.T) {
+	harness := newInsightHandlerHarness(t,
+		InsightRun{
+			ID: "ins_00000000000000a1", CreatedBy: "alice", Status: insightStatusSucceeded,
+			MeetingIDs: []string{"MEETING1"}, DocumentPath: deleteTestDocPath,
+		},
+	)
+	harness.dav.holdDocument("alice/"+deleteTestDocPath, "my own notes\n")
+	harness.dav.fileIDs["alice/"+deleteTestDocPath] = 9999
+
+	w := harness.do(t, http.MethodPost, "/insights/ins_00000000000000a1/delete", "alice", "")
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("code = %d, want 204 (%s)", w.Code, w.Body.String())
+	}
+	if got := harness.dav.deletes(); len(got) != 0 {
+		t.Errorf("deletes = %v, want a run without a file id to leave the file alone", got)
+	}
+	if _, still := harness.store.runs["ins_00000000000000a1"]; still {
+		t.Error("the run is still listed")
+	}
+}
+
 // A failed run has no document; deleting it touches nothing in Files.
 func TestDeleteFailedInsightMakesNoFilesCall(t *testing.T) {
 	harness := newInsightHandlerHarness(t,
@@ -972,10 +997,11 @@ func TestDeleteInsightKeepsTheRunWhenTheDocumentCannotBeDeleted(t *testing.T) {
 	harness := newInsightHandlerHarness(t,
 		InsightRun{
 			ID: "ins_00000000000000a1", CreatedBy: "alice", Status: insightStatusSucceeded,
-			MeetingIDs: []string{"MEETING1"}, DocumentPath: deleteTestDocPath,
+			MeetingIDs: []string{"MEETING1"}, DocumentPath: deleteTestDocPath, DocumentFileID: "4001",
 		},
 	)
 	harness.dav.holdDocument("alice/"+deleteTestDocPath, "# Themes\n")
+	harness.dav.fileIDs["alice/"+deleteTestDocPath] = 4001
 	harness.dav.failDelete = true
 
 	w := harness.do(t, http.MethodPost, "/insights/ins_00000000000000a1/delete", "alice", "")
