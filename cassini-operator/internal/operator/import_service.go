@@ -10,7 +10,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -103,33 +102,12 @@ type importService struct {
 	userLocks keyedLocks
 }
 
-// envMaxConcurrentImports bounds how many imports run at once across all
-// callers until an administrator saves the setting in the panel, which then
-// wins for good (import_settings.go). Each running import holds its staged
-// file (up to maxImportUploadBytes) and the validation copy on the work
+// defaultMaxConcurrentImports is how many imports run at once across all
+// callers until an administrator saves another number in Settings ›
+// Storage › Imports (import_settings.go). Each running import holds its
+// staged file (up to maxImportUploadBytes) and the validation copy on the work
 // volume, which recordings share.
-const (
-	envMaxConcurrentImports     = "CASSINI_MAX_CONCURRENT_IMPORTS"
-	defaultMaxConcurrentImports = 3
-)
-
-// maxConcurrentImports reads envMaxConcurrentImports. Unset, unparsable or
-// below 1 keeps the default: 0 would stop every import, and "unbounded" is not
-// offered because each import costs disk the recordings also need.
-func maxConcurrentImports(getenv func(string) string, logger *log.Logger) (n int, fromEnv bool) {
-	raw := strings.TrimSpace(getenv(envMaxConcurrentImports))
-	if raw == "" {
-		return defaultMaxConcurrentImports, false
-	}
-	n, err := strconv.Atoi(raw)
-	if err != nil || n < 1 {
-		if logger != nil {
-			logger.Printf("imports: %s=%q is not a whole number of at least 1; using %d", envMaxConcurrentImports, raw, defaultMaxConcurrentImports)
-		}
-		return defaultMaxConcurrentImports, false
-	}
-	return n, true
-}
+const defaultMaxConcurrentImports = 3
 
 // A staged-file download is abandoned when less than importFetchMinProgress
 // arrives within importFetchIdleTimeout: a Nextcloud that stalls, or trickles
@@ -422,8 +400,7 @@ func newImportService(rt *Runtime, exapp ExAppConfig, logger *log.Logger) *impor
 	}
 	slots := rt.importSlots
 	if slots == nil {
-		n, _ := maxConcurrentImports(os.Getenv, logger)
-		slots = newImportSlotPool(n)
+		slots = newImportSlotPool(defaultMaxConcurrentImports)
 	}
 	service := &importService{
 		rt:          rt,

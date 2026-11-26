@@ -184,7 +184,6 @@ type Runtime struct {
 	// importSlots is how many imports run at once, set from the panel and
 	// applied live; importSettingsMu orders its saves (import_settings.go).
 	importSlots *importSlotPool
-	importLimit importLimit
 	// importsServed is set once the import routes are mounted; without them
 	// the setting is not offered.
 	importsServed            bool
@@ -1009,12 +1008,10 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, journal *supportJ
 		}
 	}
 	// How many imports run at once: the administrator's saved value, else the
-	// deploy env, else the default. Never written here, so a deploy env set
-	// later still applies until an administrator saves a value.
+	// default. Only a save in the panel writes the file.
 	rt.importSettingsPath = importSettingsPath(cfg)
-	rt.importLimit = loadImportLimit(rt.importSettingsPath, os.Getenv, logger)
-	rt.importSlots = newImportSlotPool(rt.importLimit.n)
-	// Same for the LLM policy: seed from the deploy env on first start; on a
+	rt.importSlots = newImportSlotPool(loadImportLimit(rt.importSettingsPath, logger))
+	// The LLM policy: seed from the deploy env on first start; on a
 	// load failure keep running on the deploy env rather than refusing to start.
 	llmExisted := fileExists(rt.llmSettingsPath)
 	if llm, err := LoadOrInitLLMSettings(rt.llmSettingsPath, os.Getenv); err != nil {

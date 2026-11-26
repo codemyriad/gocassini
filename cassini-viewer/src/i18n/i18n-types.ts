@@ -4418,34 +4418,14 @@ export type NamespaceAppTranslation = {
 			 */
 			help: string
 			/**
-			 * S​a​v​e​d​ ​h​e​r​e​.​ ​R​e​d​e​p​l​o​y​i​n​g​ ​t​h​e​ ​a​p​p​ ​k​e​e​p​s​ ​i​t​.
-			 */
-			source_admin: string
-			/**
-			 * T​h​e​ ​d​e​f​a​u​l​t​,​ ​s​e​t​ ​w​h​e​n​ ​t​h​e​ ​a​p​p​ ​w​a​s​ ​d​e​p​l​o​y​e​d​ ​(​C​A​S​S​I​N​I​_​M​A​X​_​C​O​N​C​U​R​R​E​N​T​_​I​M​P​O​R​T​S​)​.​ ​A​ ​v​a​l​u​e​ ​s​a​v​e​d​ ​h​e​r​e​ ​r​e​p​l​a​c​e​s​ ​i​t​,​ ​a​n​d​ ​r​e​d​e​p​l​o​y​i​n​g​ ​k​e​e​p​s​ ​i​t​.
-			 */
-			source_deploy: string
-			/**
-			 * T​h​e​ ​d​e​f​a​u​l​t​.​ ​A​ ​v​a​l​u​e​ ​s​a​v​e​d​ ​h​e​r​e​ ​i​s​ ​k​e​p​t​ ​w​h​e​n​ ​t​h​e​ ​a​p​p​ ​i​s​ ​r​e​d​e​p​l​o​y​e​d​.
-			 */
-			source_default: string
-			/**
-			 * R​e​s​t​o​r​e​ ​d​e​f​a​u​l​t​ ​(​{​v​a​l​u​e​}​)
+			 * T​h​e​ ​d​e​f​a​u​l​t​ ​i​s​ ​{​v​a​l​u​e​}​.​ ​A​ ​v​a​l​u​e​ ​s​a​v​e​d​ ​h​e​r​e​ ​a​p​p​l​i​e​s​ ​a​t​ ​o​n​c​e​ ​a​n​d​ ​i​s​ ​k​e​p​t​ ​w​h​e​n​ ​t​h​e​ ​a​p​p​ ​i​s​ ​r​e​d​e​p​l​o​y​e​d​.
 			 * @param {unknown} value
 			 */
-			restore_default: RequiredParams<'value'>
-			/**
-			 * T​h​e​ ​d​e​f​a​u​l​t​ ​i​s​ ​t​h​e​ ​v​a​l​u​e​ ​s​e​t​ ​w​h​e​n​ ​t​h​e​ ​a​p​p​ ​w​a​s​ ​d​e​p​l​o​y​e​d​ ​(​C​A​S​S​I​N​I​_​M​A​X​_​C​O​N​C​U​R​R​E​N​T​_​I​M​P​O​R​T​S​)​.
-			 */
-			default_from_deploy: string
+			default_hint: RequiredParams<'value'>
 			/**
 			 * S​a​v​e​d​.​ ​R​u​n​n​i​n​g​ ​i​m​p​o​r​t​s​ ​f​i​n​i​s​h​;​ ​n​e​w​ ​o​n​e​s​ ​s​t​a​r​t​ ​w​i​t​h​i​n​ ​t​h​e​ ​n​e​w​ ​l​i​m​i​t​.
 			 */
 			saved: string
-			/**
-			 * D​e​f​a​u​l​t​ ​r​e​s​t​o​r​e​d​.​ ​R​u​n​n​i​n​g​ ​i​m​p​o​r​t​s​ ​f​i​n​i​s​h​;​ ​n​e​w​ ​o​n​e​s​ ​s​t​a​r​t​ ​w​i​t​h​i​n​ ​t​h​e​ ​n​e​w​ ​l​i​m​i​t​.
-			 */
-			restored: string
 			/**
 			 * L​o​a​d​i​n​g​ ​i​m​p​o​r​t​ ​s​e​t​t​i​n​g​s​…
 			 */
@@ -12918,33 +12898,13 @@ export type TranslationFunctions = {
 				 */
 				help: () => LocalizedString
 				/**
-				 * Saved here. Redeploying the app keeps it.
+				 * The default is {value}. A value saved here applies at once and is kept when the app is redeployed.
 				 */
-				source_admin: () => LocalizedString
-				/**
-				 * The default, set when the app was deployed (CASSINI_MAX_CONCURRENT_IMPORTS). A value saved here replaces it, and redeploying keeps it.
-				 */
-				source_deploy: () => LocalizedString
-				/**
-				 * The default. A value saved here is kept when the app is redeployed.
-				 */
-				source_default: () => LocalizedString
-				/**
-				 * Restore default ({value})
-				 */
-				restore_default: (arg: { value: unknown }) => LocalizedString
-				/**
-				 * The default is the value set when the app was deployed (CASSINI_MAX_CONCURRENT_IMPORTS).
-				 */
-				default_from_deploy: () => LocalizedString
+				default_hint: (arg: { value: unknown }) => LocalizedString
 				/**
 				 * Saved. Running imports finish; new ones start within the new limit.
 				 */
 				saved: () => LocalizedString
-				/**
-				 * Default restored. Running imports finish; new ones start within the new limit.
-				 */
-				restored: () => LocalizedString
 				/**
 				 * Loading import settings…
 				 */

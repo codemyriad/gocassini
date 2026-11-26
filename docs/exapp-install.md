@@ -329,7 +329,6 @@ Options).
 | `CASSINI_DISALLOW_MODEL_DOWNLOAD` | No | Set `1` on a host with no outbound network access. Images contain no models. This forbids model downloads and resumed network jobs. Local `cassini models import`, runtime checks, activation, and already installed models remain available; missing models never block audio publication |
 | `CASSINI_ATTRIBUTION_DISABLED` | No | Set `1` to skip the cross-track speaker-attribution stage. By default every word is annotated with acoustic evidence; no words are changed or removed either way |
 | `CASSINI_ATTRIBUTION_DROP` | No | Set `1` to delete words the acoustic evidence contradicts instead of annotating them (room-system microphones). The manifest records how many words were removed |
-| `CASSINI_MAX_CONCURRENT_IMPORTS` | No | The default number of meeting imports that run at the same time across all users: `1` to `10`, the maximum (a higher value counts as `10`; values below 1 keep `3`, the default without it). A value an administrator saves in **Settings › Storage › Imports** replaces it, takes effect at once and is kept across redeploys; **Restore default** there goes back to this variable. Each person's own imports still run one at a time. A running import keeps its file (up to 4 GiB) and a working copy on the app's disk, which recordings share. An import starts only if it fits while 5 GiB stay free for recordings; otherwise it waits for running imports, or fails if nothing else is importing |
 | `CASSINI_ARTIFACT_RETENTION` | No | Deprecated and ignored. Configure retention under Operator → Storage; defaults keep forever. See [container retention](./container-retention.md). |
 | `CASSINI_ROOM_ID_PEPPER` | No (recommended) | Deployment-wide secret mixed into the one-way derivation of each meeting's room id. A meeting publishes a derived id rather than its Talk conversation token, because for a public conversation that token is also the link that joins it — and a Talk token is short enough that an unpeppered derivation can be reversed by enumeration offline. With a pepper set it cannot. **Choose it once:** changing it changes every room id, while meetings already published keep the ids they were written with, so a room splits in two. Existing recordings retain their original room ids |
 | `OPENROUTER_API_KEY` | No | Initial API key for the LLM endpoint, when it needs one (a self-hosted model server usually does not). Pre-fills the app's LLM settings on first start; afterwards keys are managed in the app |
@@ -748,9 +747,8 @@ restart. If `settings.json` cannot be loaded, Cassini runs on defaults
 (transcription off, new recordings shared with attendees only); if
 `llm-settings.json` cannot be loaded, Cassini uses the deploy environment.
 `import-settings.json`, written by a save in **Settings › Storage › Imports**
-and deleted by its **Restore default**, works the same way: if it cannot be
-loaded, the deploy environment's `CASSINI_MAX_CONCURRENT_IMPORTS` applies, or
-the default of 3. Either way the file is kept as `<name>.rejected-N` beside it, because the next
+(how many meeting imports run at once, 1 to 10), works the same way: without
+it, or if it cannot be loaded, the default of 3 applies. Either way the file is kept as `<name>.rejected-N` beside it, because the next
 save replaces the original. A `*.rejected-N` file is a copy of a file Cassini
 could not load: to restore it, move that copy back over the original and
 restart. Delete the `llm-settings.json` copy when you are done: it holds API

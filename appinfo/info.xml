@@ -211,11 +211,6 @@ Summaries and questions use whichever language model you connect, so their ratin
         <display-name>Drop crosstalk words (optional)</display-name>
         <description>Set to 1 to delete words the acoustic evidence contradicts instead of annotating them. Intended for room systems where one microphone audibly picks up every participant. The manifest records how many words were removed.</description>
       </variable>
-      <variable>
-        <name>CASSINI_MAX_CONCURRENT_IMPORTS</name>
-        <display-name>Imports run at once (optional)</display-name>
-        <description>The default number of meeting imports that run at the same time across all users: from 1 to 10, the maximum (a higher value counts as 10). Leave empty for 3. A value an administrator saves in Settings › Storage wins and is kept across redeploys; Restore default there goes back to this one. Each running import keeps its file (up to 4 GiB) and a working copy on the app's disk, which recordings also use. An import starts only if it fits while 5 GiB stay free for recordings, so raising this lets more imports run only when there is room. Each person's own imports still run one at a time.</description>
-      </variable>
     </environment-variables>
 
     <routes>
@@ -321,14 +316,6 @@ Summaries and questions use whichever language model you connect, so their ratin
       <route>
         <url>^operator\/settings\/workflows\/[^\/]+\/?$</url>
         <verb>PUT,DELETE</verb>
-        <access_level>ADMIN</access_level>
-      </route>
-      <!-- ADMIN: Restore default for how many imports run at once (#509)
-           deletes the saved value. Ahead of the settings route, which does
-           not carry DELETE, for the same reason as the route above. -->
-      <route>
-        <url>^operator\/settings\/imports\/?$</url>
-        <verb>DELETE</verb>
         <access_level>ADMIN</access_level>
       </route>
       <!-- ADMIN: STT quality settings (read + update) driven by the operator

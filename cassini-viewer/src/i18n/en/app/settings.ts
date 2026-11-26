@@ -179,16 +179,9 @@ const settings = {
     save_label: "Save import settings",
     // Under the field. The sizes are fixed by the server.
     help: "Each running import keeps its file, up to 4 GiB, and a working copy on this server's disk, which recordings also use. An import starts only when it fits while 5 GiB stay free for recordings.",
-    // Where the value shown comes from, under the field.
-    source_admin: "Saved here. Redeploying the app keeps it.",
-    source_deploy: "The default, set when the app was deployed (CASSINI_MAX_CONCURRENT_IMPORTS). A value saved here replaces it, and redeploying keeps it.",
-    source_default: "The default. A value saved here is kept when the app is redeployed.",
-    // Button shown once a value is saved here. {value}: the default it goes back to.
-    restore_default: "Restore default ({value})",
-    // Beside the restore button, when the default comes from the deploy setting.
-    default_from_deploy: "The default is the value set when the app was deployed (CASSINI_MAX_CONCURRENT_IMPORTS).",
+    // Under the field. {value}: the default, 3.
+    default_hint: "The default is {value}. A value saved here applies at once and is kept when the app is redeployed.",
     saved: "Saved. Running imports finish; new ones start within the new limit.",
-    restored: "Default restored. Running imports finish; new ones start within the new limit.",
     loading: "Loading import settings…",
     load_failed: "Import settings couldn't be loaded: {detail}",
     out_of_range: "Choose a whole number from 1 to {max}. {max} is the most the server allows.",
