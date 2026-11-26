@@ -56,7 +56,7 @@ jobs:
     name: shellcheck + actionlint + script tests
     runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -128,7 +128,7 @@ jobs:
       # out), so a split floor would mean formatting depended on which module you
       # were in. Keep them unified, or this step has to become a matrix.
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: cassini-operator/go.mod
       - name: gofmt (every Go module)
@@ -228,11 +228,18 @@ jobs:
           ./scripts/check-release-migrations.sh "$BASE_SHA" HEAD
 
       - name: actionlint (all workflows)
+        env:
+          # Pinned: a new actionlint release can change what passes. Bump both
+          # values together, from the release's actionlint_<v>_checksums.txt.
+          ACTIONLINT_VERSION: 1.7.12
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
         run: |
           set -euo pipefail
-          curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash -o /tmp/dl-actionlint.bash
-          bash /tmp/dl-actionlint.bash >/dev/null
-          ./actionlint
+          tarball="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -sSfL "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${tarball}" -o "/tmp/${tarball}"
+          echo "${ACTIONLINT_SHA256}  /tmp/${tarball}" | sha256sum -c -
+          tar -xzf "/tmp/${tarball}" -C /tmp actionlint
+          /tmp/actionlint
 
       - name: Compatibility policy and release refusal controls
         run: |
