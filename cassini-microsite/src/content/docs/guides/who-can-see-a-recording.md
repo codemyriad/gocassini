@@ -48,6 +48,13 @@ Imported meetings all sit in one **Imported meetings** room in Browse — the
 ones you imported and the ones shared with you alike. The room the meeting was
 recorded in on its source installation is not shown.
 
+Whoever imports a meeting gets a Nextcloud notification when it has been
+added, linking to it, or when it failed, saying what to do. Nobody else is
+notified, and nothing is sent while the importer still has Cassini open and
+can see it happen. This needs Nextcloud's **Notifications** app; without it,
+imports work the same and the server log says once that nobody is notified.
+The notification is in English for now.
+
 ## Where recordings live
 
 Every recording belongs to the `cassini` service account, in its private
