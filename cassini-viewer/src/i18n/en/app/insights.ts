@@ -123,6 +123,7 @@ const insights = {
     delete_unavailable: "That insight is no longer there, or this deployment cannot delete insights.",
     insight_unavailable: "That insight is not available to you, or this deployment cannot create insights.",
     already_running: "This insight is already running.",
+    delete_running: "This insight is still running. Delete it once it has finished.",
     // Cassini could not be reached. {detail} is empty, or the browser's reason
     // in brackets with a space before it, e.g. " (Failed to fetch)".
     unreachable: {

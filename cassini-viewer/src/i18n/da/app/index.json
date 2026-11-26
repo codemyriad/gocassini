@@ -1388,6 +1388,7 @@
       "delete_unavailable": "",
       "insight_unavailable": "Den indsigt er ikke tilgængelig for dig, eller denne installation kan ikke oprette indsigter.",
       "already_running": "Denne indsigt kører allerede.",
+      "delete_running": "",
       "unreachable": {
         "create": "Kunne ikke nå Cassini for at starte indsigten{detail}.",
         "list": "Kunne ikke nå Cassini for at vise dine indsigter{detail}.",

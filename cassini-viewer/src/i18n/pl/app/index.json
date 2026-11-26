@@ -1388,6 +1388,7 @@
       "delete_unavailable": "",
       "insight_unavailable": "Ta analiza nie jest dla ciebie dostępna albo to wdrożenie nie potrafi tworzyć analiz.",
       "already_running": "Ta analiza jest już uruchomiona.",
+      "delete_running": "",
       "unreachable": {
         "create": "Nie udało się połączyć z Cassini, aby uruchomić analizę{detail}.",
         "list": "Nie udało się połączyć z Cassini, aby wyświetlić twoje analizy{detail}.",

@@ -1388,6 +1388,7 @@
       "delete_unavailable": "That insight is no longer there, or this deployment cannot delete insights.",
       "insight_unavailable": "That insight is not available to you, or this deployment cannot create insights.",
       "already_running": "This insight is already running.",
+      "delete_running": "This insight is still running. Delete it once it has finished.",
       "unreachable": {
         "create": "Could not reach Cassini to start the insight{detail}.",
         "list": "Could not reach Cassini to list your insights{detail}.",

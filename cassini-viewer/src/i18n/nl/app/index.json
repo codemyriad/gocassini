@@ -1388,6 +1388,7 @@
       "delete_unavailable": "",
       "insight_unavailable": "Dat inzicht is niet voor je beschikbaar, of deze installatie kan geen inzichten maken.",
       "already_running": "Dit inzicht is al bezig.",
+      "delete_running": "",
       "unreachable": {
         "create": "Kon Cassini niet bereiken om het inzicht te starten{detail}.",
         "list": "Kon Cassini niet bereiken om je inzichten op te halen{detail}.",

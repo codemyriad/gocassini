@@ -5407,6 +5407,10 @@ export type NamespaceAppTranslation = {
 			 * T​h​i​s​ ​i​n​s​i​g​h​t​ ​i​s​ ​a​l​r​e​a​d​y​ ​r​u​n​n​i​n​g​.
 			 */
 			already_running: string
+			/**
+			 * T​h​i​s​ ​i​n​s​i​g​h​t​ ​i​s​ ​s​t​i​l​l​ ​r​u​n​n​i​n​g​.​ ​D​e​l​e​t​e​ ​i​t​ ​o​n​c​e​ ​i​t​ ​h​a​s​ ​f​i​n​i​s​h​e​d​.
+			 */
+			delete_running: string
 			unreachable: {
 				/**
 				 * C​o​u​l​d​ ​n​o​t​ ​r​e​a​c​h​ ​C​a​s​s​i​n​i​ ​t​o​ ​s​t​a​r​t​ ​t​h​e​ ​i​n​s​i​g​h​t​{​d​e​t​a​i​l​}​.
@@ -13816,6 +13820,10 @@ export type TranslationFunctions = {
 				 * This insight is already running.
 				 */
 				already_running: () => LocalizedString
+				/**
+				 * This insight is still running. Delete it once it has finished.
+				 */
+				delete_running: () => LocalizedString
 				unreachable: {
 					/**
 					 * Could not reach Cassini to start the insight{detail}.

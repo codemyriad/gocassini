@@ -575,6 +575,11 @@ export function describeRequestFailure(
           return t.insight_unavailable();
       }
     case 409:
+      // A delete is refused for one reason only, a run still in flight, so it
+      // is worded here in the reader's language.
+      if (action === "delete") {
+        return t.delete_running();
+      }
       // The operator says which state refused the retry: still running, or
       // already answered. Its sentence is the answer, so it is repeated.
       return served || t.already_running();
