@@ -100,6 +100,10 @@ type importService struct {
 	// confirming them, removing files, sweeping the folder — so two tabs cannot
 	// race on one folder, while callers stay independent of each other.
 	userLocks keyedLocks
+	// shareRetries backs off a completion pass that keeps failing for an
+	// import, by import ID; guarded by mu. Lost on restart, which only
+	// starts the tries over.
+	shareRetries map[string]shareCompletionRetry
 }
 
 // defaultMaxConcurrentImports is how many imports run at once across all
@@ -467,6 +471,7 @@ func newImportService(rt *Runtime, exapp ExAppConfig, logger *log.Logger) *impor
 	}
 	service.startWorker()
 	service.startStagingGC()
+	service.startShareCompletion()
 	return service
 }
 
@@ -844,6 +849,111 @@ func (s *importService) startWorker() {
 	}()
 }
 
+// shareCompletionEvery is how often the completion pass looks for imported
+// meetings still waiting to be shared; it runs only while Nextcloud's limit on
+// new shares is not holding (ncShareLimit).
+var shareCompletionEvery = time.Minute
+
+// startShareCompletion finishes the shares Nextcloud's limit on new shares
+// held back when imports were added (#484): once the limit allows, it shares
+// each such meeting with those still waiting, oldest import first, and stops
+// the pass as soon as the limit holds again. Nobody has to press anything,
+// and the importer's row says who is still waiting meanwhile.
+func (s *importService) startShareCompletion() {
+	rt := s.rt
+	rt.workerWG.Add(1)
+	go func() {
+		defer rt.workerWG.Done()
+		tick := time.NewTicker(shareCompletionEvery)
+		defer tick.Stop()
+		for {
+			select {
+			case <-rt.ctx.Done():
+				return
+			case <-tick.C:
+			}
+			s.completeWaitingShares(rt.ctx)
+		}
+	}()
+}
+
+// A completion that fails for another reason than the limit (the meeting's
+// file moved in Files, Nextcloud answering 5xx) is tried again later and
+// later, and given up after shareCompletionTries: those still waiting are then
+// recorded as not shared, with the error, so the row stops saying "waiting"
+// and nobody spends the share budget on it every minute.
+const shareCompletionTries = 8
+
+// shareCompletionBackoff is how long a completion that failed waits before
+// its next try: twice as long each time, from shareCompletionEvery, at most an
+// hour.
+func shareCompletionBackoff(fails int) time.Duration {
+	wait := shareCompletionEvery << min(fails, 6)
+	return min(wait, time.Hour)
+}
+
+type shareCompletionRetry struct {
+	fails int
+	next  time.Time
+}
+
+// completeWaitingShares is one completion pass.
+func (s *importService) completeWaitingShares(ctx context.Context) {
+	if ncShareLimit.holding() {
+		return
+	}
+	jobs, err := s.rt.store.ImportsWaitingToShare(ctx)
+	if err != nil {
+		if ctx.Err() == nil {
+			s.logf("imports: list meetings waiting to be shared: %v", err)
+		}
+		return
+	}
+	for _, job := range jobs {
+		if ctx.Err() != nil {
+			return
+		}
+		s.mu.Lock()
+		retry := s.shareRetries[job.ID]
+		s.mu.Unlock()
+		if time.Now().Before(retry.next) {
+			continue
+		}
+		waiting, refused, err := s.importer.completeShares(ctx, job)
+		if err != nil {
+			retry.fails++
+			if retry.fails < shareCompletionTries {
+				retry.next = time.Now().Add(shareCompletionBackoff(retry.fails))
+				s.mu.Lock()
+				if s.shareRetries == nil {
+					s.shareRetries = map[string]shareCompletionRetry{}
+				}
+				s.shareRetries[job.ID] = retry
+				s.mu.Unlock()
+				s.logf("import %s: finish sharing (try %d of %d): %v", job.ID, retry.fails, shareCompletionTries, err)
+				continue
+			}
+			s.logf("import %s: finish sharing failed %d times, giving up: %v", job.ID, retry.fails, err)
+			waiting, refused = nil, nil
+			for _, principal := range job.Sharing.Waiting {
+				refused = append(refused, skippedShare{Type: principal.Type, ID: principal.ID, Reason: "Cassini could not share it: " + err.Error()})
+			}
+		}
+		s.mu.Lock()
+		delete(s.shareRetries, job.ID)
+		s.mu.Unlock()
+		if err := s.rt.store.RecordImportShares(context.Background(), job.ID, waiting, refused); err != nil {
+			s.logf("import %s: record sharing: %v", job.ID, err)
+			continue
+		}
+		s.logf("import %s: finished sharing with %d, %d still waiting, %d refused", job.ID, len(job.Sharing.Waiting)-len(waiting)-len(refused), len(waiting), len(refused))
+		if len(waiting) > 0 {
+			// The limit holds again: the rest wait for the next window.
+			return
+		}
+	}
+}
+
 // dispatch gives every caller with queued imports a worker, unless they
 // already have one. It runs on the dispatcher goroutine, which holds a
 // workerWG count of its own, so adding to the group here is safe.
@@ -1043,12 +1153,24 @@ func (s *importService) runImportJob(job ImportJob) importRunOutcome {
 	if err := rt.store.SetImportJobProvenance(context.Background(), job.ID, result.Format, result.ContentID, result.SourceRoomID, result.CreatedAtUTC, result.RecordedAtLocal); err != nil {
 		s.logf("import %s: persist provenance: %v", job.ID, err)
 	}
+	// Who is still waiting is written before the row is done, so a done row
+	// never shows everyone shared with for a moment; the completion pass
+	// reads done rows only.
+	// Written every time, empty too, so a re-run after a restart replaces what
+	// an interrupted run recorded. Not written, the row is left undone, like a
+	// failed outcome below: the startup requeue re-runs the import, which is
+	// idempotent, rather than a done row silently dropping who is waiting.
+	waiting, refused := deferredShares(result.NotSharedWith), refusedShares(result.NotSharedWith)
+	if err := rt.store.RecordImportShares(context.Background(), job.ID, waiting, refused); err != nil {
+		s.logf("import %s: record who is not shared with yet: %v", job.ID, err)
+		return importSettled
+	}
 	if err := rt.store.SetImportJobOutcome(context.Background(), job.ID, result.DeliveredName, result.FileID, result.ImportedAtUTC); err != nil {
 		s.logf("import %s: persist outcome: %v", job.ID, err)
 		return importSettled
 	}
-	s.logf("import succeeded id=%s source=%q delivered=%s file_id=%d shared_with=%d not_shared_with=%d searchable=%t",
-		job.ID, job.SourceName, result.DeliveredName, result.FileID, result.SharedWith, len(result.NotSharedWith), result.SearchIndexed)
+	s.logf("import succeeded id=%s source=%q delivered=%s file_id=%d shared_with=%d not_shared_with=%d waiting_for_share_limit=%d searchable=%t",
+		job.ID, job.SourceName, result.DeliveredName, result.FileID, result.SharedWith, len(refused), len(waiting), result.SearchIndexed)
 	// The staged copy is spent. Best effort: a leftover costs the caller some
 	// quota and is theirs to see; it never fails a landed import.
 	if err := s.exapp.davDeleteUserFile(context.Background(), s.client, job.CreatedBy, job.StagedPath); err != nil {

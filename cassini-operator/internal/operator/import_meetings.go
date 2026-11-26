@@ -71,7 +71,9 @@ type meetingImportResult struct {
 	ImportedAtUTC   string `json:"importedAtUtc"`
 	SharedWith      int    `json:"sharedWith"`
 	// NotSharedWith are individual recipients Nextcloud refused (D-885); a
-	// refused importer, group or Team fails the import instead.
+	// refused importer, group or Team fails the import instead. It also holds
+	// those Nextcloud's limit on new shares held back (ShareLimit deferred),
+	// whom the completion pass reaches later (#484).
 	NotSharedWith []skippedShare `json:"notSharedWith,omitempty"`
 	SearchIndexed bool           `json:"searchIndexed"`
 }
@@ -314,6 +316,8 @@ func (imp *meetingImporter) run(ctx context.Context, req meetingImportRequest, r
 	if err != nil {
 		return result, err
 	}
+	// Nextcloud's limit on new shares holds nobody's import back: the meeting
+	// is added, and those it held back are recorded as waiting.
 	result.SharedWith = len(audience) - len(skipped)
 	if len(skipped) > 0 {
 		result.NotSharedWith = skipped
@@ -323,6 +327,50 @@ func (imp *meetingImporter) run(ctx context.Context, req meetingImportRequest, r
 	report(importStateIndexing, "indexing")
 	result.SearchIndexed = imp.indexDelivered(ctx, item, name, staged, localDigest)
 	return result, nil
+}
+
+// completeShares shares a done import's meeting with those Nextcloud's limit
+// on new shares held back, and only them (#484): anyone shared with at import
+// time and removed by hand since is not added back. It returns who is still
+// waiting (the limit held again) and whom Nextcloud refused this time. A
+// meeting retired since has nobody left to share with.
+func (imp *meetingImporter) completeShares(ctx context.Context, job ImportJob) (waiting, refused []skippedShare, err error) {
+	s := imp.sink
+	name := job.DeliveredName
+	if name == "" || len(job.Sharing.Waiting) == 0 {
+		return nil, nil, nil
+	}
+	if s.cfg.retiredMeetingReason(ctx, name) != "" {
+		return nil, nil, nil
+	}
+	// The lock publication, re-share and retirement take, so the meeting
+	// cannot be retired between the check below and the shares being made.
+	release, err := annotationWriteLocks.acquire(ctx, name)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer release()
+	remote, err := s.cfg.currentOwnerMeetingPath(ctx, name)
+	if errors.Is(err, errMeetingRetired) {
+		return nil, nil, nil
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	// The reconciler takes the importer first; in shareComplete that entry
+	// is never shared with, and the importer is again among the rest only if
+	// waiting.
+	audience := []sharePrincipal{{Type: "user", ID: job.CreatedBy}}
+	for _, principal := range job.Sharing.Waiting {
+		audience = append(audience, sharePrincipal{Type: principal.Type, ID: principal.ID})
+	}
+	note := s.rt.meetingFactsFor(ctx, job.ID).shareNote(true)
+	// The meeting is added already, so a refusal now is reported, never fatal.
+	skipped, err := s.cfg.reconcileRecordingShares(ctx, s.client, remote, audience, true, shareComplete, note)
+	if err != nil {
+		return nil, nil, err
+	}
+	return deferredShares(skipped), refusedShares(skipped), nil
 }
 
 // importIndexTimeout bounds the indexing that finishes an import once its

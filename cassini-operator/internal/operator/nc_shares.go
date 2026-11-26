@@ -11,6 +11,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -67,6 +68,43 @@ var errShareRateLimited = errors.New("Nextcloud's limit on new shares was reache
 func shareRateLimited(err error) bool {
 	return errors.Is(err, errShareRateLimited)
 }
+
+// shareLimitWindow is how long after Nextcloud last refused a share for its
+// limit Cassini waits before sharing for an import again: the limit's own 10
+// minutes, and a margin.
+const shareLimitWindow = 10*time.Minute + 30*time.Second
+
+// shareLimitClock remembers when Nextcloud last refused a share for its
+// limit, whoever asked (a recording or an import), since every share counts
+// against the same account. Imports read it so they do not ask while the
+// limit holds (#484): a refused attempt gains nothing, and may count too.
+type shareLimitClock struct {
+	mu   sync.Mutex
+	last time.Time
+	now  func() time.Time
+}
+
+func (c *shareLimitClock) clock() time.Time {
+	if c.now != nil {
+		return c.now()
+	}
+	return time.Now()
+}
+
+func (c *shareLimitClock) hit() {
+	c.mu.Lock()
+	c.last = c.clock()
+	c.mu.Unlock()
+}
+
+// holding is whether the last refusal is under shareLimitWindow old.
+func (c *shareLimitClock) holding() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return !c.last.IsZero() && c.clock().Sub(c.last) < shareLimitWindow
+}
+
+var ncShareLimit = &shareLimitClock{}
 
 func recipientShareRefusal(err error) bool {
 	var refusal *ncShareError
@@ -334,12 +372,18 @@ const (
 	// Nextcloud refuses, a group or a Team included, is skipped and reported.
 	sharePublish shareMode = iota
 	// shareImport: the importer must receive it, and so must any group or
-	// Team chosen, as before D-885 — the Import tab cannot show what was
-	// skipped yet, so a refused group would vanish silently.
+	// Team chosen, as before D-885; a refused person is skipped, and the
+	// import's row names them. Nextcloud's limit on new shares holds nobody
+	// back: those it defers are shared with by the completion pass (#484).
 	shareImport
 	// shareReapply: the meeting is published already, so no refusal can
 	// unpublish it; every refusal is reported.
 	shareReapply
+	// shareComplete is shareReapply for an import's completion pass (#484):
+	// the first entry only names the meeting's importer and is never shared
+	// with, so a share they removed is not made again; the importer is shared
+	// with only when listed again among those waiting.
+	shareComplete
 )
 
 // reconcileRecordingShares adds only missing audience members. Existing shares
@@ -355,12 +399,13 @@ const (
 // nothing about who may receive the recording.
 //
 // Nextcloud's limit on new shares (errShareRateLimited) stops the creates for
-// this run, outside an import: the recipient it refused and everyone after
-// them not yet covered are returned as deferred entries (shareLimitDeferred),
-// neither refused nor an error, the starter included, for an administrator's
-// re-share to reach later. Nothing is retried after it, since every attempt,
-// a refused one too, counts against the same limit. An import fails on it,
-// as on any other error it does not name a recipient for.
+// this run: the recipient it refused and everyone after them not yet covered
+// are returned as deferred entries (shareLimitDeferred), neither refused nor
+// an error, the starter included — for an administrator's re-share to reach
+// later, or, for an import, Cassini's own completion pass (#484). Nothing is
+// retried after it, since every attempt, a refused one too, counts against
+// the same limit; an import that starts while the limit holds (ncShareLimit)
+// likewise defers everyone not yet covered without trying.
 //
 // note goes on every share made here; see meetingFacts.shareNote.
 func (c ExAppConfig) reconcileRecordingShares(ctx context.Context, client *http.Client, relPath string, audience []sharePrincipal, public bool, mode shareMode, note string) ([]skippedShare, error) {
@@ -373,7 +418,7 @@ func (c ExAppConfig) reconcileRecordingShares(ctx context.Context, client *http.
 		return nil, fmt.Errorf("list recording shares: %w", err)
 	}
 	skipped := []skippedShare{}
-	limited := false
+	limited := mode == shareImport && ncShareLimit.holding()
 	seen := map[string]bool{}
 	required := []sharePrincipal{}
 	permissions := ncShareRead
@@ -381,6 +426,9 @@ func (c ExAppConfig) reconcileRecordingShares(ctx context.Context, client *http.
 		permissions |= ncShareReshare
 	}
 	for index, principal := range audience {
+		if index == 0 && mode == shareComplete {
+			continue
+		}
 		principal.Type = strings.TrimSpace(principal.Type)
 		principal.ID = strings.TrimSpace(principal.ID)
 		if principal.ID == "" || (principal.Type == "user" && principal.ID == ncRecordingsOwner) {
@@ -420,6 +468,7 @@ func (c ExAppConfig) reconcileRecordingShares(ctx context.Context, client *http.
 			// Nextcloud made no share, so there is nothing to re-list, and a
 			// retry would only spend the limit again.
 			if shareRateLimited(createErr) {
+				ncShareLimit.hit()
 				break
 			}
 			// The server may have committed a share before the reply was lost.
@@ -445,7 +494,7 @@ func (c ExAppConfig) reconcileRecordingShares(ctx context.Context, client *http.
 				}
 			}
 		}
-		if createErr != nil && shareRateLimited(createErr) && mode != shareImport {
+		if createErr != nil && shareRateLimited(createErr) {
 			// Not a share warning for the storage details: nothing is wrong
 			// with the storage, and the outcome records who is waiting.
 			limited = true

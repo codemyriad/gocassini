@@ -45,6 +45,12 @@ export interface ImportFileRequest {
 }
 
 // One import job as the operator serves it (GET imports).
+export interface ImportPrincipal {
+  type: string;
+  id: string;
+  label?: string;
+}
+
 export interface ImportJobRecord {
   origin?: "upload" | "cli";
   id: string;
@@ -72,7 +78,15 @@ export interface ImportJobRecord {
   // What kind of failure error describes, when the server knows (#510).
   // One of disk_short, stalled, timed_out, invalid_file; others may come.
   errorCode?: string;
-  sharing: { share: boolean; audience?: Array<{ type: string; id: string; label?: string }> };
+  sharing: {
+    share: boolean;
+    audience?: ImportPrincipal[];
+    // Who Nextcloud's limit on new shares held back, the importer possibly
+    // included; Cassini shares with them on its own once it can (#484).
+    waiting?: ImportPrincipal[];
+    // Who Nextcloud refused, with its own reason.
+    notShared?: Array<{ type: string; id: string; reason?: string }>;
+  };
   contentId?: string;
   deliveredName?: string;
   importedAt?: string;
@@ -261,18 +275,50 @@ export function formatImportDuration(durationMs: number): string {
 
 // The sharing line a settled row shows, and the names behind it on hover. The
 // list is always the caller's own, so "you" is the importer.
-export function describeImportSharing(job: Pick<ImportJobRecord, "sharing">): { line: string; title: string } {
+export function describeImportSharing(job: Pick<ImportJobRecord, "sharing"> & { createdBy?: string }): { line: string; title: string } {
   const text = get(LL).viewer.browse.import;
-  if (!job.sharing.share) {
-    return { line: text.sharing_only_you(), title: text.sharing_only_you_title() };
-  }
   const audience = job.sharing.audience ?? [];
-  const names = audience.map((sharee) => {
-    const name = (sharee.label ?? "").trim() || sharee.id;
-    return sharee.type === "group" ? text.sharee_group({ name }) : sharee.type === "circle" ? text.sharee_team({ name }) : name;
-  });
-  return {
-    line: text.sharing_shared_with({ count: audience.length + 1 }),
-    title: [text.sharing_you(), ...names].join(", "),
+  const waiting = job.sharing.waiting ?? [];
+  const notShared = job.sharing.notShared ?? [];
+  const nameOf = (who: { type: string; id: string; label?: string }) => {
+    if (who.type === "user" && who.id === job.createdBy) return text.sharing_you();
+    const known = audience.find((sharee) => sharee.type === who.type && sharee.id === who.id);
+    const name = (who.label ?? known?.label ?? "").trim() || who.id;
+    return who.type === "group" ? text.sharee_group({ name }) : who.type === "circle" ? text.sharee_team({ name }) : name;
   };
+  // Who it is meant for, each once: the importer, then the audience as
+  // chosen (a repeat, or the importer listed again, counts once).
+  const key = (who: { type: string; id: string }) => `${who.type}\u0000${who.id}`;
+  const intended = new Map<string, { type: string; id: string; label?: string }>();
+  if (job.createdBy) intended.set(key({ type: "user", id: job.createdBy }), { type: "user", id: job.createdBy });
+  for (const sharee of audience) if (!intended.has(key(sharee))) intended.set(key(sharee), sharee);
+  const notYet = new Set([...waiting, ...notShared].map(key));
+  // Without createdBy (older callers), the importer is counted as before.
+  const shared = [...intended.values()].filter((who) => !notYet.has(key(who)));
+  const sharedCount = shared.length + (job.createdBy ? 0 : 1);
+  let line: string;
+  let title: string;
+  if (!job.sharing.share) {
+    line = text.sharing_only_you();
+    title = text.sharing_only_you_title();
+  } else {
+    // On hover, only who can open it now; who is waiting or refused follows.
+    title = (job.createdBy ? shared.map(nameOf) : [text.sharing_you(), ...shared.map(nameOf)]).join(", ");
+    line = sharedCount > 0 ? text.sharing_shared_with({ count: sharedCount }) : text.sharing_not_yet();
+  }
+  // #484: who is still waiting for Nextcloud's limit, and whom it refused.
+  const parts = [line];
+  const titles = title ? [title] : [];
+  if (waiting.length > 0) {
+    if (!job.sharing.share) parts[0] = text.sharing_not_yet();
+    parts.push(text.sharing_waiting({ count: waiting.length }));
+    titles.push(text.sharing_waiting_title({ names: waiting.map(nameOf).join(", ") }));
+  }
+  if (notShared.length > 0) {
+    parts.push(text.sharing_not_shared({ count: notShared.length }));
+    titles.push(text.sharing_not_shared_title({
+      names: notShared.map((who) => (who.reason ? `${nameOf(who)} (${who.reason})` : nameOf(who))).join(", "),
+    }));
+  }
+  return { line: parts.join(" · "), title: titles.join("\n") };
 }

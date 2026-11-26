@@ -151,8 +151,18 @@ Flags:
 			continue
 		}
 		_ = store.SetImportJobProvenance(ctx, job.ID, result.Format, result.ContentID, result.SourceRoomID, result.CreatedAtUTC, result.RecordedAtLocal)
+		// Who Nextcloud's limit on new shares held back is recorded before the
+		// row is done, as for an uploaded import: the operator's completion pass,
+		// once it is started again, reads them and shares with them (#484).
+		waiting := deferredShares(result.NotSharedWith)
+		if err := store.RecordImportShares(ctx, job.ID, waiting, refusedShares(result.NotSharedWith)); err != nil {
+			return fail(err)
+		}
 		if err := store.SetImportJobOutcome(ctx, job.ID, result.DeliveredName, result.FileID, result.ImportedAtUTC); err != nil {
 			return fail(err)
+		}
+		if len(waiting) > 0 {
+			fmt.Fprintf(stderr, "%s: Nextcloud's limit on new shares held back %d recipient(s); the operator shares with them once it is running again and the limit allows\n", filepath.Base(file), len(waiting))
 		}
 		line, _ := json.Marshal(result)
 		fmt.Fprintf(stdout, "%s -> %s\n", filepath.Base(file), string(line))

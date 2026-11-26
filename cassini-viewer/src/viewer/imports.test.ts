@@ -128,6 +128,42 @@ describe("describeImportSharing", () => {
     expect(got.line).toBe("Shared with 5 recipients");
     expect(got.title).toBe("you, Bob Lee, Design (group), Core (team), nolabel");
   });
+  // #484: who Nextcloud's limit held back is waiting, and who it refused is
+  // named with its reason; neither counts as shared with yet.
+  it("says who is still waiting for Nextcloud's limit and who was refused", () => {
+    const got = describeImportSharing({
+      createdBy: "alice",
+      sharing: {
+        share: true,
+        audience: [{ type: "user", id: "bob", label: "Bob Lee" }, { type: "group", id: "design", label: "Design" }, { type: "user", id: "eve" }],
+        waiting: [{ type: "user", id: "bob" }, { type: "group", id: "design" }],
+        notShared: [{ type: "user", id: "eve", reason: "Sharing is only allowed with group members" }],
+      },
+    });
+    expect(got.line).toBe("Shared with 1 recipient · 2 waiting · 1 not shared");
+    expect(got.title.split("\n")).toEqual([
+      "you",
+      "Nextcloud lets Cassini create only 20 shares every 10 minutes. Cassini will share this meeting with Bob Lee, Design (group) as soon as it can; nobody needs to do anything.",
+      "Nextcloud refused to share it with eve (Sharing is only allowed with group members).",
+    ]);
+  });
+  it("counts each recipient once, the importer listed again included", () => {
+    const got = describeImportSharing({
+      createdBy: "alice",
+      sharing: {
+        share: true,
+        audience: [{ type: "user", id: "alice" }, { type: "user", id: "bob" }, { type: "user", id: "bob" }],
+        waiting: [{ type: "user", id: "alice" }, { type: "user", id: "bob" }],
+      },
+    });
+    expect(got.line).toBe("Not shared yet · 2 waiting");
+    expect(got.title).not.toMatch(/^you,/);
+  });
+  it("says a meeting nobody can open yet is not shared yet", () => {
+    const got = describeImportSharing({ createdBy: "alice", sharing: { share: false, waiting: [{ type: "user", id: "alice" }] } });
+    expect(got.line).toBe("Not shared yet · 1 waiting");
+    expect(got.title).toContain("Cassini will share this meeting with you as soon as it can");
+  });
   it("says so when the meeting is private", () => {
     expect(describeImportSharing({ sharing: { share: false } })).toEqual({ line: "Only you", title: "Only you can open this meeting." });
   });

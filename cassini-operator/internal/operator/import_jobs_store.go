@@ -81,6 +81,20 @@ func importStateTerminal(state string) bool {
 type importAudience struct {
 	Share    bool              `json:"share"`
 	Audience []importPrincipal `json:"audience,omitempty"`
+	// Waiting is who Nextcloud's limit on new shares held back when the
+	// meeting was shared — the importer too, possibly. Cassini's completion
+	// pass shares with them, and only them, once the limit allows (#484).
+	Waiting []importPrincipal `json:"waiting,omitempty"`
+	// NotShared is who Nextcloud refused, with its reason; nobody retries
+	// them.
+	NotShared []importRefusal `json:"notShared,omitempty"`
+}
+
+// importRefusal is one recipient Nextcloud refused a share for.
+type importRefusal struct {
+	Type   string `json:"type"`
+	ID     string `json:"id"`
+	Reason string `json:"reason,omitempty"`
 }
 
 // importPrincipal is one recipient. Label is the display name the importer saw
@@ -322,6 +336,78 @@ func (s *Store) SetImportJobOutcome(ctx context.Context, id, deliveredName strin
 		`UPDATE import_jobs SET state=?,phase='',error='',delivered_name=?,file_id=?,imported_at=?,updated_at=? WHERE id=?`,
 		importStateDone, deliveredName, fileID, importedAt, nowUTCString(), id)
 	return err
+}
+
+// RecordImportShares records who a done import's meeting is still waiting
+// to be shared with, and who Nextcloud refused (#484). Refusals add up over
+// the completion passes; Waiting is replaced, so a pass that reaches everyone
+// clears it.
+func (s *Store) RecordImportShares(ctx context.Context, id string, waiting []skippedShare, refused []skippedShare) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var raw string
+	if err := tx.QueryRowContext(ctx, `SELECT audience_json FROM import_jobs WHERE id=?`, id).Scan(&raw); err != nil {
+		return err
+	}
+	var audience importAudience
+	if err := json.Unmarshal([]byte(raw), &audience); err != nil {
+		return fmt.Errorf("import job %s: decode sharing: %w", id, err)
+	}
+	audience.Waiting = nil
+	for _, entry := range waiting {
+		audience.Waiting = append(audience.Waiting, importPrincipal{Type: entry.Type, ID: entry.ID, Label: audience.labelFor(entry.Type, entry.ID)})
+	}
+	for _, entry := range refused {
+		known := false
+		for _, have := range audience.NotShared {
+			known = known || (have.Type == entry.Type && have.ID == entry.ID)
+		}
+		if !known {
+			audience.NotShared = append(audience.NotShared, importRefusal{Type: entry.Type, ID: entry.ID, Reason: entry.Reason})
+		}
+	}
+	encoded, err := json.Marshal(audience)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE import_jobs SET audience_json=?,updated_at=? WHERE id=?`, string(encoded), nowUTCString(), id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// labelFor is the display name the importer saw for a recipient, if any.
+func (a importAudience) labelFor(kind, id string) string {
+	for _, principal := range a.Audience {
+		if principal.Type == kind && principal.ID == id {
+			return principal.Label
+		}
+	}
+	return ""
+}
+
+// ImportsWaitingToShare lists done imports whose meeting still waits for
+// shares Nextcloud's limit held back, oldest first.
+func (s *Store) ImportsWaitingToShare(ctx context.Context) ([]ImportJob, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+importJobColumns+` FROM import_jobs WHERE state=? AND audience_json LIKE '%"waiting":[%' ORDER BY created_at, id`, importStateDone)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var jobs []ImportJob
+	for rows.Next() {
+		job, err := scanImportJob(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		if len(job.Sharing.Waiting) > 0 {
+			jobs = append(jobs, job)
+		}
+	}
+	return jobs, rows.Err()
 }
 
 // RequeueUnfinishedImports returns interrupted work to the queue at startup.
