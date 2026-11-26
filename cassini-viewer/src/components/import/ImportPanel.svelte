@@ -15,12 +15,14 @@
   import { LL } from "../../i18n";
   import type { DataProvider } from "../../viewer/dataProvider";
   import {
+    ImportFileError,
     describeImportSharing,
     formatImportDate,
     formatImportDuration,
     importJobTerminal,
     importRunningStage,
     parseImportPreview,
+    type ImportFileProblem,
     type ImportJobRecord,
     type ImportPreview,
     type ImportSharee,
@@ -49,6 +51,9 @@
     file: File;
     status: PendingStatus;
     reason?: string;
+    // Set on an invalid file: why it was skipped, and the parser's own words.
+    problem?: ImportFileProblem;
+    detail?: string;
     preview?: ImportPreview;
     audience: ImportSharee[];
     sentBytes: number;
@@ -216,7 +221,8 @@
     } catch (error) {
       patch(item.key, {
         status: "invalid",
-        reason: error instanceof Error ? error.message : String(error),
+        problem: error instanceof ImportFileError ? error.problem : "unreadable",
+        detail: error instanceof ImportFileError ? error.detail : error instanceof Error ? error.message : String(error),
       });
     }
   }
@@ -262,6 +268,14 @@
   }
 
   $: text = $LL.viewer.browse.import;
+  $: fileProblemText = {
+    empty: text.file_empty,
+    too_large: text.file_too_large,
+    unreadable: text.file_unreadable,
+    not_cassini: text.not_a_meeting,
+    newer: text.file_newer,
+    damaged: text.file_damaged,
+  } satisfies Record<ImportFileProblem, () => string>;
 
   $: shareeGroups = [
     { type: "user", heading: text.group_people() },
@@ -366,8 +380,10 @@
   }
 
   const isCLI = (job: ImportJobRecord) => job.origin === "cli" || job.stagedPath.startsWith("local:");
+  // A file the server found invalid would fail the same way again.
   const canRetry = (job: ImportJobRecord) =>
-    !isCLI(job) && (job.state === "failed" || job.state === "canceled" || job.state === "staged") && job.stagingState !== "removed";
+    !isCLI(job) && (job.state === "failed" || job.state === "canceled" || job.state === "staged") && job.stagingState !== "removed" &&
+    !(job.state === "failed" && job.errorCode === "invalid_file");
   const canRemove = (job: ImportJobRecord) =>
     !!dataProvider.removeImport &&
     (job.state === "upload_failed" || job.state === "failed" || job.state === "canceled" || job.state === "staged") &&
@@ -417,6 +433,16 @@
       case "upload_failed":
         return text.settled_upload_failed();
       case "failed":
+        switch (job.errorCode) {
+          case "disk_short":
+            return text.failed_disk_short();
+          case "stalled":
+            return text.failed_stalled();
+          case "timed_out":
+            return text.failed_timed_out();
+          case "invalid_file":
+            return text.failed_invalid_file();
+        }
         return isCLI(job) ? text.settled_server_failed() : text.settled_failed();
       case "staged":
         return text.settled_staged();
@@ -525,7 +551,7 @@
                 {#if item.status === "invalid"}
                   <!-- The parser's sentence is precise but technical; it stays
                        on hover for whoever needs it. -->
-                  <span class="import-meta import-meta-error" title={item.reason}>{text.not_a_meeting()}</span>
+                  <span class="import-meta import-meta-error" title={item.detail || undefined}>{fileProblemText[item.problem ?? "damaged"]()}</span>
                 {:else if bad}
                   <span class="import-meta import-meta-error">{item.reason}</span>
                 {:else if item.status === "parsing"}

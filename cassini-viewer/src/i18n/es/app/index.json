@@ -37,7 +37,12 @@
       "imports_not_served": "Esta instalación no admite importar reuniones.",
       "identity_unverified": "Cassini no pudo verificar quién eres; recarga la página e inténtalo de nuevo.",
       "request_failed": "La solicitud de importación falló (HTTP {status}).",
-      "people_search_failed": "La búsqueda de personas falló (HTTP {status})."
+      "people_search_failed": "La búsqueda de personas falló (HTTP {status}).",
+      "refused_busy": "",
+      "refused_too_large": "",
+      "refused_add_again": "",
+      "refused_uploading": "",
+      "refused_cancel_too_late": ""
     },
     "data_provider": {
       "bundle_needs_meetings": "Primero elige al menos una reunión.",

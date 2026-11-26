@@ -37,7 +37,12 @@
       "imports_not_served": "Diese Installation unterstützt keine Besprechungsimporte.",
       "identity_unverified": "Cassini konnte nicht überprüfen, wer Sie sind; laden Sie neu und versuchen Sie es erneut.",
       "request_failed": "Die Importanfrage ist fehlgeschlagen (HTTP {status}).",
-      "people_search_failed": "Die Personensuche ist fehlgeschlagen (HTTP {status})."
+      "people_search_failed": "Die Personensuche ist fehlgeschlagen (HTTP {status}).",
+      "refused_busy": "",
+      "refused_too_large": "",
+      "refused_add_again": "",
+      "refused_uploading": "",
+      "refused_cancel_too_late": ""
     },
     "data_provider": {
       "bundle_needs_meetings": "Wählen Sie zuerst mindestens eine Besprechung aus.",

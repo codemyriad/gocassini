@@ -37,7 +37,12 @@
       "imports_not_served": "Ce déploiement ne prend pas en charge l’importation de réunions.",
       "identity_unverified": "Cassini n’a pas pu vérifier votre identité ; rechargez la page et réessayez.",
       "request_failed": "Échec de la demande d’importation (HTTP {status}).",
-      "people_search_failed": "Échec de la recherche de personnes (HTTP {status})."
+      "people_search_failed": "Échec de la recherche de personnes (HTTP {status}).",
+      "refused_busy": "",
+      "refused_too_large": "",
+      "refused_add_again": "",
+      "refused_uploading": "",
+      "refused_cancel_too_late": ""
     },
     "data_provider": {
       "bundle_needs_meetings": "Choisissez d’abord au moins une réunion.",

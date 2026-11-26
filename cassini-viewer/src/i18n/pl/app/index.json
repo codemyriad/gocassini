@@ -37,7 +37,12 @@
       "imports_not_served": "To wdrożenie nie obsługuje importu spotkań.",
       "identity_unverified": "Cassini nie mógł potwierdzić twojej tożsamości; wczytaj stronę ponownie i spróbuj jeszcze raz.",
       "request_failed": "Żądanie importu się nie powiodło (HTTP {status}).",
-      "people_search_failed": "Wyszukiwanie osób się nie powiodło (HTTP {status})."
+      "people_search_failed": "Wyszukiwanie osób się nie powiodło (HTTP {status}).",
+      "refused_busy": "",
+      "refused_too_large": "",
+      "refused_add_again": "",
+      "refused_uploading": "",
+      "refused_cancel_too_late": ""
     },
     "data_provider": {
       "bundle_needs_meetings": "Najpierw wybierz co najmniej jedno spotkanie.",

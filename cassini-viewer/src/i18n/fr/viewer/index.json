@@ -271,6 +271,10 @@
       "settled_upload_failed": "Le téléversement n’a pas abouti",
       "settled_server_failed": "L’importation sur le serveur n’a pas abouti",
       "settled_failed": "Impossible d’importer ce fichier",
+      "failed_disk_short": "",
+      "failed_stalled": "",
+      "failed_timed_out": "",
+      "failed_invalid_file": "",
       "settled_staged": "Téléversé, pas démarré",
       "settled_canceled": "Annulée",
       "settled_imported": "Importée",
@@ -292,7 +296,10 @@
       "sharee_searching": "Recherche…",
       "sharee_none": "Aucun résultat.",
       "file_empty": "Le fichier est vide.",
-      "not_portable": "Ce n’est pas une réunion portable : ni un enregistrement Ogg/Opus, ni un document de transcription.",
+      "file_too_large": "",
+      "file_unreadable": "",
+      "file_damaged": "",
+      "file_newer": "",
       "untitled": "Réunion sans titre"
     },
     "tags": {

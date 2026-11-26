@@ -271,6 +271,10 @@
       "settled_upload_failed": "O envio não terminou",
       "settled_server_failed": "A importação no servidor não terminou",
       "settled_failed": "Não foi possível importar este ficheiro",
+      "failed_disk_short": "",
+      "failed_stalled": "",
+      "failed_timed_out": "",
+      "failed_invalid_file": "",
       "settled_staged": "Enviado, não iniciado",
       "settled_canceled": "Cancelado",
       "settled_imported": "Importado",
@@ -292,7 +296,10 @@
       "sharee_searching": "A pesquisar…",
       "sharee_none": "Ninguém corresponde a isso.",
       "file_empty": "O ficheiro está vazio.",
-      "not_portable": "Não é uma reunião portátil: não é uma gravação Ogg/Opus nem um documento de transcrição.",
+      "file_too_large": "",
+      "file_unreadable": "",
+      "file_damaged": "",
+      "file_newer": "",
       "untitled": "Reunião sem título"
     },
     "tags": {

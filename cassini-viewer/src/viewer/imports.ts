@@ -13,6 +13,7 @@ import { get } from "svelte/store";
 import { LL } from "../i18n";
 import { dateFormat, durationFormat } from "../i18n/format";
 import {
+  PortableFormatError,
   extractPortableManifestFromArrayBuffer,
   extractTranscriptionDocument,
   readPortableAnnotations,
@@ -68,6 +69,9 @@ export interface ImportJobRecord {
   stagingState?: string;
   phase?: string;
   error?: string;
+  // What kind of failure error describes, when the server knows (#510).
+  // One of disk_short, stalled, timed_out, invalid_file; others may come.
+  errorCode?: string;
   sharing: { share: boolean; audience?: Array<{ type: string; id: string; label?: string }> };
   contentId?: string;
   deliveredName?: string;
@@ -113,27 +117,90 @@ export interface ImportPreview {
   hasAudio: boolean;
 }
 
+// Why a dropped file was refused: empty, not a Cassini meeting file, written
+// by a newer Cassini, or a Cassini file that is damaged or incomplete.
+export type ImportFileProblem = "empty" | "too_large" | "unreadable" | "not_cassini" | "newer" | "damaged";
+
+// The largest file the server takes (maxImportUploadBytes in the operator).
+export const maxImportFileBytes = 4 * 2 ** 30;
+
+// ImportFileError's message is the sentence the review list shows, in the
+// reader's language; detail is the parser's own, for whoever needs it.
+export class ImportFileError extends Error {
+  readonly problem: ImportFileProblem;
+  readonly detail: string;
+  constructor(problem: ImportFileProblem, detail = "") {
+    super(importFileProblemText(problem));
+    this.name = "ImportFileError";
+    this.problem = problem;
+    this.detail = detail;
+  }
+}
+
+export function importFileProblemText(problem: ImportFileProblem): string {
+  const text = get(LL).viewer.browse.import;
+  switch (problem) {
+    case "empty":
+      return text.file_empty();
+    case "too_large":
+      return text.file_too_large();
+    case "unreadable":
+      return text.file_unreadable();
+    case "not_cassini":
+      return text.not_a_meeting();
+    case "newer":
+      return text.file_newer();
+    default:
+      return text.file_damaged();
+  }
+}
+
 // parseImportPreview reads a dropped file far enough to describe it, or throws
-// with a sentence the review list can show. The parsers are fail-closed — the
-// same contract the operator re-checks server-side — so a file that previews
-// here can still be refused there, but not the other way around.
+// an ImportFileError saying why it cannot be imported. The parsers are
+// fail-closed — the same contract the operator re-checks server-side — so a
+// file that previews here can still be refused there, but not the other way
+// around.
 export async function parseImportPreview(file: File): Promise<ImportPreview> {
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  if (bytes.length === 0) {
-    throw new Error(get(LL).viewer.browse.import.file_empty());
+  // Checked before reading: the server would refuse it, and a browser may
+  // not read a file this large into memory at all.
+  if (file.size > maxImportFileBytes) {
+    throw new ImportFileError("too_large");
   }
-  if (bytes[0] === 0x4f && bytes[1] === 0x67 && bytes[2] === 0x67 && bytes[3] === 0x53) {
-    const { manifest } = await extractPortableManifestFromArrayBuffer(bytes);
-    return describePortableManifest(manifest, "opus");
-  }
-  let parsed: unknown;
+  // A file that cannot be read (moved since it was picked, or too large for
+  // this browser to hold) says so, rather than being called damaged.
+  let bytes: Uint8Array;
   try {
-    parsed = JSON.parse(stripUTF8BOM(new TextDecoder().decode(bytes)));
-  } catch {
-    throw new Error(get(LL).viewer.browse.import.not_portable());
+    bytes = new Uint8Array(await file.arrayBuffer());
+  } catch (error) {
+    throw new ImportFileError("unreadable", error instanceof Error ? error.message : String(error));
   }
-  const { manifest } = await extractTranscriptionDocument(parsed);
-  return describePortableManifest(manifest, "json");
+  if (bytes.length === 0) {
+    throw new ImportFileError("empty");
+  }
+  try {
+    if (bytes[0] === 0x4f && bytes[1] === 0x67 && bytes[2] === 0x67 && bytes[3] === 0x53) {
+      const { manifest } = await extractPortableManifestFromArrayBuffer(bytes);
+      return describePortableManifest(manifest, "opus");
+    }
+    const text = stripUTF8BOM(new TextDecoder().decode(bytes));
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch (error) {
+      // A Cassini transcription cut short (a half-finished download) names its
+      // kind near the start: damaged, not some other file.
+      if (/^\s*\{/.test(text) && text.slice(0, 4096).includes('"cassini-transcription"')) {
+        throw new ImportFileError("damaged", error instanceof Error ? error.message : String(error));
+      }
+      throw new ImportFileError("not_cassini", "neither an Ogg/Opus recording nor a JSON transcription document");
+    }
+    const { manifest } = await extractTranscriptionDocument(parsed);
+    return describePortableManifest(manifest, "json");
+  } catch (error) {
+    if (error instanceof ImportFileError) throw error;
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new ImportFileError(error instanceof PortableFormatError ? error.problem : "damaged", detail);
+  }
 }
 
 function describePortableManifest(

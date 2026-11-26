@@ -117,6 +117,10 @@ func importTransport(headerTimeout time.Duration, withProxy bool) *http.Transpor
 // re-reads the whole file, so long meetings take real time, but never hours.
 const importCLITimeout = 10 * time.Minute
 
+// errNotPortableMeeting is a file that is neither kind; importFailureCode
+// reads it as an invalid file.
+var errNotPortableMeeting = errors.New("the file is neither an Ogg/Opus recording nor a transcription document")
+
 // run ingests one staged file. It is idempotent: a re-run after a crash puts
 // the same bytes under the same name, re-indexes the same rows and adds only
 // missing shares, so re-queueing interrupted jobs is the whole recovery story.
@@ -157,13 +161,20 @@ func (imp *meetingImporter) run(ctx context.Context, req meetingImportRequest, r
 	// `cassini publish` re-checks the embedded integrity fail-closed (format
 	// tag, manifest digests, audio identity) and emits the one-entry catalog.
 	if err := imp.runCassini(ctx, []string{"publish", staged, "--out", siteDir}); err != nil {
-		return result, fmt.Errorf("not a valid portable meeting: %w", err)
+		if ctx.Err() == nil && cassiniRefusedTheFile(err) {
+			return result, fmt.Errorf("%s: %w", importInvalidPrefix, err)
+		}
+		return result, fmt.Errorf("validate: %w", err)
 	}
 	catalog, ok, err := loadSiteCatalog(siteDir)
 	if err != nil {
 		return result, err
 	}
-	if !ok || len(catalog.Meetings) != 1 {
+	if !ok || len(catalog.Meetings) == 0 {
+		// publish skips a file it cannot read as a meeting.
+		return result, fmt.Errorf("%s: validation found no meeting in the file", importInvalidPrefix)
+	}
+	if len(catalog.Meetings) != 1 {
 		return result, fmt.Errorf("validation did not describe exactly one meeting")
 	}
 	entry := catalog.Meetings[0]
@@ -402,6 +413,19 @@ func (imp *meetingImporter) runCassini(ctx context.Context, args []string) error
 	return nil
 }
 
+// cassiniRefusedTheFile tells a CLI run that refused the file from one that
+// could not do its work. The CLI exits 1 either way, so only an exit with a
+// code counts (not a process killed by a time limit, nor a binary that would
+// not start), and not one whose output says the disk is full. Read as an
+// invalid file, it is shown as one (#510); anything else is a plain failure.
+func cassiniRefusedTheFile(err error) bool {
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() <= 0 {
+		return false
+	}
+	return !strings.Contains(strings.ToLower(err.Error()), "no space left on device")
+}
+
 // cassiniCommand prepares one run of the cassini CLI on a file a caller
 // supplied. Two things every such run needs: its own process group with a
 // cancel that kills the group, so a canceled import does not leave an ffmpeg
@@ -444,7 +468,7 @@ func sniffPortableMeetingExtension(file string) (string, error) {
 	if trimmed := bytes.TrimLeft(bytes.TrimPrefix(head, []byte{0xEF, 0xBB, 0xBF}), " \t\r\n"); len(trimmed) > 0 && trimmed[0] == '{' {
 		return ".json", nil
 	}
-	return "", fmt.Errorf("the file is neither an Ogg/Opus recording nor a transcription document")
+	return "", errNotPortableMeeting
 }
 
 // The room every imported meeting is filed under. One bucket for all of them,

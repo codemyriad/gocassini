@@ -326,6 +326,58 @@ func (s *importService) reserveImportDisk(job ImportJob) (release func(), verdic
 // cannot take their file. How much space the server has is not theirs to see.
 const importDiskShortMessage = "This file is too big to import right now. Please contact your administrator."
 
+// What kind of failure a failed import is, so the Import sheet can say it in
+// the reader's language and say what to do (#510). Each comes with an error
+// the operator words itself, and is read back from that error rather than
+// stored: importFailureCode. The text stays for Details and the log; any other
+// failure has no code and is shown as a plain "couldn't import".
+const (
+	importFailDiskShort   = "disk_short"   // the work disk cannot take the file now: ask an administrator
+	importFailStalled     = "stalled"      // the download from the person's Files stalled: retry
+	importFailTimedOut    = "timed_out"    // the import ran past its time limit: retry
+	importFailInvalidFile = "invalid_file" // the file is not a valid Cassini meeting file
+
+	// The fixed start of each error a code is read from. Reword one only
+	// together with importFailureCode; TestImportFailureCodes pins them.
+	importStalledPrefix  = "the download from your Files stalled"
+	importTimedOutPrefix = "the import did not finish within"
+	importInvalidPrefix  = "not a valid portable meeting"
+)
+
+// importFailureCode reads a failed import's error for its code, or "".
+func importFailureCode(errText string) string {
+	switch {
+	case errText == importDiskShortMessage:
+		return importFailDiskShort
+	case strings.HasPrefix(errText, importStalledPrefix):
+		return importFailStalled
+	case strings.HasPrefix(errText, importTimedOutPrefix):
+		return importFailTimedOut
+	case strings.HasPrefix(errText, importInvalidPrefix), errText == errNotPortableMeeting.Error():
+		return importFailInvalidFile
+	}
+	return ""
+}
+
+// Refusals a person can meet in the Import sheet carry a code beside the
+// English error, so the app can word them in the reader's language (#510).
+// The sheet falls back to the English for any other refusal.
+const (
+	importRefusalBusy          = "import_busy"            // try again in a moment
+	importRefusalTooLarge      = "import_too_large"       // over maxImportUploadBytes
+	importRefusalAddAgain      = "import_add_again"       // the upload cannot be used: add the file again
+	importRefusalUploading     = "import_uploading"       // the file is still uploading or importing
+	importRefusalCancelTooLate = "import_cancel_too_late" // the meeting is already added and shared
+)
+
+// writeImportRefusal answers with the error and its code, in the shape
+// writeCodedJSONError uses. It does not call that: doctor_catalog_test reads
+// every writeCodedJSONError code as one the operator panel words, and these
+// are worded by the Import sheet instead.
+func writeImportRefusal(w http.ResponseWriter, status int, code, message string) {
+	writeJSON(w, status, map[string]string{"error": message, "error_code": code})
+}
+
 // importDiskWaiter is one import's place in the line for disk space.
 type importDiskWaiter struct {
 	need int64
@@ -565,7 +617,7 @@ func (s *importService) create(w http.ResponseWriter, r *http.Request, caller st
 	defer cancel()
 	release, err := s.userLocks.acquire(ctx, caller)
 	if err != nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "staging is busy; try again")
+		writeImportRefusal(w, http.StatusServiceUnavailable, importRefusalBusy, "staging is busy; try again")
 		return
 	}
 	defer release()
@@ -598,7 +650,11 @@ func (s *importService) create(w http.ResponseWriter, r *http.Request, caller st
 		if sourceName == "" {
 			sourceName = path.Base(staged)
 		}
-		if request.Prepare && (file.ExpectedBytes <= 0 || file.ExpectedBytes > maxImportUploadBytes) {
+		if request.Prepare && file.ExpectedBytes > maxImportUploadBytes {
+			writeImportRefusal(w, http.StatusBadRequest, importRefusalTooLarge, "upload must be between 1 byte and 4 GiB")
+			return
+		}
+		if request.Prepare && file.ExpectedBytes <= 0 {
 			writeJSONError(w, http.StatusBadRequest, "upload must be between 1 byte and 4 GiB")
 			return
 		}
@@ -610,7 +666,7 @@ func (s *importService) create(w http.ResponseWriter, r *http.Request, caller st
 				return
 			}
 			if taken {
-				writeJSONError(w, 409, "staging path already belongs to an upload; add the file again")
+				writeImportRefusal(w, 409, importRefusalAddAgain, "staging path already belongs to an upload; add the file again")
 				return
 			}
 			state, stagingState = importStateUploading, "pending"
@@ -644,7 +700,7 @@ func (s *importService) create(w http.ResponseWriter, r *http.Request, caller st
 						return
 					}
 				case importStateUploading, importStateUploadFailed:
-					writeJSONError(w, 409, "upload is not complete")
+					writeImportRefusal(w, 409, importRefusalAddAgain, "upload is not complete")
 					return
 				}
 				// Any other state: already queued, running or settled — the
@@ -653,7 +709,7 @@ func (s *importService) create(w http.ResponseWriter, r *http.Request, caller st
 				break
 			}
 			if !found {
-				writeJSONError(w, 409, fmt.Sprintf("no registered upload at %s; add the file again", jobs[i].StagedPath))
+				writeImportRefusal(w, 409, importRefusalAddAgain, fmt.Sprintf("no registered upload at %s; add the file again", jobs[i].StagedPath))
 				return
 			}
 		}
@@ -686,7 +742,7 @@ func (s *importService) cancel(w http.ResponseWriter, r *http.Request, job Impor
 		return
 	}
 	if job.State == importStateUploading {
-		writeJSONError(w, 409, "upload is still active")
+		writeImportRefusal(w, 409, importRefusalUploading, "upload is still active")
 		return
 	}
 	if importStateTerminal(job.State) {
@@ -694,7 +750,7 @@ func (s *importService) cancel(w http.ResponseWriter, r *http.Request, job Impor
 		return
 	}
 	if job.State == importStateIndexing {
-		writeJSONError(w, http.StatusConflict, "the meeting has already been added and shared; it can no longer be canceled")
+		writeImportRefusal(w, http.StatusConflict, importRefusalCancelTooLate, "the meeting has already been added and shared; it can no longer be canceled")
 		return
 	}
 	if err := s.rt.store.CancelImportJob(r.Context(), job.ID); err != nil {
@@ -725,7 +781,7 @@ func (s *importService) retry(w http.ResponseWriter, r *http.Request, job Import
 		return
 	}
 	if job.ClearedAt != "" || job.StagingState == "removed" || (job.ExpectedBytes > 0 && job.StagingState != "present") {
-		writeJSONError(w, 409, "staged file was removed; upload the file again")
+		writeImportRefusal(w, 409, importRefusalAddAgain, "staged file was removed; upload the file again")
 		return
 	}
 	if job.State != importStateFailed && job.State != importStateCanceled && job.State != importStateStaged {
@@ -735,7 +791,7 @@ func (s *importService) retry(w http.ResponseWriter, r *http.Request, job Import
 	// A cancel lands on the row before the worker has let go of the job; a
 	// retry in that window would be claimed by the dying run's bookkeeping.
 	if s.isRunning(job.ID) {
-		writeJSONError(w, http.StatusConflict, "cancellation is still finishing; retry in a moment")
+		writeImportRefusal(w, http.StatusConflict, importRefusalBusy, "cancellation is still finishing; retry in a moment")
 		return
 	}
 	if err := s.rt.store.RetryImportJob(r.Context(), job.ID); err != nil {
@@ -962,7 +1018,7 @@ func (s *importService) runImportJob(job ImportJob) importRunOutcome {
 		perform = s.performImport
 	}
 	limit := importTimeLimit(job)
-	errTooLong := fmt.Errorf("the import did not finish within %s", limit.Round(time.Minute))
+	errTooLong := fmt.Errorf("%s %s", importTimedOutPrefix, limit.Round(time.Minute))
 	runCtx, cancelRun := context.WithTimeoutCause(ctx, limit, errTooLong)
 	defer cancelRun()
 	result, err := perform(runCtx, job)
@@ -1028,7 +1084,7 @@ func (s *importService) fetchStaged(ctx context.Context, job ImportJob, local st
 	idleTimeout, minProgress, poll := importFetchIdleTimeout, importFetchMinProgress, importFetchIdlePoll
 	fetchCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
-	errStalled := fmt.Errorf("the download from your Files stalled: less than %d KiB arrived in %s", minProgress>>10, idleTimeout)
+	errStalled := fmt.Errorf("%s: less than %d KiB arrived in %s", importStalledPrefix, minProgress>>10, idleTimeout)
 	done := make(chan struct{})
 	watched := make(chan struct{})
 	// Stop the watchdog and wait for it, so it never outlives the download.

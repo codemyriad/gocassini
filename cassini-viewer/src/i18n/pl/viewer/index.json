@@ -271,6 +271,10 @@
       "settled_upload_failed": "Przesyłanie nie zostało ukończone",
       "settled_server_failed": "Import na serwerze nie został ukończony",
       "settled_failed": "Nie udało się zaimportować tego pliku",
+      "failed_disk_short": "",
+      "failed_stalled": "",
+      "failed_timed_out": "",
+      "failed_invalid_file": "",
       "settled_staged": "Przesłano, nie rozpoczęto",
       "settled_canceled": "Anulowano",
       "settled_imported": "Zaimportowano",
@@ -292,7 +296,10 @@
       "sharee_searching": "Wyszukiwanie…",
       "sharee_none": "Nikt nie pasuje.",
       "file_empty": "Plik jest pusty.",
-      "not_portable": "To nie jest przenośne spotkanie: ani nagranie Ogg/Opus, ani dokument transkrypcji.",
+      "file_too_large": "",
+      "file_unreadable": "",
+      "file_damaged": "",
+      "file_newer": "",
       "untitled": "Spotkanie bez tytułu"
     },
     "tags": {

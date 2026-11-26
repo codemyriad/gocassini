@@ -37,7 +37,12 @@
       "imports_not_served": "Denne installation understøtter ikke import af møder.",
       "identity_unverified": "Cassini kunne ikke bekræfte, hvem du er; genindlæs, og prøv igen.",
       "request_failed": "Importanmodningen mislykkedes (HTTP {status}).",
-      "people_search_failed": "Søgningen efter personer mislykkedes (HTTP {status})."
+      "people_search_failed": "Søgningen efter personer mislykkedes (HTTP {status}).",
+      "refused_busy": "",
+      "refused_too_large": "",
+      "refused_add_again": "",
+      "refused_uploading": "",
+      "refused_cancel_too_late": ""
     },
     "data_provider": {
       "bundle_needs_meetings": "Vælg mindst ét møde først.",

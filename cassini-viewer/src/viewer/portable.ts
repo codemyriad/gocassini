@@ -107,6 +107,29 @@ export interface PortableTranscriptDescriptor {
   isDefault: boolean;
 }
 
+// PortableFormatError marks the failures that say what kind of file was read,
+// so a reader can tell a person why it was refused (the import sheet): a file
+// that is not a Cassini meeting at all, or one written by a newer Cassini. Any
+// other failure, a plain Error, means a Cassini file that is damaged or
+// incomplete. The message stays the technical one, for diagnosis.
+export type PortableFormatProblem = "not_cassini" | "newer";
+export class PortableFormatError extends Error {
+  readonly problem: PortableFormatProblem;
+  constructor(problem: PortableFormatProblem, message: string) {
+    super(message);
+    this.name = "PortableFormatError";
+    this.problem = problem;
+  }
+}
+
+const portableFormatPrefix = "org.cassini.portable-meeting/";
+
+// newerVersion: a version number above the one this build reads.
+function newerVersion(value: unknown, supported: number): boolean {
+  const n = typeof value === "number" ? value : Number(String(value ?? "").trim());
+  return Number.isInteger(n) && n > supported;
+}
+
 export interface ExtractedPortableManifest {
   manifest: PortableMeetingManifest;
   tags: Record<string, string>;
@@ -114,7 +137,9 @@ export interface ExtractedPortableManifest {
 
 export async function extractTranscriptionDocument(value: unknown): Promise<ExtractedPortableManifest> {
   const doc = value as {kind?: string; version?: number; source?: PortableMeetingManifest; bodies?: Record<string, unknown>; tags?: unknown};
-  if (doc?.kind !== "cassini-transcription" || doc.version !== 1 || !doc.source || !doc.bodies) throw new Error("Unsupported transcription document");
+  if (doc?.kind !== "cassini-transcription") throw new PortableFormatError("not_cassini", "Unsupported transcription document");
+  if (newerVersion(doc.version, 1)) throw new PortableFormatError("newer", `Unsupported transcription document version ${String(doc.version)}`);
+  if (doc.version !== 1 || !doc.source || !doc.bodies) throw new Error("Unsupported transcription document");
   const manifest = doc.source;
   validatePortableIndexManifest(manifest);
   // The tags the source file carried (DATE among them), so this document is
@@ -143,10 +168,14 @@ export async function extractPortableManifestFromArrayBuffer(
   const tags = parseOpusCommentTags(bytes);
   const format = String(tags.CASSINI_FORMAT ?? "").trim();
   if (!format) {
-    throw new Error("portable opus file is missing CASSINI_FORMAT");
+    throw new PortableFormatError("not_cassini", "portable opus file is missing CASSINI_FORMAT");
   }
-  if (format !== "org.cassini.portable-meeting/1") {
-    throw new Error(`portable opus file uses unsupported CASSINI_FORMAT=${format}`);
+  if (format !== `${portableFormatPrefix}1`) {
+    const message = `portable opus file uses unsupported CASSINI_FORMAT=${format}`;
+    if (format.startsWith(portableFormatPrefix) && newerVersion(format.slice(portableFormatPrefix.length), 1)) {
+      throw new PortableFormatError("newer", message);
+    }
+    throw new Error(message);
   }
   for (const [name, expected] of Object.entries({
     CASSINI_PROFILE: "ogg-opus",
@@ -179,7 +208,9 @@ function validatePortableIndexManifest(manifest: PortableMeetingManifest): void 
     throw new Error(`portable manifest has unsupported kind ${String(manifest.kind)}`);
   }
   if (manifest.version !== 1) {
-    throw new Error(`portable opus file uses unsupported manifest version ${String(manifest.version)}`);
+    const message = `portable opus file uses unsupported manifest version ${String(manifest.version)}`;
+    if (newerVersion(manifest.version, 1)) throw new PortableFormatError("newer", message);
+    throw new Error(message);
   }
   if (manifest.profile !== "ogg-opus") {
     throw new Error(`portable manifest has unsupported profile ${String(manifest.profile)}`);
@@ -1548,13 +1579,15 @@ export function describeVariantSuffix(meetingId: string): string {
 
 function parseOpusCommentTags(bytes: Uint8Array): Record<string, string> {
   const packets = extractOggPackets(bytes, 2);
+  // A stream that ends before its second packet is cut short; one whose second
+  // packet is not Opus tags is some other audio (Vorbis, say), not a meeting.
   if (packets.length < 2) {
     throw new Error("portable opus file is missing OpusTags");
   }
   const tagsPacket = packets[1];
   const signature = new TextDecoder().decode(tagsPacket.subarray(0, 8));
   if (signature !== "OpusTags") {
-    throw new Error("portable opus file does not contain a valid OpusTags packet");
+    throw new PortableFormatError("not_cassini", "portable opus file does not contain a valid OpusTags packet");
   }
 
   const view = new DataView(tagsPacket.buffer, tagsPacket.byteOffset, tagsPacket.byteLength);
