@@ -1,7 +1,7 @@
 import { describeImportSharing } from "./imports";
 import { describe, expect, it } from "vitest";
 
-import { formatImportDuration, importJobTerminal, importRunningStage, parseImportPreview } from "./imports";
+import { ImportFileError, formatImportDuration, importJobTerminal, importRunningStage, parseImportPreview, type ImportFileProblem } from "./imports";
 import { durationFormat } from "../i18n";
 
 function fileOf(name: string, bytes: Uint8Array | string): File {
@@ -9,29 +9,78 @@ function fileOf(name: string, bytes: Uint8Array | string): File {
   return new File([body], name);
 }
 
+// An Ogg stream of two pages: an OpusHead, then the given second packet
+// (OpusTags with these tags, unless raw bytes are given).
+function oggOf(second: Record<string, string> | Uint8Array): Uint8Array {
+  const encoder = new TextEncoder();
+  const page = (packet: Uint8Array, sequence: number) => {
+    const segments: number[] = [];
+    let remaining = packet.length;
+    for (; remaining >= 255; remaining -= 255) segments.push(255);
+    segments.push(remaining);
+    const out = new Uint8Array(27 + segments.length + packet.length);
+    out.set(encoder.encode("OggS"), 0);
+    new DataView(out.buffer).setUint32(18, sequence, true);
+    out[26] = segments.length;
+    out.set(segments, 27);
+    out.set(packet, 27 + segments.length);
+    return out;
+  };
+  const head = new Uint8Array(19);
+  head.set(encoder.encode("OpusHead"), 0);
+  let tags = second;
+  if (!(second instanceof Uint8Array)) {
+    const comments = Object.entries(second).map(([key, value]) => encoder.encode(`${key}=${value}`));
+    const packet = new Uint8Array(16 + comments.reduce((sum, c) => sum + 4 + c.length, 0));
+    packet.set(encoder.encode("OpusTags"), 0);
+    const view = new DataView(packet.buffer);
+    view.setUint32(12, comments.length, true);
+    let offset = 16;
+    for (const comment of comments) {
+      view.setUint32(offset, comment.length, true);
+      packet.set(comment, offset + 4);
+      offset += 4 + comment.length;
+    }
+    tags = packet;
+  }
+  const pages = [page(head, 0), page(tags as Uint8Array, 1)];
+  const out = new Uint8Array(pages[0].length + pages[1].length);
+  out.set(pages[0], 0);
+  out.set(pages[1], pages[0].length);
+  return out;
+}
+
+async function refusal(file: File): Promise<ImportFileError> {
+  try {
+    await parseImportPreview(file);
+  } catch (error) {
+    expect(error).toBeInstanceOf(ImportFileError);
+    return error as ImportFileError;
+  }
+  throw new Error("the file was accepted");
+}
+
 describe("parseImportPreview", () => {
-  it("refuses an empty file", async () => {
-    await expect(parseImportPreview(fileOf("a.opus", new Uint8Array()))).rejects.toThrow(/empty/i);
-  });
-
-  it("refuses a file that is neither Ogg nor JSON, whatever its name says", async () => {
-    await expect(parseImportPreview(fileOf("meeting.opus", "RIFF....WAVE"))).rejects.toThrow(
-      /not a portable meeting/i,
-    );
-  });
-
-  it("routes an OggS prefix to the portable parser, which fails closed without the format tag", async () => {
-    const bytes = new TextEncoder().encode("OggS\u0000\u0002not-really-a-page");
-    await expect(parseImportPreview(fileOf("renamed.json", bytes))).rejects.toThrow();
-  });
-
-  it("routes JSON content to the transcription parser even under a BOM and an .opus name", async () => {
-    // Content decides the parser; the transcription reader then refuses the
-    // wrong kind with its own sentence.
-    const body = "﻿" + JSON.stringify({ kind: "something-else", version: 1 });
-    await expect(parseImportPreview(fileOf("renamed.opus", body))).rejects.toThrow(
-      /unsupported transcription document/i,
-    );
+  // #510: a person learns what is wrong in a sentence of their own language;
+  // the parser's words stay as the detail.
+  it.each<[string, File, ImportFileProblem, RegExp, RegExp | ""]>([
+    ["an empty file", fileOf("a.opus", new Uint8Array()), "empty", /^This file is empty/, ""],
+    // Never read: a stand-in that would fail if it were.
+    ["a file over 4 GiB", { name: "huge.opus", size: 4 * 2 ** 30 + 1, arrayBuffer: () => Promise.reject(new Error("read")) } as unknown as File, "too_large", /^This file is larger than 4 GiB/, ""],
+    ["neither Ogg nor JSON, whatever its name says", fileOf("meeting.opus", "RIFF....WAVE"), "not_cassini", /^This isn't a meeting file from Cassini/, /neither an Ogg\/Opus/],
+    ["an ordinary Opus recording", fileOf("song.opus", oggOf({ TITLE: "A song" })), "not_cassini", /^This isn't a meeting file from Cassini/, /missing CASSINI_FORMAT/],
+    ["an Ogg stream that is not Opus", fileOf("song.ogg", oggOf(new TextEncoder().encode("\u0003vorbis-comments"))), "not_cassini", /^This isn't/, /OpusTags/],
+    ["a newer portable format", fileOf("m.opus", oggOf({ CASSINI_FORMAT: "org.cassini.portable-meeting/2" })), "newer", /^This file was made by a newer version of Cassini/, /CASSINI_FORMAT=org.cassini.portable-meeting\/2/],
+    ["a Cassini file missing its other tags", fileOf("m.opus", oggOf({ CASSINI_FORMAT: "org.cassini.portable-meeting/1" })), "damaged", /^This file is damaged or incomplete/, /CASSINI_PROFILE/],
+    ["a truncated Ogg stream", fileOf("renamed.json", new TextEncoder().encode("OggS\u0000\u0002not-really-a-page")), "damaged", /damaged or incomplete/, ""],
+    ["another kind of JSON, under a BOM and an .opus name", fileOf("renamed.opus", "\ufeff" + JSON.stringify({ kind: "something-else", version: 1 })), "not_cassini", /^This isn't/, /unsupported transcription document/i],
+    ["a newer transcription document", fileOf("m.json", JSON.stringify({ kind: "cassini-transcription", version: 2 })), "newer", /newer version of Cassini/, /version 2/],
+    ["a transcription document with no meeting in it", fileOf("m.json", JSON.stringify({ kind: "cassini-transcription", version: 1 })), "damaged", /damaged or incomplete/, /unsupported transcription document/i],
+  ])("refuses %s", async (_name, file, problem, message, detail) => {
+    const error = await refusal(file);
+    expect(error.problem).toBe(problem);
+    expect(error.message).toMatch(message);
+    if (detail) expect(error.detail).toMatch(detail);
   });
 });
 

@@ -344,8 +344,8 @@ func TestStagedDownloadMustMakeProgress(t *testing.T) {
 		mode.Store(stalled)
 		begun := time.Now()
 		err := s.fetchStaged(context.Background(), job, filepath.Join(t.TempDir(), "staged"))
-		if err == nil || !strings.Contains(err.Error(), "stalled") {
-			t.Fatalf("%s: %v", stalled, err)
+		if err == nil || !strings.Contains(err.Error(), "stalled") || importFailureCode(err.Error()) != importFailStalled {
+			t.Fatalf("%s: %v (code %q)", stalled, err, importFailureCode(err.Error()))
 		}
 		if elapsed := time.Since(begun); elapsed > 5*time.Second {
 			t.Fatalf("%s: gave up after %s", stalled, elapsed)
@@ -387,7 +387,7 @@ func TestImportOverItsTimeLimitFails(t *testing.T) {
 	waitForImportState(t, s, "slow", importStateFailed)
 	waitForImportState(t, s, "next", importStateFailed)
 	job, _, _ := s.rt.store.ImportJob(context.Background(), "slow")
-	if !strings.Contains(job.Error, "did not finish within") {
+	if !strings.Contains(job.Error, "did not finish within") || job.ErrorCode != importFailTimedOut {
 		t.Fatalf("error: %q", job.Error)
 	}
 }
@@ -684,7 +684,7 @@ func TestImportTooBigForTheDiskFails(t *testing.T) {
 	waitForImportState(t, s, "a1", importStateFailed)
 	got, _, _ := s.rt.store.ImportJob(context.Background(), "a1")
 	// The person sees that the file is too big, never the server's disk.
-	if got.Error != importDiskShortMessage || strings.Contains(got.Error, "GiB") {
+	if got.Error != importDiskShortMessage || strings.Contains(got.Error, "GiB") || got.ErrorCode != importFailDiskShort {
 		t.Fatalf("error %q, want %q", got.Error, importDiskShortMessage)
 	}
 	deadline := time.Now().Add(5 * time.Second)
@@ -761,8 +761,8 @@ func TestAnImportThatCanNeverFitDoesNotHoldUpOthers(t *testing.T) {
 	close(releaseA)
 	waitForImportState(t, s, "b1", importStateFailed)
 	got, _, _ = s.rt.store.ImportJob(context.Background(), "b1")
-	if got.Error != importDiskShortMessage {
-		t.Fatalf("error %q, want %q", got.Error, importDiskShortMessage)
+	if got.Error != importDiskShortMessage || got.ErrorCode != importFailDiskShort {
+		t.Fatalf("error %q (code %q), want %q", got.Error, got.ErrorCode, importDiskShortMessage)
 	}
 	select {
 	case id := <-started:
@@ -1040,7 +1040,7 @@ func TestCancelRefusesAnIndexingImport(t *testing.T) {
 	if err := s.rt.store.SetImportJobState(context.Background(), "a1", importStateIndexing, "indexing", ""); err != nil {
 		t.Fatal(err)
 	}
-	if w := importDo(t, s, http.MethodPost, importsURLPath+"/a1/cancel", "alice", ""); w.Code != http.StatusConflict {
+	if w := importDo(t, s, http.MethodPost, importsURLPath+"/a1/cancel", "alice", ""); w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), `"error_code":"`+importRefusalCancelTooLate+`"`) {
 		t.Fatalf("cancel while indexing: %d %s", w.Code, w.Body.String())
 	}
 	if got, _, _ := s.rt.store.ImportJob(context.Background(), "a1"); got.State != importStateIndexing {

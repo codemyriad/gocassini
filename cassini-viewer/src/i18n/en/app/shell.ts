@@ -53,6 +53,12 @@ const shell = {
     request_failed: "The import request failed (HTTP {status}).",
     // Searching for people to share an import with. {status} is an HTTP status code.
     people_search_failed: "People search failed (HTTP {status}).",
+    // Refusals from the server, by their error_code (#510).
+    refused_busy: "Cassini is busy right now. Try again in a moment.",
+    refused_too_large: "This file is larger than 4 GiB and can't be imported.",
+    refused_add_again: "This upload can't be used any more. Add the file again.",
+    refused_uploading: "This file is still uploading. Try again when it has finished.",
+    refused_cancel_too_late: "The meeting has already been added and shared, so it can no longer be canceled.",
   },
   // Preparing a bundle of meetings as context for an AI assistant.
   data_provider: {

@@ -65,12 +65,22 @@ func TestCreateImportRefusesABadRequest(t *testing.T) {
 		{"sharing on submit", `{"files":[{"stagedPath":".CassiniImports/a.opus","share":true,"audience":[{"type":"user","id":"bob"}]}]}`, 400},
 		{"source name on submit", `{"files":[{"stagedPath":".CassiniImports/a.opus","sourceName":"a.opus"}]}`, 400},
 		{"submit of an unregistered path", `{"files":[{"stagedPath":".CassiniImports/never-prepared.opus"}]}`, 409},
+		{"over 4 GiB", `{"prepare":true,"files":[{"stagedPath":".CassiniImports/big.opus","expectedBytes":4294967297}]}`, 400},
+	}
+	// #510: the refusals a person can meet carry a code the sheet words in
+	// the reader's language.
+	codes := map[string]string{
+		"submit of an unregistered path": importRefusalAddAgain,
+		"over 4 GiB":                     importRefusalTooLarge,
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			w := importDo(t, s, http.MethodPost, importsURLPath, "alice", tc.body)
 			if w.Code != tc.want {
 				t.Fatalf("%s: %d %s", tc.name, w.Code, w.Body.String())
+			}
+			if code := codes[tc.name]; code != "" && !strings.Contains(w.Body.String(), `"error_code":"`+code+`"`) {
+				t.Fatalf("%s: no error_code %s in %s", tc.name, code, w.Body.String())
 			}
 		})
 	}

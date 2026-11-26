@@ -310,3 +310,50 @@ func TestInterruptedCLIImportsAreNotRequeuedAsWebUploads(t *testing.T) {
 		t.Fatal(jobs, err)
 	}
 }
+
+// #510: a failed import's code is read from its error, which the operator
+// words itself. The stall, time-limit, disk and invalid-file tests check the
+// errors the pipeline really writes; this pins the reading, and that only a
+// failed row has a code.
+func TestImportFailureCodes(t *testing.T) {
+	for errText, want := range map[string]string{
+		importDiskShortMessage: importFailDiskShort,
+		"the download from your Files stalled: less than 64 KiB arrived in 2m0s": importFailStalled,
+		"the import did not finish within 3h50m0s":                               importFailTimedOut,
+		"not a valid portable meeting: exit status 1":                            importFailInvalidFile,
+		errNotPortableMeeting.Error():                                            importFailInvalidFile,
+		"mkdir /seed/.import-x: read-only file system":                           "",
+		"": "",
+	} {
+		if got := importFailureCode(errText); got != want {
+			t.Errorf("%q: code %q, want %q", errText, got, want)
+		}
+	}
+	store, err := OpenStore(filepath.Join(t.TempDir(), "jobs.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	if err := store.CreateImportJobs(ctx, []ImportJob{{ID: "a", BatchID: "b", CreatedBy: "alice", SourceName: "a.opus", StagedPath: ".CassiniImports/a.opus"}}); err != nil {
+		t.Fatal(err)
+	}
+	code := func() string {
+		t.Helper()
+		job, _, err := store.ImportJob(ctx, "a")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return job.ErrorCode
+	}
+	if err := store.SetImportJobState(ctx, "a", importStateFailed, "", importDiskShortMessage); err != nil || code() != importFailDiskShort {
+		t.Fatalf("failed: %v %q", err, code())
+	}
+	if err := store.RetryImportJob(ctx, "a"); err != nil || code() != "" {
+		t.Fatalf("retried: %v %q", err, code())
+	}
+	// A row that is not failed has no code, whatever its error says.
+	if err := store.SetImportJobState(ctx, "a", importStateFetching, "fetching", importDiskShortMessage); err != nil || code() != "" {
+		t.Fatalf("fetching: %v %q", err, code())
+	}
+}

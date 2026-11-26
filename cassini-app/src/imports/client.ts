@@ -234,16 +234,27 @@ export async function retryImport(id: string): Promise<void> {
 }
 
 async function describeImportFailure(response: Response): Promise<string> {
+  const t = get(LL).app.shell.imports_client;
   let served = "";
+  let code = "";
   try {
-    const payload = JSON.parse(await response.text()) as { error?: unknown };
+    const payload = JSON.parse(await response.text()) as { error?: unknown; error_code?: unknown };
     if (typeof payload.error === "string") served = payload.error.trim();
+    if (typeof payload.error_code === "string") code = payload.error_code;
   } catch {
     // Not JSON: the status is all there is.
   }
-  // The operator's own sentence, shown as it was sent.
+  // A refusal the operator coded is worded in the reader's language (#510).
+  const refusals: Record<string, () => string> = {
+    import_busy: t.refused_busy,
+    import_too_large: t.refused_too_large,
+    import_add_again: t.refused_add_again,
+    import_uploading: t.refused_uploading,
+    import_cancel_too_late: t.refused_cancel_too_late,
+  };
+  if (Object.hasOwn(refusals, code)) return refusals[code]();
+  // Any other: the operator's own sentence, shown as it was sent.
   if (served) return served;
-  const t = get(LL).app.shell.imports_client;
   switch (response.status) {
     case 404:
       return t.imports_not_served();

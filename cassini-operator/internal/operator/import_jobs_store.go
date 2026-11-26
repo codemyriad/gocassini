@@ -97,20 +97,24 @@ type importPrincipal struct {
 const importCLIRecovery = "This import uses a local CLI file. Run import-meeting again with the source file, or upload it as a new import."
 
 type ImportJob struct {
-	Origin        string         `json:"origin"`
-	ExpectedBytes int64          `json:"expectedBytes,omitempty"`
-	StagingState  string         `json:"stagingState,omitempty"`
-	ClearedAt     string         `json:"clearedAt,omitempty"`
-	ID            string         `json:"id"`
-	BatchID       string         `json:"batchId"`
-	CreatedBy     string         `json:"createdBy"`
-	SourceName    string         `json:"sourceName"`
-	StagedPath    string         `json:"stagedPath"`
-	Format        string         `json:"format,omitempty"`
-	State         string         `json:"state"`
-	Phase         string         `json:"phase,omitempty"`
-	Error         string         `json:"error,omitempty"`
-	Sharing       importAudience `json:"sharing"`
+	Origin        string `json:"origin"`
+	ExpectedBytes int64  `json:"expectedBytes,omitempty"`
+	StagingState  string `json:"stagingState,omitempty"`
+	ClearedAt     string `json:"clearedAt,omitempty"`
+	ID            string `json:"id"`
+	BatchID       string `json:"batchId"`
+	CreatedBy     string `json:"createdBy"`
+	SourceName    string `json:"sourceName"`
+	StagedPath    string `json:"stagedPath"`
+	Format        string `json:"format,omitempty"`
+	State         string `json:"state"`
+	Phase         string `json:"phase,omitempty"`
+	Error         string `json:"error,omitempty"`
+	// ErrorCode says what kind of failure Error describes, so the sheet can
+	// say it in the reader's language. Not stored: read from Error, which the
+	// operator writes from fixed wording (importFailureCode).
+	ErrorCode string         `json:"errorCode,omitempty"`
+	Sharing   importAudience `json:"sharing"`
 	// Provenance read from the file at validation.
 	ContentID              string `json:"contentId,omitempty"`
 	SourceRoomID           string `json:"sourceRoomId,omitempty"`
@@ -145,6 +149,9 @@ func scanImportJob(scan func(dest ...any) error) (ImportJob, error) {
 	}
 	if err := json.Unmarshal([]byte(audience), &j.Sharing); err != nil {
 		return ImportJob{}, fmt.Errorf("import job %s: decode sharing: %w", j.ID, err)
+	}
+	if j.State == importStateFailed {
+		j.ErrorCode = importFailureCode(j.Error)
 	}
 	j.Origin = "upload"
 	if j.isCLI() {

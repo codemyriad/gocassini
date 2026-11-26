@@ -168,3 +168,28 @@ func TestIndexingADeliveredImportOutlivesACancel(t *testing.T) {
 		t.Fatal("a canceled import's delivered meeting was left out of search")
 	}
 }
+
+// #510: a file the importer refuses reads as an invalid file, so the sheet
+// can say so in the reader's language; the CLI's words stay as the error.
+func TestAnInvalidFileFailsWithItsCode(t *testing.T) {
+	store, err := OpenStore(filepath.Join(t.TempDir(), "jobs.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	bin := fakeCassini(t, `echo "portable opus file is missing CASSINI_FORMAT" >&2; exit 1`)
+	imp := &meetingImporter{sink: &nextcloudFilesPublishSink{cassiniBin: bin, rt: &Runtime{store: store}}}
+	for name, body := range map[string]string{
+		"neither Ogg nor JSON": "RIFF....WAVE",
+		"refused by the CLI":   "OggS-not-a-meeting",
+	} {
+		local := filepath.Join(t.TempDir(), "staged")
+		if err := os.WriteFile(local, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := imp.run(context.Background(), meetingImportRequest{ImportID: "01INVALID", CreatedBy: "alice", LocalPath: local}, nil)
+		if err == nil || importFailureCode(err.Error()) != importFailInvalidFile {
+			t.Fatalf("%s: %v (code %q)", name, err, importFailureCode(err.Error()))
+		}
+	}
+}

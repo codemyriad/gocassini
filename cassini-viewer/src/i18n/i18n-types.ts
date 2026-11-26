@@ -323,6 +323,26 @@ export type NamespaceAppTranslation = {
 			 * @param {unknown} status
 			 */
 			people_search_failed: RequiredParams<'status'>
+			/**
+			 * C​a​s​s​i​n​i​ ​i​s​ ​b​u​s​y​ ​r​i​g​h​t​ ​n​o​w​.​ ​T​r​y​ ​a​g​a​i​n​ ​i​n​ ​a​ ​m​o​m​e​n​t​.
+			 */
+			refused_busy: string
+			/**
+			 * T​h​i​s​ ​f​i​l​e​ ​i​s​ ​l​a​r​g​e​r​ ​t​h​a​n​ ​4​ ​G​i​B​ ​a​n​d​ ​c​a​n​'​t​ ​b​e​ ​i​m​p​o​r​t​e​d​.
+			 */
+			refused_too_large: string
+			/**
+			 * T​h​i​s​ ​u​p​l​o​a​d​ ​c​a​n​'​t​ ​b​e​ ​u​s​e​d​ ​a​n​y​ ​m​o​r​e​.​ ​A​d​d​ ​t​h​e​ ​f​i​l​e​ ​a​g​a​i​n​.
+			 */
+			refused_add_again: string
+			/**
+			 * T​h​i​s​ ​f​i​l​e​ ​i​s​ ​s​t​i​l​l​ ​u​p​l​o​a​d​i​n​g​.​ ​T​r​y​ ​a​g​a​i​n​ ​w​h​e​n​ ​i​t​ ​h​a​s​ ​f​i​n​i​s​h​e​d​.
+			 */
+			refused_uploading: string
+			/**
+			 * T​h​e​ ​m​e​e​t​i​n​g​ ​h​a​s​ ​a​l​r​e​a​d​y​ ​b​e​e​n​ ​a​d​d​e​d​ ​a​n​d​ ​s​h​a​r​e​d​,​ ​s​o​ ​i​t​ ​c​a​n​ ​n​o​ ​l​o​n​g​e​r​ ​b​e​ ​c​a​n​c​e​l​e​d​.
+			 */
+			refused_cancel_too_late: string
 		}
 		data_provider: {
 			/**
@@ -6529,10 +6549,6 @@ export type NamespaceViewerTranslation = {
 			 */
 			files_label: string
 			/**
-			 * N​o​t​ ​a​ ​m​e​e​t​i​n​g​ ​f​i​l​e​ ​f​r​o​m​ ​C​a​s​s​i​n​i​,​ ​s​o​ ​i​t​ ​w​a​s​ ​s​k​i​p​p​e​d​.
-			 */
-			not_a_meeting: string
-			/**
 			 * R​e​a​d​i​n​g​…
 			 */
 			reading: string
@@ -6669,6 +6685,22 @@ export type NamespaceViewerTranslation = {
 			 */
 			settled_failed: string
 			/**
+			 * T​o​o​ ​b​i​g​ ​t​o​ ​i​m​p​o​r​t​ ​r​i​g​h​t​ ​n​o​w​.​ ​A​s​k​ ​y​o​u​r​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​.
+			 */
+			failed_disk_short: string
+			/**
+			 * T​h​e​ ​d​o​w​n​l​o​a​d​ ​f​r​o​m​ ​y​o​u​r​ ​F​i​l​e​s​ ​s​t​o​p​p​e​d​.​ ​T​r​y​ ​a​g​a​i​n​.
+			 */
+			failed_stalled: string
+			/**
+			 * T​h​e​ ​i​m​p​o​r​t​ ​t​o​o​k​ ​t​o​o​ ​l​o​n​g​.​ ​T​r​y​ ​a​g​a​i​n​.
+			 */
+			failed_timed_out: string
+			/**
+			 * N​o​t​ ​a​ ​v​a​l​i​d​ ​m​e​e​t​i​n​g​ ​f​i​l​e​ ​f​r​o​m​ ​C​a​s​s​i​n​i
+			 */
+			failed_invalid_file: string
+			/**
 			 * U​p​l​o​a​d​e​d​,​ ​n​o​t​ ​s​t​a​r​t​e​d
 			 */
 			settled_staged: string
@@ -6754,13 +6786,25 @@ export type NamespaceViewerTranslation = {
 			 */
 			sharee_none: string
 			/**
-			 * T​h​e​ ​f​i​l​e​ ​i​s​ ​e​m​p​t​y​.
+			 * T​h​i​s​ ​f​i​l​e​ ​i​s​ ​e​m​p​t​y​,​ ​s​o​ ​i​t​ ​w​a​s​ ​s​k​i​p​p​e​d​.
 			 */
 			file_empty: string
 			/**
-			 * N​o​t​ ​a​ ​p​o​r​t​a​b​l​e​ ​m​e​e​t​i​n​g​:​ ​n​e​i​t​h​e​r​ ​a​n​ ​O​g​g​/​O​p​u​s​ ​r​e​c​o​r​d​i​n​g​ ​n​o​r​ ​a​ ​t​r​a​n​s​c​r​i​p​t​i​o​n​ ​d​o​c​u​m​e​n​t​.
+			 * T​h​i​s​ ​f​i​l​e​ ​i​s​ ​l​a​r​g​e​r​ ​t​h​a​n​ ​4​ ​G​i​B​,​ ​s​o​ ​i​t​ ​w​a​s​ ​s​k​i​p​p​e​d​.
 			 */
-			not_portable: string
+			file_too_large: string
+			/**
+			 * T​h​i​s​ ​i​s​n​'​t​ ​a​ ​m​e​e​t​i​n​g​ ​f​i​l​e​ ​f​r​o​m​ ​C​a​s​s​i​n​i​,​ ​s​o​ ​i​t​ ​w​a​s​ ​s​k​i​p​p​e​d​.
+			 */
+			file_not_cassini: string
+			/**
+			 * T​h​i​s​ ​f​i​l​e​ ​i​s​ ​d​a​m​a​g​e​d​ ​o​r​ ​i​n​c​o​m​p​l​e​t​e​,​ ​s​o​ ​i​t​ ​w​a​s​ ​s​k​i​p​p​e​d​.​ ​I​f​ ​i​t​ ​c​a​m​e​ ​f​r​o​m​ ​C​a​s​s​i​n​i​,​ ​d​o​w​n​l​o​a​d​ ​i​t​ ​a​g​a​i​n​ ​a​n​d​ ​r​e​t​r​y​.
+			 */
+			file_damaged: string
+			/**
+			 * T​h​i​s​ ​f​i​l​e​ ​w​a​s​ ​m​a​d​e​ ​b​y​ ​a​ ​n​e​w​e​r​ ​v​e​r​s​i​o​n​ ​o​f​ ​C​a​s​s​i​n​i​,​ ​s​o​ ​i​t​ ​w​a​s​ ​s​k​i​p​p​e​d​.​ ​A​s​k​ ​y​o​u​r​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​ ​t​o​ ​u​p​d​a​t​e​ ​C​a​s​s​i​n​i​.
+			 */
+			file_newer: string
 			/**
 			 * U​n​t​i​t​l​e​d​ ​m​e​e​t​i​n​g
 			 */
@@ -9070,6 +9114,26 @@ export type TranslationFunctions = {
 				 * People search failed (HTTP {status}).
 				 */
 				people_search_failed: (arg: { status: unknown }) => LocalizedString
+				/**
+				 * Cassini is busy right now. Try again in a moment.
+				 */
+				refused_busy: () => LocalizedString
+				/**
+				 * This file is larger than 4 GiB and can't be imported.
+				 */
+				refused_too_large: () => LocalizedString
+				/**
+				 * This upload can't be used any more. Add the file again.
+				 */
+				refused_add_again: () => LocalizedString
+				/**
+				 * This file is still uploading. Try again when it has finished.
+				 */
+				refused_uploading: () => LocalizedString
+				/**
+				 * The meeting has already been added and shared, so it can no longer be canceled.
+				 */
+				refused_cancel_too_late: () => LocalizedString
 			}
 			data_provider: {
 				/**
@@ -14874,10 +14938,6 @@ export type TranslationFunctions = {
 				 */
 				files_label: () => LocalizedString
 				/**
-				 * Not a meeting file from Cassini, so it was skipped.
-				 */
-				not_a_meeting: () => LocalizedString
-				/**
 				 * Reading…
 				 */
 				reading: () => LocalizedString
@@ -15006,6 +15066,22 @@ export type TranslationFunctions = {
 				 */
 				settled_failed: () => LocalizedString
 				/**
+				 * Too big to import right now. Ask your administrator.
+				 */
+				failed_disk_short: () => LocalizedString
+				/**
+				 * The download from your Files stopped. Try again.
+				 */
+				failed_stalled: () => LocalizedString
+				/**
+				 * The import took too long. Try again.
+				 */
+				failed_timed_out: () => LocalizedString
+				/**
+				 * Not a valid meeting file from Cassini
+				 */
+				failed_invalid_file: () => LocalizedString
+				/**
 				 * Uploaded, not started
 				 */
 				settled_staged: () => LocalizedString
@@ -15086,13 +15162,25 @@ export type TranslationFunctions = {
 				 */
 				sharee_none: () => LocalizedString
 				/**
-				 * The file is empty.
+				 * This file is empty, so it was skipped.
 				 */
 				file_empty: () => LocalizedString
 				/**
-				 * Not a portable meeting: neither an Ogg/Opus recording nor a transcription document.
+				 * This file is larger than 4 GiB, so it was skipped.
 				 */
-				not_portable: () => LocalizedString
+				file_too_large: () => LocalizedString
+				/**
+				 * This isn't a meeting file from Cassini, so it was skipped.
+				 */
+				file_not_cassini: () => LocalizedString
+				/**
+				 * This file is damaged or incomplete, so it was skipped. If it came from Cassini, download it again and retry.
+				 */
+				file_damaged: () => LocalizedString
+				/**
+				 * This file was made by a newer version of Cassini, so it was skipped. Ask your administrator to update Cassini.
+				 */
+				file_newer: () => LocalizedString
 				/**
 				 * Untitled meeting
 				 */

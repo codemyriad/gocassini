@@ -13,6 +13,7 @@ import { get } from "svelte/store";
 import { LL } from "../i18n";
 import { dateFormat, durationFormat } from "../i18n/format";
 import {
+  PortableFormatError,
   extractPortableManifestFromArrayBuffer,
   extractTranscriptionDocument,
   readPortableAnnotations,
@@ -68,6 +69,9 @@ export interface ImportJobRecord {
   stagingState?: string;
   phase?: string;
   error?: string;
+  // What kind of failure error describes, when the server knows (#510).
+  // One of disk_short, stalled, timed_out, invalid_file; others may come.
+  errorCode?: string;
   sharing: { share: boolean; audience?: Array<{ type: string; id: string; label?: string }> };
   contentId?: string;
   deliveredName?: string;
@@ -113,27 +117,75 @@ export interface ImportPreview {
   hasAudio: boolean;
 }
 
+// Why a dropped file was refused: empty, not a Cassini meeting file, written
+// by a newer Cassini, or a Cassini file that is damaged or incomplete.
+export type ImportFileProblem = "empty" | "too_large" | "not_cassini" | "newer" | "damaged";
+
+// The largest file the server takes (maxImportUploadBytes in the operator).
+export const maxImportFileBytes = 4 * 2 ** 30;
+
+// ImportFileError's message is the sentence the review list shows, in the
+// reader's language; detail is the parser's own, for whoever needs it.
+export class ImportFileError extends Error {
+  readonly problem: ImportFileProblem;
+  readonly detail: string;
+  constructor(problem: ImportFileProblem, detail = "") {
+    super(importFileProblemText(problem));
+    this.name = "ImportFileError";
+    this.problem = problem;
+    this.detail = detail;
+  }
+}
+
+export function importFileProblemText(problem: ImportFileProblem): string {
+  const text = get(LL).viewer.browse.import;
+  switch (problem) {
+    case "empty":
+      return text.file_empty();
+    case "too_large":
+      return text.file_too_large();
+    case "not_cassini":
+      return text.file_not_cassini();
+    case "newer":
+      return text.file_newer();
+    default:
+      return text.file_damaged();
+  }
+}
+
 // parseImportPreview reads a dropped file far enough to describe it, or throws
-// with a sentence the review list can show. The parsers are fail-closed — the
-// same contract the operator re-checks server-side — so a file that previews
-// here can still be refused there, but not the other way around.
+// an ImportFileError saying why it cannot be imported. The parsers are
+// fail-closed — the same contract the operator re-checks server-side — so a
+// file that previews here can still be refused there, but not the other way
+// around.
 export async function parseImportPreview(file: File): Promise<ImportPreview> {
+  // Checked before reading: the server would refuse it, and a browser may
+  // not read a file this large into memory at all.
+  if (file.size > maxImportFileBytes) {
+    throw new ImportFileError("too_large");
+  }
   const bytes = new Uint8Array(await file.arrayBuffer());
   if (bytes.length === 0) {
-    throw new Error(get(LL).viewer.browse.import.file_empty());
+    throw new ImportFileError("empty");
   }
-  if (bytes[0] === 0x4f && bytes[1] === 0x67 && bytes[2] === 0x67 && bytes[3] === 0x53) {
-    const { manifest } = await extractPortableManifestFromArrayBuffer(bytes);
-    return describePortableManifest(manifest, "opus");
-  }
-  let parsed: unknown;
   try {
-    parsed = JSON.parse(stripUTF8BOM(new TextDecoder().decode(bytes)));
-  } catch {
-    throw new Error(get(LL).viewer.browse.import.not_portable());
+    if (bytes[0] === 0x4f && bytes[1] === 0x67 && bytes[2] === 0x67 && bytes[3] === 0x53) {
+      const { manifest } = await extractPortableManifestFromArrayBuffer(bytes);
+      return describePortableManifest(manifest, "opus");
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(stripUTF8BOM(new TextDecoder().decode(bytes)));
+    } catch {
+      throw new ImportFileError("not_cassini", "neither an Ogg/Opus recording nor a JSON transcription document");
+    }
+    const { manifest } = await extractTranscriptionDocument(parsed);
+    return describePortableManifest(manifest, "json");
+  } catch (error) {
+    if (error instanceof ImportFileError) throw error;
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new ImportFileError(error instanceof PortableFormatError ? error.problem : "damaged", detail);
   }
-  const { manifest } = await extractTranscriptionDocument(parsed);
-  return describePortableManifest(manifest, "json");
 }
 
 function describePortableManifest(

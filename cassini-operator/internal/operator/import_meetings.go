@@ -117,6 +117,10 @@ func importTransport(headerTimeout time.Duration, withProxy bool) *http.Transpor
 // re-reads the whole file, so long meetings take real time, but never hours.
 const importCLITimeout = 10 * time.Minute
 
+// errNotPortableMeeting is a file that is neither kind; importFailureCode
+// reads it as an invalid file.
+var errNotPortableMeeting = errors.New("the file is neither an Ogg/Opus recording nor a transcription document")
+
 // run ingests one staged file. It is idempotent: a re-run after a crash puts
 // the same bytes under the same name, re-indexes the same rows and adds only
 // missing shares, so re-queueing interrupted jobs is the whole recovery story.
@@ -157,7 +161,7 @@ func (imp *meetingImporter) run(ctx context.Context, req meetingImportRequest, r
 	// `cassini publish` re-checks the embedded integrity fail-closed (format
 	// tag, manifest digests, audio identity) and emits the one-entry catalog.
 	if err := imp.runCassini(ctx, []string{"publish", staged, "--out", siteDir}); err != nil {
-		return result, fmt.Errorf("not a valid portable meeting: %w", err)
+		return result, fmt.Errorf("%s: %w", importInvalidPrefix, err)
 	}
 	catalog, ok, err := loadSiteCatalog(siteDir)
 	if err != nil {
@@ -444,7 +448,7 @@ func sniffPortableMeetingExtension(file string) (string, error) {
 	if trimmed := bytes.TrimLeft(bytes.TrimPrefix(head, []byte{0xEF, 0xBB, 0xBF}), " \t\r\n"); len(trimmed) > 0 && trimmed[0] == '{' {
 		return ".json", nil
 	}
-	return "", fmt.Errorf("the file is neither an Ogg/Opus recording nor a transcription document")
+	return "", errNotPortableMeeting
 }
 
 // The room every imported meeting is filed under. One bucket for all of them,
