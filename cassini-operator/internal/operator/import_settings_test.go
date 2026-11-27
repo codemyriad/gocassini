@@ -17,7 +17,7 @@ import (
 // start uses. Nothing is written on start.
 func TestImportLimitIsTheSavedValueOrTheDefault(t *testing.T) {
 	path := filepath.Join(t.TempDir(), importSettingsFileName)
-	if n := loadImportLimit(path, nil); n != defaultMaxConcurrentImports {
+	if n := loadImportSettings(path, nil).MaxConcurrentImports; n != defaultMaxConcurrentImports {
 		t.Fatalf("no file: %d", n)
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
@@ -26,8 +26,22 @@ func TestImportLimitIsTheSavedValueOrTheDefault(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"max_concurrent_imports": 7}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if n := loadImportLimit(path, nil); n != 7 {
-		t.Fatalf("saved 7: %d", n)
+	// A file saved before #508 has no size: the default, 4 GiB.
+	if got := loadImportSettings(path, nil); got.MaxConcurrentImports != 7 || got.MaxFileMiB != 4096 {
+		t.Fatalf("saved 7: %+v", got)
+	}
+	if err := os.WriteFile(path, []byte(`{"max_concurrent_imports": 2, "max_file_mib": 500}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := loadImportSettings(path, nil); got.MaxConcurrentImports != 2 || got.MaxFileMiB != 500 {
+		t.Fatalf("saved 2 and 500 MiB: %+v", got)
+	}
+	// A size of 0 is not "absent": the file is passed over for the defaults.
+	if err := os.WriteFile(path, []byte(`{"max_concurrent_imports": 2, "max_file_mib": 0}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := loadImportSettings(path, nil); got != defaultImportSettings() {
+		t.Fatalf("saved 0 MiB: %+v", got)
 	}
 }
 
@@ -39,7 +53,7 @@ func TestAnUnusableImportSettingsFileIsKeptAndPassedOver(t *testing.T) {
 		t.Fatal(err)
 	}
 	var logged strings.Builder
-	if n := loadImportLimit(path, log.New(&logged, "", 0)); n != defaultMaxConcurrentImports {
+	if n := loadImportSettings(path, log.New(&logged, "", 0)).MaxConcurrentImports; n != defaultMaxConcurrentImports {
 		t.Fatalf("unusable file: %d", n)
 	}
 	kept, _ := filepath.Glob(path + ".rejected-*")
@@ -51,6 +65,42 @@ func TestAnUnusableImportSettingsFileIsKeptAndPassedOver(t *testing.T) {
 	}
 	if !strings.Contains(logged.String(), filepath.Base(kept[0])) {
 		t.Fatalf("the log does not name the kept copy: %s", logged.String())
+	}
+}
+
+// #508: the largest file is a setting too, from 1 MiB to 4 GiB, applied at
+// once and kept; sending one value leaves the other as it is.
+func TestImportSettingsHandlerSavesTheFileSizeLimit(t *testing.T) {
+	path := filepath.Join(t.TempDir(), importSettingsFileName)
+	rt := &Runtime{importSlots: newImportSlotPool(defaultMaxConcurrentImports), importsServed: true, importSettingsPath: path}
+	put := func(body string) (int, importSettingsResponse) {
+		t.Helper()
+		w := httptest.NewRecorder()
+		rt.importSettingsHandler(w, httptest.NewRequest(http.MethodPut, "/settings/imports", strings.NewReader(body)))
+		var got importSettingsResponse
+		_ = json.Unmarshal(w.Body.Bytes(), &got)
+		return w.Code, got
+	}
+	if rt.importMaxFileBytes() != maxImportUploadBytes {
+		t.Fatalf("default: %d", rt.importMaxFileBytes())
+	}
+	for _, bad := range []string{`{"max_file_mib": 0}`, `{"max_file_mib": 4097}`} {
+		if code, _ := put(bad); code != http.StatusBadRequest {
+			t.Fatalf("PUT %s: %d", bad, code)
+		}
+	}
+	code, got := put(`{"max_file_mib": 500}`)
+	if code != http.StatusOK || got.MaxFileMiB != 500 || got.MaxFileMiBLimit != 4096 || got.MaxConcurrentImports != defaultMaxConcurrentImports {
+		t.Fatalf("PUT 500 MiB: %d %+v", code, got)
+	}
+	if rt.importMaxFileBytes() != 500<<20 {
+		t.Fatalf("applied: %d", rt.importMaxFileBytes())
+	}
+	if code, got = put(`{"max_concurrent_imports": 4}`); code != http.StatusOK || got.MaxFileMiB != 500 || got.MaxConcurrentImports != 4 {
+		t.Fatalf("PUT 4 at once: %d %+v", code, got)
+	}
+	if saved := loadImportSettings(path, nil); saved.MaxFileMiB != 500 || saved.MaxConcurrentImports != 4 {
+		t.Fatalf("after a restart: %+v", saved)
 	}
 }
 
@@ -86,7 +136,7 @@ func TestImportSettingsHandlerSavesAndAppliesTheLimit(t *testing.T) {
 	}
 	w, got = do(http.MethodPut, `{"max_concurrent_imports": 7}`)
 	want("PUT 7", w, got, 7)
-	if n := loadImportLimit(path, nil); n != 7 {
+	if n := loadImportSettings(path, nil).MaxConcurrentImports; n != 7 {
 		t.Fatalf("after a restart: %d", n)
 	}
 	if w, _ := do(http.MethodDelete, ""); w.Code != http.StatusMethodNotAllowed {

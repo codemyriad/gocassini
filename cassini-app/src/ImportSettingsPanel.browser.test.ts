@@ -5,7 +5,7 @@ import ImportSettingsPanel from "./ImportSettingsPanel.svelte";
 import { OperatorClient } from "./operator/client";
 import "./app.css";
 
-const initial = { max_concurrent_imports: 3, default: 3, max: 10 };
+const initial = { max_concurrent_imports: 3, default: 3, max: 10, max_file_mib: 4096, max_file_mib_limit: 4096 };
 let stored = { ...initial };
 let puts: unknown[] = [];
 let served = true;
@@ -24,7 +24,7 @@ beforeEach(() => {
     if (init?.method === "PUT") {
       const body = JSON.parse(init.body as string);
       puts.push(body);
-      stored = { ...stored, max_concurrent_imports: body.max_concurrent_imports };
+      stored = { ...stored, ...body };
     }
     return Response.json(stored);
   }));
@@ -52,8 +52,26 @@ it("saves the number of imports run at once", async () => {
   await field.fill("5");
   await page.getByRole("button", { name: "Save import settings" }).click();
   await expect.element(page.getByText(/^Saved\./)).toBeVisible();
-  expect(puts).toEqual([{ max_concurrent_imports: 5 }]);
+  expect(puts).toEqual([{ max_concurrent_imports: 5, max_file_mib: 4096 }]);
   await expect.element(page.getByRole("button", { name: "Save import settings" })).toBeDisabled();
+});
+
+// #508
+it("saves the largest file an import may be", async () => {
+  app = mount(ImportSettingsPanel, { target: host, props: { operatorClient: new OperatorClient("/operator") } });
+  const field = page.getByLabelText("Largest file (MiB)");
+  await expect.element(field).toHaveValue(4096);
+  await expect.element(page.getByText("1 to 4096")).toBeVisible();
+
+  await field.fill("4097");
+  await expect.element(page.getByText(/^Choose a whole number of MiB from 1 to 4096\./)).toBeVisible();
+  await expect.element(page.getByRole("button", { name: "Save import settings" })).toBeDisabled();
+
+  await field.fill("500");
+  await page.getByRole("button", { name: "Save import settings" }).click();
+  await expect.element(page.getByText(/^Saved\./)).toBeVisible();
+  expect(puts).toEqual([{ max_concurrent_imports: 3, max_file_mib: 500 }]);
+  await expect.element(field).toHaveValue(500);
 });
 
 it("is not shown on a server that does not serve imports", async () => {

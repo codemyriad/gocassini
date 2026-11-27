@@ -271,6 +271,9 @@ export interface DataProvider {
   // named by its staged path only; sharing was decided at registration.
   startImports?(files: ImportFileRequest[]): Promise<ImportJobRecord[]>;
   listImports?(): Promise<ImportJobRecord[]>;
+  // The largest file this server imports, as the last listImports said; until
+  // then, undefined (the panel assumes the most any server takes).
+  importMaxFileBytes?(): number | undefined;
   // Where an agent outside Cassini connects to read meetings as this person
   // (D-813), for the "Connect an agent" panel. Optional like every capability
   // here: only an operator behind Nextcloud serves the MCP endpoint, so a

@@ -186,8 +186,11 @@ type Runtime struct {
 	importSlots *importSlotPool
 	// importsServed is set once the import routes are mounted; without them
 	// the setting is not offered.
-	importsServed            bool
-	importSettingsPath       string
+	importsServed      bool
+	importSettingsPath string
+	// importMaxFileMiB is the largest file a new import may be, in MiB; 0
+	// means the default (importMaxFileBytes).
+	importMaxFileMiB         atomic.Int64
 	importSettingsMu         sync.Mutex
 	eventWebhookSettings     EventWebhookSettings
 	eventWebhookSettingsPath string
@@ -1007,10 +1010,12 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, journal *supportJ
 			logger.Printf("%s was not found; using detected defaults (transcription off) until an administrator saves Settings", filepath.Base(rt.settingsPath))
 		}
 	}
-	// How many imports run at once: the administrator's saved value, else the
-	// default. Only a save in the panel writes the file.
+	// How many imports run at once, and how large one may be: the saved values, else the
+	// defaults. Only a save in the panel writes the file.
 	rt.importSettingsPath = importSettingsPath(cfg)
-	rt.importSlots = newImportSlotPool(loadImportLimit(rt.importSettingsPath, logger))
+	saved := loadImportSettings(rt.importSettingsPath, logger)
+	rt.importSlots = newImportSlotPool(saved.MaxConcurrentImports)
+	rt.importMaxFileMiB.Store(int64(saved.MaxFileMiB))
 	// The LLM policy: seed from the deploy env on first start; on a
 	// load failure keep running on the deploy env rather than refusing to start.
 	llmExisted := fileExists(rt.llmSettingsPath)

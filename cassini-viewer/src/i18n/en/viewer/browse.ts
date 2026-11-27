@@ -427,7 +427,8 @@ const browse = {
     sharee_none: "Nobody matches that.",
     // Why a dropped file was skipped, on its row in the list.
     file_empty: "This file is empty, so it was skipped.",
-    file_too_large: "This file is larger than 4 GiB, so it was skipped.",
+    // {limit}: the largest file this server imports, such as "4 GiB" or "500 MiB".
+    file_too_large: "This file is larger than {limit}, so it was skipped.",
     file_unreadable: "This file couldn't be read, so it was skipped. Try adding it again.",
     file_damaged: "This file is damaged or incomplete, so it was skipped. If it came from Cassini, download it again and retry.",
     file_newer: "This file was made by a newer version of Cassini, so it was skipped. Ask your administrator to update Cassini.",

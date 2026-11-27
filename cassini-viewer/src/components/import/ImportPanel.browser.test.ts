@@ -274,3 +274,27 @@ it("groups the people a meeting is shared with, and an empty list means only me"
  await expect.element(page.getByText("Groups", { exact: true })).not.toBeInTheDocument();
  await expect.element(page.getByRole("button", { name: "Only me" })).toBeVisible();
 });
+
+// #508: a file over the administrator's limit is skipped naming that limit,
+// and a later change to the limit rechecks it.
+it("skips a file over the server's size limit, and rechecks it when the limit changes", async () => {
+ let limit = 2 ** 20;
+ const importMaxFileBytes = vi.fn(() => limit);
+ const provider: DataProvider = Object.assign(new StaticCatalogProvider(), { listImports: async () => [], importMaxFileBytes });
+ open(provider);
+ const drop = (file: File) => {
+  const transfer = new DataTransfer();
+  transfer.items.add(file);
+  const input = host.querySelector('input[type="file"]') as HTMLInputElement;
+  input.files = transfer.files; input.dispatchEvent(new Event("change", { bubbles: true }));
+ };
+ // The first list has told the panel the limit.
+ await vi.waitFor(() => expect(importMaxFileBytes).toHaveBeenCalled());
+ drop(new File([new Uint8Array(2 ** 20 + 1)], "big.opus"));
+ await expect.element(page.getByText("This file is larger than 1 MiB, so it was skipped.")).toBeVisible();
+ // The limit is raised; the next list (a new drop asks for one) rechecks it.
+ limit = 4 * 2 ** 30;
+ drop(new File(["RIFF....WAVE"], "song.opus"));
+ await expect.element(page.getByText(/^This file is larger than/)).not.toBeInTheDocument();
+ await vi.waitFor(() => expect(page.getByText("Not a meeting file from Cassini, so it was skipped.").elements()).toHaveLength(2));
+});

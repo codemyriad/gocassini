@@ -374,7 +374,7 @@ func importFailureCode(errText string) string {
 // The sheet falls back to the English for any other refusal.
 const (
 	importRefusalBusy          = "import_busy"            // try again in a moment
-	importRefusalTooLarge      = "import_too_large"       // over maxImportUploadBytes
+	importRefusalTooLarge      = "import_too_large"       // over the size setting; carries max_file_bytes
 	importRefusalAddAgain      = "import_add_again"       // the upload cannot be used: add the file again
 	importRefusalUploading     = "import_uploading"       // the file is still uploading or importing
 	importRefusalCancelTooLate = "import_cancel_too_late" // the meeting is already added and shared
@@ -593,7 +593,9 @@ func (s *importService) list(w http.ResponseWriter, r *http.Request, caller stri
 		return
 	}
 	setImportQueuePositions(jobs, s.runningIDs())
-	writeJSON(w, http.StatusOK, map[string]any{"imports": jobs})
+	// The size limit rides along so the browser can skip a file that is too
+	// large before uploading it.
+	writeJSON(w, http.StatusOK, map[string]any{"imports": jobs, "max_file_bytes": s.rt.importMaxFileBytes()})
 }
 
 // importCreateRequest serves two calls. With prepare, it REGISTERS uploads: one
@@ -662,12 +664,16 @@ func (s *importService) create(w http.ResponseWriter, r *http.Request, caller st
 		if sourceName == "" {
 			sourceName = path.Base(staged)
 		}
-		if request.Prepare && file.ExpectedBytes > maxImportUploadBytes {
-			writeImportRefusal(w, http.StatusBadRequest, importRefusalTooLarge, "upload must be between 1 byte and 4 GiB")
+		if limit := s.rt.importMaxFileBytes(); request.Prepare && file.ExpectedBytes > limit {
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"error":          fmt.Sprintf("%s is larger than %d MiB, the most this server imports", sourceName, limit>>20),
+				"error_code":     importRefusalTooLarge,
+				"max_file_bytes": limit,
+			})
 			return
 		}
 		if request.Prepare && file.ExpectedBytes <= 0 {
-			writeJSONError(w, http.StatusBadRequest, "upload must be between 1 byte and 4 GiB")
+			writeJSONError(w, http.StatusBadRequest, "an upload must not be empty")
 			return
 		}
 		state, stagingState := "", ""

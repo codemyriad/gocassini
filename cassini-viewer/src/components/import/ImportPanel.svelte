@@ -16,6 +16,8 @@
   import type { DataProvider } from "../../viewer/dataProvider";
   import {
     ImportFileError,
+    formatImportFileLimit,
+    maxImportFileBytes,
     describeImportSharing,
     formatImportDate,
     formatImportDuration,
@@ -54,6 +56,8 @@
     // Set on an invalid file: why it was skipped, and the parser's own words.
     problem?: ImportFileProblem;
     detail?: string;
+    // For "too_large": the limit it was over, which the sentence names.
+    limitBytes?: number;
     preview?: ImportPreview;
     audience: ImportSharee[];
     sentBytes: number;
@@ -99,6 +103,8 @@
   // --- the jobs poll -------------------------------------------------------
 
   let pollTimer: ReturnType<typeof setInterval> | null = null;
+  // The largest file this server imports (#508), from the last list.
+  let maxFileBytes = maxImportFileBytes;
   let previousStates = new Map<string, string>();
   // How many imports finished since the last "N imported" went quiet.
   let justImported = 0;
@@ -109,6 +115,11 @@
     if (!dataProvider.listImports) return;
     try {
       const listed = await dataProvider.listImports();
+      const limit = dataProvider.importMaxFileBytes?.() ?? maxImportFileBytes;
+      if (limit !== maxFileBytes) {
+        maxFileBytes = limit;
+        recheckSizes();
+      }
       let landed = 0;
       for (const job of listed) {
         const before = previousStates.get(job.id);
@@ -225,15 +236,32 @@
       pending = [...pending, item];
       void parseOne(item);
     }
+    // The size limit may have changed since the last list: ask again, and a
+    // change rechecks these files.
+    void refreshJobs();
+  }
+
+  // An administrator changed the size limit (#508): files waiting here are
+  // checked against the new one, either way.
+  function recheckSizes() {
+    for (const item of pending) {
+      if (item.status === "ready" && item.file.size > maxFileBytes) {
+        patch(item.key, { status: "invalid", problem: "too_large", detail: "", limitBytes: maxFileBytes, preview: undefined });
+      } else if (item.status === "invalid" && item.problem === "too_large" && item.file.size <= maxFileBytes) {
+        patch(item.key, { status: "parsing", problem: undefined, limitBytes: undefined });
+        void parseOne(item);
+      }
+    }
   }
 
   async function parseOne(item: PendingItem) {
     try {
-      const preview = await parseImportPreview(item.file);
+      const preview = await parseImportPreview(item.file, maxFileBytes);
       patch(item.key, { status: "ready", preview });
     } catch (error) {
       patch(item.key, {
         status: "invalid",
+        limitBytes: maxFileBytes,
         problem: error instanceof ImportFileError ? error.problem : "unreadable",
         detail: error instanceof ImportFileError ? error.detail : error instanceof Error ? error.message : String(error),
       });
@@ -283,12 +311,12 @@
   $: text = $LL.viewer.browse.import;
   $: fileProblemText = {
     empty: text.file_empty,
-    too_large: text.file_too_large,
+    too_large: (limitBytes = maxFileBytes) => text.file_too_large({ limit: formatImportFileLimit(limitBytes) }),
     unreadable: text.file_unreadable,
     not_cassini: text.not_a_meeting,
     newer: text.file_newer,
     damaged: text.file_damaged,
-  } satisfies Record<ImportFileProblem, () => string>;
+  } satisfies Record<ImportFileProblem, (limitBytes?: number) => string>;
 
   $: shareeGroups = [
     { type: "user", heading: text.group_people() },
@@ -564,7 +592,7 @@
                 {#if item.status === "invalid"}
                   <!-- The parser's sentence is precise but technical; it stays
                        on hover for whoever needs it. -->
-                  <span class="import-meta import-meta-error" title={item.detail || undefined}>{fileProblemText[item.problem ?? "damaged"]()}</span>
+                  <span class="import-meta import-meta-error" title={item.detail || undefined}>{fileProblemText[item.problem ?? "damaged"](item.limitBytes)}</span>
                 {:else if bad}
                   <span class="import-meta import-meta-error">{item.reason}</span>
                 {:else if item.status === "parsing"}

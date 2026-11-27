@@ -1135,6 +1135,10 @@
       "help": "",
       "default_hint": "",
       "saved": "",
+      "size_label": "",
+      "size_range": "",
+      "size_help": "",
+      "size_out_of_range": "",
       "loading": "",
       "load_failed": "",
       "out_of_range": ""

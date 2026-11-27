@@ -328,9 +328,10 @@ export type NamespaceAppTranslation = {
 			 */
 			refused_busy: string
 			/**
-			 * T​h​i​s​ ​f​i​l​e​ ​i​s​ ​l​a​r​g​e​r​ ​t​h​a​n​ ​4​ ​G​i​B​ ​a​n​d​ ​c​a​n​'​t​ ​b​e​ ​i​m​p​o​r​t​e​d​.
+			 * T​h​i​s​ ​f​i​l​e​ ​i​s​ ​l​a​r​g​e​r​ ​t​h​a​n​ ​{​l​i​m​i​t​}​ ​a​n​d​ ​c​a​n​'​t​ ​b​e​ ​i​m​p​o​r​t​e​d​.
+			 * @param {unknown} limit
 			 */
-			refused_too_large: string
+			refused_too_large: RequiredParams<'limit'>
 			/**
 			 * T​h​i​s​ ​u​p​l​o​a​d​ ​c​a​n​'​t​ ​b​e​ ​u​s​e​d​ ​a​n​y​ ​m​o​r​e​.​ ​A​d​d​ ​t​h​e​ ​f​i​l​e​ ​a​g​a​i​n​.
 			 */
@@ -4417,7 +4418,7 @@ export type NamespaceAppTranslation = {
 			 */
 			heading: string
 			/**
-			 * H​o​w​ ​m​a​n​y​ ​m​e​e​t​i​n​g​ ​i​m​p​o​r​t​s​ ​r​u​n​ ​a​t​ ​t​h​e​ ​s​a​m​e​ ​t​i​m​e​,​ ​a​c​r​o​s​s​ ​e​v​e​r​y​o​n​e​.​ ​E​a​c​h​ ​p​e​r​s​o​n​'​s​ ​o​w​n​ ​i​m​p​o​r​t​s​ ​s​t​i​l​l​ ​r​u​n​ ​o​n​e​ ​a​t​ ​a​ ​t​i​m​e​.
+			 * H​o​w​ ​m​a​n​y​ ​m​e​e​t​i​n​g​ ​i​m​p​o​r​t​s​ ​r​u​n​ ​a​t​ ​t​h​e​ ​s​a​m​e​ ​t​i​m​e​,​ ​a​c​r​o​s​s​ ​e​v​e​r​y​o​n​e​,​ ​a​n​d​ ​h​o​w​ ​l​a​r​g​e​ ​a​n​ ​i​m​p​o​r​t​e​d​ ​f​i​l​e​ ​m​a​y​ ​b​e​.​ ​E​a​c​h​ ​p​e​r​s​o​n​'​s​ ​o​w​n​ ​i​m​p​o​r​t​s​ ​s​t​i​l​l​ ​r​u​n​ ​o​n​e​ ​a​t​ ​a​ ​t​i​m​e​.
 			 */
 			intro: string
 			/**
@@ -4434,7 +4435,7 @@ export type NamespaceAppTranslation = {
 			 */
 			save_label: string
 			/**
-			 * E​a​c​h​ ​r​u​n​n​i​n​g​ ​i​m​p​o​r​t​ ​k​e​e​p​s​ ​i​t​s​ ​f​i​l​e​,​ ​u​p​ ​t​o​ ​4​ ​G​i​B​,​ ​a​n​d​ ​a​ ​w​o​r​k​i​n​g​ ​c​o​p​y​ ​o​n​ ​t​h​i​s​ ​s​e​r​v​e​r​'​s​ ​d​i​s​k​,​ ​w​h​i​c​h​ ​r​e​c​o​r​d​i​n​g​s​ ​a​l​s​o​ ​u​s​e​.​ ​A​n​ ​i​m​p​o​r​t​ ​s​t​a​r​t​s​ ​o​n​l​y​ ​w​h​e​n​ ​i​t​ ​f​i​t​s​ ​w​h​i​l​e​ ​5​ ​G​i​B​ ​s​t​a​y​ ​f​r​e​e​ ​f​o​r​ ​r​e​c​o​r​d​i​n​g​s​.
+			 * E​a​c​h​ ​r​u​n​n​i​n​g​ ​i​m​p​o​r​t​ ​k​e​e​p​s​ ​i​t​s​ ​f​i​l​e​ ​a​n​d​ ​a​ ​w​o​r​k​i​n​g​ ​c​o​p​y​ ​o​n​ ​t​h​i​s​ ​s​e​r​v​e​r​'​s​ ​d​i​s​k​,​ ​w​h​i​c​h​ ​r​e​c​o​r​d​i​n​g​s​ ​a​l​s​o​ ​u​s​e​.​ ​A​n​ ​i​m​p​o​r​t​ ​s​t​a​r​t​s​ ​o​n​l​y​ ​w​h​e​n​ ​i​t​ ​f​i​t​s​ ​w​h​i​l​e​ ​5​ ​G​i​B​ ​s​t​a​y​ ​f​r​e​e​ ​f​o​r​ ​r​e​c​o​r​d​i​n​g​s​.
 			 */
 			help: string
 			/**
@@ -4443,9 +4444,28 @@ export type NamespaceAppTranslation = {
 			 */
 			default_hint: RequiredParams<'value'>
 			/**
-			 * S​a​v​e​d​.​ ​R​u​n​n​i​n​g​ ​i​m​p​o​r​t​s​ ​f​i​n​i​s​h​;​ ​n​e​w​ ​o​n​e​s​ ​s​t​a​r​t​ ​w​i​t​h​i​n​ ​t​h​e​ ​n​e​w​ ​l​i​m​i​t​.
+			 * S​a​v​e​d​.​ ​R​u​n​n​i​n​g​ ​i​m​p​o​r​t​s​ ​f​i​n​i​s​h​;​ ​n​e​w​ ​o​n​e​s​ ​s​t​a​r​t​ ​w​i​t​h​i​n​ ​t​h​e​ ​n​e​w​ ​l​i​m​i​t​s​.
 			 */
 			saved: string
+			/**
+			 * L​a​r​g​e​s​t​ ​f​i​l​e​ ​(​M​i​B​)
+			 */
+			size_label: string
+			/**
+			 * 1​ ​t​o​ ​{​m​a​x​}
+			 * @param {unknown} max
+			 */
+			size_range: RequiredParams<'max'>
+			/**
+			 * A​ ​l​a​r​g​e​r​ ​f​i​l​e​ ​i​s​ ​r​e​f​u​s​e​d​ ​b​e​f​o​r​e​ ​i​t​ ​i​s​ ​u​p​l​o​a​d​e​d​.​ ​T​h​e​ ​d​e​f​a​u​l​t​ ​a​n​d​ ​t​h​e​ ​m​o​s​t​ ​a​l​l​o​w​e​d​ ​i​s​ ​{​m​a​x​}​ ​M​i​B​ ​(​4​ ​G​i​B​)​.​ ​I​m​p​o​r​t​s​ ​a​l​r​e​a​d​y​ ​a​c​c​e​p​t​e​d​ ​a​r​e​ ​n​o​t​ ​a​f​f​e​c​t​e​d​ ​b​y​ ​a​ ​l​o​w​e​r​ ​v​a​l​u​e​.
+			 * @param {unknown} max
+			 */
+			size_help: RequiredParams<'max'>
+			/**
+			 * C​h​o​o​s​e​ ​a​ ​w​h​o​l​e​ ​n​u​m​b​e​r​ ​o​f​ ​M​i​B​ ​f​r​o​m​ ​1​ ​t​o​ ​{​m​a​x​}​.​ ​{​m​a​x​}​ ​i​s​ ​t​h​e​ ​m​o​s​t​ ​t​h​e​ ​s​e​r​v​e​r​ ​a​l​l​o​w​s​.
+			 * @param {unknown} max
+			 */
+			size_out_of_range: RequiredParams<'max' | 'max'>
 			/**
 			 * L​o​a​d​i​n​g​ ​i​m​p​o​r​t​ ​s​e​t​t​i​n​g​s​…
 			 */
@@ -6840,9 +6860,10 @@ export type NamespaceViewerTranslation = {
 			 */
 			file_empty: string
 			/**
-			 * T​h​i​s​ ​f​i​l​e​ ​i​s​ ​l​a​r​g​e​r​ ​t​h​a​n​ ​4​ ​G​i​B​,​ ​s​o​ ​i​t​ ​w​a​s​ ​s​k​i​p​p​e​d​.
+			 * T​h​i​s​ ​f​i​l​e​ ​i​s​ ​l​a​r​g​e​r​ ​t​h​a​n​ ​{​l​i​m​i​t​}​,​ ​s​o​ ​i​t​ ​w​a​s​ ​s​k​i​p​p​e​d​.
+			 * @param {unknown} limit
 			 */
-			file_too_large: string
+			file_too_large: RequiredParams<'limit'>
 			/**
 			 * T​h​i​s​ ​f​i​l​e​ ​c​o​u​l​d​n​'​t​ ​b​e​ ​r​e​a​d​,​ ​s​o​ ​i​t​ ​w​a​s​ ​s​k​i​p​p​e​d​.​ ​T​r​y​ ​a​d​d​i​n​g​ ​i​t​ ​a​g​a​i​n​.
 			 */
@@ -9201,9 +9222,9 @@ export type TranslationFunctions = {
 				 */
 				refused_busy: () => LocalizedString
 				/**
-				 * This file is larger than 4 GiB and can't be imported.
+				 * This file is larger than {limit} and can't be imported.
 				 */
-				refused_too_large: () => LocalizedString
+				refused_too_large: (arg: { limit: unknown }) => LocalizedString
 				/**
 				 * This upload can't be used any more. Add the file again.
 				 */
@@ -13024,7 +13045,7 @@ export type TranslationFunctions = {
 				 */
 				heading: () => LocalizedString
 				/**
-				 * How many meeting imports run at the same time, across everyone. Each person's own imports still run one at a time.
+				 * How many meeting imports run at the same time, across everyone, and how large an imported file may be. Each person's own imports still run one at a time.
 				 */
 				intro: () => LocalizedString
 				/**
@@ -13040,7 +13061,7 @@ export type TranslationFunctions = {
 				 */
 				save_label: () => LocalizedString
 				/**
-				 * Each running import keeps its file, up to 4 GiB, and a working copy on this server's disk, which recordings also use. An import starts only when it fits while 5 GiB stay free for recordings.
+				 * Each running import keeps its file and a working copy on this server's disk, which recordings also use. An import starts only when it fits while 5 GiB stay free for recordings.
 				 */
 				help: () => LocalizedString
 				/**
@@ -13048,9 +13069,25 @@ export type TranslationFunctions = {
 				 */
 				default_hint: (arg: { value: unknown }) => LocalizedString
 				/**
-				 * Saved. Running imports finish; new ones start within the new limit.
+				 * Saved. Running imports finish; new ones start within the new limits.
 				 */
 				saved: () => LocalizedString
+				/**
+				 * Largest file (MiB)
+				 */
+				size_label: () => LocalizedString
+				/**
+				 * 1 to {max}
+				 */
+				size_range: (arg: { max: unknown }) => LocalizedString
+				/**
+				 * A larger file is refused before it is uploaded. The default and the most allowed is {max} MiB (4 GiB). Imports already accepted are not affected by a lower value.
+				 */
+				size_help: (arg: { max: unknown }) => LocalizedString
+				/**
+				 * Choose a whole number of MiB from 1 to {max}. {max} is the most the server allows.
+				 */
+				size_out_of_range: (arg: { max: unknown }) => LocalizedString
 				/**
 				 * Loading import settings…
 				 */
@@ -15292,9 +15329,9 @@ export type TranslationFunctions = {
 				 */
 				file_empty: () => LocalizedString
 				/**
-				 * This file is larger than 4 GiB, so it was skipped.
+				 * This file is larger than {limit}, so it was skipped.
 				 */
-				file_too_large: () => LocalizedString
+				file_too_large: (arg: { limit: unknown }) => LocalizedString
 				/**
 				 * This file couldn't be read, so it was skipped. Try adding it again.
 				 */

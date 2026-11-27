@@ -60,7 +60,7 @@ beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(String(input), location.href).pathname;
     // The Storage page also shows how many imports run at once.
-    if (path === "/operator/settings/imports") return Response.json({ max_concurrent_imports: 3, default: 3, max: 10 });
+    if (path === "/operator/settings/imports") return Response.json({ max_concurrent_imports: 3, default: 3, max: 10, max_file_mib: 4096, max_file_mib_limit: 4096 });
     const method = init?.method ?? "GET";
     if (path === "/operator/status") {
       statusCalls += 1;
