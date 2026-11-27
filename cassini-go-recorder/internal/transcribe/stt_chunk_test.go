@@ -671,8 +671,8 @@ func TestShortInterjectionVADConfig(t *testing.T) {
 	if cfg.SileroVad.Model != "vad.onnx" || cfg.SampleRate != 16000 {
 		t.Fatalf("VAD identity config = model %q sample rate %d", cfg.SileroVad.Model, cfg.SampleRate)
 	}
-	if cfg.SileroVad.Threshold != 0.18 || cfg.SileroVad.MinSpeechDuration != 0.10 {
-		t.Fatalf("VAD short-turn config = threshold %g min speech %g; want 0.18 / 0.10", cfg.SileroVad.Threshold, cfg.SileroVad.MinSpeechDuration)
+	if cfg.SileroVad.Threshold != 0.30 || cfg.SileroVad.MinSpeechDuration != 0.10 {
+		t.Fatalf("VAD short-turn config = threshold %g min speech %g; want 0.30 / 0.10", cfg.SileroVad.Threshold, cfg.SileroVad.MinSpeechDuration)
 	}
 	if cfg.SileroVad.WindowSize != vadWindowSamples || cfg.NumThreads != 1 || cfg.Provider != "cpu" {
 		t.Fatalf("VAD runtime config = window %d threads %d provider %q", cfg.SileroVad.WindowSize, cfg.NumThreads, cfg.Provider)

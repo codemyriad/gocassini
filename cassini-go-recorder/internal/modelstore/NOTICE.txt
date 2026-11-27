@@ -80,7 +80,7 @@ Silero VAD
 ==========
 Original project: https://github.com/snakers4/silero-vad
 Source file, distributed with lossless seekable Zstandard compression:
-https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx
+https://raw.githubusercontent.com/snakers4/silero-vad/63d4a2a7bfce8cd9bb39ed8fa0afcb5236d73e01/src/silero_vad/data/silero_vad.onnx
 
 MIT License
 

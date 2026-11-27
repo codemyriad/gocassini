@@ -303,7 +303,7 @@ jobs:
           mkdir -p "$CASSINI_CACHE_ROOT/vad"
           if [[ ! -s "$CASSINI_CACHE_ROOT/vad/silero_vad.onnx" ]]; then
             curl --fail --location --retry 3 \
-              https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx \
+              https://raw.githubusercontent.com/snakers4/silero-vad/63d4a2a7bfce8cd9bb39ed8fa0afcb5236d73e01/src/silero_vad/data/silero_vad.onnx \
               -o "$CASSINI_CACHE_ROOT/vad/silero_vad.onnx"
           fi
           cd "$CASSINI_CACHE_ROOT"

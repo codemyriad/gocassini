@@ -82,11 +82,14 @@ func (r *Recognizer) NativeFrontend() string {
 const vadWindowSamples = 512
 
 // The stock 0.5 Silero threshold missed direct acknowledgements as short as
-// 420-500ms in real per-participant tracks. The lower threshold recovers those
-// turns; the conservative energy gate below prevents newly admitted digital
-// silence and near-silence from becoming attributed ASR hallucinations.
+// 420-500ms on the older v4/v5 export, which previously required lowering the
+// threshold to 0.18. Silero v6.3 improves short-speech and short-pause
+// detection: at 0.30 it matches total word coverage while recovering +36% more
+// sub-second turns without bridging pauses (0.18) or dropping quiet words (0.50).
+// The conservative energy gate below still prevents digital silence and
+// near-silence from becoming attributed ASR hallucinations.
 const (
-	vadSpeechThreshold       = 0.18
+	vadSpeechThreshold       = 0.30
 	vadMinSpeechDuration     = 0.10
 	vadMinSilenceDurationMS  = 500
 	minimumWordPeakAmplitude = 0.001  // -60 dBFS

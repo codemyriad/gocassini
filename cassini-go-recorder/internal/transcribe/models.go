@@ -53,8 +53,8 @@ const (
 
 	defaultModelID = ModelParakeetUltraInt8
 
-	// sileroVADURL is the Silero VAD model (single .onnx file, ~630 KB).
-	sileroVADURL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx"
+	// sileroVADURL is the Silero VAD v6.3 model (single .onnx file, ~2.2 MB).
+	sileroVADURL = "https://raw.githubusercontent.com/snakers4/silero-vad/63d4a2a7bfce8cd9bb39ed8fa0afcb5236d73e01/src/silero_vad/data/silero_vad.onnx"
 )
 
 type modelSpec struct {
