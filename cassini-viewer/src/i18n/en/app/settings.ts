@@ -170,7 +170,7 @@ const settings = {
   // Operator › Storage: how many meeting imports the server runs at once.
   imports: {
     heading: "Imports",
-    intro: "How many meeting imports run at the same time, across everyone. Each person's own imports still run one at a time.",
+    intro: "How many meeting imports run at the same time, across everyone, and how large an imported file may be. Each person's own imports still run one at a time.",
     limit_label: "Imports at once",
     // Next to the field. {max}: the highest value the server accepts, 10.
     range: "1 to {max}",
@@ -178,10 +178,16 @@ const settings = {
     // the retention settings' own Save.
     save_label: "Save import settings",
     // Under the field. The sizes are fixed by the server.
-    help: "Each running import keeps its file, up to 4 GiB, and a working copy on this server's disk, which recordings also use. An import starts only when it fits while 5 GiB stay free for recordings.",
+    help: "Each running import keeps its file and a working copy on this server's disk, which recordings also use. An import starts only when it fits while 5 GiB stay free for recordings.",
     // Under the field. {value}: the default, 3.
     default_hint: "The default is {value}. A value saved here applies at once and is kept when the app is redeployed.",
-    saved: "Saved. Running imports finish; new ones start within the new limit.",
+    saved: "Saved. Running imports finish; new ones start within the new limits.",
+    size_label: "Largest file (MiB)",
+    // Next to the field. {max}: the highest value the server accepts, 4096.
+    size_range: "1 to {max}",
+    // Under the field. {max}: 4096, the default and the highest value.
+    size_help: "A larger file is refused before it is uploaded. The default and the most allowed is {max} MiB (4 GiB). Imports already accepted are not affected by a lower value.",
+    size_out_of_range: "Choose a whole number of MiB from 1 to {max}. {max} is the most the server allows.",
     loading: "Loading import settings…",
     load_failed: "Import settings couldn't be loaded: {detail}",
     out_of_range: "Choose a whole number from 1 to {max}. {max} is the most the server allows.",

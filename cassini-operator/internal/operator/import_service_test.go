@@ -91,6 +91,24 @@ func TestCreateImportRefusesABadRequest(t *testing.T) {
 	}
 }
 
+// #508: a file over the administrator's size limit is refused when it is
+// asked for, before any upload, and the refusal says what the limit is.
+func TestCreateImportRefusesAFileOverTheSizeSetting(t *testing.T) {
+	s := importHandlerService(t)
+	s.rt.importMaxFileMiB.Store(1)
+	w := importDo(t, s, http.MethodPost, importsURLPath, "alice", `{"prepare":true,"files":[{"stagedPath":".CassiniImports/big.opus","sourceName":"big.opus","expectedBytes":1048577}]}`)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), `"error_code":"import_too_large"`) || !strings.Contains(w.Body.String(), `"max_file_bytes":1048576`) {
+		t.Fatalf("over 1 MiB: %d %s", w.Code, w.Body.String())
+	}
+	if w := importDo(t, s, http.MethodPost, importsURLPath, "alice", `{"prepare":true,"files":[{"stagedPath":".CassiniImports/ok.opus","sourceName":"ok.opus","expectedBytes":1048576}]}`); w.Code != http.StatusAccepted {
+		t.Fatalf("at 1 MiB: %d %s", w.Code, w.Body.String())
+	}
+	list := importDo(t, s, http.MethodGet, importsURLPath, "alice", "")
+	if !strings.Contains(list.Body.String(), `"max_file_bytes":1048576`) {
+		t.Fatalf("the list does not carry the limit: %s", list.Body.String())
+	}
+}
+
 func TestImportLifecycleOverHTTP(t *testing.T) {
 	s := importHandlerService(t)
 	ctx := context.Background()

@@ -16,6 +16,8 @@
   import type { DataProvider } from "../../viewer/dataProvider";
   import {
     ImportFileError,
+    formatImportFileLimit,
+    maxImportFileBytes,
     describeImportSharing,
     formatImportDate,
     formatImportDuration,
@@ -99,6 +101,8 @@
   // --- the jobs poll -------------------------------------------------------
 
   let pollTimer: ReturnType<typeof setInterval> | null = null;
+  // The largest file this server imports (#508), from the last list.
+  let maxFileBytes = maxImportFileBytes;
   let previousStates = new Map<string, string>();
   // How many imports finished since the last "N imported" went quiet.
   let justImported = 0;
@@ -109,6 +113,7 @@
     if (!dataProvider.listImports) return;
     try {
       const listed = await dataProvider.listImports();
+      maxFileBytes = dataProvider.importMaxFileBytes?.() ?? maxImportFileBytes;
       let landed = 0;
       for (const job of listed) {
         const before = previousStates.get(job.id);
@@ -229,7 +234,7 @@
 
   async function parseOne(item: PendingItem) {
     try {
-      const preview = await parseImportPreview(item.file);
+      const preview = await parseImportPreview(item.file, maxFileBytes);
       patch(item.key, { status: "ready", preview });
     } catch (error) {
       patch(item.key, {
@@ -283,7 +288,7 @@
   $: text = $LL.viewer.browse.import;
   $: fileProblemText = {
     empty: text.file_empty,
-    too_large: text.file_too_large,
+    too_large: () => text.file_too_large({ limit: formatImportFileLimit(maxFileBytes) }),
     unreadable: text.file_unreadable,
     not_cassini: text.not_a_meeting,
     newer: text.file_newer,

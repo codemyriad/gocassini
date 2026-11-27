@@ -13,6 +13,7 @@ import { get } from "svelte/store";
 import { LL } from "cassini-viewer/i18n";
 import { resolvePublishedUrl } from "cassini-viewer/dataProvider";
 import type { ImportFileRequest, ImportJobRecord, ImportSharee, ImportSharingRequest } from "cassini-viewer/imports";
+import { formatImportFileLimit, maxImportFileBytes } from "cassini-viewer/imports";
 
 // The staging folder inside the caller's Files. Must match the operator's
 // importStagingDir — it refuses staged paths anywhere else.
@@ -213,8 +214,17 @@ export async function startImports(files: ImportFileRequest[]): Promise<ImportJo
   return result.imports;
 }
 
+// The largest file the server imports, as its last list said (#508).
+let lastMaxFileBytes: number | undefined;
+
+export function importMaxFileBytes(): number | undefined {
+  return lastMaxFileBytes;
+}
+
 export async function listImports(): Promise<ImportJobRecord[]> {
-  return (await importsRequest<{ imports: ImportJobRecord[] }>("")).imports;
+  const listed = await importsRequest<{ imports: ImportJobRecord[]; max_file_bytes?: unknown }>("");
+  if (typeof listed.max_file_bytes === "number" && listed.max_file_bytes > 0) lastMaxFileBytes = listed.max_file_bytes;
+  return listed.imports;
 }
 
 export async function cancelImport(id: string): Promise<void> {
@@ -237,17 +247,19 @@ async function describeImportFailure(response: Response): Promise<string> {
   const t = get(LL).app.shell.imports_client;
   let served = "";
   let code = "";
+  let maxFileBytes = maxImportFileBytes;
   try {
-    const payload = JSON.parse(await response.text()) as { error?: unknown; error_code?: unknown };
+    const payload = JSON.parse(await response.text()) as { error?: unknown; error_code?: unknown; max_file_bytes?: unknown };
     if (typeof payload.error === "string") served = payload.error.trim();
     if (typeof payload.error_code === "string") code = payload.error_code;
+    if (typeof payload.max_file_bytes === "number" && payload.max_file_bytes > 0) maxFileBytes = payload.max_file_bytes;
   } catch {
     // Not JSON: the status is all there is.
   }
   // A refusal the operator coded is worded in the reader's language (#510).
   const refusals: Record<string, () => string> = {
     import_busy: t.refused_busy,
-    import_too_large: t.refused_too_large,
+    import_too_large: () => t.refused_too_large({ limit: formatImportFileLimit(maxFileBytes) }),
     import_add_again: t.refused_add_again,
     import_uploading: t.refused_uploading,
     import_cancel_too_late: t.refused_cancel_too_late,

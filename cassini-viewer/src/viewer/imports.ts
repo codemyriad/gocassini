@@ -135,29 +135,39 @@ export interface ImportPreview {
 // by a newer Cassini, or a Cassini file that is damaged or incomplete.
 export type ImportFileProblem = "empty" | "too_large" | "unreadable" | "not_cassini" | "newer" | "damaged";
 
-// The largest file the server takes (maxImportUploadBytes in the operator).
+// The largest file the server ever takes (maxImportUploadBytes in the
+// operator). An administrator can set a lower limit (#508); the import list
+// says which applies.
 export const maxImportFileBytes = 4 * 2 ** 30;
+
+// formatImportFileLimit words a size limit: "4 GiB", or "500 MiB" when it is
+// not a whole number of GiB.
+export function formatImportFileLimit(bytes: number): string {
+  const gib = bytes / 2 ** 30;
+  if (Number.isInteger(gib)) return `${gib} GiB`;
+  return `${Math.floor(bytes / 2 ** 20)} MiB`;
+}
 
 // ImportFileError's message is the sentence the review list shows, in the
 // reader's language; detail is the parser's own, for whoever needs it.
 export class ImportFileError extends Error {
   readonly problem: ImportFileProblem;
   readonly detail: string;
-  constructor(problem: ImportFileProblem, detail = "") {
-    super(importFileProblemText(problem));
+  constructor(problem: ImportFileProblem, detail = "", maxBytes = maxImportFileBytes) {
+    super(importFileProblemText(problem, maxBytes));
     this.name = "ImportFileError";
     this.problem = problem;
     this.detail = detail;
   }
 }
 
-export function importFileProblemText(problem: ImportFileProblem): string {
+export function importFileProblemText(problem: ImportFileProblem, maxBytes = maxImportFileBytes): string {
   const text = get(LL).viewer.browse.import;
   switch (problem) {
     case "empty":
       return text.file_empty();
     case "too_large":
-      return text.file_too_large();
+      return text.file_too_large({ limit: formatImportFileLimit(maxBytes) });
     case "unreadable":
       return text.file_unreadable();
     case "not_cassini":
@@ -174,11 +184,11 @@ export function importFileProblemText(problem: ImportFileProblem): string {
 // fail-closed — the same contract the operator re-checks server-side — so a
 // file that previews here can still be refused there, but not the other way
 // around.
-export async function parseImportPreview(file: File): Promise<ImportPreview> {
+export async function parseImportPreview(file: File, maxBytes = maxImportFileBytes): Promise<ImportPreview> {
   // Checked before reading: the server would refuse it, and a browser may
   // not read a file this large into memory at all.
-  if (file.size > maxImportFileBytes) {
-    throw new ImportFileError("too_large");
+  if (file.size > maxBytes) {
+    throw new ImportFileError("too_large", "", maxBytes);
   }
   // A file that cannot be read (moved since it was picked, or too large for
   // this browser to hold) says so, rather than being called damaged.

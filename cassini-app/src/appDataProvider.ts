@@ -44,6 +44,7 @@ import {
   removeImport as postImportRemove,
   clearImportStaging as postClearImportStaging,
   listImports as fetchImports,
+  importMaxFileBytes,
   retryImport as postImportRetry,
   searchImportSharees as queryImportSharees,
   stageImportUpload as davStageImportUpload,
@@ -269,6 +270,10 @@ export class AppDataProvider extends StaticCatalogProvider {
 
   listImports(): Promise<ImportJobRecord[]> {
     return fetchImports();
+  }
+
+  importMaxFileBytes(): number | undefined {
+    return importMaxFileBytes();
   }
 
   cancelImport(id: string): Promise<void> {

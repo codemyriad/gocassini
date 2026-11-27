@@ -1,7 +1,7 @@
 import { describeImportSharing } from "./imports";
 import { describe, expect, it } from "vitest";
 
-import { ImportFileError, formatImportDuration, importJobTerminal, importRunningStage, parseImportPreview, type ImportFileProblem } from "./imports";
+import { ImportFileError, formatImportDuration, formatImportFileLimit, importJobTerminal, importRunningStage, parseImportPreview, type ImportFileProblem } from "./imports";
 import { durationFormat } from "../i18n";
 
 function fileOf(name: string, bytes: Uint8Array | string): File {
@@ -83,6 +83,27 @@ describe("parseImportPreview", () => {
     expect(error.problem).toBe(problem);
     expect(error.message).toMatch(message);
     if (detail) expect(error.detail).toMatch(detail);
+  });
+});
+
+// #508: an administrator's lower limit is checked before the file is read,
+// and the sentence names it.
+describe("the file size limit", () => {
+  it("refuses a file over a lower limit, naming it", async () => {
+    const file = { name: "big.opus", size: 500 * 2 ** 20 + 1, arrayBuffer: () => Promise.reject(new Error("read")) } as unknown as File;
+    const error = await parseImportPreview(file, 500 * 2 ** 20).then(
+      () => { throw new Error("the file was accepted"); },
+      (error: unknown) => error as ImportFileError,
+    );
+    expect(error.problem).toBe("too_large");
+    expect(error.message).toMatch(/^This file is larger than 500 MiB/);
+  });
+
+  it("words a limit in GiB when it is whole, else in MiB", () => {
+    expect(formatImportFileLimit(4 * 2 ** 30)).toBe("4 GiB");
+    expect(formatImportFileLimit(2 ** 30)).toBe("1 GiB");
+    expect(formatImportFileLimit(1536 * 2 ** 20)).toBe("1536 MiB");
+    expect(formatImportFileLimit(2 ** 20)).toBe("1 MiB");
   });
 });
 

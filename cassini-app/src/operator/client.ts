@@ -8,6 +8,10 @@ export interface ImportSettings {
   max_concurrent_imports: number;
   default: number;
   max: number;
+  // The largest file one import may be, in MiB (#508); the default and the
+  // highest allowed are both max_file_mib_limit, 4096.
+  max_file_mib: number;
+  max_file_mib_limit: number;
 }
 import { normalizeRecordedAtMigration, type RecordedAtMigration } from "./recordedAtMigration";
 import type {
@@ -339,15 +343,16 @@ export class OperatorClient {
     });
   }
 
-  // How many imports run at once: the administrator's value, saved on the
-  // operator's volume, applied without a restart and kept across redeploys.
+  // How many imports run at once and how large one may be: the
+  // administrator's values, saved on the operator's volume, applied without a
+  // restart and kept across redeploys.
   getImportSettings(): Promise<ImportSettings> {
     return this.#request<ImportSettings>("/settings/imports", { cache: "no-store" });
   }
-  putImportSettings(maxConcurrentImports: number): Promise<ImportSettings> {
+  putImportSettings(update: { max_concurrent_imports?: number; max_file_mib?: number }): Promise<ImportSettings> {
     return this.#request<ImportSettings>("/settings/imports", {
       method: "PUT", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ max_concurrent_imports: maxConcurrentImports }),
+      body: JSON.stringify(update),
     });
   }
 
