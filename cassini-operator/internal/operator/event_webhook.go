@@ -8,19 +8,24 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
+	"math"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/oklog/ulid/v2"
 )
@@ -47,19 +52,21 @@ var eventCatalog = []string{
 	eventSummaryFailed,
 }
 
+// Retry, give-up and retention rules are explained in docs/events.md.
 const (
-	eventWebhookDefaultTimeout = 10 * time.Second
-	eventWebhookMaxTimeout     = time.Minute
-	// An undelivered event is retried, at most five minutes apart, until it
-	// is a day old: long enough for a receiver's upgrade or a bad night, short
-	// enough that a receiver does not wake up to last week's meetings.
-	eventWebhookRetryWindow = 24 * time.Hour
-	eventWebhookRetryCap    = 5 * time.Minute
-	eventWebhookDrainBatch  = 10
-	// A row is deleted a week after it was written, delivered or not: it holds
-	// a meeting's title and its whole summary.
-	eventOutboxRetention     = 7 * 24 * time.Hour
-	eventOutboxPruneInterval = 24 * time.Hour
+	eventWebhookDefaultTimeoutSeconds = 10
+	eventWebhookMaxTimeoutSeconds     = 60
+	eventWebhookRetryWindow           = 24 * time.Hour
+	eventWebhookRetryCap              = 5 * time.Minute
+	eventWebhookBaseRetryDelay        = time.Second
+	eventWebhookDrainBatch            = 10
+	eventOutboxRetention              = 7 * 24 * time.Hour
+	eventOutboxPruneInterval          = time.Hour
+	// The prune gives up on waiting rows this long after the worker would,
+	// so a POST the worker started just before the window can finish.
+	eventOutboxGiveUpMargin = 5 * time.Minute
+	// For a secret set through the API; a shorter one 0.4.0 stored still works.
+	eventWebhookMinSecretLength = 32
 )
 
 // EventWebhookSettings is the receiver lifecycle events are sent to. It has
@@ -72,84 +79,142 @@ type EventWebhookSettings struct {
 	// Secret signs every request. Write-only from the API's point of view: a
 	// response reports secret_set instead of the value.
 	Secret string `json:"secret,omitempty"`
-	// Events is the allow-list; empty means the whole catalog.
+	// Events is the allow-list, required with a URL.
 	Events []string `json:"events,omitempty"`
-	// Timeout bounds one request: a Go duration of at most a minute. Empty
-	// means eventWebhookDefaultTimeout.
-	Timeout string `json:"timeout,omitempty"`
+	// TimeoutSeconds is 1 to 60; zero means the default.
+	TimeoutSeconds int `json:"timeout_seconds,omitempty"`
+}
+
+// eventReceiverKey tags every queued row with the URL it was queued for; a row
+// is only ever sent there. Derived, never stored. No URL: "".
+func eventReceiverKey(receiverURL string) string {
+	if receiverURL == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(receiverURL))
+	return "rcv_" + hex.EncodeToString(sum[:8])
+}
+
+func (s EventWebhookSettings) timeoutSeconds() int {
+	if s.TimeoutSeconds > 0 {
+		return s.TimeoutSeconds
+	}
+	return eventWebhookDefaultTimeoutSeconds
 }
 
 func (s EventWebhookSettings) requestTimeout() time.Duration {
-	if timeout, err := time.ParseDuration(s.Timeout); err == nil && timeout > 0 {
-		return timeout
-	}
-	return eventWebhookDefaultTimeout
+	return time.Duration(s.timeoutSeconds()) * time.Second
 }
 
 func eventWebhookSettingsPath(cfg Config) string {
 	return filepath.Join(filepath.Dir(cfg.DBPath), "event-webhook-settings.json")
 }
 
+// eventWebhookSettingsError is a refusal; Code is the PUT's error_code, which
+// the Webhooks panel shows under the field it is about.
+type eventWebhookSettingsError struct {
+	Code    string
+	Message string
+}
+
+func (e *eventWebhookSettingsError) Error() string { return e.Message }
+
+func eventWebhookSettingsRefusal(code, format string, args ...any) error {
+	return &eventWebhookSettingsError{Code: code, Message: fmt.Sprintf(format, args...)}
+}
+
 // normalizeEventWebhookSettings trims and validates the receiver. An empty URL
-// turns delivery off and needs no secret. An unknown or blank event name is an
-// error rather than dropped: dropping one could leave an empty list, which
-// means the whole catalog.
+// turns delivery off and drops the secret and events with it.
 func normalizeEventWebhookSettings(s EventWebhookSettings) (EventWebhookSettings, error) {
 	s.URL = strings.TrimSpace(s.URL)
 	s.Secret = strings.TrimSpace(s.Secret)
-	s.Timeout = strings.TrimSpace(s.Timeout)
-	if s.Timeout != "" {
-		if timeout, err := time.ParseDuration(s.Timeout); err != nil || timeout <= 0 || timeout > eventWebhookMaxTimeout {
-			return s, fmt.Errorf("timeout must be a duration of at most %s (got %q)", eventWebhookMaxTimeout, s.Timeout)
-		}
+	if s.TimeoutSeconds < 0 || s.TimeoutSeconds > eventWebhookMaxTimeoutSeconds {
+		return s, eventWebhookTimeoutRefusal(float64(s.TimeoutSeconds))
 	}
-	events := make([]string, 0, len(s.Events))
+	if s.URL == "" {
+		return EventWebhookSettings{TimeoutSeconds: s.TimeoutSeconds}, nil
+	}
+	asked := make([]string, 0, len(s.Events))
 	for _, name := range s.Events {
 		name = strings.TrimSpace(name)
 		if !slices.Contains(eventCatalog, name) {
-			return s, fmt.Errorf("unknown event %q", name)
+			return s, eventWebhookSettingsRefusal("webhook_event_unknown", "unknown event %q", name)
 		}
-		if !slices.Contains(events, name) {
-			events = append(events, name)
+		asked = append(asked, name)
+	}
+	// In catalog order, once each.
+	s.Events = nil
+	for _, name := range eventCatalog {
+		if slices.Contains(asked, name) {
+			s.Events = append(s.Events, name)
 		}
-	}
-	sort.Strings(events)
-	s.Events = events
-	if len(events) == 0 {
-		s.Events = nil
-	}
-	if s.URL == "" {
-		return s, nil
 	}
 	parsed, err := url.ParseRequestURI(s.URL)
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
-		return s, fmt.Errorf("url must be an absolute http or https URL")
+		return s, eventWebhookSettingsRefusal("webhook_url_invalid", "url must be an absolute http or https URL")
 	}
 	if s.Secret == "" {
-		return s, fmt.Errorf("secret is required when url is set")
+		return s, eventWebhookSettingsRefusal("webhook_secret_required", "secret is required when url is set")
+	}
+	if len(s.Events) == 0 {
+		return s, eventWebhookSettingsRefusal("webhook_events_required", "events must name at least one event when url is set")
 	}
 	return s, nil
 }
 
-// loadEventWebhookSettings reads the settings file. A missing file is
-// delivery switched off, which is the default.
-func loadEventWebhookSettings(path string) (EventWebhookSettings, error) {
+func eventWebhookTimeoutRefusal(got float64) error {
+	return eventWebhookSettingsRefusal("webhook_timeout_invalid", "timeout_seconds must be a whole number from 1 to %d (got %v)", eventWebhookMaxTimeoutSeconds, got)
+}
+
+// eventWebhookEvents040 is what 0.4.0 sent a receiver with no event list.
+// Frozen: it must not grow with the catalog.
+var eventWebhookEvents040 = []string{
+	"recording.started",
+	"recording.stopped",
+	"recording.published",
+	"recording.failed",
+	"summary.completed",
+	"summary.failed",
+}
+
+// loadEventWebhookSettings reads the settings file; a missing file is delivery
+// off. converted reports a 0.4.0 file brought up to date (its duration timeout,
+// its missing event list), which the caller saves back.
+func loadEventWebhookSettings(path string) (s EventWebhookSettings, converted bool, err error) {
 	raw, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return EventWebhookSettings{}, nil
+		return EventWebhookSettings{}, false, nil
 	}
 	if err != nil {
-		return EventWebhookSettings{}, fmt.Errorf("read event webhook settings: %w", err)
+		return EventWebhookSettings{}, false, fmt.Errorf("read event webhook settings: %w", err)
 	}
-	var s EventWebhookSettings
-	if err := json.Unmarshal(raw, &s); err != nil {
-		return EventWebhookSettings{}, fmt.Errorf("parse event webhook settings: %w", err)
+	var file struct {
+		EventWebhookSettings
+		Timeout *string `json:"timeout"` // 0.4.0: a Go duration
+	}
+	if err := json.Unmarshal(raw, &file); err != nil {
+		return EventWebhookSettings{}, false, fmt.Errorf("parse event webhook settings: %w", err)
+	}
+	s = file.EventWebhookSettings
+	if file.Timeout != nil {
+		if raw := strings.TrimSpace(*file.Timeout); raw != "" && s.TimeoutSeconds == 0 {
+			timeout, err := time.ParseDuration(raw)
+			if err != nil || timeout <= 0 {
+				return EventWebhookSettings{}, false, fmt.Errorf("invalid event webhook settings: timeout %q is not a positive duration", raw)
+			}
+			s.TimeoutSeconds = min(int((timeout+time.Second-1)/time.Second), eventWebhookMaxTimeoutSeconds)
+		}
+		converted = true
+	}
+	if strings.TrimSpace(s.URL) != "" && len(s.Events) == 0 {
+		s.Events = slices.Clone(eventWebhookEvents040)
+		converted = true
 	}
 	s, err = normalizeEventWebhookSettings(s)
 	if err != nil {
-		return EventWebhookSettings{}, fmt.Errorf("invalid event webhook settings: %w", err)
+		return EventWebhookSettings{}, false, fmt.Errorf("invalid event webhook settings: %w", err)
 	}
-	return s, nil
+	return s, converted, nil
 }
 
 // saveEventWebhookSettings writes the file atomically and owner-only: it
@@ -171,13 +236,14 @@ func saveEventWebhookSettings(path string, s EventWebhookSettings) error {
 type eventWebhookConfig struct {
 	URL     string
 	Secret  string
-	Events  map[string]bool
+	Events  []string
 	Version string
-	// baseRetryDelay and retryWindow are test seams: production uses one
-	// second and eventWebhookRetryWindow.
+	// Test seams.
 	baseRetryDelay time.Duration
 	retryWindow    time.Duration
 }
+
+func (c eventWebhookConfig) receiver() string { return eventReceiverKey(c.URL) }
 
 type eventWebhook struct {
 	store  *Store
@@ -187,6 +253,10 @@ type eventWebhook struct {
 	kick   chan struct{}
 	// done is closed when the worker's loop has returned; nil until start.
 	done chan struct{}
+	// The receiver as a whole backs off: nothing is sent before pausedUntil.
+	// Touched only by the worker's goroutine.
+	failStreak  int
+	pausedUntil time.Time
 }
 
 // outboundEventPayload is the envelope every receiver sees. Data carries the
@@ -197,6 +267,16 @@ type outboundEventPayload struct {
 	At             string         `json:"at"`
 	CassiniVersion string         `json:"cassini_version,omitempty"`
 	Data           map[string]any `json:"data"`
+}
+
+func newOutboundEvent(eventType, version string, data map[string]any) outboundEventPayload {
+	return outboundEventPayload{
+		ID:             "evt_" + ulid.Make().String(),
+		Type:           eventType,
+		At:             nowUTCString(),
+		CassiniVersion: version,
+		Data:           data,
+	}
 }
 
 type outboxEvent struct {
@@ -215,45 +295,138 @@ func redactEventWebhookURL(raw string) string {
 	return parsed.Scheme + "://" + parsed.Host
 }
 
-// newEventWebhook builds the delivery worker from settings that
-// normalizeEventWebhookSettings has accepted. An empty URL means no worker.
+// newEventWebhook builds the delivery worker from normalized settings. An
+// empty URL means no worker.
 func newEventWebhook(store *Store, logger *log.Logger, settings EventWebhookSettings, version string) *eventWebhook {
 	if settings.URL == "" {
 		return nil
 	}
-	events := map[string]bool{}
-	names := settings.Events
-	if len(names) == 0 {
-		names = eventCatalog
-	}
-	for _, name := range names {
-		events[name] = true
-	}
-	logger.Printf("event webhooks enabled receiver=%s events=%d timeout=%s", redactEventWebhookURL(settings.URL), len(events), settings.requestTimeout())
+	logger.Printf("event webhooks enabled receiver=%s events=%d timeout=%s", redactEventWebhookURL(settings.URL), len(settings.Events), settings.requestTimeout())
 	return &eventWebhook{
 		store: store,
 		cfg: eventWebhookConfig{
-			URL: settings.URL, Secret: settings.Secret, Events: events,
-			Version: strings.TrimSpace(version), baseRetryDelay: time.Second, retryWindow: eventWebhookRetryWindow,
+			URL: settings.URL, Secret: settings.Secret, Events: slices.Clone(settings.Events),
+			Version: strings.TrimSpace(version), baseRetryDelay: eventWebhookBaseRetryDelay, retryWindow: eventWebhookRetryWindow,
 		},
-		// A redirect is not followed: Go would re-issue the signed POST as a
-		// GET without its body, and the page it lands on answering 200 would
-		// mark an event delivered that no receiver saw.
-		client: &http.Client{
-			Timeout:       settings.requestTimeout(),
-			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-		},
+		client: newEventWebhookClient(settings.requestTimeout()),
 		logger: logger,
 		kick:   make(chan struct{}, 1),
 	}
 }
 
-func (e *eventWebhook) enabled(eventType string) bool {
-	return e != nil && e.cfg.Events[eventType]
+// newEventWebhookClient sends every request to a receiver, test events
+// included. Redirects are not followed (Go would re-send the POST as a bodiless
+// GET, and its 200 would count as a delivery), and blocked addresses are never
+// dialled.
+func newEventWebhookClient(timeout time.Duration) *http.Client {
+	dialer := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second, Control: eventWebhookDialControl}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = dialer.DialContext
+	return &http.Client{
+		Timeout:       timeout,
+		Transport:     transport,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
 }
 
+// eventWebhookBlockedPrefixes are link-local ranges and the cloud metadata
+// addresses (AWS, GCP, Azure, Oracle, Alibaba). Private ranges and loopback
+// stay allowed: a receiver on the same network is the recommended setup.
+var eventWebhookBlockedPrefixes = []netip.Prefix{
+	netip.MustParsePrefix("169.254.0.0/16"),
+	netip.MustParsePrefix("fe80::/10"),
+	netip.MustParsePrefix("fd00:ec2::254/128"),
+	netip.MustParsePrefix("fd20:ce::254/128"),
+	netip.MustParsePrefix("fd00:c1::a9fe:a9fe/128"),
+	netip.MustParsePrefix("100.100.100.200/32"),
+	netip.MustParsePrefix("168.63.129.16/32"),
+}
+
+// eventWebhookNAT64 is the well-known NAT64 prefix: the IPv4 address in its
+// last 32 bits is the one reached, so that is the one checked.
+var eventWebhookNAT64 = netip.MustParsePrefix("64:ff9b::/96")
+
+type eventWebhookBlockedAddressError struct{ addr netip.Addr }
+
+func (e *eventWebhookBlockedAddressError) Error() string {
+	return fmt.Sprintf("address not allowed: link-local/metadata (%s)", e.addr)
+}
+
+// eventWebhookDialControl runs after name resolution, on the address actually
+// dialled, so a name resolving to a blocked address is refused too.
+func eventWebhookDialControl(_, address string, _ syscall.RawConn) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return err
+	}
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return err
+	}
+	addr = addr.Unmap().WithZone("")
+	if eventWebhookNAT64.Contains(addr) {
+		b := addr.As16()
+		addr = netip.AddrFrom4([4]byte{b[12], b[13], b[14], b[15]})
+	}
+	for _, prefix := range eventWebhookBlockedPrefixes {
+		if prefix.Contains(addr) {
+			return &eventWebhookBlockedAddressError{addr: addr}
+		}
+	}
+	return nil
+}
+
+// newSignedEventRequest builds the POST for one event, outbox or test: the
+// same headers and signature either way.
+func newSignedEventRequest(ctx context.Context, receiverURL, secret, version, eventType, deliveryID string, payload []byte) (*http.Request, error) {
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte(timestamp))
+	_, _ = mac.Write([]byte("\n"))
+	_, _ = mac.Write(payload)
+	signature := hex.EncodeToString(mac.Sum(nil))
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, receiverURL, bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "Cassini/"+version)
+	req.Header.Set("X-Cassini-Event", eventType)
+	req.Header.Set("X-Cassini-Delivery", deliveryID)
+	req.Header.Set("X-Cassini-Timestamp", timestamp)
+	req.Header.Set("X-Cassini-Signature", "sha256="+signature)
+	return req, nil
+}
+
+// eventWebhookRequestError is why a receiver gave no answer, without the URL
+// (its query can carry a token, and the reason is shown in the panel).
+func eventWebhookRequestError(err error, timeout time.Duration) string {
+	var blocked *eventWebhookBlockedAddressError
+	if errors.As(err, &blocked) {
+		return blocked.Error()
+	}
+	var urlErr *url.Error
+	if !errors.As(err, &urlErr) {
+		return err.Error()
+	}
+	if urlErr.Timeout() {
+		return fmt.Sprintf("no answer within %ds", int(timeout/time.Second))
+	}
+	return urlErr.Err.Error()
+}
+
+func (e *eventWebhook) enabled(eventType string) bool {
+	return e != nil && slices.Contains(e.cfg.Events, eventType)
+}
+
+// start runs the worker, with a first pass at once.
 func (e *eventWebhook) start(ctx context.Context, wg *sync.WaitGroup) {
 	e.done = make(chan struct{})
+	select {
+	case e.kick <- struct{}{}:
+	default:
+	}
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -271,10 +444,9 @@ func (e *eventWebhook) wait() {
 }
 
 func (e *eventWebhook) loop(ctx context.Context) {
+	defer e.client.CloseIdleConnections()
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
-	prune := time.NewTicker(eventOutboxPruneInterval)
-	defer prune.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -283,8 +455,6 @@ func (e *eventWebhook) loop(ctx context.Context) {
 			e.deliverDue(ctx)
 		case <-e.kick:
 			e.deliverDue(ctx)
-		case <-prune.C:
-			e.store.pruneEventOutbox(e.logger, time.Now().UTC())
 		}
 	}
 }
@@ -295,19 +465,12 @@ func (e *eventWebhook) enqueue(ctx context.Context, eventType string, data map[s
 	if !e.enabled(eventType) {
 		return nil
 	}
-	at := nowUTCString()
-	payload := outboundEventPayload{
-		ID:             "evt_" + ulid.Make().String(),
-		Type:           eventType,
-		At:             at,
-		CassiniVersion: e.cfg.Version,
-		Data:           data,
-	}
+	payload := newOutboundEvent(eventType, e.cfg.Version, data)
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("marshal event %s: %w", eventType, err)
 	}
-	if err := e.store.insertEvent(ctx, payload.ID, eventType, string(raw), at); err != nil {
+	if err := e.store.insertEvent(ctx, payload.ID, e.cfg.receiver(), eventType, string(raw), payload.At); err != nil {
 		return err
 	}
 	select {
@@ -318,13 +481,16 @@ func (e *eventWebhook) enqueue(ctx context.Context, eventType string, data map[s
 }
 
 func (e *eventWebhook) deliverDue(ctx context.Context) {
+	if time.Now().Before(e.pausedUntil) {
+		return
+	}
 	for i := 0; i < eventWebhookDrainBatch; i++ {
 		// A cancelled worker is being replaced or the operator is stopping:
 		// it stops here, and a read it can no longer make is not a fault.
 		if ctx.Err() != nil {
 			return
 		}
-		event, ok, err := e.store.nextDueEvent(ctx, nowUTCString())
+		event, ok, err := e.store.nextDueEvent(ctx, nowUTCString(), e.cfg.receiver(), e.cfg.Events)
 		if err != nil {
 			if ctx.Err() == nil {
 				e.logger.Printf("event webhook outbox read failed: %v", err)
@@ -335,7 +501,11 @@ func (e *eventWebhook) deliverDue(ctx context.Context) {
 			return
 		}
 		if created, err := time.Parse(sortableUTCLayout, event.CreatedAt); err == nil && time.Since(created) >= e.cfg.retryWindow {
-			e.markFailed(event.ID, fmt.Sprintf("gave up after %s and %d attempts", e.cfg.retryWindow, event.Attempts))
+			if err := e.store.markEventFailed(context.Background(), event.ID, nowUTCString(), fmt.Sprintf("gave up after %s and %d attempts", e.cfg.retryWindow, event.Attempts)); err != nil {
+				e.logger.Printf("event webhook mark failed id=%s: %v", event.ID, err)
+				e.pause(0)
+				return
+			}
 			continue
 		}
 		if !e.deliver(ctx, event) {
@@ -344,100 +514,125 @@ func (e *eventWebhook) deliverDue(ctx context.Context) {
 	}
 }
 
-// deliver reports whether the pass may go on to the next event. It may not
-// once the outbox cannot record a delivery: the same event would be the next
-// one due, and the receiver would be sent it again at once.
+// deliver reports whether the pass may go on to the next event.
 func (e *eventWebhook) deliver(ctx context.Context, event outboxEvent) bool {
-	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
-	mac := hmac.New(sha256.New, []byte(e.cfg.Secret))
-	_, _ = mac.Write([]byte(timestamp))
-	_, _ = mac.Write([]byte("\n"))
-	_, _ = mac.Write([]byte(event.Payload))
-	signature := hex.EncodeToString(mac.Sum(nil))
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, e.cfg.URL, bytes.NewReader([]byte(event.Payload)))
+	req, err := newSignedEventRequest(ctx, e.cfg.URL, e.cfg.Secret, e.cfg.Version, event.Type, event.ID, []byte(event.Payload))
 	if err != nil {
-		e.markFailed(event.ID, fmt.Sprintf("build request: %v", err))
-		return true
+		return e.fail(event, fmt.Sprintf("build request: %v", err), false, 0)
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "Cassini/"+e.cfg.Version)
-	req.Header.Set("X-Cassini-Event", event.Type)
-	req.Header.Set("X-Cassini-Delivery", event.ID)
-	req.Header.Set("X-Cassini-Timestamp", timestamp)
-	req.Header.Set("X-Cassini-Signature", "sha256="+signature)
-
 	resp, err := e.client.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
-			// This worker is being replaced or the operator is stopping: the
-			// receiver did not fail, so the event keeps its place in the queue.
+			// Replaced or stopping: not the receiver's failure.
 			return true
 		}
-		e.reschedule(event, fmt.Sprintf("request: %v", err))
-		return true
+		return e.fail(event, "request: "+eventWebhookRequestError(err, e.client.Timeout), true, 0)
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode >= 200 && resp.StatusCode <= 299 {
+	status := resp.StatusCode
+	if status >= 200 && status <= 299 {
 		if err := e.store.markEventDelivered(context.Background(), event.ID, nowUTCString()); err != nil {
 			e.logger.Printf("event webhook mark delivered failed id=%s: %v", event.ID, err)
-			// Back off like a failed attempt, so a store that cannot be
-			// written does not turn into a POST every pass.
-			e.reschedule(event, fmt.Sprintf("delivered, but not recorded: %v", err))
-			return false
+			return e.fail(event, fmt.Sprintf("delivered, but not recorded: %v", err), true, 0)
 		}
+		e.failStreak = 0
 		return true
 	}
-
-	// Everything that is not a 2xx is retried until the event is a day old,
-	// a 4xx included: a 401 while a secret is being rotated, or a 404 while
-	// the receiver is redeployed, says the receiver is not ready, not that
-	// the event is wrong.
-	e.reschedule(event, fmt.Sprintf("receiver returned HTTP %d", resp.StatusCode))
-	return true
+	// Every other status is retried. A 5xx, 429 or redirect says the receiver
+	// is down; any other 4xx answers this one request.
+	var retryAfter time.Duration
+	if status == http.StatusTooManyRequests || status == http.StatusServiceUnavailable {
+		retryAfter = eventWebhookRetryAfter(resp.Header.Get("Retry-After"), time.Now())
+	}
+	down := status >= 500 || status == http.StatusTooManyRequests || (status >= 300 && status <= 399)
+	return e.fail(event, fmt.Sprintf("receiver returned HTTP %d", status), down, retryAfter)
 }
 
-func (e *eventWebhook) reschedule(event outboxEvent, detail string) {
+// fail records a failed attempt, retried after the usual backoff or the
+// receiver's Retry-After, whichever is longer. It reports whether the pass may
+// go on: not when the receiver is down, nor when the attempt could not be
+// recorded (the same event would be due again at once). Then the whole worker
+// pauses, so neither turns into a POST every pass.
+func (e *eventWebhook) fail(event outboxEvent, detail string, receiverDown bool, retryAfter time.Duration) bool {
 	attempts := event.Attempts + 1
-	delay := e.cfg.baseRetryDelay
+	now := time.Now().UTC()
+	next := formatUTCString(now.Add(max(eventWebhookRetryDelay(e.cfg.baseRetryDelay, attempts), retryAfter)))
+	err := e.store.rescheduleEvent(context.Background(), event.ID, attempts, next, formatUTCString(now), detail)
+	if err != nil {
+		e.logger.Printf("event webhook reschedule failed id=%s: %v", event.ID, err)
+	} else if !receiverDown {
+		return true
+	}
+	e.pause(retryAfter)
+	return false
+}
+
+func (e *eventWebhook) pause(retryAfter time.Duration) {
+	e.failStreak++
+	e.pausedUntil = time.Now().Add(max(eventWebhookRetryDelay(e.cfg.baseRetryDelay, e.failStreak), retryAfter))
+}
+
+// eventWebhookRetryAfter reads Retry-After (seconds or an HTTP date), capped
+// at the retry window; missing, invalid or past is zero.
+func eventWebhookRetryAfter(header string, now time.Time) time.Duration {
+	var wait time.Duration
+	if seconds, err := strconv.Atoi(strings.TrimSpace(header)); err == nil {
+		wait = time.Duration(min(seconds, int(eventWebhookRetryWindow/time.Second))) * time.Second
+	} else if at, err := http.ParseTime(header); err == nil {
+		wait = at.Sub(now)
+	}
+	return min(max(wait, 0), eventWebhookRetryWindow)
+}
+
+// eventWebhookRetryDelay is how long after its attempts-th failed attempt an
+// event is tried again: base doubled per earlier attempt, capped.
+func eventWebhookRetryDelay(base time.Duration, attempts int) time.Duration {
+	delay := base
 	for i := 1; i < attempts; i++ {
 		delay *= 2
 		if delay >= eventWebhookRetryCap {
-			delay = eventWebhookRetryCap
-			break
+			return eventWebhookRetryCap
 		}
 	}
-	next := formatUTCString(time.Now().UTC().Add(delay))
-	if err := e.store.rescheduleEvent(context.Background(), event.ID, attempts, next, detail); err != nil {
-		e.logger.Printf("event webhook reschedule failed id=%s: %v", event.ID, err)
-	}
+	return delay
 }
 
-func (e *eventWebhook) markFailed(id, detail string) {
-	if err := e.store.markEventFailed(context.Background(), id, nowUTCString(), detail); err != nil {
-		e.logger.Printf("event webhook mark failed id=%s: %v", id, err)
-	}
-}
-
-func (s *Store) insertEvent(ctx context.Context, id, eventType, payload, at string) error {
+func (s *Store) insertEvent(ctx context.Context, id, receiverID, eventType, payload, at string) error {
 	_, err := s.db.ExecContext(ctx, `
-INSERT INTO event_outbox (id, type, payload, created_at, attempts, next_attempt_at)
-VALUES (?, ?, ?, ?, 0, ?)`, id, eventType, payload, at, at)
+INSERT INTO event_outbox (id, receiver_id, type, payload, created_at, attempts, next_attempt_at)
+VALUES (?, ?, ?, ?, ?, 0, ?)`, id, receiverID, eventType, payload, at, at)
 	if err != nil {
 		return fmt.Errorf("insert event outbox: %w", err)
 	}
 	return nil
 }
 
-func (s *Store) nextDueEvent(ctx context.Context, at string) (outboxEvent, bool, error) {
+// eventWaiting is a row neither delivered nor given up on.
+const eventWaiting = `delivered_at IS NULL AND failed_at IS NULL`
+
+// eventWanted matches the rows the receiver at key wants: queued for its URL,
+// of a type it ticks. Only those are sent or counted as waiting.
+func eventWanted(key string, events []string) (string, []any) {
+	if key == "" || len(events) == 0 {
+		return `0`, nil
+	}
+	args := []any{key}
+	for _, name := range events {
+		args = append(args, name)
+	}
+	return `(receiver_id = ? AND type IN (?` + strings.Repeat(", ?", len(events)-1) + `))`, args
+}
+
+func (s *Store) nextDueEvent(ctx context.Context, at, receiverID string, events []string) (outboxEvent, bool, error) {
 	var event outboxEvent
+	wanted, args := eventWanted(receiverID, events)
 	err := s.db.QueryRowContext(ctx, `
 SELECT id, type, payload, attempts, created_at
 FROM event_outbox
-WHERE delivered_at IS NULL AND failed_at IS NULL AND next_attempt_at <= ?
+WHERE `+eventWaiting+` AND `+wanted+` AND next_attempt_at <= ?
 ORDER BY next_attempt_at ASC, created_at ASC
-LIMIT 1`, at).Scan(&event.ID, &event.Type, &event.Payload, &event.Attempts, &event.CreatedAt)
+LIMIT 1`, append(args, at)...).Scan(&event.ID, &event.Type, &event.Payload, &event.Attempts, &event.CreatedAt)
 	if err == sql.ErrNoRows {
 		return outboxEvent{}, false, nil
 	}
@@ -447,8 +642,10 @@ LIMIT 1`, at).Scan(&event.ID, &event.Type, &event.Payload, &event.Attempts, &eve
 	return event, true, nil
 }
 
+// markEventDelivered and markEventFailed finish a row and empty its payload. A
+// delivery wins over a give-up, so a row is never both.
 func (s *Store) markEventDelivered(ctx context.Context, id, at string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE event_outbox SET delivered_at = ?, last_error = NULL WHERE id = ?`, at, id)
+	_, err := s.db.ExecContext(ctx, `UPDATE event_outbox SET delivered_at = ?, failed_at = NULL, payload = '', last_error = NULL, last_error_at = NULL WHERE id = ?`, at, id)
 	if err != nil {
 		return fmt.Errorf("mark event delivered: %w", err)
 	}
@@ -457,25 +654,92 @@ func (s *Store) markEventDelivered(ctx context.Context, id, at string) error {
 
 func (s *Store) markEventFailed(ctx context.Context, id, at, detail string) error {
 	_, err := s.db.ExecContext(ctx, `
-UPDATE event_outbox SET failed_at = ?, last_error = COALESCE(last_error || '; ', '') || ? WHERE id = ?`, at, detail, id)
+UPDATE event_outbox SET failed_at = ?, payload = '', last_error_at = ?, last_error = COALESCE(last_error || '; ', '') || ? WHERE id = ? AND delivered_at IS NULL`, at, at, detail, id)
 	if err != nil {
 		return fmt.Errorf("mark event failed: %w", err)
 	}
 	return nil
 }
 
-func (s *Store) rescheduleEvent(ctx context.Context, id string, attempts int, nextAt, detail string) error {
+func (s *Store) rescheduleEvent(ctx context.Context, id string, attempts int, nextAt, errorAt, detail string) error {
 	_, err := s.db.ExecContext(ctx, `
-UPDATE event_outbox SET attempts = ?, next_attempt_at = ?, last_error = ? WHERE id = ?`, attempts, nextAt, detail, id)
+UPDATE event_outbox SET attempts = ?, next_attempt_at = ?, last_error = ?, last_error_at = ? WHERE id = ?`, attempts, nextAt, detail, errorAt, id)
 	if err != nil {
 		return fmt.Errorf("reschedule event: %w", err)
 	}
 	return nil
 }
 
-// pruneEventOutbox deletes the rows written more than a week before now,
-// whatever became of them. Best-effort and logged.
+// eventDeliverySummary is the last week of delivery to one URL. Times are in
+// the store's layout; empty or zero when there is nothing to report.
+type eventDeliverySummary struct {
+	LastDeliveredAt string `json:"last_delivered_at"`
+	Delivered       int    `json:"delivered"`
+	Waiting         int    `json:"waiting"`
+	Failed          int    `json:"failed"`
+	// The newest error on a waiting event.
+	LastError   string `json:"last_error"`
+	LastErrorAt string `json:"last_error_at"`
+}
+
+func (s *Store) eventDeliverySummary(ctx context.Context, settings EventWebhookSettings) (eventDeliverySummary, error) {
+	var out eventDeliverySummary
+	key := eventReceiverKey(settings.URL)
+	if key == "" {
+		return out, nil
+	}
+	wanted, args := eventWanted(key, settings.Events)
+	if err := s.db.QueryRowContext(ctx, `
+SELECT COUNT(delivered_at), COUNT(failed_at), COALESCE(MAX(delivered_at), ''),
+  COUNT(*) FILTER (WHERE `+eventWaiting+` AND `+wanted+`)
+FROM event_outbox WHERE receiver_id = ?`, append(slices.Clone(args), key)...).Scan(&out.Delivered, &out.Failed, &out.LastDeliveredAt, &out.Waiting); err != nil {
+		return eventDeliverySummary{}, fmt.Errorf("read event outbox counts: %w", err)
+	}
+	err := s.db.QueryRowContext(ctx, `
+SELECT last_error, COALESCE(last_error_at, '')
+FROM event_outbox
+WHERE `+eventWaiting+` AND `+wanted+` AND COALESCE(last_error, '') <> ''
+ORDER BY COALESCE(last_error_at, '') DESC, created_at DESC
+LIMIT 1`, args...).Scan(&out.LastError, &out.LastErrorAt)
+	if err != nil && err != sql.ErrNoRows {
+		return eventDeliverySummary{}, fmt.Errorf("read event outbox last error: %w", err)
+	}
+	return out, nil
+}
+
+// settleEventOutbox deletes every waiting row the receiver in settings does
+// not want. It runs after every save and every start whose settings loaded,
+// with no worker running.
+func (s *Store) settleEventOutbox(ctx context.Context, settings EventWebhookSettings) (int64, error) {
+	wanted, args := eventWanted(eventReceiverKey(settings.URL), settings.Events)
+	result, err := s.db.ExecContext(ctx, `DELETE FROM event_outbox WHERE `+eventWaiting+` AND NOT `+wanted, args...)
+	if err != nil {
+		return 0, fmt.Errorf("delete waiting events the receiver does not want: %w", err)
+	}
+	return result.RowsAffected()
+}
+
+// adoptEventsWithoutReceiver tags rows 0.4.0 queued, which have no receiver, with the
+// stored URL's key: the URL they were queued for.
+func (s *Store) adoptEventsWithoutReceiver(ctx context.Context, key string) error {
+	if _, err := s.db.ExecContext(ctx, `UPDATE event_outbox SET receiver_id = ? WHERE receiver_id = ''`, key); err != nil {
+		return fmt.Errorf("adopt events queued before receivers: %w", err)
+	}
+	return nil
+}
+
+// pruneEventOutbox gives up on every waiting row past the retry window (plus
+// the margin), whoever it was queued for, and deletes rows older than a week.
+// Best-effort and logged.
 func (s *Store) pruneEventOutbox(logger *log.Logger, now time.Time) {
+	at := formatUTCString(now)
+	if _, err := s.db.ExecContext(context.Background(), `
+UPDATE event_outbox SET failed_at = ?, payload = '', last_error_at = ?,
+  last_error = COALESCE(last_error || '; ', '') || ?
+WHERE `+eventWaiting+` AND created_at < ?`,
+		at, at, fmt.Sprintf("gave up after %s", eventWebhookRetryWindow), formatUTCString(now.Add(-eventWebhookRetryWindow-eventOutboxGiveUpMargin))); err != nil {
+		logger.Printf("event webhook outbox give-up failed: %v", err)
+	}
 	result, err := s.db.ExecContext(context.Background(),
 		`DELETE FROM event_outbox WHERE created_at < ?`, formatUTCString(now.Add(-eventOutboxRetention)))
 	if err != nil {
@@ -504,8 +768,8 @@ func (rt *Runtime) eventEnabled(eventTypes ...string) bool {
 // queues the webhook. It is deliberately fire-and-forget: every caller is on a
 // recording path where a webhook receiver must never become a dependency. It
 // takes no context: a caller that is shutting down must not be able to cancel
-// the outbox insert. A worker that is replaced while this runs is harmless:
-// the row it wrote is delivered by its successor.
+// the outbox insert. A row a replaced worker writes is tagged with its own
+// URL, so it is never sent anywhere else.
 func (rt *Runtime) emitEvent(eventType, jobID string, attemptNumber int, extra map[string]any) {
 	hook := rt.eventWebhook.Load()
 	if !hook.enabled(eventType) {
@@ -631,45 +895,90 @@ func (rt *Runtime) eventBaseData(ctx context.Context, jobID string, attemptNumbe
 	return data
 }
 
-// applyEventWebhook makes the delivery worker match settings. The caller holds
-// eventWebhookMu. The old worker goes first and is waited for: two workers
-// would each read the same undelivered row and POST it.
+// applyEventWebhook puts settings in effect. The caller holds eventWebhookMu.
+// The old worker is stopped and waited for, the new one put in place, the
+// queue settled, and only then the new worker started: two workers never read
+// the same row, and none runs while rows are deleted.
 func (rt *Runtime) applyEventWebhook(settings EventWebhookSettings) {
 	if rt.eventWebhookCancel != nil {
 		rt.eventWebhookCancel()
 		rt.eventWebhookCancel = nil
 	}
-	// The old worker stays in place for emitEvent until its successor is:
-	// an event written in between is delivered by whichever worker runs next.
 	rt.eventWebhook.Load().wait()
+
 	hook := newEventWebhook(rt.store, rt.logger, settings, os.Getenv(envAppVersion))
-	if hook == nil || rt.eventWebhookStopped || rt.ctx.Err() != nil {
-		// Off, or the operator is stopping: Shutdown may already be waiting on
-		// the workers, so none is added. Saved settings apply at the next start.
-		rt.eventWebhook.Store(nil)
+	if rt.eventWebhookStopped || rt.ctx.Err() != nil {
+		// Shutdown may already be waiting on the workers: none is added.
+		hook = nil
+	}
+	rt.eventWebhook.Store(hook)
+	if dropped, err := rt.store.settleEventOutbox(context.Background(), settings); err != nil {
+		rt.logger.Printf("event webhooks: %v", err)
+	} else if dropped > 0 {
+		rt.logger.Printf("event webhooks: %d waiting events the receiver no longer wants deleted", dropped)
+	}
+	if hook == nil {
 		return
 	}
 	ctx, cancel := context.WithCancel(rt.ctx)
 	rt.eventWebhookCancel = cancel
 	hook.start(ctx, &rt.workerWG)
-	rt.eventWebhook.Store(hook)
 }
 
-// startEventWebhook loads the stored receiver and starts its worker. Settings
-// that cannot be read or are not valid leave delivery off, with the reason
-// kept for GET /settings/webhook; nothing else depends on this file.
+// startEventWebhook starts the prune, loads the stored receiver and applies
+// it. Settings that cannot be loaded leave delivery off, with the reason kept
+// for GET, and the queue untouched until the next save.
 func (rt *Runtime) startEventWebhook() {
-	rt.store.pruneEventOutbox(rt.logger, time.Now().UTC())
 	rt.eventWebhookMu.Lock()
 	defer rt.eventWebhookMu.Unlock()
-	settings, err := loadEventWebhookSettings(rt.eventWebhookSettingsPath)
+	rt.startEventOutboxPrune()
+	settings, converted, err := loadEventWebhookSettings(rt.eventWebhookSettingsPath)
 	if err != nil {
 		rt.logger.Printf("event webhooks disabled: %v", err)
 		rt.eventWebhookLoadError = err.Error()
+		rt.eventWebhookSettings = EventWebhookSettings{}
+		rt.eventWebhook.Store(nil)
 		return
+	}
+	if converted {
+		// Not fatal: the converted settings apply, and the next start retries.
+		if err := saveEventWebhookSettings(rt.eventWebhookSettingsPath, settings); err != nil {
+			rt.logger.Printf("event webhooks: stored 0.4.0 settings converted (%d events, timeout %ds); saving that failed: %v", len(settings.Events), settings.timeoutSeconds(), err)
+		} else {
+			rt.logger.Printf("event webhooks: stored 0.4.0 settings converted (%d events, timeout %ds, saved)", len(settings.Events), settings.timeoutSeconds())
+		}
+	}
+	if settings.URL != "" {
+		if err := rt.store.adoptEventsWithoutReceiver(context.Background(), eventReceiverKey(settings.URL)); err != nil {
+			rt.logger.Printf("event webhooks: %v", err)
+		}
 	}
 	rt.eventWebhookSettings = settings
 	rt.applyEventWebhook(settings)
+}
+
+// startEventOutboxPrune prunes now and then hourly until the operator stops,
+// with or without a worker. The caller holds eventWebhookMu.
+func (rt *Runtime) startEventOutboxPrune() {
+	rt.store.pruneEventOutbox(rt.logger, time.Now().UTC())
+	if rt.eventOutboxPruning || rt.eventWebhookStopped || rt.ctx == nil {
+		return
+	}
+	rt.eventOutboxPruning = true
+	rt.workerWG.Add(1)
+	go func() {
+		defer rt.workerWG.Done()
+		ticker := time.NewTicker(eventOutboxPruneInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-rt.ctx.Done():
+				return
+			case <-ticker.C:
+				rt.store.pruneEventOutbox(rt.logger, time.Now().UTC())
+			}
+		}
+	}()
 }
 
 // stopEventWebhook is called by Shutdown before it waits on the workers, under
@@ -682,24 +991,26 @@ func (rt *Runtime) stopEventWebhook() {
 }
 
 type eventWebhookSettingsResponse struct {
-	URL       string   `json:"url"`
-	SecretSet bool     `json:"secret_set"`
-	Events    []string `json:"events"`
-	// Timeout is the one in effect: the stored value, or the default.
-	Timeout string `json:"timeout"`
+	URL            string   `json:"url"`
+	SecretSet      bool     `json:"secret_set"`
+	Events         []string `json:"events"`
+	TimeoutSeconds int      `json:"timeout_seconds"`
 	// Error is why the stored settings were not accepted at startup, when
 	// they were not: delivery is off until a PUT replaces them.
-	Error string `json:"error,omitempty"`
+	Error    string               `json:"error,omitempty"`
+	Catalog  []string             `json:"catalog"`
+	Delivery eventDeliverySummary `json:"delivery"`
 }
 
 // eventWebhookSettingsUpdate is the PUT body. A field left out keeps its
 // stored value, so a client that sends back what it read (which never
 // includes the secret) does not erase it.
 type eventWebhookSettingsUpdate struct {
-	URL     *string   `json:"url"`
-	Secret  *string   `json:"secret"`
-	Events  *[]string `json:"events"`
-	Timeout *string   `json:"timeout"`
+	URL    *string   `json:"url"`
+	Secret *string   `json:"secret"`
+	Events *[]string `json:"events"`
+	// A float, so 2.5 is refused with a code rather than as a bad body.
+	TimeoutSeconds *float64 `json:"timeout_seconds"`
 }
 
 // eventWebhookSettingsHandler serves GET and PUT /settings/webhook.
@@ -708,6 +1019,23 @@ func (rt *Runtime) eventWebhookSettingsHandler(w http.ResponseWriter, r *http.Re
 		writeMethodNotAllowed(w, http.MethodGet+", "+http.MethodPut)
 		return
 	}
+	out, settings, ok := rt.updateEventWebhookSettings(w, r)
+	if !ok {
+		return
+	}
+	// Outside the settings lock. A summary that cannot be read is not worth
+	// failing the request: the settings are what the panel needs.
+	delivery, err := rt.store.eventDeliverySummary(r.Context(), settings)
+	if err != nil {
+		rt.logger.Printf("event webhook delivery summary failed: %v", err)
+	}
+	out.Delivery = delivery
+	writeJSON(w, http.StatusOK, out)
+}
+
+// updateEventWebhookSettings applies a PUT, when it is one, and reports the
+// settings in effect. A refusal has been written to w when ok is false.
+func (rt *Runtime) updateEventWebhookSettings(w http.ResponseWriter, r *http.Request) (out eventWebhookSettingsResponse, s EventWebhookSettings, ok bool) {
 	rt.eventWebhookMu.Lock()
 	defer rt.eventWebhookMu.Unlock()
 	if r.Method == http.MethodPut {
@@ -716,7 +1044,7 @@ func (rt *Runtime) eventWebhookSettingsHandler(w http.ResponseWriter, r *http.Re
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&in); err != nil {
 			writeJSONError(w, http.StatusBadRequest, "invalid request body")
-			return
+			return out, s, false
 		}
 		updated := rt.eventWebhookSettings
 		if in.URL != nil {
@@ -724,31 +1052,117 @@ func (rt *Runtime) eventWebhookSettingsHandler(w http.ResponseWriter, r *http.Re
 		}
 		if in.Secret != nil {
 			updated.Secret = *in.Secret
+			// Not checked when turning delivery off, which discards it.
+			if secret := strings.TrimSpace(*in.Secret); strings.TrimSpace(updated.URL) != "" && secret != "" && utf8.RuneCountInString(secret) < eventWebhookMinSecretLength {
+				refuseEventWebhookSettings(w, eventWebhookSettingsRefusal("webhook_secret_too_short", "secret must be at least %d characters", eventWebhookMinSecretLength))
+				return out, s, false
+			}
 		}
 		if in.Events != nil {
 			updated.Events = *in.Events
 		}
-		if in.Timeout != nil {
-			updated.Timeout = *in.Timeout
+		if in.TimeoutSeconds != nil {
+			seconds := *in.TimeoutSeconds
+			if seconds != math.Trunc(seconds) || seconds < 1 || seconds > eventWebhookMaxTimeoutSeconds {
+				refuseEventWebhookSettings(w, eventWebhookTimeoutRefusal(seconds))
+				return out, s, false
+			}
+			updated.TimeoutSeconds = int(seconds)
 		}
 		updated, err := normalizeEventWebhookSettings(updated)
 		if err != nil {
-			writeJSONError(w, http.StatusBadRequest, err.Error())
-			return
+			refuseEventWebhookSettings(w, err)
+			return out, s, false
+		}
+		// A new address must not be signed with the old address's secret.
+		if current := rt.eventWebhookSettings.URL; current != "" && updated.URL != "" && updated.URL != current && in.Secret == nil {
+			refuseEventWebhookSettings(w, eventWebhookSettingsRefusal("webhook_secret_required_for_new_url", "a new url needs a new secret: send secret with it"))
+			return out, s, false
 		}
 		if err := saveEventWebhookSettings(rt.eventWebhookSettingsPath, updated); err != nil {
 			writeJSONError(w, http.StatusInternalServerError, err.Error())
-			return
+			return out, s, false
 		}
 		rt.eventWebhookSettings, rt.eventWebhookLoadError = updated, ""
 		rt.applyEventWebhook(updated)
 	}
-	s := rt.eventWebhookSettings
+	s = rt.eventWebhookSettings
 	events := s.Events
 	if events == nil {
 		events = []string{}
 	}
-	writeJSON(w, http.StatusOK, eventWebhookSettingsResponse{
-		URL: s.URL, SecretSet: s.Secret != "", Events: events, Timeout: s.requestTimeout().String(), Error: rt.eventWebhookLoadError,
-	})
+	return eventWebhookSettingsResponse{
+		URL: s.URL, SecretSet: s.Secret != "", Events: events, TimeoutSeconds: s.timeoutSeconds(),
+		Error: rt.eventWebhookLoadError, Catalog: slices.Clone(eventCatalog),
+	}, s, true
+}
+
+// refuseEventWebhookSettings answers a refused PUT: a coded 400 when the
+// refusal is about a field.
+func refuseEventWebhookSettings(w http.ResponseWriter, err error) {
+	var refusal *eventWebhookSettingsError
+	if errors.As(err, &refusal) {
+		writeCodedJSONError(w, http.StatusBadRequest, refusal.Code, refusal.Message)
+		return
+	}
+	writeJSONError(w, http.StatusBadRequest, err.Error())
+}
+
+// eventWebhookTestEvent is not in the catalog and never enters the outbox.
+const eventWebhookTestEvent = "webhook.test"
+
+type eventWebhookTestResponse struct {
+	Status int    `json:"status,omitempty"`
+	Error  string `json:"error,omitempty"`
+	// ErrorCode is set only for a refused address (webhook_address_not_allowed).
+	ErrorCode  string `json:"error_code,omitempty"`
+	DurationMS int64  `json:"duration_ms"`
+}
+
+// eventWebhookTestHandler serves POST /settings/webhook/test: one signed
+// webhook.test event to the saved receiver, now, outside the outbox. Whatever
+// status the receiver answers is a result, not an error of this endpoint.
+func (rt *Runtime) eventWebhookTestHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeMethodNotAllowed(w, http.MethodPost)
+		return
+	}
+	// Locked only to read: a slow receiver must not hold up a save.
+	rt.eventWebhookMu.Lock()
+	settings := rt.eventWebhookSettings
+	rt.eventWebhookMu.Unlock()
+	if settings.URL == "" {
+		writeCodedJSONError(w, http.StatusConflict, "webhook_not_configured", "No webhook receiver is saved. Save one before sending a test event.")
+		return
+	}
+
+	version := strings.TrimSpace(os.Getenv(envAppVersion))
+	event := newOutboundEvent(eventWebhookTestEvent, version, map[string]any{})
+	payload, err := json.Marshal(event)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	req, err := newSignedEventRequest(r.Context(), settings.URL, settings.Secret, version, eventWebhookTestEvent, event.ID, payload)
+	if err != nil {
+		writeJSON(w, http.StatusOK, eventWebhookTestResponse{Error: fmt.Sprintf("build request: %v", err)})
+		return
+	}
+	timeout := settings.requestTimeout()
+	started := time.Now()
+	client := newEventWebhookClient(timeout)
+	defer client.CloseIdleConnections()
+	resp, err := client.Do(req)
+	if err != nil {
+		out := eventWebhookTestResponse{Error: eventWebhookRequestError(err, timeout), DurationMS: time.Since(started).Milliseconds()}
+		var blocked *eventWebhookBlockedAddressError
+		if errors.As(err, &blocked) {
+			out.ErrorCode = "webhook_address_not_allowed"
+		}
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+	_ = resp.Body.Close()
+	writeJSON(w, http.StatusOK, eventWebhookTestResponse{Status: resp.StatusCode, DurationMS: time.Since(started).Milliseconds()})
 }

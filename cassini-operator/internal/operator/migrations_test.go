@@ -2,6 +2,7 @@ package operator
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -510,6 +511,7 @@ func TestNewestMigrationHasARollbackTest(t *testing.T) {
 		"share_notice_dismissals":  true,
 		"job_audience_mode":        true,
 		"event_outbox":             true,
+		"event_outbox_receiver":    true,
 	}
 	newest := migrations[len(migrations)-1].Name
 	if !covered[newest] {
@@ -760,7 +762,7 @@ func TestMigrateDownDropsEventOutbox(t *testing.T) {
 	}
 	defer store.Close()
 	ctx := context.Background()
-	if err := store.insertEvent(ctx, "evt_before_rollback", eventSummaryCompleted, `{"type":"summary.completed"}`, nowUTCString()); err != nil {
+	if err := store.insertEvent(ctx, "evt_before_rollback", "rcv_test", eventSummaryCompleted, `{"type":"summary.completed"}`, nowUTCString()); err != nil {
 		t.Fatalf("insertEvent() error = %v", err)
 	}
 
@@ -773,13 +775,91 @@ func TestMigrateDownDropsEventOutbox(t *testing.T) {
 	if err := store.ensureSchema(); err != nil {
 		t.Fatalf("ensureSchema() error = %v", err)
 	}
-	if _, ok, err := store.nextDueEvent(ctx, nowUTCString()); err != nil || ok {
+	if _, ok, err := store.nextDueEvent(ctx, nowUTCString(), "rcv_test", eventCatalog); err != nil || ok {
 		t.Fatalf("nextDueEvent() after re-upgrade ok=%v, err=%v; want an empty, working outbox", ok, err)
 	}
-	if err := store.insertEvent(ctx, "evt_after_upgrade", eventRecordingStarted, `{"type":"recording.started"}`, nowUTCString()); err != nil {
+	if err := store.insertEvent(ctx, "evt_after_upgrade", "rcv_test", eventRecordingStarted, `{"type":"recording.started"}`, nowUTCString()); err != nil {
 		t.Fatalf("insertEvent() after re-upgrade error = %v", err)
 	}
-	if event, ok, err := store.nextDueEvent(ctx, nowUTCString()); err != nil || !ok || event.ID != "evt_after_upgrade" {
+	if event, ok, err := store.nextDueEvent(ctx, nowUTCString(), "rcv_test", eventCatalog); err != nil || !ok || event.ID != "evt_after_upgrade" {
 		t.Fatalf("nextDueEvent() after re-upgrade = %+v, %v, %v", event, ok, err)
+	}
+}
+
+// A rollback past 0029 drops the receiver tag and the error time and puts
+// 0028's index back; the rows survive. The re-upgrade cleans up what 0.4.0
+// left (a row both delivered and given up, a finished row with a payload) and
+// owes the untagged rows to nobody until a start adopts them.
+func TestMigrateDownDropsEventOutboxReceiver(t *testing.T) {
+	migrations, err := loadMigrations()
+	if err != nil {
+		t.Fatalf("loadMigrations() error = %v", err)
+	}
+	at := migrationIndex(migrations, "event_outbox_receiver")
+	if at < 0 {
+		t.Fatal("no event_outbox_receiver migration")
+	}
+	store, err := OpenStore(filepath.Join(t.TempDir(), "jobs.sqlite3"))
+	if err != nil {
+		t.Fatalf("OpenStore() error = %v", err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	settings := EventWebhookSettings{URL: "https://hooks.example/a", Events: []string{eventSummaryCompleted}}
+	key := eventReceiverKey(settings.URL)
+	indexes := func() string {
+		t.Helper()
+		var names sql.NullString
+		if err := store.db.QueryRow(`SELECT group_concat(name) FROM (SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'event_outbox' AND name LIKE 'event_outbox_%' ORDER BY name)`).Scan(&names); err != nil {
+			t.Fatal(err)
+		}
+		return names.String
+	}
+	if err := store.insertEvent(ctx, "evt_1", key, eventSummaryCompleted, `{}`, nowUTCString()); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.rescheduleEvent(ctx, "evt_1", 1, nowUTCString(), "2026-11-18T10:00:00.000000000Z", "receiver returned HTTP 500"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.migrateDownTo(migrations[at].Version - 1); err != nil {
+		t.Fatalf("migrateDownTo(%d) error = %v", migrations[at].Version-1, err)
+	}
+	if got := indexes(); got != "event_outbox_due" {
+		t.Fatalf("indexes after down = %q, want event_outbox_due back", got)
+	}
+	for _, column := range []string{"receiver_id", "last_error_at"} {
+		if _, err := store.db.Exec(`SELECT ` + column + ` FROM event_outbox`); err == nil {
+			t.Fatalf("%s survived the down migration", column)
+		}
+	}
+	var lastError string
+	if err := store.db.QueryRow(`SELECT last_error FROM event_outbox WHERE id = 'evt_1'`).Scan(&lastError); err != nil || lastError != "receiver returned HTTP 500" {
+		t.Fatalf("the row did not survive the down migration: last_error=%q err=%v", lastError, err)
+	}
+	// What 0.4.0 could leave behind.
+	if _, err := store.db.Exec(`INSERT INTO event_outbox (id, type, payload, created_at, next_attempt_at, delivered_at, failed_at) VALUES ('evt_old', 'summary.completed', '{"title":"x"}', ?, ?, ?, ?)`, nowUTCString(), nowUTCString(), nowUTCString(), nowUTCString()); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ensureSchema(); err != nil {
+		t.Fatalf("ensureSchema() error = %v", err)
+	}
+	if got := indexes(); got != "event_outbox_owed,event_outbox_receiver" {
+		t.Fatalf("indexes after re-upgrade = %q, want event_outbox_owed and event_outbox_receiver", got)
+	}
+	var failed sql.NullString
+	var payload string
+	if err := store.db.QueryRow(`SELECT failed_at, payload FROM event_outbox WHERE id = 'evt_old'`).Scan(&failed, &payload); err != nil || failed.Valid || payload != "" {
+		t.Fatalf("0.4.0 row after re-upgrade: failed_at=%v payload=%q err=%v; want delivered only, no payload", failed, payload, err)
+	}
+	if _, ok, err := store.nextDueEvent(ctx, nowUTCString(), key, settings.Events); err != nil || ok {
+		t.Fatalf("nextDueEvent() after re-upgrade ok=%v err=%v; want the row owed to nobody", ok, err)
+	}
+	if err := store.adoptEventsWithoutReceiver(ctx, key); err != nil {
+		t.Fatal(err)
+	}
+	summary, err := store.eventDeliverySummary(ctx, settings)
+	if err != nil || summary.LastError != "receiver returned HTTP 500" || summary.LastErrorAt != "" || summary.Waiting != 1 || summary.Delivered != 1 || summary.Failed != 0 {
+		t.Fatalf("summary after adopting = %+v, %v; want one waiting with an untimed error, one delivered", summary, err)
 	}
 }

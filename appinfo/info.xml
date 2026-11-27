@@ -318,6 +318,13 @@ Summaries and questions use whichever language model you connect, so their ratin
         <verb>PUT,DELETE</verb>
         <access_level>ADMIN</access_level>
       </route>
+      <!-- ADMIN: send one test event to the saved webhook receiver (#488).
+           POST, which the settings route below does not carry. -->
+      <route>
+        <url>^operator\/settings\/webhook\/test$</url>
+        <verb>POST</verb>
+        <access_level>ADMIN</access_level>
+      </route>
       <!-- ADMIN: STT quality settings (read + update) driven by the operator
            surface's Settings panel (D-420 V3). Kept ADMIN like the rest of the
            operator API — a non-admin's PUT/GET 403s at the proxy boundary. -->
