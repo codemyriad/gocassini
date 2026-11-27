@@ -36,6 +36,13 @@ func TestImportLimitIsTheSavedValueOrTheDefault(t *testing.T) {
 	if got := loadImportSettings(path, nil); got.MaxConcurrentImports != 2 || got.MaxFileMiB != 500 {
 		t.Fatalf("saved 2 and 500 MiB: %+v", got)
 	}
+	// A size of 0 is not "absent": the file is passed over for the defaults.
+	if err := os.WriteFile(path, []byte(`{"max_concurrent_imports": 2, "max_file_mib": 0}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := loadImportSettings(path, nil); got != defaultImportSettings() {
+		t.Fatalf("saved 0 MiB: %+v", got)
+	}
 }
 
 // A saved file that cannot be used is kept as a .rejected-N copy, like the

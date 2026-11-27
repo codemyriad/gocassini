@@ -31,8 +31,14 @@ const (
 
 type importSettings struct {
 	MaxConcurrentImports int `json:"max_concurrent_imports"`
-	// MaxFileMiB is absent from files saved before #508: the default.
-	MaxFileMiB int `json:"max_file_mib,omitempty"`
+	MaxFileMiB           int `json:"max_file_mib"`
+}
+
+// savedImportSettings is the file as written; MaxFileMiB is absent from files
+// saved before #508, and then the default.
+type savedImportSettings struct {
+	MaxConcurrentImports int  `json:"max_concurrent_imports"`
+	MaxFileMiB           *int `json:"max_file_mib"`
 }
 
 func defaultImportSettings() importSettings {
@@ -60,12 +66,13 @@ func loadImportSettings(path string, logger *log.Logger) importSettings {
 	if errors.Is(err, os.ErrNotExist) {
 		return defaultImportSettings()
 	}
-	var s importSettings
+	var saved savedImportSettings
 	if err == nil {
-		err = json.Unmarshal(raw, &s)
+		err = json.Unmarshal(raw, &saved)
 	}
-	if err == nil && s.MaxFileMiB == 0 {
-		s.MaxFileMiB = maxImportFileMiBLimit
+	s := importSettings{MaxConcurrentImports: saved.MaxConcurrentImports, MaxFileMiB: maxImportFileMiBLimit}
+	if saved.MaxFileMiB != nil {
+		s.MaxFileMiB = *saved.MaxFileMiB
 	}
 	if err == nil {
 		err = s.valid()
