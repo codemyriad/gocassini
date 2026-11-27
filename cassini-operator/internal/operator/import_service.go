@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -104,6 +105,11 @@ type importService struct {
 	// import, by import ID; guarded by mu. Lost on restart, which only
 	// starts the tries over.
 	shareRetries map[string]shareCompletionRetry
+	// watchers is who has asked for their imports lately: they are watching,
+	// and are not notified (#523). notificationsOff remembers that AppAPI said
+	// the Notifications app is disabled, so it is logged once.
+	watchers         importWatchers
+	notificationsOff atomic.Bool
 }
 
 // defaultMaxConcurrentImports is how many imports run at once across all
@@ -579,6 +585,7 @@ func (s *importService) ownJob(w http.ResponseWriter, r *http.Request, caller, i
 }
 
 func (s *importService) list(w http.ResponseWriter, r *http.Request, caller string) {
+	s.watchers.saw(caller)
 	s.reconcileUploads(r.Context(), caller)
 	jobs, err := s.rt.store.ImportJobsFor(r.Context(), caller)
 	if err != nil {
@@ -1113,6 +1120,7 @@ func (s *importService) runImportJob(job ImportJob) importRunOutcome {
 		// learns only what they can act on.
 		s.logf("import %s (%s): not enough free disk space: %s", job.ID, job.SourceName, detail)
 		s.saveState(job.ID, importStateFailed, "", importDiskShortMessage)
+		s.notifySettled(job, false, importDiskShortMessage)
 		return importSettled
 	}
 	defer releaseDisk()
@@ -1148,6 +1156,7 @@ func (s *importService) runImportJob(job ImportJob) importRunOutcome {
 	if err != nil {
 		s.logf("import %s (%s): %v", job.ID, job.SourceName, err)
 		s.saveState(job.ID, importStateFailed, "", err.Error())
+		s.notifySettled(job, false, err.Error())
 		return importSettled
 	}
 	if err := rt.store.SetImportJobProvenance(context.Background(), job.ID, result.Format, result.ContentID, result.SourceRoomID, result.CreatedAtUTC, result.RecordedAtLocal); err != nil {
@@ -1171,6 +1180,7 @@ func (s *importService) runImportJob(job ImportJob) importRunOutcome {
 	}
 	s.logf("import succeeded id=%s source=%q delivered=%s file_id=%d shared_with=%d not_shared_with=%d waiting_for_share_limit=%d searchable=%t",
 		job.ID, job.SourceName, result.DeliveredName, result.FileID, result.SharedWith, len(refused), len(waiting), result.SearchIndexed)
+	s.notifySettled(job, true, "")
 	// The staged copy is spent. Best effort: a leftover costs the caller some
 	// quota and is theirs to see; it never fails a landed import.
 	if err := s.exapp.davDeleteUserFile(context.Background(), s.client, job.CreatedBy, job.StagedPath); err != nil {
