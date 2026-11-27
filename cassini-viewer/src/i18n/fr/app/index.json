@@ -38,11 +38,11 @@
       "identity_unverified": "Cassini n’a pas pu vérifier votre identité ; rechargez la page et réessayez.",
       "request_failed": "Échec de la demande d’importation (HTTP {status}).",
       "people_search_failed": "Échec de la recherche de personnes (HTTP {status}).",
-      "refused_busy": "",
-      "refused_too_large": "",
-      "refused_add_again": "",
-      "refused_uploading": "",
-      "refused_cancel_too_late": ""
+      "refused_busy": "Cassini est occupé pour le moment. Réessayez dans un instant.",
+      "refused_too_large": "Ce fichier dépasse 4 Gio et ne peut pas être importé.",
+      "refused_add_again": "Ce téléversement n’est plus utilisable. Ajoutez à nouveau le fichier.",
+      "refused_uploading": "Ce fichier est encore en cours de téléversement ou d’importation. Réessayez une fois l’opération terminée.",
+      "refused_cancel_too_late": "La réunion a déjà été ajoutée et partagée, elle ne peut donc plus être annulée."
     },
     "data_provider": {
       "bundle_needs_meetings": "Choisissez d’abord au moins une réunion.",
@@ -52,14 +52,14 @@
       "bundle_failed": "Impossible de préparer le lot (HTTP {status})."
     },
     "setup_notice": {
-      "open_doctor": "",
+      "open_doctor": "Ouvrir {place}",
       "title_failing": "Cassini ne peut pas sauvegarder les enregistrements pour le moment",
       "title_unchecked": "Cassini n’a pas vérifié qu’il peut sauvegarder les enregistrements",
-      "reader_failing": "",
-      "reader_unchecked": "",
-      "copy_link": "",
-      "title_recording": "",
-      "reader_recording": "",
+      "reader_failing": "Les appels fonctionnent toujours et les enregistrements existants sont toujours là. Demandez à un administrateur de corriger le problème.",
+      "reader_unchecked": "Les enregistrements existants sont toujours là. Les nouveaux risquent de ne pas être sauvegardés tant qu’un administrateur n’a pas vérifié.",
+      "copy_link": "Copier le lien pour un administrateur",
+      "title_recording": "La configuration de l’enregistrement n’est pas terminée",
+      "reader_recording": "Les nouveaux appels risquent de ne pas être enregistrés tant qu’un administrateur ne l’a pas terminée.",
       "cause_unknown": "Cassini n’a pas pu confirmer la configuration de ses enregistrements.",
       "cause": {
         "nextcloud_probe": "Nextcloud n’a pas répondu à la vérification du compte des enregistrements.",
@@ -1127,17 +1127,17 @@
       "save_in_progress": "Les paramètres de conservation sont en cours de sauvegarde. Réessayez."
     },
     "imports": {
-      "heading": "",
-      "intro": "",
-      "limit_label": "",
-      "range": "",
-      "save_label": "",
-      "help": "",
-      "default_hint": "",
-      "saved": "",
-      "loading": "",
-      "load_failed": "",
-      "out_of_range": ""
+      "heading": "Importations",
+      "intro": "Nombre d’importations de réunions exécutées en même temps, tous utilisateurs confondus. Les importations de chaque personne s’exécutent toujours une à la fois.",
+      "limit_label": "Importations simultanées",
+      "range": "1 à {max}",
+      "save_label": "Enregistrer les paramètres d’importation",
+      "help": "Chaque importation en cours conserve son fichier, jusqu’à 4 Gio, et une copie de travail sur le disque de ce serveur, que les enregistrements utilisent aussi. Une importation ne démarre que si elle tient en laissant 5 Gio libres pour les enregistrements.",
+      "default_hint": "La valeur par défaut est {value}. Une valeur enregistrée ici s’applique immédiatement et est conservée lorsque l’application est redéployée.",
+      "saved": "Enregistré. Les importations en cours se terminent ; les nouvelles démarrent dans la nouvelle limite.",
+      "loading": "Chargement des paramètres d’importation…",
+      "load_failed": "Impossible de charger les paramètres d’importation : {detail}",
+      "out_of_range": "Choisissez un nombre entier de 1 à {max}. {max} est le maximum autorisé par le serveur."
     },
     "retention_policy": {
       "keep_forever": "Conserver indéfiniment",
@@ -1403,17 +1403,17 @@
       "create_unavailable": "L’une de ces réunions ne vous est pas accessible, ou ce déploiement ne peut pas créer d’analyses.",
       "list_unavailable": "Impossible de lister les analyses.",
       "rename_unavailable": "Cette analyse ne vous est pas accessible, ou ce déploiement ne peut pas renommer les analyses.",
-      "delete_unavailable": "",
+      "delete_unavailable": "Cette analyse n’existe plus, ou ce déploiement ne permet pas de supprimer les analyses.",
       "insight_unavailable": "Cette analyse ne vous est pas accessible, ou ce déploiement ne peut pas créer d’analyses.",
       "already_running": "Cette analyse est déjà en cours.",
-      "delete_running": "",
+      "delete_running": "Cette analyse est encore en cours. Supprimez-la une fois qu’elle sera terminée.",
       "unreachable": {
         "create": "Impossible de joindre Cassini pour lancer l’analyse{detail}.",
         "list": "Impossible de joindre Cassini pour lister vos analyses{detail}.",
         "read": "Impossible de joindre Cassini pour lire l’analyse{detail}.",
         "retry": "Impossible de joindre Cassini pour relancer l’analyse{detail}.",
         "rename": "Impossible de joindre Cassini pour renommer l’analyse{detail}.",
-        "delete": ""
+        "delete": "Impossible de joindre Cassini pour supprimer l’analyse{detail}."
       },
       "cassini_failed": {
         "create": "Cassini n’a pas pu lancer l’analyse.",
@@ -1421,7 +1421,7 @@
         "read": "Cassini n’a pas pu lire l’analyse.",
         "retry": "Cassini n’a pas pu relancer l’analyse.",
         "rename": "Cassini n’a pas pu renommer l’analyse.",
-        "delete": ""
+        "delete": "Cassini n’a pas pu supprimer l’analyse. Son document se trouve peut-être encore dans vos Fichiers."
       },
       "failed_status": {
         "create": "Impossible de lancer l’analyse (HTTP {status}).",
@@ -1429,7 +1429,7 @@
         "read": "Impossible de lire l’analyse (HTTP {status}).",
         "retry": "Impossible de relancer l’analyse (HTTP {status}).",
         "rename": "Impossible de renommer l’analyse (HTTP {status}).",
-        "delete": ""
+        "delete": "Impossible de supprimer l’analyse (HTTP {status})."
       }
     },
     "summary_action": {
