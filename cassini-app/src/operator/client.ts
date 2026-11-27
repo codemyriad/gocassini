@@ -34,6 +34,10 @@ import type {
   SettingsQuality,
   SettingsUpdate,
   StorageServiceAccount,
+  WebhookDelivery,
+  WebhookSettings,
+  WebhookSettingsUpdate,
+  WebhookTestResult,
   StorageSetupStep,
   StorageStatus,
   StorageUsageCategory,
@@ -281,6 +285,35 @@ export class OperatorClient {
         body: JSON.stringify(payload),
       }),
     );
+  }
+
+  async getWebhookSettings(): Promise<WebhookSettings> {
+    return normalizeWebhookSettings(await this.#request<unknown>("/settings/webhook"));
+  }
+
+  async putWebhookSettings(payload: WebhookSettingsUpdate): Promise<WebhookSettings> {
+    return normalizeWebhookSettings(
+      await this.#request<unknown>("/settings/webhook", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }),
+    );
+  }
+
+  // Sends one webhook.test event to the SAVED receiver. A receiver's 4xx/5xx
+  // is a result here, not a failed call; only a refusal by the operator (409
+  // webhook_not_configured) throws.
+  async testWebhook(): Promise<WebhookTestResult> {
+    const raw = (await this.#request<unknown>("/settings/webhook/test", { method: "POST" })) ?? {};
+    const value = raw as Record<string, unknown>;
+    const status = typeof value.status === "number" && Number.isInteger(value.status) && value.status > 0 ? value.status : null;
+    return {
+      status,
+      error: status === null ? asString(value.error) : "",
+      error_code: status === null ? asString(value.error_code) : "",
+      duration_ms: asNonNegativeNumber(value.duration_ms),
+    };
   }
 
   async listProviderModels(providerId: string): Promise<LLMModel[]> {
@@ -551,6 +584,31 @@ function normalizeLLMSettings(raw: unknown): LLMSettings {
       summary: normalizeLLMEffectiveStep(effective.summary),
       insight: normalizeLLMEffectiveStep(effective.insight),
     },
+  };
+}
+
+// normalizeWebhookSettings: a renderable shape whatever the operator sends,
+// and never a secret, even from a buggy server.
+export function normalizeWebhookSettings(raw: unknown): WebhookSettings {
+  const value = (raw ?? {}) as Record<string, unknown>;
+  const delivery = (value.delivery != null && typeof value.delivery === "object" ? value.delivery : {}) as Record<string, unknown>;
+  const normalizedDelivery: WebhookDelivery = {
+    last_delivered_at: asString(delivery.last_delivered_at),
+    delivered: asNonNegativeNumber(delivery.delivered),
+    waiting: asNonNegativeNumber(delivery.waiting),
+    failed: asNonNegativeNumber(delivery.failed),
+    last_error: asString(delivery.last_error),
+    last_error_at: asString(delivery.last_error_at),
+  };
+  return {
+    url: asString(value.url),
+    secret_set: value.secret_set === true,
+    events: asStringArray(value.events),
+    timeout_seconds: asNonNegativeNumber(value.timeout_seconds),
+    catalog: asStringArray(value.catalog),
+    summary_notice: asString(value.summary_notice),
+    delivery: normalizedDelivery,
+    error: asString(value.error),
   };
 }
 

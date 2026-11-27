@@ -441,6 +441,132 @@ const settings = {
     insight_default_with_model: "Whoever creates an insight picks which provider it uses. If they don't pick one, it uses {provider} with {model}.",
     remove_all_turns_off: "Remove all providers to turn off both summaries and insights.",
   },
+  // Operator › Webhooks: the one receiver Cassini sends recording and summary events to.
+  webhook: {
+    heading: "Webhooks",
+    // Windmill and n8n are automation tools; keep the names.
+    intro: "Send recording and summary events to Windmill, n8n or your own service. Use them to act when a meeting is recorded, published or summarised. Every message is signed, so your service can check it came from Cassini. Events come from every recorded meeting on this Nextcloud, in every room, including one-to-one calls.",
+    // Link to the developer documentation of the events and their contents.
+    reference: "Event reference",
+    loading: "Loading webhook settings…",
+    no_client: "No operator client is available.",
+    // Empty state, when no receiver is set.
+    empty_title: "No receiver yet",
+    // {post} is the HTTP method POST, drawn as code.
+    empty_text: "Configure the address of a service that accepts a {post}, and a secret to sign each message with.",
+    set_up: "Set up a receiver",
+    // Empty state, when the saved settings were rejected when Cassini started.
+    load_failed_title: "Your receiver could not be loaded",
+    load_failed_text: "Cassini could not use its saved webhook settings when it started. It is not sending events until you set up the receiver again.",
+    // {reason} is the technical reason, in English, drawn as code.
+    load_failed_reason: "Reason: {reason}",
+    // Small uppercase section titles.
+    section_receiver: "Receiver",
+    section_delivery: "Delivery",
+    address: "Address",
+    secret: "Signing secret",
+    // Pill beside "Signing secret" when one is saved.
+    secret_set: "Set",
+    secret_hidden: "Hidden once saved. Your receiver uses it to check that each message came from Cassini.",
+    replace: "Replace",
+    new_secret_placeholder: "New secret",
+    save_secret: "Save secret",
+    events: "Events",
+    // Beside the event list. {seconds} is a number.
+    timeout_fact: "timeout {seconds} s",
+    // Delivery status pills.
+    status_delivering: "Delivering",
+    status_failing: "Receiver is not accepting messages",
+    status_idle: "Nothing sent yet",
+    // {when} is a relative time, such as "4 minutes ago".
+    last_delivered: "Last message delivered {when}",
+    // Test events are not counted: this is about events from meetings.
+    never_delivered: "No meeting event delivered yet",
+    fact_delivered: "Delivered",
+    fact_waiting: "Waiting to be sent",
+    fact_failed: "Gave up after 24 hours",
+    // Small text beside a count: the counts cover the last week.
+    last_7_days: "last 7 days",
+    // Small text beside the waiting count while the receiver is failing.
+    retrying: "retrying, at most 5 min apart",
+    // {when} is a relative time, such as "2 hours ago". {error} is the technical error, in English, drawn as code.
+    latest_error: "Latest error, {when}: {error}",
+    // The same, for an error whose time was not recorded. {error} is the technical error, in English, drawn as code.
+    latest_error_untimed: "Latest error: {error}",
+    auth_hint: "A 401 or 403 usually means the receiver is checking with a different secret. Replace the secret here or on the receiver. Messages still waiting are sent once it accepts them.",
+    send_test: "Send test event",
+    sending_test: "Sending…",
+    saved_hint: "Saved. Send a test event to check that your receiver accepts it.",
+    // {status} is an HTTP status code, {ms} a number of milliseconds.
+    test_answered: "Receiver answered HTTP {status} in {ms} ms.",
+    test_auth_refused: "It did not accept the signature.",
+    // {error} is the technical error, in English.
+    test_no_answer: "No answer from the receiver: {error}",
+    // The receiver's address, or the address its name resolves to, is link-local or a cloud provider's metadata service. Cassini refuses to connect there, so nothing was sent.
+    test_address_not_allowed: "Not sent. This address is link-local or a cloud metadata service, and Cassini never connects to those. Use your receiver's address on your network or the internet.",
+    // The test was refused because no receiver is saved (for example, it was removed in another tab).
+    test_not_configured: "No receiver is saved. Set one up before sending a test event.",
+    // The test got no answer in time: a proxy between the browser and Cassini answered 502 or 504 instead. Either the receiver was slow or Cassini itself could not be reached.
+    test_gateway_timeout: "No answer in time. Either the receiver is slow or Cassini could not be reached.",
+    remove: "Remove receiver",
+    remove_confirm_text: "Stop sending events and delete the address and secret?",
+    remove_confirm: "Remove",
+    keep: "Keep it",
+    // Form.
+    form_new: "Set up a receiver",
+    form_edit: "Edit receiver",
+    field_url: "Receiver address",
+    url_placeholder: "https://…",
+    // {post} is the HTTP method POST, drawn as code.
+    url_help: "Cassini sends a {post} with a JSON body. Redirects are not followed.",
+    field_timeout: "Wait for an answer",
+    // After the number field.
+    seconds: "seconds",
+    field_secret: "Signing secret",
+    secret_placeholder_new: "Paste or generate",
+    secret_placeholder_keep: "Leave empty to keep the saved secret",
+    generate: "Generate",
+    generated_new: "Copy it now and give it to your receiver; it is not shown after saving.",
+    // Accessible name of the field that shows a generated secret.
+    generated_label: "Generated secret",
+    copy: "Copy",
+    copy_blocked: "Your browser blocked copying. The secret is selected, so copy it with your keyboard.",
+    field_events: "Events to send",
+    select_all: "Select all",
+    events_help: "Cassini sends only the events you tick. Events added in later versions stay off until you tick them here.",
+    // Above Save, when the address was changed and events are still waiting to be sent to the old one. They are never sent to the new address.
+    address_change_drops_waiting: "{count:number|num} {{event|events}} waiting for the old address will be deleted when you save.",
+    // Inline errors under the fields.
+    error_url: "Enter the receiver's plain address, starting with https:// or http:// (an international name in its xn-- form).",
+    error_timeout: "Enter a whole number of seconds, from 1 to 60.",
+    error_secret: "A receiver needs a signing secret. Generate one, or paste the one your receiver expects.",
+    // The address was changed and the secret field was left empty.
+    error_secret_new_url: "A new address needs its own secret. Generate one, or paste the one the new receiver expects.",
+    error_secret_short: "Use at least 32 characters. Generate one to get a strong secret.",
+    error_events: "Pick at least one event.",
+    error_event_unknown: "This version of Cassini does not know one of these events. Tick them again.",
+    // The optional reason, nested under summary.completed and shown while it is ticked.
+    field_summary_notice: "Why summaries are sent (optional)",
+    summary_notice_placeholder: "e.g. We keep summaries in our team wiki.",
+    // Under the reason. {notice} is the sentence a meeting shows once its summary was sent (viewer.meeting.summary_sent.notice), followed by the reason as typed.
+    summary_notice_preview: "People who can open the meeting will see a notice: “{notice}”",
+    error_summary_notice_invalid: "Write the reason as plain text on one line, without line breaks or invisible characters.",
+    // The reason is posted in Talk, where a word starting with @ mentions someone.
+    error_summary_notice_mention: "Don't start a word with @: in Talk it would mention someone.",
+    // {max} is the longest reason allowed, in characters.
+    error_summary_notice_too_long: "Use at most {max:number|num} characters.",
+    // Under each event's name in the form. Keys are the event names with "_" for ".".
+    event: {
+      recording_started: "The recorder started",
+      recording_stopped: "The recording was stored",
+      recording_published: "The meeting was delivered to the room",
+      recording_failed: "Recording, transcription or publishing failed",
+      // {emphasis} is summary_completed_emphasis, drawn in bold.
+      summary_completed: "A summary was written; {emphasis}",
+      summary_completed_emphasis: "includes its full text, for every recorded meeting",
+      summary_failed: "A summary could not be written",
+    },
+  },
 };
 
 export default settings;

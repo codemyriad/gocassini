@@ -56,6 +56,7 @@
         { id: "pipeline", get label() { return get(LL).common.place.publish_pipeline(); } },
         { id: "templates", get label() { return get(LL).common.place.insight_templates(); } },
         { id: "storage", get label() { return get(LL).common.place.storage(); } },
+        { id: "webhooks", get label() { return get(LL).common.place.webhooks(); } },
       ],
     },
     {

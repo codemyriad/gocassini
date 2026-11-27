@@ -525,6 +525,11 @@
       "audio_stereo": "estéreo",
       "audio_channels": "{count:number|num} {{canal|canales}}"
     },
+    "summary_sent": {
+      "chip": "",
+      "panel_label": "",
+      "notice": ""
+    },
     "timing": {
       "passage": "Sincronizada por pasajes",
       "word": "Sincronizada por palabras",

@@ -525,6 +525,11 @@
       "audio_stereo": "stereo",
       "audio_channels": "{count:number|num} {{channel|channels}}"
     },
+    "summary_sent": {
+      "chip": "Sent to {host}",
+      "panel_label": "Where this summary was sent",
+      "notice": "A summary of this meeting was sent to {host}."
+    },
     "timing": {
       "passage": "Passage-timed",
       "word": "Word-timed",

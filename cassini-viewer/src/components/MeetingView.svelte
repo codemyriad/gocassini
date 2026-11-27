@@ -29,6 +29,7 @@
   import TranscriptWords from "./TranscriptWords.svelte";
   import ExportMenu from "./ExportMenu.svelte";
   import MeetingFacts from "./MeetingFacts.svelte";
+  import SummarySentChip from "./SummarySentChip.svelte";
   import SummaryRequest from "./SummaryRequest.svelte";
   import {
     describeSummaryRequestError,
@@ -1746,6 +1747,7 @@
             timing={timingPrecision}
           />
         </span>
+        <SummarySentChip sentTo={meeting.summarySentTo} />
         <MeetingTags session={marks} vocabulary={tagVocabulary} preview={previewTags} />
       </div>
     {/if}

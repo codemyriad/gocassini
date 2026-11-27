@@ -198,6 +198,8 @@ type Runtime struct {
 	eventWebhookCancel       context.CancelFunc
 	// eventWebhookStopped is set by Shutdown: no worker is started after it.
 	eventWebhookStopped bool
+	// eventOutboxPruning is set once the outbox prune loop is running.
+	eventOutboxPruning bool
 
 	// buildExecutionMu is the final admission gate around the whole build. The
 	// configured worker count may exceed one, but CUDA recognizers and the RAM/
@@ -1171,6 +1173,7 @@ func operatorAPIRoutes(rt *Runtime, exappCfg ExAppConfig) []struct {
 		// The lifecycle event receiver (docs/events.md); exact, so it wins
 		// over the prefix below.
 		{"/settings/webhook", http.HandlerFunc(rt.eventWebhookSettingsHandler)},
+		{"/settings/webhook/test", http.HandlerFunc(rt.eventWebhookTestHandler)},
 		// How many imports run at once (import_settings.go); exact, so it
 		// wins over the prefix below.
 		{"/settings/imports", http.HandlerFunc(rt.importSettingsHandler)},
@@ -2491,8 +2494,10 @@ func writeJSONError(w http.ResponseWriter, status int, message string) {
 
 // writeCodedJSONError is writeJSONError for a refusal a reader sees as a
 // sentence: error stays the English, and error_code lets the app word it in
-// the reader's language (D-921). Every code is in
-// cassini-app/src/operator/doctorCatalog.json (doctor_catalog_test.go).
+// the reader's language (D-921). Every Doctor code is in
+// cassini-app/src/operator/doctorCatalog.json (doctor_catalog_test.go); the
+// webhook settings' codes are the Webhooks panel's own, listed in
+// docs/events.md.
 func writeCodedJSONError(w http.ResponseWriter, status int, code, message string) {
 	writeJSON(w, status, map[string]string{"error": message, "error_code": code})
 }

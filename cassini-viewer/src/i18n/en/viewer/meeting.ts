@@ -138,6 +138,16 @@ const meeting = {
     // Plural; see the translator guide. {count}: audio channels, 3 or more.
     audio_channels: "{count:number|num} {{channel|channels}}",
   },
+  // The highlighted chip in a meeting's header once its summary was sent to a
+  // webhook receiver an admin set up (SummarySentChip.svelte). {host} is a
+  // server name such as flows.example.org, never translated.
+  summary_sent: {
+    chip: "Sent to {host}",
+    // Screen-reader name of the chip's popover.
+    panel_label: "Where this summary was sent",
+    // The popover. The admin's own reason, untranslated, follows on the same line.
+    notice: "A summary of this meeting was sent to {host}.",
+  },
   // How precisely the words are timed, under "Timing" in the details.
   timing: {
     passage: "Passage-timed",

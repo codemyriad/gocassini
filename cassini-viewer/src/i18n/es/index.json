@@ -41,6 +41,7 @@
       "insight_templates": "Plantillas de análisis",
       "doctor": "Diagnóstico",
       "storage": "Almacenamiento",
+      "webhooks": "",
       "help": "Ayuda"
     },
     "status": {

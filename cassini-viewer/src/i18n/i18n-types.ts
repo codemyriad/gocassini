@@ -178,6 +178,10 @@ type RootTranslation = {
 			 */
 			storage: string
 			/**
+			 * W​e​b​h​o​o​k​s
+			 */
+			webhooks: string
+			/**
 			 * H​e​l​p
 			 */
 			help: string
@@ -5161,6 +5165,373 @@ export type NamespaceAppTranslation = {
 			 */
 			remove_all_turns_off: string
 		}
+		webhook: {
+			/**
+			 * W​e​b​h​o​o​k​s
+			 */
+			heading: string
+			/**
+			 * S​e​n​d​ ​r​e​c​o​r​d​i​n​g​ ​a​n​d​ ​s​u​m​m​a​r​y​ ​e​v​e​n​t​s​ ​t​o​ ​W​i​n​d​m​i​l​l​,​ ​n​8​n​ ​o​r​ ​y​o​u​r​ ​o​w​n​ ​s​e​r​v​i​c​e​.​ ​U​s​e​ ​t​h​e​m​ ​t​o​ ​a​c​t​ ​w​h​e​n​ ​a​ ​m​e​e​t​i​n​g​ ​i​s​ ​r​e​c​o​r​d​e​d​,​ ​p​u​b​l​i​s​h​e​d​ ​o​r​ ​s​u​m​m​a​r​i​s​e​d​.​ ​E​v​e​r​y​ ​m​e​s​s​a​g​e​ ​i​s​ ​s​i​g​n​e​d​,​ ​s​o​ ​y​o​u​r​ ​s​e​r​v​i​c​e​ ​c​a​n​ ​c​h​e​c​k​ ​i​t​ ​c​a​m​e​ ​f​r​o​m​ ​C​a​s​s​i​n​i​.​ ​E​v​e​n​t​s​ ​c​o​m​e​ ​f​r​o​m​ ​e​v​e​r​y​ ​r​e​c​o​r​d​e​d​ ​m​e​e​t​i​n​g​ ​o​n​ ​t​h​i​s​ ​N​e​x​t​c​l​o​u​d​,​ ​i​n​ ​e​v​e​r​y​ ​r​o​o​m​,​ ​i​n​c​l​u​d​i​n​g​ ​o​n​e​-​t​o​-​o​n​e​ ​c​a​l​l​s​.
+			 */
+			intro: string
+			/**
+			 * E​v​e​n​t​ ​r​e​f​e​r​e​n​c​e
+			 */
+			reference: string
+			/**
+			 * L​o​a​d​i​n​g​ ​w​e​b​h​o​o​k​ ​s​e​t​t​i​n​g​s​…
+			 */
+			loading: string
+			/**
+			 * N​o​ ​o​p​e​r​a​t​o​r​ ​c​l​i​e​n​t​ ​i​s​ ​a​v​a​i​l​a​b​l​e​.
+			 */
+			no_client: string
+			/**
+			 * N​o​ ​r​e​c​e​i​v​e​r​ ​y​e​t
+			 */
+			empty_title: string
+			/**
+			 * C​o​n​f​i​g​u​r​e​ ​t​h​e​ ​a​d​d​r​e​s​s​ ​o​f​ ​a​ ​s​e​r​v​i​c​e​ ​t​h​a​t​ ​a​c​c​e​p​t​s​ ​a​ ​{​p​o​s​t​}​,​ ​a​n​d​ ​a​ ​s​e​c​r​e​t​ ​t​o​ ​s​i​g​n​ ​e​a​c​h​ ​m​e​s​s​a​g​e​ ​w​i​t​h​.
+			 * @param {unknown} post
+			 */
+			empty_text: RequiredParams<'post'>
+			/**
+			 * S​e​t​ ​u​p​ ​a​ ​r​e​c​e​i​v​e​r
+			 */
+			set_up: string
+			/**
+			 * Y​o​u​r​ ​r​e​c​e​i​v​e​r​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​l​o​a​d​e​d
+			 */
+			load_failed_title: string
+			/**
+			 * C​a​s​s​i​n​i​ ​c​o​u​l​d​ ​n​o​t​ ​u​s​e​ ​i​t​s​ ​s​a​v​e​d​ ​w​e​b​h​o​o​k​ ​s​e​t​t​i​n​g​s​ ​w​h​e​n​ ​i​t​ ​s​t​a​r​t​e​d​.​ ​I​t​ ​i​s​ ​n​o​t​ ​s​e​n​d​i​n​g​ ​e​v​e​n​t​s​ ​u​n​t​i​l​ ​y​o​u​ ​s​e​t​ ​u​p​ ​t​h​e​ ​r​e​c​e​i​v​e​r​ ​a​g​a​i​n​.
+			 */
+			load_failed_text: string
+			/**
+			 * R​e​a​s​o​n​:​ ​{​r​e​a​s​o​n​}
+			 * @param {unknown} reason
+			 */
+			load_failed_reason: RequiredParams<'reason'>
+			/**
+			 * R​e​c​e​i​v​e​r
+			 */
+			section_receiver: string
+			/**
+			 * D​e​l​i​v​e​r​y
+			 */
+			section_delivery: string
+			/**
+			 * A​d​d​r​e​s​s
+			 */
+			address: string
+			/**
+			 * S​i​g​n​i​n​g​ ​s​e​c​r​e​t
+			 */
+			secret: string
+			/**
+			 * S​e​t
+			 */
+			secret_set: string
+			/**
+			 * H​i​d​d​e​n​ ​o​n​c​e​ ​s​a​v​e​d​.​ ​Y​o​u​r​ ​r​e​c​e​i​v​e​r​ ​u​s​e​s​ ​i​t​ ​t​o​ ​c​h​e​c​k​ ​t​h​a​t​ ​e​a​c​h​ ​m​e​s​s​a​g​e​ ​c​a​m​e​ ​f​r​o​m​ ​C​a​s​s​i​n​i​.
+			 */
+			secret_hidden: string
+			/**
+			 * R​e​p​l​a​c​e
+			 */
+			replace: string
+			/**
+			 * N​e​w​ ​s​e​c​r​e​t
+			 */
+			new_secret_placeholder: string
+			/**
+			 * S​a​v​e​ ​s​e​c​r​e​t
+			 */
+			save_secret: string
+			/**
+			 * E​v​e​n​t​s
+			 */
+			events: string
+			/**
+			 * t​i​m​e​o​u​t​ ​{​s​e​c​o​n​d​s​}​ ​s
+			 * @param {unknown} seconds
+			 */
+			timeout_fact: RequiredParams<'seconds'>
+			/**
+			 * D​e​l​i​v​e​r​i​n​g
+			 */
+			status_delivering: string
+			/**
+			 * R​e​c​e​i​v​e​r​ ​i​s​ ​n​o​t​ ​a​c​c​e​p​t​i​n​g​ ​m​e​s​s​a​g​e​s
+			 */
+			status_failing: string
+			/**
+			 * N​o​t​h​i​n​g​ ​s​e​n​t​ ​y​e​t
+			 */
+			status_idle: string
+			/**
+			 * L​a​s​t​ ​m​e​s​s​a​g​e​ ​d​e​l​i​v​e​r​e​d​ ​{​w​h​e​n​}
+			 * @param {unknown} when
+			 */
+			last_delivered: RequiredParams<'when'>
+			/**
+			 * N​o​ ​m​e​e​t​i​n​g​ ​e​v​e​n​t​ ​d​e​l​i​v​e​r​e​d​ ​y​e​t
+			 */
+			never_delivered: string
+			/**
+			 * D​e​l​i​v​e​r​e​d
+			 */
+			fact_delivered: string
+			/**
+			 * W​a​i​t​i​n​g​ ​t​o​ ​b​e​ ​s​e​n​t
+			 */
+			fact_waiting: string
+			/**
+			 * G​a​v​e​ ​u​p​ ​a​f​t​e​r​ ​2​4​ ​h​o​u​r​s
+			 */
+			fact_failed: string
+			/**
+			 * l​a​s​t​ ​7​ ​d​a​y​s
+			 */
+			last_7_days: string
+			/**
+			 * r​e​t​r​y​i​n​g​,​ ​a​t​ ​m​o​s​t​ ​5​ ​m​i​n​ ​a​p​a​r​t
+			 */
+			retrying: string
+			/**
+			 * L​a​t​e​s​t​ ​e​r​r​o​r​,​ ​{​w​h​e​n​}​:​ ​{​e​r​r​o​r​}
+			 * @param {unknown} error
+			 * @param {unknown} when
+			 */
+			latest_error: RequiredParams<'error' | 'when'>
+			/**
+			 * L​a​t​e​s​t​ ​e​r​r​o​r​:​ ​{​e​r​r​o​r​}
+			 * @param {unknown} error
+			 */
+			latest_error_untimed: RequiredParams<'error'>
+			/**
+			 * A​ ​4​0​1​ ​o​r​ ​4​0​3​ ​u​s​u​a​l​l​y​ ​m​e​a​n​s​ ​t​h​e​ ​r​e​c​e​i​v​e​r​ ​i​s​ ​c​h​e​c​k​i​n​g​ ​w​i​t​h​ ​a​ ​d​i​f​f​e​r​e​n​t​ ​s​e​c​r​e​t​.​ ​R​e​p​l​a​c​e​ ​t​h​e​ ​s​e​c​r​e​t​ ​h​e​r​e​ ​o​r​ ​o​n​ ​t​h​e​ ​r​e​c​e​i​v​e​r​.​ ​M​e​s​s​a​g​e​s​ ​s​t​i​l​l​ ​w​a​i​t​i​n​g​ ​a​r​e​ ​s​e​n​t​ ​o​n​c​e​ ​i​t​ ​a​c​c​e​p​t​s​ ​t​h​e​m​.
+			 */
+			auth_hint: string
+			/**
+			 * S​e​n​d​ ​t​e​s​t​ ​e​v​e​n​t
+			 */
+			send_test: string
+			/**
+			 * S​e​n​d​i​n​g​…
+			 */
+			sending_test: string
+			/**
+			 * S​a​v​e​d​.​ ​S​e​n​d​ ​a​ ​t​e​s​t​ ​e​v​e​n​t​ ​t​o​ ​c​h​e​c​k​ ​t​h​a​t​ ​y​o​u​r​ ​r​e​c​e​i​v​e​r​ ​a​c​c​e​p​t​s​ ​i​t​.
+			 */
+			saved_hint: string
+			/**
+			 * R​e​c​e​i​v​e​r​ ​a​n​s​w​e​r​e​d​ ​H​T​T​P​ ​{​s​t​a​t​u​s​}​ ​i​n​ ​{​m​s​}​ ​m​s​.
+			 * @param {unknown} ms
+			 * @param {unknown} status
+			 */
+			test_answered: RequiredParams<'ms' | 'status'>
+			/**
+			 * I​t​ ​d​i​d​ ​n​o​t​ ​a​c​c​e​p​t​ ​t​h​e​ ​s​i​g​n​a​t​u​r​e​.
+			 */
+			test_auth_refused: string
+			/**
+			 * N​o​ ​a​n​s​w​e​r​ ​f​r​o​m​ ​t​h​e​ ​r​e​c​e​i​v​e​r​:​ ​{​e​r​r​o​r​}
+			 * @param {unknown} error
+			 */
+			test_no_answer: RequiredParams<'error'>
+			/**
+			 * N​o​t​ ​s​e​n​t​.​ ​T​h​i​s​ ​a​d​d​r​e​s​s​ ​i​s​ ​l​i​n​k​-​l​o​c​a​l​ ​o​r​ ​a​ ​c​l​o​u​d​ ​m​e​t​a​d​a​t​a​ ​s​e​r​v​i​c​e​,​ ​a​n​d​ ​C​a​s​s​i​n​i​ ​n​e​v​e​r​ ​c​o​n​n​e​c​t​s​ ​t​o​ ​t​h​o​s​e​.​ ​U​s​e​ ​y​o​u​r​ ​r​e​c​e​i​v​e​r​'​s​ ​a​d​d​r​e​s​s​ ​o​n​ ​y​o​u​r​ ​n​e​t​w​o​r​k​ ​o​r​ ​t​h​e​ ​i​n​t​e​r​n​e​t​.
+			 */
+			test_address_not_allowed: string
+			/**
+			 * N​o​ ​r​e​c​e​i​v​e​r​ ​i​s​ ​s​a​v​e​d​.​ ​S​e​t​ ​o​n​e​ ​u​p​ ​b​e​f​o​r​e​ ​s​e​n​d​i​n​g​ ​a​ ​t​e​s​t​ ​e​v​e​n​t​.
+			 */
+			test_not_configured: string
+			/**
+			 * N​o​ ​a​n​s​w​e​r​ ​i​n​ ​t​i​m​e​.​ ​E​i​t​h​e​r​ ​t​h​e​ ​r​e​c​e​i​v​e​r​ ​i​s​ ​s​l​o​w​ ​o​r​ ​C​a​s​s​i​n​i​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​r​e​a​c​h​e​d​.
+			 */
+			test_gateway_timeout: string
+			/**
+			 * R​e​m​o​v​e​ ​r​e​c​e​i​v​e​r
+			 */
+			remove: string
+			/**
+			 * S​t​o​p​ ​s​e​n​d​i​n​g​ ​e​v​e​n​t​s​ ​a​n​d​ ​d​e​l​e​t​e​ ​t​h​e​ ​a​d​d​r​e​s​s​ ​a​n​d​ ​s​e​c​r​e​t​?
+			 */
+			remove_confirm_text: string
+			/**
+			 * R​e​m​o​v​e
+			 */
+			remove_confirm: string
+			/**
+			 * K​e​e​p​ ​i​t
+			 */
+			keep: string
+			/**
+			 * S​e​t​ ​u​p​ ​a​ ​r​e​c​e​i​v​e​r
+			 */
+			form_new: string
+			/**
+			 * E​d​i​t​ ​r​e​c​e​i​v​e​r
+			 */
+			form_edit: string
+			/**
+			 * R​e​c​e​i​v​e​r​ ​a​d​d​r​e​s​s
+			 */
+			field_url: string
+			/**
+			 * h​t​t​p​s​:​/​/​…
+			 */
+			url_placeholder: string
+			/**
+			 * C​a​s​s​i​n​i​ ​s​e​n​d​s​ ​a​ ​{​p​o​s​t​}​ ​w​i​t​h​ ​a​ ​J​S​O​N​ ​b​o​d​y​.​ ​R​e​d​i​r​e​c​t​s​ ​a​r​e​ ​n​o​t​ ​f​o​l​l​o​w​e​d​.
+			 * @param {unknown} post
+			 */
+			url_help: RequiredParams<'post'>
+			/**
+			 * W​a​i​t​ ​f​o​r​ ​a​n​ ​a​n​s​w​e​r
+			 */
+			field_timeout: string
+			/**
+			 * s​e​c​o​n​d​s
+			 */
+			seconds: string
+			/**
+			 * S​i​g​n​i​n​g​ ​s​e​c​r​e​t
+			 */
+			field_secret: string
+			/**
+			 * P​a​s​t​e​ ​o​r​ ​g​e​n​e​r​a​t​e
+			 */
+			secret_placeholder_new: string
+			/**
+			 * L​e​a​v​e​ ​e​m​p​t​y​ ​t​o​ ​k​e​e​p​ ​t​h​e​ ​s​a​v​e​d​ ​s​e​c​r​e​t
+			 */
+			secret_placeholder_keep: string
+			/**
+			 * G​e​n​e​r​a​t​e
+			 */
+			generate: string
+			/**
+			 * C​o​p​y​ ​i​t​ ​n​o​w​ ​a​n​d​ ​g​i​v​e​ ​i​t​ ​t​o​ ​y​o​u​r​ ​r​e​c​e​i​v​e​r​;​ ​i​t​ ​i​s​ ​n​o​t​ ​s​h​o​w​n​ ​a​f​t​e​r​ ​s​a​v​i​n​g​.
+			 */
+			generated_new: string
+			/**
+			 * G​e​n​e​r​a​t​e​d​ ​s​e​c​r​e​t
+			 */
+			generated_label: string
+			/**
+			 * C​o​p​y
+			 */
+			copy: string
+			/**
+			 * Y​o​u​r​ ​b​r​o​w​s​e​r​ ​b​l​o​c​k​e​d​ ​c​o​p​y​i​n​g​.​ ​T​h​e​ ​s​e​c​r​e​t​ ​i​s​ ​s​e​l​e​c​t​e​d​,​ ​s​o​ ​c​o​p​y​ ​i​t​ ​w​i​t​h​ ​y​o​u​r​ ​k​e​y​b​o​a​r​d​.
+			 */
+			copy_blocked: string
+			/**
+			 * E​v​e​n​t​s​ ​t​o​ ​s​e​n​d
+			 */
+			field_events: string
+			/**
+			 * S​e​l​e​c​t​ ​a​l​l
+			 */
+			select_all: string
+			/**
+			 * C​a​s​s​i​n​i​ ​s​e​n​d​s​ ​o​n​l​y​ ​t​h​e​ ​e​v​e​n​t​s​ ​y​o​u​ ​t​i​c​k​.​ ​E​v​e​n​t​s​ ​a​d​d​e​d​ ​i​n​ ​l​a​t​e​r​ ​v​e​r​s​i​o​n​s​ ​s​t​a​y​ ​o​f​f​ ​u​n​t​i​l​ ​y​o​u​ ​t​i​c​k​ ​t​h​e​m​ ​h​e​r​e​.
+			 */
+			events_help: string
+			/**
+			 * {​c​o​u​n​t​|​n​u​m​}​ ​{​{​e​v​e​n​t​|​e​v​e​n​t​s​}​}​ ​w​a​i​t​i​n​g​ ​f​o​r​ ​t​h​e​ ​o​l​d​ ​a​d​d​r​e​s​s​ ​w​i​l​l​ ​b​e​ ​d​e​l​e​t​e​d​ ​w​h​e​n​ ​y​o​u​ ​s​a​v​e​.
+			 * @param {number} count
+			 */
+			address_change_drops_waiting: RequiredParams<'count|num'>
+			/**
+			 * E​n​t​e​r​ ​t​h​e​ ​r​e​c​e​i​v​e​r​'​s​ ​p​l​a​i​n​ ​a​d​d​r​e​s​s​,​ ​s​t​a​r​t​i​n​g​ ​w​i​t​h​ ​h​t​t​p​s​:​/​/​ ​o​r​ ​h​t​t​p​:​/​/​ ​(​a​n​ ​i​n​t​e​r​n​a​t​i​o​n​a​l​ ​n​a​m​e​ ​i​n​ ​i​t​s​ ​x​n​-​-​ ​f​o​r​m​)​.
+			 */
+			error_url: string
+			/**
+			 * E​n​t​e​r​ ​a​ ​w​h​o​l​e​ ​n​u​m​b​e​r​ ​o​f​ ​s​e​c​o​n​d​s​,​ ​f​r​o​m​ ​1​ ​t​o​ ​6​0​.
+			 */
+			error_timeout: string
+			/**
+			 * A​ ​r​e​c​e​i​v​e​r​ ​n​e​e​d​s​ ​a​ ​s​i​g​n​i​n​g​ ​s​e​c​r​e​t​.​ ​G​e​n​e​r​a​t​e​ ​o​n​e​,​ ​o​r​ ​p​a​s​t​e​ ​t​h​e​ ​o​n​e​ ​y​o​u​r​ ​r​e​c​e​i​v​e​r​ ​e​x​p​e​c​t​s​.
+			 */
+			error_secret: string
+			/**
+			 * A​ ​n​e​w​ ​a​d​d​r​e​s​s​ ​n​e​e​d​s​ ​i​t​s​ ​o​w​n​ ​s​e​c​r​e​t​.​ ​G​e​n​e​r​a​t​e​ ​o​n​e​,​ ​o​r​ ​p​a​s​t​e​ ​t​h​e​ ​o​n​e​ ​t​h​e​ ​n​e​w​ ​r​e​c​e​i​v​e​r​ ​e​x​p​e​c​t​s​.
+			 */
+			error_secret_new_url: string
+			/**
+			 * U​s​e​ ​a​t​ ​l​e​a​s​t​ ​3​2​ ​c​h​a​r​a​c​t​e​r​s​.​ ​G​e​n​e​r​a​t​e​ ​o​n​e​ ​t​o​ ​g​e​t​ ​a​ ​s​t​r​o​n​g​ ​s​e​c​r​e​t​.
+			 */
+			error_secret_short: string
+			/**
+			 * P​i​c​k​ ​a​t​ ​l​e​a​s​t​ ​o​n​e​ ​e​v​e​n​t​.
+			 */
+			error_events: string
+			/**
+			 * T​h​i​s​ ​v​e​r​s​i​o​n​ ​o​f​ ​C​a​s​s​i​n​i​ ​d​o​e​s​ ​n​o​t​ ​k​n​o​w​ ​o​n​e​ ​o​f​ ​t​h​e​s​e​ ​e​v​e​n​t​s​.​ ​T​i​c​k​ ​t​h​e​m​ ​a​g​a​i​n​.
+			 */
+			error_event_unknown: string
+			/**
+			 * W​h​y​ ​s​u​m​m​a​r​i​e​s​ ​a​r​e​ ​s​e​n​t​ ​(​o​p​t​i​o​n​a​l​)
+			 */
+			field_summary_notice: string
+			/**
+			 * e​.​g​.​ ​W​e​ ​k​e​e​p​ ​s​u​m​m​a​r​i​e​s​ ​i​n​ ​o​u​r​ ​t​e​a​m​ ​w​i​k​i​.
+			 */
+			summary_notice_placeholder: string
+			/**
+			 * P​e​o​p​l​e​ ​w​h​o​ ​c​a​n​ ​o​p​e​n​ ​t​h​e​ ​m​e​e​t​i​n​g​ ​w​i​l​l​ ​s​e​e​ ​a​ ​n​o​t​i​c​e​:​ ​“​{​n​o​t​i​c​e​}​”
+			 * @param {unknown} notice
+			 */
+			summary_notice_preview: RequiredParams<'notice'>
+			/**
+			 * W​r​i​t​e​ ​t​h​e​ ​r​e​a​s​o​n​ ​a​s​ ​p​l​a​i​n​ ​t​e​x​t​ ​o​n​ ​o​n​e​ ​l​i​n​e​,​ ​w​i​t​h​o​u​t​ ​l​i​n​e​ ​b​r​e​a​k​s​ ​o​r​ ​i​n​v​i​s​i​b​l​e​ ​c​h​a​r​a​c​t​e​r​s​.
+			 */
+			error_summary_notice_invalid: string
+			/**
+			 * D​o​n​'​t​ ​s​t​a​r​t​ ​a​ ​w​o​r​d​ ​w​i​t​h​ ​@​:​ ​i​n​ ​T​a​l​k​ ​i​t​ ​w​o​u​l​d​ ​m​e​n​t​i​o​n​ ​s​o​m​e​o​n​e​.
+			 */
+			error_summary_notice_mention: string
+			/**
+			 * U​s​e​ ​a​t​ ​m​o​s​t​ ​{​m​a​x​|​n​u​m​}​ ​c​h​a​r​a​c​t​e​r​s​.
+			 * @param {number} max
+			 */
+			error_summary_notice_too_long: RequiredParams<'max|num'>
+			event: {
+				/**
+				 * T​h​e​ ​r​e​c​o​r​d​e​r​ ​s​t​a​r​t​e​d
+				 */
+				recording_started: string
+				/**
+				 * T​h​e​ ​r​e​c​o​r​d​i​n​g​ ​w​a​s​ ​s​t​o​r​e​d
+				 */
+				recording_stopped: string
+				/**
+				 * T​h​e​ ​m​e​e​t​i​n​g​ ​w​a​s​ ​d​e​l​i​v​e​r​e​d​ ​t​o​ ​t​h​e​ ​r​o​o​m
+				 */
+				recording_published: string
+				/**
+				 * R​e​c​o​r​d​i​n​g​,​ ​t​r​a​n​s​c​r​i​p​t​i​o​n​ ​o​r​ ​p​u​b​l​i​s​h​i​n​g​ ​f​a​i​l​e​d
+				 */
+				recording_failed: string
+				/**
+				 * A​ ​s​u​m​m​a​r​y​ ​w​a​s​ ​w​r​i​t​t​e​n​;​ ​{​e​m​p​h​a​s​i​s​}
+				 * @param {unknown} emphasis
+				 */
+				summary_completed: RequiredParams<'emphasis'>
+				/**
+				 * i​n​c​l​u​d​e​s​ ​i​t​s​ ​f​u​l​l​ ​t​e​x​t​,​ ​f​o​r​ ​e​v​e​r​y​ ​r​e​c​o​r​d​e​d​ ​m​e​e​t​i​n​g
+				 */
+				summary_completed_emphasis: string
+				/**
+				 * A​ ​s​u​m​m​a​r​y​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​w​r​i​t​t​e​n
+				 */
+				summary_failed: string
+			}
+		}
 	}
 	insights: {
 		generate_card: {
@@ -7739,6 +8110,22 @@ export type NamespaceViewerTranslation = {
 			 */
 			audio_channels: RequiredParams<'count|num'>
 		}
+		summary_sent: {
+			/**
+			 * S​e​n​t​ ​t​o​ ​{​h​o​s​t​}
+			 * @param {unknown} host
+			 */
+			chip: RequiredParams<'host'>
+			/**
+			 * W​h​e​r​e​ ​t​h​i​s​ ​s​u​m​m​a​r​y​ ​w​a​s​ ​s​e​n​t
+			 */
+			panel_label: string
+			/**
+			 * A​ ​s​u​m​m​a​r​y​ ​o​f​ ​t​h​i​s​ ​m​e​e​t​i​n​g​ ​w​a​s​ ​s​e​n​t​ ​t​o​ ​{​h​o​s​t​}​.
+			 * @param {unknown} host
+			 */
+			notice: RequiredParams<'host'>
+		}
 		timing: {
 			/**
 			 * P​a​s​s​a​g​e​-​t​i​m​e​d
@@ -9078,6 +9465,10 @@ export type TranslationFunctions = {
 			 * Storage
 			 */
 			storage: () => LocalizedString
+			/**
+			 * Webhooks
+			 */
+			webhooks: () => LocalizedString
 			/**
 			 * Help
 			 */
@@ -13745,6 +14136,358 @@ export type TranslationFunctions = {
 				 */
 				remove_all_turns_off: () => LocalizedString
 			}
+			webhook: {
+				/**
+				 * Webhooks
+				 */
+				heading: () => LocalizedString
+				/**
+				 * Send recording and summary events to Windmill, n8n or your own service. Use them to act when a meeting is recorded, published or summarised. Every message is signed, so your service can check it came from Cassini. Events come from every recorded meeting on this Nextcloud, in every room, including one-to-one calls.
+				 */
+				intro: () => LocalizedString
+				/**
+				 * Event reference
+				 */
+				reference: () => LocalizedString
+				/**
+				 * Loading webhook settings…
+				 */
+				loading: () => LocalizedString
+				/**
+				 * No operator client is available.
+				 */
+				no_client: () => LocalizedString
+				/**
+				 * No receiver yet
+				 */
+				empty_title: () => LocalizedString
+				/**
+				 * Configure the address of a service that accepts a {post}, and a secret to sign each message with.
+				 */
+				empty_text: (arg: { post: unknown }) => LocalizedString
+				/**
+				 * Set up a receiver
+				 */
+				set_up: () => LocalizedString
+				/**
+				 * Your receiver could not be loaded
+				 */
+				load_failed_title: () => LocalizedString
+				/**
+				 * Cassini could not use its saved webhook settings when it started. It is not sending events until you set up the receiver again.
+				 */
+				load_failed_text: () => LocalizedString
+				/**
+				 * Reason: {reason}
+				 */
+				load_failed_reason: (arg: { reason: unknown }) => LocalizedString
+				/**
+				 * Receiver
+				 */
+				section_receiver: () => LocalizedString
+				/**
+				 * Delivery
+				 */
+				section_delivery: () => LocalizedString
+				/**
+				 * Address
+				 */
+				address: () => LocalizedString
+				/**
+				 * Signing secret
+				 */
+				secret: () => LocalizedString
+				/**
+				 * Set
+				 */
+				secret_set: () => LocalizedString
+				/**
+				 * Hidden once saved. Your receiver uses it to check that each message came from Cassini.
+				 */
+				secret_hidden: () => LocalizedString
+				/**
+				 * Replace
+				 */
+				replace: () => LocalizedString
+				/**
+				 * New secret
+				 */
+				new_secret_placeholder: () => LocalizedString
+				/**
+				 * Save secret
+				 */
+				save_secret: () => LocalizedString
+				/**
+				 * Events
+				 */
+				events: () => LocalizedString
+				/**
+				 * timeout {seconds} s
+				 */
+				timeout_fact: (arg: { seconds: unknown }) => LocalizedString
+				/**
+				 * Delivering
+				 */
+				status_delivering: () => LocalizedString
+				/**
+				 * Receiver is not accepting messages
+				 */
+				status_failing: () => LocalizedString
+				/**
+				 * Nothing sent yet
+				 */
+				status_idle: () => LocalizedString
+				/**
+				 * Last message delivered {when}
+				 */
+				last_delivered: (arg: { when: unknown }) => LocalizedString
+				/**
+				 * No meeting event delivered yet
+				 */
+				never_delivered: () => LocalizedString
+				/**
+				 * Delivered
+				 */
+				fact_delivered: () => LocalizedString
+				/**
+				 * Waiting to be sent
+				 */
+				fact_waiting: () => LocalizedString
+				/**
+				 * Gave up after 24 hours
+				 */
+				fact_failed: () => LocalizedString
+				/**
+				 * last 7 days
+				 */
+				last_7_days: () => LocalizedString
+				/**
+				 * retrying, at most 5 min apart
+				 */
+				retrying: () => LocalizedString
+				/**
+				 * Latest error, {when}: {error}
+				 */
+				latest_error: (arg: { error: unknown, when: unknown }) => LocalizedString
+				/**
+				 * Latest error: {error}
+				 */
+				latest_error_untimed: (arg: { error: unknown }) => LocalizedString
+				/**
+				 * A 401 or 403 usually means the receiver is checking with a different secret. Replace the secret here or on the receiver. Messages still waiting are sent once it accepts them.
+				 */
+				auth_hint: () => LocalizedString
+				/**
+				 * Send test event
+				 */
+				send_test: () => LocalizedString
+				/**
+				 * Sending…
+				 */
+				sending_test: () => LocalizedString
+				/**
+				 * Saved. Send a test event to check that your receiver accepts it.
+				 */
+				saved_hint: () => LocalizedString
+				/**
+				 * Receiver answered HTTP {status} in {ms} ms.
+				 */
+				test_answered: (arg: { ms: unknown, status: unknown }) => LocalizedString
+				/**
+				 * It did not accept the signature.
+				 */
+				test_auth_refused: () => LocalizedString
+				/**
+				 * No answer from the receiver: {error}
+				 */
+				test_no_answer: (arg: { error: unknown }) => LocalizedString
+				/**
+				 * Not sent. This address is link-local or a cloud metadata service, and Cassini never connects to those. Use your receiver's address on your network or the internet.
+				 */
+				test_address_not_allowed: () => LocalizedString
+				/**
+				 * No receiver is saved. Set one up before sending a test event.
+				 */
+				test_not_configured: () => LocalizedString
+				/**
+				 * No answer in time. Either the receiver is slow or Cassini could not be reached.
+				 */
+				test_gateway_timeout: () => LocalizedString
+				/**
+				 * Remove receiver
+				 */
+				remove: () => LocalizedString
+				/**
+				 * Stop sending events and delete the address and secret?
+				 */
+				remove_confirm_text: () => LocalizedString
+				/**
+				 * Remove
+				 */
+				remove_confirm: () => LocalizedString
+				/**
+				 * Keep it
+				 */
+				keep: () => LocalizedString
+				/**
+				 * Set up a receiver
+				 */
+				form_new: () => LocalizedString
+				/**
+				 * Edit receiver
+				 */
+				form_edit: () => LocalizedString
+				/**
+				 * Receiver address
+				 */
+				field_url: () => LocalizedString
+				/**
+				 * https://…
+				 */
+				url_placeholder: () => LocalizedString
+				/**
+				 * Cassini sends a {post} with a JSON body. Redirects are not followed.
+				 */
+				url_help: (arg: { post: unknown }) => LocalizedString
+				/**
+				 * Wait for an answer
+				 */
+				field_timeout: () => LocalizedString
+				/**
+				 * seconds
+				 */
+				seconds: () => LocalizedString
+				/**
+				 * Signing secret
+				 */
+				field_secret: () => LocalizedString
+				/**
+				 * Paste or generate
+				 */
+				secret_placeholder_new: () => LocalizedString
+				/**
+				 * Leave empty to keep the saved secret
+				 */
+				secret_placeholder_keep: () => LocalizedString
+				/**
+				 * Generate
+				 */
+				generate: () => LocalizedString
+				/**
+				 * Copy it now and give it to your receiver; it is not shown after saving.
+				 */
+				generated_new: () => LocalizedString
+				/**
+				 * Generated secret
+				 */
+				generated_label: () => LocalizedString
+				/**
+				 * Copy
+				 */
+				copy: () => LocalizedString
+				/**
+				 * Your browser blocked copying. The secret is selected, so copy it with your keyboard.
+				 */
+				copy_blocked: () => LocalizedString
+				/**
+				 * Events to send
+				 */
+				field_events: () => LocalizedString
+				/**
+				 * Select all
+				 */
+				select_all: () => LocalizedString
+				/**
+				 * Cassini sends only the events you tick. Events added in later versions stay off until you tick them here.
+				 */
+				events_help: () => LocalizedString
+				/**
+				 * {count|num} {{event|events}} waiting for the old address will be deleted when you save.
+				 */
+				address_change_drops_waiting: (arg: { count: number }) => LocalizedString
+				/**
+				 * Enter the receiver's plain address, starting with https:// or http:// (an international name in its xn-- form).
+				 */
+				error_url: () => LocalizedString
+				/**
+				 * Enter a whole number of seconds, from 1 to 60.
+				 */
+				error_timeout: () => LocalizedString
+				/**
+				 * A receiver needs a signing secret. Generate one, or paste the one your receiver expects.
+				 */
+				error_secret: () => LocalizedString
+				/**
+				 * A new address needs its own secret. Generate one, or paste the one the new receiver expects.
+				 */
+				error_secret_new_url: () => LocalizedString
+				/**
+				 * Use at least 32 characters. Generate one to get a strong secret.
+				 */
+				error_secret_short: () => LocalizedString
+				/**
+				 * Pick at least one event.
+				 */
+				error_events: () => LocalizedString
+				/**
+				 * This version of Cassini does not know one of these events. Tick them again.
+				 */
+				error_event_unknown: () => LocalizedString
+				/**
+				 * Why summaries are sent (optional)
+				 */
+				field_summary_notice: () => LocalizedString
+				/**
+				 * e.g. We keep summaries in our team wiki.
+				 */
+				summary_notice_placeholder: () => LocalizedString
+				/**
+				 * People who can open the meeting will see a notice: “{notice}”
+				 */
+				summary_notice_preview: (arg: { notice: unknown }) => LocalizedString
+				/**
+				 * Write the reason as plain text on one line, without line breaks or invisible characters.
+				 */
+				error_summary_notice_invalid: () => LocalizedString
+				/**
+				 * Don't start a word with @: in Talk it would mention someone.
+				 */
+				error_summary_notice_mention: () => LocalizedString
+				/**
+				 * Use at most {max|num} characters.
+				 */
+				error_summary_notice_too_long: (arg: { max: number }) => LocalizedString
+				event: {
+					/**
+					 * The recorder started
+					 */
+					recording_started: () => LocalizedString
+					/**
+					 * The recording was stored
+					 */
+					recording_stopped: () => LocalizedString
+					/**
+					 * The meeting was delivered to the room
+					 */
+					recording_published: () => LocalizedString
+					/**
+					 * Recording, transcription or publishing failed
+					 */
+					recording_failed: () => LocalizedString
+					/**
+					 * A summary was written; {emphasis}
+					 */
+					summary_completed: (arg: { emphasis: unknown }) => LocalizedString
+					/**
+					 * includes its full text, for every recorded meeting
+					 */
+					summary_completed_emphasis: () => LocalizedString
+					/**
+					 * A summary could not be written
+					 */
+					summary_failed: () => LocalizedString
+				}
+			}
 		}
 		insights: {
 			generate_card: {
@@ -16136,6 +16879,20 @@ export type TranslationFunctions = {
 				 * {count|num} {{channel|channels}}
 				 */
 				audio_channels: (arg: { count: number }) => LocalizedString
+			}
+			summary_sent: {
+				/**
+				 * Sent to {host}
+				 */
+				chip: (arg: { host: unknown }) => LocalizedString
+				/**
+				 * Where this summary was sent
+				 */
+				panel_label: () => LocalizedString
+				/**
+				 * A summary of this meeting was sent to {host}.
+				 */
+				notice: (arg: { host: unknown }) => LocalizedString
 			}
 			timing: {
 				/**

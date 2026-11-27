@@ -165,8 +165,22 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 	// Failure never changes the publication result or stops its cleanup.
 	if notification != nil {
 		notification.enrich(attemptArtifactSitePath, attemptMeetingPath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber), roomName)
+		// A summary on its way to the current receiver gets a second
+		// message (#532); with delivery off, nothing is promised.
+		receiverKey := ""
+		if hook := rt.eventWebhook.Load(); hook.enabled(eventSummaryCompleted) {
+			receiverKey = hook.cfg.receiver()
+		}
+		forward, forwarded, err := rt.store.pendingSummaryNotice(rt.ctx, task.JobID, receiverKey)
+		if err != nil {
+			rt.logger.Printf("Talk summary notice skipped id=%s: %v", task.JobID, err)
+		}
 		if _, err := notificationClient.send(rt.ctx, *notification); err != nil {
 			rt.logger.Printf("Talk notification failed id=%s: %v", task.JobID, err)
+		} else if forwarded {
+			if _, err := notificationClient.sendSummaryForward(rt.ctx, *notification, forward); err != nil {
+				rt.logger.Printf("Talk summary notice failed id=%s: %v", task.JobID, err)
+			}
 		}
 	}
 	rt.logger.Printf("publish succeeded id=%s attempt=%d sink=%s attempt_site=%s location=%s", task.JobID, task.AttemptNumber, rt.sink().Name(), attemptArtifactSitePath, location)

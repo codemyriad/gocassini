@@ -41,6 +41,7 @@
       "insight_templates": "Gabarits d’analyse",
       "doctor": "Diagnostic",
       "storage": "Stockage",
+      "webhooks": "",
       "help": "Aide"
     },
     "status": {

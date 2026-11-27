@@ -525,6 +525,11 @@
       "audio_stereo": "estéreo",
       "audio_channels": "{count:number|num} {{|canal|||canais|canais}}"
     },
+    "summary_sent": {
+      "chip": "",
+      "panel_label": "",
+      "notice": ""
+    },
     "timing": {
       "passage": "Tempo por passagem",
       "word": "Tempo por palavra",

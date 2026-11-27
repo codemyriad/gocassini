@@ -41,6 +41,7 @@
       "insight_templates": "Erkenntnisvorlagen",
       "doctor": "Diagnose",
       "storage": "Speicher",
+      "webhooks": "",
       "help": "Hilfe"
     },
     "status": {

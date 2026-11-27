@@ -315,6 +315,56 @@ export interface LLMSettingsUpdate {
   insight?: LLMStep;
 }
 
+// The event webhook (GET/PUT operator/settings/webhook, docs/events.md). The
+// secret is write-only: the server only ever says whether one is set.
+export interface WebhookDelivery {
+  last_delivered_at: string;
+  // Counts over the outbox, which keeps rows for 7 days.
+  delivered: number;
+  waiting: number;
+  failed: number;
+  last_error: string;
+  last_error_at: string;
+}
+
+export interface WebhookSettings {
+  url: string;
+  secret_set: boolean;
+  events: string[];
+  // How long one request may take, in whole seconds from 1 to 60.
+  timeout_seconds: number;
+  // Every event a receiver can subscribe to, in the operator's order.
+  catalog: string[];
+  // The admin's optional reason, shown after "A summary of this meeting was sent to
+  // {host}." on meetings whose summary was sent. Kept while summary.completed
+  // is unticked. "" when there is none, or the operator is older.
+  summary_notice: string;
+  delivery: WebhookDelivery;
+  // Why the saved settings were refused at startup; url, secret_set and
+  // events are empty when it is set.
+  error: string;
+}
+
+// A field left out keeps its stored value. secret "" clears it.
+export interface WebhookSettingsUpdate {
+  url?: string;
+  secret?: string;
+  events?: string[];
+  timeout_seconds?: number;
+  summary_notice?: string;
+}
+
+// What POST operator/settings/webhook/test reports: an HTTP status when the
+// receiver answered (any status), else the reason there was no answer.
+export interface WebhookTestResult {
+  status: number | null;
+  error: string;
+  // Set when the operator refused to connect, for a reason the panel words
+  // itself: "webhook_address_not_allowed". Empty otherwise.
+  error_code: string;
+  duration_ms: number;
+}
+
 export interface LLMModel {
   id: string;
   name?: string;
