@@ -38,11 +38,11 @@
       "identity_unverified": "Cassini nie mógł potwierdzić twojej tożsamości; wczytaj stronę ponownie i spróbuj jeszcze raz.",
       "request_failed": "Żądanie importu się nie powiodło (HTTP {status}).",
       "people_search_failed": "Wyszukiwanie osób się nie powiodło (HTTP {status}).",
-      "refused_busy": "",
-      "refused_too_large": "",
-      "refused_add_again": "",
-      "refused_uploading": "",
-      "refused_cancel_too_late": ""
+      "refused_busy": "Cassini jest teraz zajęty. Spróbuj ponownie za chwilę.",
+      "refused_too_large": "Ten plik ma ponad 4 GiB i nie można go zaimportować.",
+      "refused_add_again": "Tego przesłania nie można już użyć. Dodaj plik ponownie.",
+      "refused_uploading": "Ten plik jest wciąż przesyłany lub importowany. Spróbuj ponownie, gdy to się zakończy.",
+      "refused_cancel_too_late": "Spotkanie zostało już dodane i udostępnione, więc nie można go już anulować."
     },
     "data_provider": {
       "bundle_needs_meetings": "Najpierw wybierz co najmniej jedno spotkanie.",
@@ -52,14 +52,14 @@
       "bundle_failed": "Nie udało się przygotować pakietu (HTTP {status})."
     },
     "setup_notice": {
-      "open_doctor": "",
+      "open_doctor": "Otwórz {place}",
       "title_failing": "Cassini nie może teraz zapisywać nagrań",
       "title_unchecked": "Cassini nie sprawdził jeszcze, czy może zapisywać nagrania",
-      "reader_failing": "",
-      "reader_unchecked": "",
-      "copy_link": "",
-      "title_recording": "",
-      "reader_recording": "",
+      "reader_failing": "Połączenia nadal działają, a dotychczasowe nagrania są dostępne. Poproś administratora o rozwiązanie problemu.",
+      "reader_unchecked": "Dotychczasowe nagrania są dostępne. Nowe mogą nie zostać zapisane, dopóki administrator tego nie sprawdzi.",
+      "copy_link": "Skopiuj link dla administratora",
+      "title_recording": "Konfiguracja nagrywania nie została ukończona",
+      "reader_recording": "Nowe połączenia mogą nie zostać nagrane, dopóki administrator jej nie ukończy.",
       "cause_unknown": "Cassini nie mógł potwierdzić konfiguracji nagrań.",
       "cause": {
         "nextcloud_probe": "Nextcloud nie odpowiedział na sprawdzenie konta nagrań.",
@@ -1127,17 +1127,17 @@
       "save_in_progress": "Ustawienia przechowywania są właśnie zapisywane. Spróbuj ponownie."
     },
     "imports": {
-      "heading": "",
-      "intro": "",
-      "limit_label": "",
-      "range": "",
-      "save_label": "",
-      "help": "",
-      "default_hint": "",
-      "saved": "",
-      "loading": "",
-      "load_failed": "",
-      "out_of_range": ""
+      "heading": "Importy",
+      "intro": "Ile importów spotkań działa jednocześnie, łącznie dla wszystkich. Importy jednej osoby nadal wykonują się po kolei.",
+      "limit_label": "Importy jednocześnie",
+      "range": "Od 1 do {max}",
+      "save_label": "Zapisz ustawienia importu",
+      "help": "Każdy trwający import zajmuje swój plik, do 4 GiB, oraz kopię roboczą na dysku tego serwera, z którego korzystają też nagrania. Import rusza dopiero wtedy, gdy się zmieści, a na nagrania zostanie 5 GiB wolnego miejsca.",
+      "default_hint": "Wartość domyślna to {value}. Wartość zapisana tutaj obowiązuje od razu i zostaje zachowana po ponownym wdrożeniu aplikacji.",
+      "saved": "Zapisano. Trwające importy zostaną dokończone; nowe ruszą w ramach nowego limitu.",
+      "loading": "Wczytywanie ustawień importu…",
+      "load_failed": "Nie udało się wczytać ustawień importu: {detail}",
+      "out_of_range": "Wybierz liczbę całkowitą od 1 do {max}. {max} to najwięcej, na ile pozwala serwer."
     },
     "retention_policy": {
       "keep_forever": "Przechowuj bezterminowo",
@@ -1403,17 +1403,17 @@
       "create_unavailable": "Jedno z tych spotkań nie jest dla ciebie dostępne albo to wdrożenie nie potrafi tworzyć analiz.",
       "list_unavailable": "Nie udało się wyświetlić listy analiz.",
       "rename_unavailable": "Ta analiza nie jest dla ciebie dostępna albo to wdrożenie nie potrafi zmieniać nazw analiz.",
-      "delete_unavailable": "",
+      "delete_unavailable": "Tej analizy już nie ma albo ta instalacja nie może usuwać analiz.",
       "insight_unavailable": "Ta analiza nie jest dla ciebie dostępna albo to wdrożenie nie potrafi tworzyć analiz.",
       "already_running": "Ta analiza jest już uruchomiona.",
-      "delete_running": "",
+      "delete_running": "Ta analiza wciąż trwa. Usuń ją, gdy się zakończy.",
       "unreachable": {
         "create": "Nie udało się połączyć z Cassini, aby uruchomić analizę{detail}.",
         "list": "Nie udało się połączyć z Cassini, aby wyświetlić twoje analizy{detail}.",
         "read": "Nie udało się połączyć z Cassini, aby odczytać analizę{detail}.",
         "retry": "Nie udało się połączyć z Cassini, aby ponowić analizę{detail}.",
         "rename": "Nie udało się połączyć z Cassini, aby zmienić nazwę analizy{detail}.",
-        "delete": ""
+        "delete": "Nie udało się połączyć z Cassini, aby usunąć analizę{detail}."
       },
       "cassini_failed": {
         "create": "Cassini nie mógł uruchomić analizy.",
@@ -1421,7 +1421,7 @@
         "read": "Cassini nie mógł odczytać analizy.",
         "retry": "Cassini nie mógł ponowić analizy.",
         "rename": "Cassini nie mógł zmienić nazwy analizy.",
-        "delete": ""
+        "delete": "Cassini nie udało się usunąć analizy. Jej dokument może nadal być w twoich Plikach."
       },
       "failed_status": {
         "create": "Nie udało się uruchomić analizy (HTTP {status}).",
@@ -1429,7 +1429,7 @@
         "read": "Nie udało się odczytać analizy (HTTP {status}).",
         "retry": "Nie udało się ponowić analizy (HTTP {status}).",
         "rename": "Nie udało się zmienić nazwy analizy (HTTP {status}).",
-        "delete": ""
+        "delete": "Nie udało się usunąć analizy (HTTP {status})."
       }
     },
     "summary_action": {
