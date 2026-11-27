@@ -26,10 +26,11 @@ the rest of the operator's settings) read and write the receiver:
 
 | Field | Required | Meaning |
 |---|---|---|
-| `url` | To enable events | Absolute `http` or `https` receiver URL. Empty turns delivery off and deletes the stored secret and events. |
+| `url` | To enable events | Absolute `http` or `https` receiver URL, with a plain host (see [What people see](#what-people-see)). Empty turns delivery off and deletes the stored secret, events and `summary_notice`. |
 | `secret` | With the URL | HMAC-SHA256 secret used to sign every request, at least 32 characters. Write-only: responses never return it and report `secret_set` instead. Required again whenever `url` changes. |
 | `events` | With the URL | The events to send, e.g. `["summary.completed", "recording.failed"]`. At least one; unknown names and blank entries are rejected. There is no "all events" value: an event added in a later release stays off until it is added here. |
 | `timeout_seconds` | No | How long one request may take, in whole seconds from `1` to `60`. Default `10`. |
+| `summary_notice` | No | Why summaries are sent, shown after the [summary notice](#what-people-see). One line of plain text, at most 200 characters; spaces are trimmed and collapsed. Kept while `summary.completed` is unticked. |
 
 A field left out of a `PUT` keeps its stored value, so a client can send back
 what it read without erasing the secret. The exception is a new address: a
@@ -53,13 +54,16 @@ Any invalid value is a `400` with `error` (an English sentence) and
 
 | `error_code` | When |
 |---|---|
-| `webhook_url_invalid` | `url` is not an absolute `http` or `https` URL. |
+| `webhook_url_invalid` | `url` is not an absolute `http` or `https` URL, or its host is not a plain one. |
 | `webhook_secret_required` | `url` is set and there is no secret. |
 | `webhook_secret_required_for_new_url` | `url` changes a saved address to another one and the body has no `secret`. |
 | `webhook_secret_too_short` | `secret` is shorter than 32 characters. |
 | `webhook_events_required` | `url` is set and `events` is empty. |
 | `webhook_event_unknown` | An entry in `events` is blank or not in the catalog. |
 | `webhook_timeout_invalid` | `timeout_seconds` is not a whole number from 1 to 60. |
+| `webhook_summary_notice_invalid` | `summary_notice` has a line break, a control character, a direction override or isolate (U+202A–202E, U+2066–2069), or an invisible space (U+200B, U+2060–2064, U+FEFF). |
+| `webhook_summary_notice_mention` | A word in `summary_notice` starts with `@`, which Talk would turn into a mention. |
+| `webhook_summary_notice_too_long` | `summary_notice` is longer than 200 characters. |
 
 A body that is not valid JSON, or has a field not listed above, is a plain
 `400` with `error: "invalid request body"`.
@@ -74,6 +78,7 @@ PUT operator/settings/webhook
   "secret_set": true,
   "events": ["summary.completed"],
   "timeout_seconds": 10,
+  "summary_notice": "",
   "catalog": ["recording.started", "recording.stopped", "recording.published",
               "recording.failed", "summary.completed", "summary.failed"],
   "delivery": {
@@ -322,6 +327,36 @@ told Cassini the room's name, the meeting title and room name, so the flow
 does not need to call back into Cassini.
 Send a test event from the panel to check the address and the secret before
 the first meeting.
+
+## What people see
+
+With `summary.completed` ticked, summaries leave the Nextcloud server, and the
+people who can open a meeting are told where they went:
+
+- **The meeting** shows a highlighted "Sent to flows.example.org" chip once
+  the receiver has accepted that meeting's `summary.completed` (any `2xx`).
+  Its popover says "A summary of this meeting was sent to flows.example.org."
+  followed by `summary_notice`. The host and reason are the ones saved when
+  the summary was queued. A refused, given-up or deleted event shows no chip;
+  a summary rewritten later and not sent leaves the chip as it was.
+- **Talk** gets a second, silent message right after the "Meeting recording
+  available" post, when the summary is queued for the current receiver:
+  "This meeting's summary will also be sent to flows.example.org." and the
+  reason, in English. It goes out once, with the first post, so a summary
+  requested later is sent and shows the chip but is not announced. Meetings
+  shared only with attendees or moderators get no chat posts.
+- **The host** is the URL's host only, never its port, path, query or
+  credentials. Cassini names only plain hosts, written as a browser writes
+  them: ASCII names (an international name in its `xn--` form), dotted
+  decimal IPv4, compressed IPv6. Any other address is refused on save. A
+  receiver saved by 0.4.0 with another address keeps receiving events, its
+  summaries without a chip, until its address is replaced.
+- Status events show nothing, though every event can carry the meeting's
+  title and room name. Audio and transcripts are never sent. Imported and
+  uploaded meetings send no events.
+
+Before ticking `summary.completed`, consider Talk's recording consent
+setting (**Administration settings › Talk › Recording consent**).
 
 ## Security and privacy
 
