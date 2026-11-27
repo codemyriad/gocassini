@@ -38,11 +38,11 @@
       "identity_unverified": "Cassini konnte nicht überprüfen, wer Sie sind; laden Sie neu und versuchen Sie es erneut.",
       "request_failed": "Die Importanfrage ist fehlgeschlagen (HTTP {status}).",
       "people_search_failed": "Die Personensuche ist fehlgeschlagen (HTTP {status}).",
-      "refused_busy": "",
-      "refused_too_large": "",
-      "refused_add_again": "",
-      "refused_uploading": "",
-      "refused_cancel_too_late": ""
+      "refused_busy": "Cassini ist gerade ausgelastet. Versuchen Sie es gleich noch einmal.",
+      "refused_too_large": "Diese Datei ist größer als 4 GiB und kann nicht importiert werden.",
+      "refused_add_again": "Dieser Upload kann nicht mehr verwendet werden. Fügen Sie die Datei erneut hinzu.",
+      "refused_uploading": "Diese Datei wird noch hochgeladen oder importiert. Versuchen Sie es noch einmal, wenn das abgeschlossen ist.",
+      "refused_cancel_too_late": "Die Besprechung wurde bereits hinzugefügt und geteilt und kann daher nicht mehr abgebrochen werden."
     },
     "data_provider": {
       "bundle_needs_meetings": "Wählen Sie zuerst mindestens eine Besprechung aus.",
@@ -52,14 +52,14 @@
       "bundle_failed": "Das Paket konnte nicht vorbereitet werden (HTTP {status})."
     },
     "setup_notice": {
-      "open_doctor": "",
+      "open_doctor": "{place} öffnen",
       "title_failing": "Cassini kann gerade keine Aufnahmen speichern",
       "title_unchecked": "Cassini hat noch nicht geprüft, ob es Aufnahmen speichern kann",
-      "reader_failing": "",
-      "reader_unchecked": "",
-      "copy_link": "",
-      "title_recording": "",
-      "reader_recording": "",
+      "reader_failing": "Anrufe funktionieren weiterhin und vorhandene Aufnahmen sind noch da. Bitten Sie die Administration, das zu beheben.",
+      "reader_unchecked": "Vorhandene Aufnahmen sind noch da. Neue werden möglicherweise nicht gespeichert, bis die Administration das prüft.",
+      "copy_link": "Link für die Administration kopieren",
+      "title_recording": "Die Einrichtung der Aufnahme ist nicht abgeschlossen",
+      "reader_recording": "Neue Anrufe werden möglicherweise nicht aufgenommen, bis die Administration sie abschließt.",
       "cause_unknown": "Cassini konnte die Einrichtung der Aufnahmen nicht bestätigen.",
       "cause": {
         "nextcloud_probe": "Nextcloud hat auf die Prüfung des Aufnahmekontos nicht geantwortet.",
@@ -1127,17 +1127,17 @@
       "save_in_progress": "Die Aufbewahrungseinstellungen werden gerade gespeichert. Versuchen Sie es erneut."
     },
     "imports": {
-      "heading": "",
-      "intro": "",
-      "limit_label": "",
-      "range": "",
-      "save_label": "",
-      "help": "",
-      "default_hint": "",
-      "saved": "",
-      "loading": "",
-      "load_failed": "",
-      "out_of_range": ""
+      "heading": "Importe",
+      "intro": "Wie viele Besprechungsimporte gleichzeitig laufen, über alle Personen hinweg. Die Importe einer einzelnen Person laufen weiterhin nacheinander.",
+      "limit_label": "Gleichzeitige Importe",
+      "range": "1 bis {max}",
+      "save_label": "Import-Einstellungen speichern",
+      "help": "Jeder laufende Import belegt seine Datei, bis zu 4 GiB, und eine Arbeitskopie auf der Festplatte dieses Servers, die auch Aufnahmen nutzen. Ein Import startet erst, wenn er Platz hat und dabei 5 GiB für Aufnahmen frei bleiben.",
+      "default_hint": "Der Standardwert ist {value}. Ein hier gespeicherter Wert gilt sofort und bleibt erhalten, wenn die App neu bereitgestellt wird.",
+      "saved": "Gespeichert. Laufende Importe werden abgeschlossen; neue starten innerhalb des neuen Limits.",
+      "loading": "Import-Einstellungen werden geladen…",
+      "load_failed": "Die Import-Einstellungen konnten nicht geladen werden: {detail}",
+      "out_of_range": "Wählen Sie eine ganze Zahl von 1 bis {max}. {max} ist das Maximum, das der Server erlaubt."
     },
     "retention_policy": {
       "keep_forever": "Unbegrenzt aufbewahren",
@@ -1403,17 +1403,17 @@
       "create_unavailable": "Eine dieser Besprechungen steht Ihnen nicht zur Verfügung, oder diese Installation kann keine Erkenntnisse erstellen.",
       "list_unavailable": "Die Erkenntnisse konnten nicht aufgelistet werden.",
       "rename_unavailable": "Diese Erkenntnis steht Ihnen nicht zur Verfügung, oder diese Installation kann keine Erkenntnisse umbenennen.",
-      "delete_unavailable": "",
+      "delete_unavailable": "Diese Erkenntnis gibt es nicht mehr, oder diese Installation kann keine Erkenntnisse löschen.",
       "insight_unavailable": "Diese Erkenntnis steht Ihnen nicht zur Verfügung, oder diese Installation kann keine Erkenntnisse erstellen.",
       "already_running": "Diese Erkenntnis läuft bereits.",
-      "delete_running": "",
+      "delete_running": "Diese Erkenntnis läuft noch. Löschen Sie sie, sobald sie fertig ist.",
       "unreachable": {
         "create": "Cassini war nicht erreichbar, um die Erkenntnis zu starten{detail}.",
         "list": "Cassini war nicht erreichbar, um Ihre Erkenntnisse aufzulisten{detail}.",
         "read": "Cassini war nicht erreichbar, um die Erkenntnis zu lesen{detail}.",
         "retry": "Cassini war nicht erreichbar, um die Erkenntnis erneut zu versuchen{detail}.",
         "rename": "Cassini war nicht erreichbar, um die Erkenntnis umzubenennen{detail}.",
-        "delete": ""
+        "delete": "Cassini war nicht erreichbar, um die Erkenntnis zu löschen{detail}."
       },
       "cassini_failed": {
         "create": "Cassini konnte die Erkenntnis nicht starten.",
@@ -1421,7 +1421,7 @@
         "read": "Cassini konnte die Erkenntnis nicht lesen.",
         "retry": "Cassini konnte die Erkenntnis nicht erneut versuchen.",
         "rename": "Cassini konnte die Erkenntnis nicht umbenennen.",
-        "delete": ""
+        "delete": "Cassini konnte die Erkenntnis nicht löschen. Ihr Dokument liegt möglicherweise noch in Ihren Dateien."
       },
       "failed_status": {
         "create": "Die Erkenntnis konnte nicht gestartet werden (HTTP {status}).",
@@ -1429,7 +1429,7 @@
         "read": "Die Erkenntnis konnte nicht gelesen werden (HTTP {status}).",
         "retry": "Die Erkenntnis konnte nicht erneut versucht werden (HTTP {status}).",
         "rename": "Die Erkenntnis konnte nicht umbenannt werden (HTTP {status}).",
-        "delete": ""
+        "delete": "Die Erkenntnis konnte nicht gelöscht werden (HTTP {status})."
       }
     },
     "summary_action": {
