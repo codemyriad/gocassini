@@ -3,6 +3,7 @@
   import { around } from "cassini-viewer/ui/richText";
   import { Check, Copy, KeyRound } from "@lucide/svelte";
   import { LL } from "cassini-viewer/i18n";
+  import { copyWithFallback } from "./clipboard";
 
   // The one time the service account's password is on screen (D-708).
   //
@@ -36,35 +37,15 @@
   let copyFailed = false;
   let field: HTMLInputElement | null = null;
 
-  // The clipboard is not a given here.
-  //
-  // The app runs inside a shadow root on AppAPI's embedded page, where
-  // `navigator.clipboard` needs both a secure context and `clipboard-write` in
-  // the frame's permissions policy. Neither is guaranteed, so there are three
-  // layers: the async API, `execCommand` over a selection, and — always — a
-  // readonly field the administrator can select by hand. A copy button that
-  // silently does nothing is worse than no button.
+  // The clipboard is not a given here (see copyWithFallback): when it
+  // refuses, the readonly field below is left selected for the keyboard.
   async function copy(): Promise<void> {
     copyFailed = false;
-    try {
-      await navigator.clipboard.writeText(password);
+    if (await copyWithFallback(password, field)) {
       copied = true;
-      return;
-    } catch {
-      // Fall through to the selection-based path.
+    } else {
+      copyFailed = true;
     }
-    try {
-      field?.select();
-      field?.setSelectionRange(0, password.length);
-      if (document.execCommand("copy")) {
-        copied = true;
-        return;
-      }
-    } catch {
-      // Nothing left to try.
-    }
-    copyFailed = true;
-    field?.select();
   }
 </script>
 

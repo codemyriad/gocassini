@@ -306,13 +306,14 @@ describe("Operator left nav (D-723)", () => {
     // Doctor is its own group rather than a Settings row: it answers "is this
     // working", which is not something you configure.
     expect(navGroups.map((group) => group.label)).toEqual(["Console", "Diagnostics", "Settings", "Support"]);
-    expect(navPanels).toEqual(["recordings", "doctor", "endpoints", "pipeline", "templates", "storage", "help", "support"]);
+    expect(navPanels).toEqual(["recordings", "doctor", "endpoints", "pipeline", "templates", "storage", "webhooks", "help", "support"]);
     expect(navGroups[1].items.map((item) => item.label)).toEqual(["Doctor"]);
     expect(navGroups[2].items.map((item) => item.label)).toEqual([
       "AI providers",
       "Publish pipeline",
       "Insight templates",
       "Storage",
+      "Webhooks",
     ]);
     expect(navGroups[3].items.map((item) => item.label)).toEqual(["Help", "Support Cassini"]);
   });

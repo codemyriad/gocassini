@@ -71,6 +71,8 @@ const en = {
       insight_templates: "Insight templates",
       doctor: "Doctor",
       storage: "Storage",
+      // Where Cassini sends recording and summary events to another service.
+      webhooks: "Webhooks",
       // Getting help with this installation, and its support bundle.
       help: "Help",
     },
