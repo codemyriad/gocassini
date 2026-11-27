@@ -41,6 +41,7 @@
       "insight_templates": "Insight templates",
       "doctor": "Doctor",
       "storage": "Storage",
+      "webhooks": "Webhooks",
       "help": "Help"
     },
     "status": {

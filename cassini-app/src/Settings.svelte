@@ -20,6 +20,7 @@
   import RecordedAtMigration from "./RecordedAtMigration.svelte";
   import LLMSettingsPanel from "./LLMSettingsPanel.svelte";
   import InsightTemplatesPanel from "./InsightTemplatesPanel.svelte";
+  import WebhookPanel from "./WebhookPanel.svelte";
   import SupportPanel from "./SupportPanel.svelte";
   import HelpPanel from "./HelpPanel.svelte";
   import { applyJob, applyPanel, type OperatorPanel } from "./surfaceRouting";
@@ -87,6 +88,8 @@
     <RetentionPanel {operatorClient} />
     <!-- Imports share the work disk with recordings, so their limit sits here. -->
     <ImportSettingsPanel {operatorClient} />
+  {:else if panel === "webhooks"}
+    <WebhookPanel {operatorClient} />
   {:else if panel === "templates"}
     <InsightTemplatesPanel
       {operatorClient}
