@@ -38,11 +38,11 @@
       "identity_unverified": "O Cassini não conseguiu verificar a sua identidade; recarregue a página e tente novamente.",
       "request_failed": "O pedido de importação falhou (HTTP {status}).",
       "people_search_failed": "A pesquisa de pessoas falhou (HTTP {status}).",
-      "refused_busy": "",
-      "refused_too_large": "",
-      "refused_add_again": "",
-      "refused_uploading": "",
-      "refused_cancel_too_late": ""
+      "refused_busy": "O Cassini está ocupado neste momento. Tente novamente daqui a pouco.",
+      "refused_too_large": "Este ficheiro tem mais de 4 GiB e não pode ser importado.",
+      "refused_add_again": "Este envio já não pode ser usado. Adicione o ficheiro novamente.",
+      "refused_uploading": "Este ficheiro ainda está a ser enviado ou importado. Tente novamente quando terminar.",
+      "refused_cancel_too_late": "A reunião já foi adicionada e partilhada, por isso já não pode ser cancelada."
     },
     "data_provider": {
       "bundle_needs_meetings": "Escolha primeiro pelo menos uma reunião.",
@@ -52,14 +52,14 @@
       "bundle_failed": "Não foi possível preparar o pacote (HTTP {status})."
     },
     "setup_notice": {
-      "open_doctor": "",
+      "open_doctor": "Abrir {place}",
       "title_failing": "O Cassini não consegue guardar gravações neste momento",
       "title_unchecked": "O Cassini ainda não verificou se consegue guardar gravações",
-      "reader_failing": "",
-      "reader_unchecked": "",
-      "copy_link": "",
-      "title_recording": "",
-      "reader_recording": "",
+      "reader_failing": "As chamadas continuam a funcionar e as gravações existentes continuam aqui. Peça a um administrador para corrigir isto.",
+      "reader_unchecked": "As gravações existentes continuam aqui. As novas podem não ser guardadas até um administrador verificar isto.",
+      "copy_link": "Copiar ligação para um administrador",
+      "title_recording": "A configuração de gravação não está concluída",
+      "reader_recording": "As novas chamadas podem não ser gravadas até um administrador a concluir.",
       "cause_unknown": "O Cassini não conseguiu confirmar a configuração das gravações.",
       "cause": {
         "nextcloud_probe": "O Nextcloud não respondeu à verificação da conta de gravações.",
@@ -1127,17 +1127,17 @@
       "save_in_progress": "As definições de retenção estão a ser guardadas. Tente novamente."
     },
     "imports": {
-      "heading": "",
-      "intro": "",
-      "limit_label": "",
-      "range": "",
-      "save_label": "",
-      "help": "",
-      "default_hint": "",
-      "saved": "",
-      "loading": "",
-      "load_failed": "",
-      "out_of_range": ""
+      "heading": "Importações",
+      "intro": "Quantas importações de reuniões decorrem ao mesmo tempo, contando com todos. As importações de cada pessoa continuam a decorrer uma de cada vez.",
+      "limit_label": "Importações em simultâneo",
+      "range": "1 a {max}",
+      "save_label": "Guardar definições de importação",
+      "help": "Cada importação em curso ocupa o seu ficheiro, até 4 GiB, e uma cópia de trabalho no disco deste servidor, que as gravações também usam. Uma importação só começa quando cabe deixando 5 GiB livres para as gravações.",
+      "default_hint": "O valor predefinido é {value}. Um valor guardado aqui aplica-se de imediato e mantém-se quando a aplicação é reinstalada.",
+      "saved": "Guardado. As importações em curso terminam; as novas começam dentro do novo limite.",
+      "loading": "A carregar definições de importação…",
+      "load_failed": "Não foi possível carregar as definições de importação: {detail}",
+      "out_of_range": "Escolha um número inteiro de 1 a {max}. {max} é o máximo que o servidor permite."
     },
     "retention_policy": {
       "keep_forever": "Guardar para sempre",
@@ -1403,17 +1403,17 @@
       "create_unavailable": "Uma destas reuniões não está disponível para si, ou esta instalação não consegue criar análises.",
       "list_unavailable": "Não foi possível listar as análises.",
       "rename_unavailable": "Essa análise não está disponível para si, ou esta instalação não consegue mudar o nome de análises.",
-      "delete_unavailable": "",
+      "delete_unavailable": "Essa análise já não existe, ou esta instalação não consegue eliminar análises.",
       "insight_unavailable": "Essa análise não está disponível para si, ou esta instalação não consegue criar análises.",
       "already_running": "Esta análise já está em curso.",
-      "delete_running": "",
+      "delete_running": "Esta análise ainda está em curso. Elimine-a quando terminar.",
       "unreachable": {
         "create": "Não foi possível contactar o Cassini para iniciar a análise{detail}.",
         "list": "Não foi possível contactar o Cassini para listar as suas análises{detail}.",
         "read": "Não foi possível contactar o Cassini para ler a análise{detail}.",
         "retry": "Não foi possível contactar o Cassini para tentar a análise novamente{detail}.",
         "rename": "Não foi possível contactar o Cassini para mudar o nome da análise{detail}.",
-        "delete": ""
+        "delete": "Não foi possível contactar o Cassini para eliminar a análise{detail}."
       },
       "cassini_failed": {
         "create": "O Cassini não conseguiu iniciar a análise.",
@@ -1421,7 +1421,7 @@
         "read": "O Cassini não conseguiu ler a análise.",
         "retry": "O Cassini não conseguiu tentar a análise novamente.",
         "rename": "O Cassini não conseguiu mudar o nome da análise.",
-        "delete": ""
+        "delete": "O Cassini não conseguiu eliminar a análise. O respetivo documento pode ainda estar nos seus Ficheiros."
       },
       "failed_status": {
         "create": "Não foi possível iniciar a análise (HTTP {status}).",
@@ -1429,7 +1429,7 @@
         "read": "Não foi possível ler a análise (HTTP {status}).",
         "retry": "Não foi possível tentar a análise novamente (HTTP {status}).",
         "rename": "Não foi possível mudar o nome da análise (HTTP {status}).",
-        "delete": ""
+        "delete": "Não foi possível eliminar a análise (HTTP {status})."
       }
     },
     "summary_action": {

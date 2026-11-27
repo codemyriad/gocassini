@@ -38,11 +38,11 @@
       "identity_unverified": "Cassini kon niet controleren wie je bent; laad de pagina opnieuw en probeer het nog eens.",
       "request_failed": "Het importverzoek is mislukt (HTTP {status}).",
       "people_search_failed": "Zoeken naar personen is mislukt (HTTP {status}).",
-      "refused_busy": "",
-      "refused_too_large": "",
-      "refused_add_again": "",
-      "refused_uploading": "",
-      "refused_cancel_too_late": ""
+      "refused_busy": "Cassini is nu bezig. Probeer het zo opnieuw.",
+      "refused_too_large": "Dit bestand is groter dan 4 GiB en kan niet worden geïmporteerd.",
+      "refused_add_again": "Deze upload kan niet meer worden gebruikt. Voeg het bestand opnieuw toe.",
+      "refused_uploading": "Dit bestand wordt nog geüpload of geïmporteerd. Probeer het opnieuw als dat klaar is.",
+      "refused_cancel_too_late": "De vergadering is al toegevoegd en gedeeld en kan daarom niet meer worden geannuleerd."
     },
     "data_provider": {
       "bundle_needs_meetings": "Kies eerst minstens één vergadering.",
@@ -52,14 +52,14 @@
       "bundle_failed": "Kon de bundel niet voorbereiden (HTTP {status})."
     },
     "setup_notice": {
-      "open_doctor": "",
+      "open_doctor": "{place} openen",
       "title_failing": "Cassini kan op dit moment geen opnames opslaan",
       "title_unchecked": "Cassini heeft nog niet gecontroleerd of het opnames kan opslaan",
-      "reader_failing": "",
-      "reader_unchecked": "",
-      "copy_link": "",
-      "title_recording": "",
-      "reader_recording": "",
+      "reader_failing": "Gesprekken werken nog en bestaande opnames zijn er nog. Vraag een beheerder om dit op te lossen.",
+      "reader_unchecked": "Bestaande opnames zijn er nog. Nieuwe worden mogelijk niet opgeslagen totdat een beheerder dit controleert.",
+      "copy_link": "Link kopiëren voor een beheerder",
+      "title_recording": "De opname-instellingen zijn niet voltooid",
+      "reader_recording": "Nieuwe gesprekken worden mogelijk niet opgenomen totdat een beheerder ze voltooit.",
       "cause_unknown": "Cassini kon de opname-instellingen niet bevestigen.",
       "cause": {
         "nextcloud_probe": "Nextcloud heeft niet gereageerd op de controle van het opname-account.",
@@ -1127,17 +1127,17 @@
       "save_in_progress": "De instellingen voor de bewaartermijn worden opgeslagen. Probeer het opnieuw."
     },
     "imports": {
-      "heading": "",
-      "intro": "",
-      "limit_label": "",
-      "range": "",
-      "save_label": "",
-      "help": "",
-      "default_hint": "",
-      "saved": "",
-      "loading": "",
-      "load_failed": "",
-      "out_of_range": ""
+      "heading": "Imports",
+      "intro": "Hoeveel vergaderimports tegelijk lopen, voor iedereen samen. De imports van één persoon lopen nog steeds een voor een.",
+      "limit_label": "Imports tegelijk",
+      "range": "1 tot en met {max}",
+      "save_label": "Importinstellingen opslaan",
+      "help": "Elke lopende import houdt zijn bestand, tot 4 GiB, en een werkkopie vast op de schijf van deze server, die ook opnames gebruiken. Een import start pas als hij past terwijl er 5 GiB vrij blijft voor opnames.",
+      "default_hint": "De standaardwaarde is {value}. Een hier opgeslagen waarde geldt meteen en blijft behouden als de app opnieuw wordt uitgerold.",
+      "saved": "Opgeslagen. Lopende imports worden afgemaakt; nieuwe starten binnen de nieuwe limiet.",
+      "loading": "Importinstellingen laden…",
+      "load_failed": "Importinstellingen konden niet worden geladen: {detail}",
+      "out_of_range": "Kies een heel getal van 1 tot en met {max}. {max} is het maximum dat de server toestaat."
     },
     "retention_policy": {
       "keep_forever": "Voor altijd bewaren",
@@ -1403,17 +1403,17 @@
       "create_unavailable": "Een van deze vergaderingen is niet voor je beschikbaar, of deze installatie kan geen inzichten maken.",
       "list_unavailable": "Kon de inzichten niet ophalen.",
       "rename_unavailable": "Dat inzicht is niet voor je beschikbaar, of deze installatie kan de naam van inzichten niet wijzigen.",
-      "delete_unavailable": "",
+      "delete_unavailable": "Dat inzicht bestaat niet meer, of deze installatie kan geen inzichten verwijderen.",
       "insight_unavailable": "Dat inzicht is niet voor je beschikbaar, of deze installatie kan geen inzichten maken.",
       "already_running": "Dit inzicht is al bezig.",
-      "delete_running": "",
+      "delete_running": "Dit inzicht loopt nog. Verwijder het zodra het klaar is.",
       "unreachable": {
         "create": "Kon Cassini niet bereiken om het inzicht te starten{detail}.",
         "list": "Kon Cassini niet bereiken om je inzichten op te halen{detail}.",
         "read": "Kon Cassini niet bereiken om het inzicht te lezen{detail}.",
         "retry": "Kon Cassini niet bereiken om het inzicht opnieuw te proberen{detail}.",
         "rename": "Kon Cassini niet bereiken om de naam van het inzicht te wijzigen{detail}.",
-        "delete": ""
+        "delete": "Kon Cassini niet bereiken om het inzicht te verwijderen{detail}."
       },
       "cassini_failed": {
         "create": "Cassini kon het inzicht niet starten.",
@@ -1421,7 +1421,7 @@
         "read": "Cassini kon het inzicht niet lezen.",
         "retry": "Cassini kon het inzicht niet opnieuw proberen.",
         "rename": "Cassini kon de naam van het inzicht niet wijzigen.",
-        "delete": ""
+        "delete": "Cassini kon het inzicht niet verwijderen. Het document staat mogelijk nog in je Bestanden."
       },
       "failed_status": {
         "create": "Kon het inzicht niet starten (HTTP {status}).",
@@ -1429,7 +1429,7 @@
         "read": "Kon het inzicht niet lezen (HTTP {status}).",
         "retry": "Kon het inzicht niet opnieuw proberen (HTTP {status}).",
         "rename": "Kon de naam van het inzicht niet wijzigen (HTTP {status}).",
-        "delete": ""
+        "delete": "Kon het inzicht niet verwijderen (HTTP {status})."
       }
     },
     "summary_action": {

@@ -38,11 +38,11 @@
       "identity_unverified": "Cassini nije mogao provjeriti tko si; ponovno učitaj stranicu i pokušaj ponovno.",
       "request_failed": "Zahtjev za uvoz nije uspio (HTTP {status}).",
       "people_search_failed": "Pretraživanje osoba nije uspjelo (HTTP {status}).",
-      "refused_busy": "",
-      "refused_too_large": "",
-      "refused_add_again": "",
-      "refused_uploading": "",
-      "refused_cancel_too_late": ""
+      "refused_busy": "Cassini je trenutačno zauzet. Pokušaj ponovno za trenutak.",
+      "refused_too_large": "Ova datoteka veća je od 4 GiB i ne može se uvesti.",
+      "refused_add_again": "Ovaj prijenos više se ne može koristiti. Ponovno dodaj datoteku.",
+      "refused_uploading": "Ova datoteka još se prenosi ili uvozi. Pokušaj ponovno kad završi.",
+      "refused_cancel_too_late": "Sastanak je već dodan i podijeljen pa se više ne može otkazati."
     },
     "data_provider": {
       "bundle_needs_meetings": "Najprije odaberi barem jedan sastanak.",
@@ -52,14 +52,14 @@
       "bundle_failed": "Nije moguće pripremiti paket (HTTP {status})."
     },
     "setup_notice": {
-      "open_doctor": "",
+      "open_doctor": "Otvori {place}",
       "title_failing": "Cassini trenutno ne može spremati snimke",
       "title_unchecked": "Cassini još nije provjerio može li spremati snimke",
-      "reader_failing": "",
-      "reader_unchecked": "",
-      "copy_link": "",
-      "title_recording": "",
-      "reader_recording": "",
+      "reader_failing": "Pozivi i dalje rade, a postojeće snimke su i dalje ovdje. Zamoli administratora da to popravi.",
+      "reader_unchecked": "Postojeće snimke su i dalje ovdje. Nove se možda neće spremiti dok administrator to ne provjeri.",
+      "copy_link": "Kopiraj poveznicu za administratora",
+      "title_recording": "Postavljanje snimanja nije dovršeno",
+      "reader_recording": "Novi pozivi možda se neće snimati dok ga administrator ne dovrši.",
       "cause_unknown": "Cassini nije mogao potvrditi postavke snimanja.",
       "cause": {
         "nextcloud_probe": "Nextcloud nije odgovorio na provjeru računa za snimke.",
@@ -1127,17 +1127,17 @@
       "save_in_progress": "Postavke zadržavanja upravo se spremaju. Pokušaj ponovno."
     },
     "imports": {
-      "heading": "",
-      "intro": "",
-      "limit_label": "",
-      "range": "",
-      "save_label": "",
-      "help": "",
-      "default_hint": "",
-      "saved": "",
-      "loading": "",
-      "load_failed": "",
-      "out_of_range": ""
+      "heading": "Uvozi",
+      "intro": "Koliko uvoza sastanaka radi istodobno, za sve zajedno. Uvozi pojedine osobe i dalje se izvode jedan po jedan.",
+      "limit_label": "Istodobni uvozi",
+      "range": "Od 1 do {max}",
+      "save_label": "Spremi postavke uvoza",
+      "help": "Svaki uvoz u tijeku zauzima svoju datoteku, do 4 GiB, i radnu kopiju na disku ovog poslužitelja, koji koriste i snimke. Uvoz počinje tek kad stane, a da za snimke ostane 5 GiB slobodno.",
+      "default_hint": "Zadana vrijednost je {value}. Vrijednost spremljena ovdje vrijedi odmah i zadržava se kad se aplikacija ponovno postavi.",
+      "saved": "Spremljeno. Uvozi u tijeku se dovršavaju; novi počinju unutar novog ograničenja.",
+      "loading": "Učitavanje postavki uvoza…",
+      "load_failed": "Postavke uvoza nije bilo moguće učitati: {detail}",
+      "out_of_range": "Odaberi cijeli broj od 1 do {max}. {max} je najviše što poslužitelj dopušta."
     },
     "retention_policy": {
       "keep_forever": "Čuvaj zauvijek",
@@ -1403,17 +1403,17 @@
       "create_unavailable": "Jedan od ovih sastanaka nije ti dostupan ili ova instalacija ne može stvarati uvide.",
       "list_unavailable": "Nije moguće prikazati popis uvida.",
       "rename_unavailable": "Taj ti uvid nije dostupan ili ova instalacija ne može preimenovati uvide.",
-      "delete_unavailable": "",
+      "delete_unavailable": "Taj uvid više ne postoji ili ova instalacija ne može brisati uvide.",
       "insight_unavailable": "Taj ti uvid nije dostupan ili ova instalacija ne može stvarati uvide.",
       "already_running": "Ovaj je uvid već u tijeku.",
-      "delete_running": "",
+      "delete_running": "Ovaj uvid još je u tijeku. Izbriši ga kad završi.",
       "unreachable": {
         "create": "Nije moguće doći do Cassinija radi pokretanja uvida{detail}.",
         "list": "Nije moguće doći do Cassinija radi prikaza tvojih uvida{detail}.",
         "read": "Nije moguće doći do Cassinija radi čitanja uvida{detail}.",
         "retry": "Nije moguće doći do Cassinija radi ponovnog pokušaja uvida{detail}.",
         "rename": "Nije moguće doći do Cassinija radi preimenovanja uvida{detail}.",
-        "delete": ""
+        "delete": "Nije moguće doći do Cassinija radi brisanja uvida{detail}."
       },
       "cassini_failed": {
         "create": "Cassini nije mogao pokrenuti uvid.",
@@ -1421,7 +1421,7 @@
         "read": "Cassini nije mogao pročitati uvid.",
         "retry": "Cassini nije mogao ponovno pokušati uvid.",
         "rename": "Cassini nije mogao preimenovati uvid.",
-        "delete": ""
+        "delete": "Cassini nije mogao izbrisati uvid. Njegov dokument možda je još u tvojim Datotekama."
       },
       "failed_status": {
         "create": "Nije moguće pokrenuti uvid (HTTP {status}).",
@@ -1429,7 +1429,7 @@
         "read": "Nije moguće pročitati uvid (HTTP {status}).",
         "retry": "Nije moguće ponovno pokušati uvid (HTTP {status}).",
         "rename": "Nije moguće preimenovati uvid (HTTP {status}).",
-        "delete": ""
+        "delete": "Nije moguće izbrisati uvid (HTTP {status})."
       }
     },
     "summary_action": {

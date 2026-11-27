@@ -38,11 +38,11 @@
       "identity_unverified": "Cassini non ha potuto verificare la tua identità; ricarica e riprova.",
       "request_failed": "La richiesta di importazione non è riuscita (HTTP {status}).",
       "people_search_failed": "Ricerca di persone non riuscita (HTTP {status}).",
-      "refused_busy": "",
-      "refused_too_large": "",
-      "refused_add_again": "",
-      "refused_uploading": "",
-      "refused_cancel_too_late": ""
+      "refused_busy": "Cassini è occupato in questo momento. Riprova tra poco.",
+      "refused_too_large": "Questo file supera i 4 GiB e non può essere importato.",
+      "refused_add_again": "Questo caricamento non si può più usare. Aggiungi di nuovo il file.",
+      "refused_uploading": "Questo file è ancora in caricamento o in importazione. Riprova quando avrà finito.",
+      "refused_cancel_too_late": "La riunione è già stata aggiunta e condivisa, quindi non si può più annullare."
     },
     "data_provider": {
       "bundle_needs_meetings": "Scegli prima almeno una riunione.",
@@ -52,14 +52,14 @@
       "bundle_failed": "Impossibile preparare il pacchetto (HTTP {status})."
     },
     "setup_notice": {
-      "open_doctor": "",
+      "open_doctor": "Apri {place}",
       "title_failing": "Al momento Cassini non può salvare le registrazioni",
       "title_unchecked": "Cassini non ha verificato di poter salvare le registrazioni",
-      "reader_failing": "",
-      "reader_unchecked": "",
-      "copy_link": "",
-      "title_recording": "",
-      "reader_recording": "",
+      "reader_failing": "Le chiamate funzionano ancora e le registrazioni esistenti sono ancora qui. Chiedi a un amministratore di risolvere il problema.",
+      "reader_unchecked": "Le registrazioni esistenti sono ancora qui. Le nuove potrebbero non essere salvate finché un amministratore non lo verifica.",
+      "copy_link": "Copia il link per un amministratore",
+      "title_recording": "La configurazione della registrazione non è completa",
+      "reader_recording": "Le nuove chiamate potrebbero non essere registrate finché un amministratore non la completa.",
       "cause_unknown": "Cassini non ha potuto confermare la configurazione delle registrazioni.",
       "cause": {
         "nextcloud_probe": "Nextcloud non ha risposto al controllo dell’account delle registrazioni.",
@@ -1127,17 +1127,17 @@
       "save_in_progress": "Le impostazioni di conservazione sono in salvataggio. Riprova."
     },
     "imports": {
-      "heading": "",
-      "intro": "",
-      "limit_label": "",
-      "range": "",
-      "save_label": "",
-      "help": "",
-      "default_hint": "",
-      "saved": "",
-      "loading": "",
-      "load_failed": "",
-      "out_of_range": ""
+      "heading": "Importazioni",
+      "intro": "Quante importazioni di riunioni vengono eseguite contemporaneamente, considerando tutti. Le importazioni di ciascuna persona vengono comunque eseguite una alla volta.",
+      "limit_label": "Importazioni simultanee",
+      "range": "Da 1 a {max}",
+      "save_label": "Salva le impostazioni di importazione",
+      "help": "Ogni importazione in corso occupa il suo file, fino a 4 GiB, e una copia di lavoro sul disco di questo server, che usano anche le registrazioni. Un’importazione parte solo se c’è spazio lasciando 5 GiB liberi per le registrazioni.",
+      "default_hint": "Il valore predefinito è {value}. Un valore salvato qui si applica subito e viene mantenuto quando l’app viene ridistribuita.",
+      "saved": "Salvato. Le importazioni in corso terminano; le nuove partono con il nuovo limite.",
+      "loading": "Caricamento delle impostazioni di importazione…",
+      "load_failed": "Impossibile caricare le impostazioni di importazione: {detail}",
+      "out_of_range": "Scegli un numero intero da 1 a {max}. {max} è il massimo consentito dal server."
     },
     "retention_policy": {
       "keep_forever": "Conserva per sempre",
@@ -1403,17 +1403,17 @@
       "create_unavailable": "Una di queste riunioni non è disponibile per te, oppure questa installazione non può creare analisi.",
       "list_unavailable": "Impossibile elencare le analisi.",
       "rename_unavailable": "Quell’analisi non è disponibile per te, oppure questa installazione non può rinominare le analisi.",
-      "delete_unavailable": "",
+      "delete_unavailable": "Quell’analisi non esiste più, oppure questa installazione non può eliminare analisi.",
       "insight_unavailable": "Quell’analisi non è disponibile per te, oppure questa installazione non può creare analisi.",
       "already_running": "Questa analisi è già in esecuzione.",
-      "delete_running": "",
+      "delete_running": "Questa analisi è ancora in corso. Eliminala quando sarà terminata.",
       "unreachable": {
         "create": "Impossibile raggiungere Cassini per avviare l’analisi{detail}.",
         "list": "Impossibile raggiungere Cassini per elencare le tue analisi{detail}.",
         "read": "Impossibile raggiungere Cassini per leggere l’analisi{detail}.",
         "retry": "Impossibile raggiungere Cassini per riprovare l’analisi{detail}.",
         "rename": "Impossibile raggiungere Cassini per rinominare l’analisi{detail}.",
-        "delete": ""
+        "delete": "Impossibile raggiungere Cassini per eliminare l’analisi{detail}."
       },
       "cassini_failed": {
         "create": "Cassini non ha potuto avviare l’analisi.",
@@ -1421,7 +1421,7 @@
         "read": "Cassini non ha potuto leggere l’analisi.",
         "retry": "Cassini non ha potuto riprovare l’analisi.",
         "rename": "Cassini non ha potuto rinominare l’analisi.",
-        "delete": ""
+        "delete": "Cassini non è riuscito a eliminare l’analisi. Il suo documento potrebbe essere ancora nei tuoi File."
       },
       "failed_status": {
         "create": "Impossibile avviare l’analisi (HTTP {status}).",
@@ -1429,7 +1429,7 @@
         "read": "Impossibile leggere l’analisi (HTTP {status}).",
         "retry": "Impossibile riprovare l’analisi (HTTP {status}).",
         "rename": "Impossibile rinominare l’analisi (HTTP {status}).",
-        "delete": ""
+        "delete": "Impossibile eliminare l’analisi (HTTP {status})."
       }
     },
     "summary_action": {
