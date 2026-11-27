@@ -1400,6 +1400,12 @@
       "error_secret_short": "",
       "error_events": "",
       "error_event_unknown": "",
+      "field_summary_notice": "",
+      "summary_notice_placeholder": "",
+      "summary_notice_preview": "",
+      "error_summary_notice_invalid": "",
+      "error_summary_notice_mention": "",
+      "error_summary_notice_too_long": "",
       "event": {
         "recording_started": "",
         "recording_stopped": "",

@@ -276,6 +276,28 @@ describe("validateMeetingCatalog", () => {
     }
   });
 
+  it("carries where a meeting's summary was sent, and drops a notice without a host", () => {
+    const base = { audioPath: "./meetings/a.opus", title: "Weekly Sync", dateLabel: "2026-08-11 10:32" };
+    const catalog = validateMeetingCatalog({
+      version: "cassini.viewer.catalog.v1",
+      meetings: [
+        { ...base, id: "sent", summarySentTo: { host: " flows.example.org ", reason: " We keep summaries. " } },
+        { ...base, id: "no-reason", summarySentTo: { host: "flows.example.org", reason: 7 } },
+        { ...base, id: "blank", summarySentTo: { host: "", reason: "x" } },
+        { ...base, id: "junk", summarySentTo: "flows.example.org" },
+        { ...base, id: "none" },
+      ],
+    });
+
+    expect(catalog.meetings.map((entry) => entry.summarySentTo)).toEqual([
+      { host: "flows.example.org", reason: "We keep summaries." },
+      { host: "flows.example.org" },
+      undefined,
+      undefined,
+      undefined,
+    ]);
+  });
+
   it("rejects invalid catalog versions", () => {
     expect(() =>
       validateMeetingCatalog({

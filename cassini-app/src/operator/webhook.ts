@@ -4,11 +4,23 @@
 import type { WebhookDelivery, WebhookSettings, WebhookSettingsUpdate } from "./types";
 
 export const DEFAULT_TIMEOUT_SECONDS = 10;
+export const SUMMARY_COMPLETED = "summary.completed";
+export const MAX_SUMMARY_NOTICE_LENGTH = 200;
 
-export type WebhookField = "url" | "timeout" | "secret" | "events";
+export type WebhookField = "url" | "timeout" | "secret" | "events" | "summary_notice";
 
 // Suffixes of the app.settings.webhook.error_* keys.
-export type WebhookFieldError = "url" | "timeout" | "secret" | "secret_new_url" | "secret_short" | "events" | "event_unknown";
+export type WebhookFieldError =
+  | "url"
+  | "timeout"
+  | "secret"
+  | "secret_new_url"
+  | "secret_short"
+  | "events"
+  | "event_unknown"
+  | "summary_notice_invalid"
+  | "summary_notice_mention"
+  | "summary_notice_too_long";
 
 export type WebhookErrors = Partial<Record<WebhookField, WebhookFieldError>>;
 
@@ -20,14 +32,22 @@ export interface WebhookDraft {
   // keeps the stored secret.
   secret: string;
   events: string[];
+  // Why summaries are sent; kept while summary.completed is unticked.
+  summaryNotice: string;
 }
 
 // A new receiver starts with nothing ticked.
 export function draftFrom(settings: WebhookSettings | null, existing: boolean): WebhookDraft {
   if (!settings || !existing) {
-    return { url: "", timeoutSec: DEFAULT_TIMEOUT_SECONDS, secret: "", events: [] };
+    return { url: "", timeoutSec: DEFAULT_TIMEOUT_SECONDS, secret: "", events: [], summaryNotice: "" };
   }
-  return { url: settings.url, timeoutSec: settings.timeout_seconds, secret: "", events: [...settings.events] };
+  return {
+    url: settings.url,
+    timeoutSec: settings.timeout_seconds,
+    secret: "",
+    events: [...settings.events],
+    summaryNotice: settings.summary_notice,
+  };
 }
 
 // The PUT for a draft: only what changed against the saved settings (all of
@@ -50,7 +70,40 @@ export function webhookUpdate(draft: WebhookDraft, saved: WebhookSettings | null
   if (secret !== "") {
     update.secret = secret;
   }
+  // Only while summary.completed is ticked, when the field is shown.
+  const notice = normalizeSummaryNotice(draft.summaryNotice);
+  if (draft.events.includes(SUMMARY_COMPLETED) && notice !== (fresh ? "" : saved.summary_notice)) {
+    update.summary_notice = notice;
+  }
   return update;
+}
+
+// The reason as the operator stores it: trimmed, spaces collapsed.
+export function normalizeSummaryNotice(reason: string): string {
+  return reason.trim().split(/\s+/).filter(Boolean).join(" ");
+}
+
+// The host a meeting will name the receiver at url by, or "" when the
+// operator would refuse it: only a host the browser writes exactly as typed,
+// lowercased (eventNoticeHost in notice_host.go). Never the port, path,
+// query or credentials.
+export function noticeHost(url: string): string {
+  const typed = /^https?:\/\/(?:[^@/?#]*@)?(\[[^\]/?#]*\]|[^:/?#]*)/i.exec(url.trim())?.[1]?.toLowerCase();
+  let host: string;
+  try {
+    host = new URL(url.trim()).hostname;
+  } catch {
+    return "";
+  }
+  if (!typed || host !== typed) {
+    return "";
+  }
+  const bare = host.replace(/^\[(.*)\]$/, "$1");
+  const plain =
+    /^([a-z0-9_-]+\.)*[a-z0-9_-]+\.?$/.test(bare) || // a name (the browser refuses one ending in a number)
+    /^(\d{1,3}\.){3}\d{1,3}$/.test(bare) || // dotted decimal, as the browser writes it
+    (host.startsWith("[") && !bare.includes(".") && !bare.startsWith("::ffff:")); // IPv6, not IPv4-mapped
+  return plain ? bare : "";
 }
 
 // The field a coded 400 belongs to (codes listed in docs/events.md), or null
@@ -71,6 +124,10 @@ export function fieldForErrorCode(code: string): { field: WebhookField; error: W
       return { field: "events", error: "event_unknown" };
     case "webhook_timeout_invalid":
       return { field: "timeout", error: "timeout" };
+    case "webhook_summary_notice_invalid":
+    case "webhook_summary_notice_mention":
+    case "webhook_summary_notice_too_long":
+      return { field: "summary_notice", error: code.slice("webhook_".length) as WebhookFieldError };
     default:
       return null;
   }

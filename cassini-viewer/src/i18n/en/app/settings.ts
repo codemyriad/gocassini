@@ -537,7 +537,7 @@ const settings = {
     // Above Save, when the address was changed and events are still waiting to be sent to the old one. They are never sent to the new address.
     address_change_drops_waiting: "{count:number|num} {{event|events}} waiting for the old address will be deleted when you save.",
     // Inline errors under the fields.
-    error_url: "Enter a full address starting with https:// or http://.",
+    error_url: "Enter the receiver's plain address, starting with https:// or http:// (an international name in its xn-- form).",
     error_timeout: "Enter a whole number of seconds, from 1 to 60.",
     error_secret: "A receiver needs a signing secret. Generate one, or paste the one your receiver expects.",
     // The address was changed and the secret field was left empty.
@@ -545,6 +545,16 @@ const settings = {
     error_secret_short: "Use at least 32 characters. Generate one to get a strong secret.",
     error_events: "Pick at least one event.",
     error_event_unknown: "This version of Cassini does not know one of these events. Tick them again.",
+    // The optional reason, nested under summary.completed and shown while it is ticked.
+    field_summary_notice: "Why summaries are sent (optional)",
+    summary_notice_placeholder: "e.g. We keep summaries in our team wiki.",
+    // Under the reason. {notice} is the sentence a meeting shows once its summary was sent (viewer.meeting.summary_sent.notice), followed by the reason as typed.
+    summary_notice_preview: "People who can open the meeting will see a notice: “{notice}”",
+    error_summary_notice_invalid: "Write the reason as plain text on one line, without line breaks or invisible characters.",
+    // The reason is posted in Talk, where a word starting with @ mentions someone.
+    error_summary_notice_mention: "Don't start a word with @: in Talk it would mention someone.",
+    // {max} is the longest reason allowed, in characters.
+    error_summary_notice_too_long: "Use at most {max:number|num} characters.",
     // Under each event's name in the form. Keys are the event names with "_" for ".".
     event: {
       recording_started: "The recorder started",

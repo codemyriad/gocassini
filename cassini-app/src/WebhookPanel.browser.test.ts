@@ -18,7 +18,7 @@ const CATALOG = [
 const SECRET = "s3cret-0123456789abcdef0123456789";
 
 const delivery = () => ({ last_delivered_at: "", delivered: 0, waiting: 0, failed: 0, last_error: "", last_error_at: "" });
-const off = () => ({ url: "", secret_set: false, events: [] as string[], timeout_seconds: 10, catalog: CATALOG, delivery: delivery(), error: "" });
+const off = () => ({ url: "", secret_set: false, events: [] as string[], timeout_seconds: 10, catalog: CATALOG, summary_notice: "", delivery: delivery(), error: "" });
 const working = () => ({
   ...off(),
   url: "https://flows.example.org/hook",
@@ -137,7 +137,7 @@ describe("webhook panel in the browser", () => {
     await page.getByLabelText("Signing secret").fill(SECRET);
     await page.getByRole("button", { name: "Select all" }).click();
     const cases: [string, string][] = [
-      ["webhook_url_invalid", "Enter a full address starting with https:// or http://."],
+      ["webhook_url_invalid", "Enter the receiver's plain address, starting with https:// or http:// (an international name in its xn-- form)."],
       ["webhook_secret_required", "A receiver needs a signing secret."],
       ["webhook_secret_required_for_new_url", "A new address needs its own secret. Generate one, or paste"],
       ["webhook_secret_too_short", "Use at least 32 characters."],
@@ -390,4 +390,65 @@ describe("webhook panel in the browser", () => {
     writeText.mockRestore();
     execCommand.mockRestore();
   });
+
+  it("asks why summaries are sent only while summary.completed is ticked, and previews the notice", async () => {
+    await openSetup();
+    const reason = () => page.getByLabelText("Why summaries are sent (optional)");
+    const preview = () => page.getByTestId("summary-notice-preview");
+    await expect.element(reason()).not.toBeInTheDocument();
+
+    await page.getByRole("checkbox", { name: /summary\.completed/ }).click();
+    await expect.element(reason()).toBeVisible();
+    // No address yet: nothing to name.
+    await expect.element(preview()).not.toBeInTheDocument();
+
+    await page.getByLabelText("Receiver address").fill("https://user:pw@Flows.Example.org:8443/webhook/abc?token=secret");
+    await expect.element(preview()).toHaveTextContent(
+      "People who can open the meeting will see a notice: “A summary of this meeting was sent to flows.example.org.”",
+    );
+    await reason().fill("  We keep summaries   in our team wiki. ");
+    await expect.element(preview()).toHaveTextContent(
+      "People who can open the meeting will see a notice: “A summary of this meeting was sent to flows.example.org. We keep summaries in our team wiki.”",
+    );
+    expect(document.body.textContent).not.toContain("token=secret");
+
+    await page.getByLabelText("Signing secret").fill(SECRET);
+    await page.getByRole("button", { name: "Save" }).click();
+    await expect.element(page.getByText(/^Saved\./)).toBeVisible();
+    expect(puts.at(-1)).toMatchObject({ events: ["summary.completed"], summary_notice: "We keep summaries in our team wiki." });
+  });
+
+  it("keeps the reason stored when summary.completed is unticked", async () => {
+    current = { ...working(), summary_notice: "We keep summaries in our team wiki." };
+    mountPanel();
+    await page.getByRole("button", { name: "Edit" }).click();
+    await expect.element(page.getByLabelText("Why summaries are sent (optional)")).toHaveValue("We keep summaries in our team wiki.");
+    await page.getByRole("checkbox", { name: /summary\.completed/ }).click();
+    await expect.element(page.getByLabelText("Why summaries are sent (optional)")).not.toBeInTheDocument();
+    await page.getByRole("button", { name: "Save" }).click();
+    await expect.element(page.getByText(/^Saved\./)).toBeVisible();
+    expect(puts).toEqual([{ events: ["recording.failed"] }]);
+  });
+
+  it("puts the operator's refusals of the reason and of the address under their fields", async () => {
+    current = working();
+    mountPanel();
+    await page.getByRole("button", { name: "Edit" }).click();
+    const reason = page.getByLabelText("Why summaries are sent (optional)");
+    for (const [code, sentence] of [
+      ["webhook_summary_notice_too_long", "Use at most 200 characters."],
+      ["webhook_summary_notice_mention", "Don't start a word with @: in Talk it would mention someone."],
+    ]) {
+      onPut = () => Response.json({ error: "refused", error_code: code }, { status: 400 });
+      await reason.fill(`A reason for ${code}`);
+      await page.getByRole("button", { name: "Save" }).click();
+      await expect.element(page.getByText(sentence)).toBeVisible();
+    }
+    onPut = () => Response.json({ error: "refused", error_code: "webhook_url_invalid" }, { status: 400 });
+    await page.getByLabelText("Receiver address").fill("https://xn--a.example/hook");
+    await page.getByLabelText("Signing secret").fill(SECRET);
+    await page.getByRole("button", { name: "Save" }).click();
+    await expect.element(page.getByText("Enter the receiver's plain address, starting with https:// or http:// (an international name in its xn-- form).")).toBeVisible();
+  });
+
 });

@@ -606,6 +606,7 @@ export function normalizeWebhookSettings(raw: unknown): WebhookSettings {
     events: asStringArray(value.events),
     timeout_seconds: asNonNegativeNumber(value.timeout_seconds),
     catalog: asStringArray(value.catalog),
+    summary_notice: asString(value.summary_notice),
     delivery: normalizedDelivery,
     error: asString(value.error),
   };

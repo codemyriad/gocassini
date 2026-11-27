@@ -335,6 +335,10 @@ export interface WebhookSettings {
   timeout_seconds: number;
   // Every event a receiver can subscribe to, in the operator's order.
   catalog: string[];
+  // The admin's optional reason, shown after "A summary of this meeting was sent to
+  // {host}." on meetings whose summary was sent. Kept while summary.completed
+  // is unticked. "" when there is none, or the operator is older.
+  summary_notice: string;
   delivery: WebhookDelivery;
   // Why the saved settings were refused at startup; url, secret_set and
   // events are empty when it is set.
@@ -347,6 +351,7 @@ export interface WebhookSettingsUpdate {
   secret?: string;
   events?: string[];
   timeout_seconds?: number;
+  summary_notice?: string;
 }
 
 // What POST operator/settings/webhook/test reports: an HTTP status when the

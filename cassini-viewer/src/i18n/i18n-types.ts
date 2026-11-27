@@ -5447,7 +5447,7 @@ export type NamespaceAppTranslation = {
 			 */
 			address_change_drops_waiting: RequiredParams<'count|num'>
 			/**
-			 * E​n​t​e​r​ ​a​ ​f​u​l​l​ ​a​d​d​r​e​s​s​ ​s​t​a​r​t​i​n​g​ ​w​i​t​h​ ​h​t​t​p​s​:​/​/​ ​o​r​ ​h​t​t​p​:​/​/​.
+			 * E​n​t​e​r​ ​t​h​e​ ​r​e​c​e​i​v​e​r​'​s​ ​p​l​a​i​n​ ​a​d​d​r​e​s​s​,​ ​s​t​a​r​t​i​n​g​ ​w​i​t​h​ ​h​t​t​p​s​:​/​/​ ​o​r​ ​h​t​t​p​:​/​/​ ​(​a​n​ ​i​n​t​e​r​n​a​t​i​o​n​a​l​ ​n​a​m​e​ ​i​n​ ​i​t​s​ ​x​n​-​-​ ​f​o​r​m​)​.
 			 */
 			error_url: string
 			/**
@@ -5474,6 +5474,32 @@ export type NamespaceAppTranslation = {
 			 * T​h​i​s​ ​v​e​r​s​i​o​n​ ​o​f​ ​C​a​s​s​i​n​i​ ​d​o​e​s​ ​n​o​t​ ​k​n​o​w​ ​o​n​e​ ​o​f​ ​t​h​e​s​e​ ​e​v​e​n​t​s​.​ ​T​i​c​k​ ​t​h​e​m​ ​a​g​a​i​n​.
 			 */
 			error_event_unknown: string
+			/**
+			 * W​h​y​ ​s​u​m​m​a​r​i​e​s​ ​a​r​e​ ​s​e​n​t​ ​(​o​p​t​i​o​n​a​l​)
+			 */
+			field_summary_notice: string
+			/**
+			 * e​.​g​.​ ​W​e​ ​k​e​e​p​ ​s​u​m​m​a​r​i​e​s​ ​i​n​ ​o​u​r​ ​t​e​a​m​ ​w​i​k​i​.
+			 */
+			summary_notice_placeholder: string
+			/**
+			 * P​e​o​p​l​e​ ​w​h​o​ ​c​a​n​ ​o​p​e​n​ ​t​h​e​ ​m​e​e​t​i​n​g​ ​w​i​l​l​ ​s​e​e​ ​a​ ​n​o​t​i​c​e​:​ ​“​{​n​o​t​i​c​e​}​”
+			 * @param {unknown} notice
+			 */
+			summary_notice_preview: RequiredParams<'notice'>
+			/**
+			 * W​r​i​t​e​ ​t​h​e​ ​r​e​a​s​o​n​ ​a​s​ ​p​l​a​i​n​ ​t​e​x​t​ ​o​n​ ​o​n​e​ ​l​i​n​e​,​ ​w​i​t​h​o​u​t​ ​l​i​n​e​ ​b​r​e​a​k​s​ ​o​r​ ​i​n​v​i​s​i​b​l​e​ ​c​h​a​r​a​c​t​e​r​s​.
+			 */
+			error_summary_notice_invalid: string
+			/**
+			 * D​o​n​'​t​ ​s​t​a​r​t​ ​a​ ​w​o​r​d​ ​w​i​t​h​ ​@​:​ ​i​n​ ​T​a​l​k​ ​i​t​ ​w​o​u​l​d​ ​m​e​n​t​i​o​n​ ​s​o​m​e​o​n​e​.
+			 */
+			error_summary_notice_mention: string
+			/**
+			 * U​s​e​ ​a​t​ ​m​o​s​t​ ​{​m​a​x​|​n​u​m​}​ ​c​h​a​r​a​c​t​e​r​s​.
+			 * @param {number} max
+			 */
+			error_summary_notice_too_long: RequiredParams<'max|num'>
 			event: {
 				/**
 				 * T​h​e​ ​r​e​c​o​r​d​e​r​ ​s​t​a​r​t​e​d
@@ -8083,6 +8109,22 @@ export type NamespaceViewerTranslation = {
 			 * @param {number} count
 			 */
 			audio_channels: RequiredParams<'count|num'>
+		}
+		summary_sent: {
+			/**
+			 * S​e​n​t​ ​t​o​ ​{​h​o​s​t​}
+			 * @param {unknown} host
+			 */
+			chip: RequiredParams<'host'>
+			/**
+			 * W​h​e​r​e​ ​t​h​i​s​ ​s​u​m​m​a​r​y​ ​w​a​s​ ​s​e​n​t
+			 */
+			panel_label: string
+			/**
+			 * A​ ​s​u​m​m​a​r​y​ ​o​f​ ​t​h​i​s​ ​m​e​e​t​i​n​g​ ​w​a​s​ ​s​e​n​t​ ​t​o​ ​{​h​o​s​t​}​.
+			 * @param {unknown} host
+			 */
+			notice: RequiredParams<'host'>
 		}
 		timing: {
 			/**
@@ -14364,7 +14406,7 @@ export type TranslationFunctions = {
 				 */
 				address_change_drops_waiting: (arg: { count: number }) => LocalizedString
 				/**
-				 * Enter a full address starting with https:// or http://.
+				 * Enter the receiver's plain address, starting with https:// or http:// (an international name in its xn-- form).
 				 */
 				error_url: () => LocalizedString
 				/**
@@ -14391,6 +14433,30 @@ export type TranslationFunctions = {
 				 * This version of Cassini does not know one of these events. Tick them again.
 				 */
 				error_event_unknown: () => LocalizedString
+				/**
+				 * Why summaries are sent (optional)
+				 */
+				field_summary_notice: () => LocalizedString
+				/**
+				 * e.g. We keep summaries in our team wiki.
+				 */
+				summary_notice_placeholder: () => LocalizedString
+				/**
+				 * People who can open the meeting will see a notice: “{notice}”
+				 */
+				summary_notice_preview: (arg: { notice: unknown }) => LocalizedString
+				/**
+				 * Write the reason as plain text on one line, without line breaks or invisible characters.
+				 */
+				error_summary_notice_invalid: () => LocalizedString
+				/**
+				 * Don't start a word with @: in Talk it would mention someone.
+				 */
+				error_summary_notice_mention: () => LocalizedString
+				/**
+				 * Use at most {max|num} characters.
+				 */
+				error_summary_notice_too_long: (arg: { max: number }) => LocalizedString
 				event: {
 					/**
 					 * The recorder started
@@ -16813,6 +16879,20 @@ export type TranslationFunctions = {
 				 * {count|num} {{channel|channels}}
 				 */
 				audio_channels: (arg: { count: number }) => LocalizedString
+			}
+			summary_sent: {
+				/**
+				 * Sent to {host}
+				 */
+				chip: (arg: { host: unknown }) => LocalizedString
+				/**
+				 * Where this summary was sent
+				 */
+				panel_label: () => LocalizedString
+				/**
+				 * A summary of this meeting was sent to {host}.
+				 */
+				notice: (arg: { host: unknown }) => LocalizedString
 			}
 			timing: {
 				/**

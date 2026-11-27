@@ -94,6 +94,14 @@ export interface MeetingCatalogEntry {
   // provenance — and is visible to everyone the meeting is shared with, the
   // same way marks travel with their authors. Absent on recordings made here.
   imported?: { by?: string; atUtc?: string };
+  // Where this meeting's summary was sent (#532), added by the operator once a
+  // webhook receiver accepted it: the receiver's host and the admin's reason.
+  summarySentTo?: SummarySentTo;
+}
+
+export interface SummarySentTo {
+  host: string;
+  reason?: string;
 }
 
 export interface MeetingCatalog {
@@ -320,7 +328,17 @@ function validateMeetingCatalogEntry(
     // is not there (D-716).
     hasSummary: optionalBoolean(value.hasSummary),
     wordCount: optionalWordCount(value.wordCount),
+    // Lenient: a malformed notice is no notice, never a failed load.
+    summarySentTo: optionalSummarySentTo(value.summarySentTo),
   };
+}
+
+export function optionalSummarySentTo(value: unknown): SummarySentTo | undefined {
+  if (!isRecord(value) || typeof value.host !== "string" || value.host.trim() === "") {
+    return undefined;
+  }
+  const reason = typeof value.reason === "string" ? value.reason.trim() : "";
+  return reason ? { host: value.host.trim(), reason } : { host: value.host.trim() };
 }
 
 function optionalRecordedAtUtc(value: unknown): { recordedAtUtc?: string } {

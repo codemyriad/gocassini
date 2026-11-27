@@ -20,6 +20,10 @@
     fieldForErrorCode,
     generateSecret,
     isAuthRefusal,
+    MAX_SUMMARY_NOTICE_LENGTH,
+    normalizeSummaryNotice,
+    noticeHost,
+    SUMMARY_COMPLETED,
     testRefusal,
     webhookUpdate,
     type WebhookDraft,
@@ -225,7 +229,7 @@
   }
 
   function errorText(error: WebhookFieldError): string {
-    return (t as unknown as Record<string, () => string>)[`error_${error}`]();
+    return (t as unknown as Record<string, (args: { max: number }) => string>)[`error_${error}`]({ max: MAX_SUMMARY_NOTICE_LENGTH });
   }
 
   // Under each checkbox; an event this build has no words for shows its name
@@ -246,6 +250,12 @@
   $: urlHelp = around(t.url_help, "post");
   $: reasonText = around(t.load_failed_reason, "reason");
   $: summaryCompleted = around(t.event.summary_completed, "emphasis");
+  // The sentence a meeting will show (#532), from the address being typed.
+  $: previewHost = draft ? noticeHost(draft.url) : "";
+  $: previewReason = draft ? normalizeSummaryNotice(draft.summaryNotice) : "";
+  $: previewNotice = previewHost
+    ? $LL.viewer.meeting.summary_sent.notice({ host: previewHost }) + (previewReason ? ` ${previewReason}` : "")
+    : "";
 
   // An error recorded before Cassini kept its time has none.
   function latestErrorText(words: typeof t, at: string): [string, string] {
@@ -340,15 +350,34 @@
       <p class="wh-help">{t.events_help()}</p>
       <div class="wh-checks">
         {#each catalog as name (name)}
-          <label>
-            <input type="checkbox" value={name} bind:group={draft.events} on:change={() => clearError("events")} />
-            <span>
-              <span class="font-mono text-[11.5px]">{name}</span>
-              {#if name === "summary.completed"}
-                <span class="wh-help block">{summaryCompleted[0]}<strong>{t.event.summary_completed_emphasis()}</strong>{summaryCompleted[1]}</span>
-              {:else if eventDescription(name)}<span class="wh-help block">{eventDescription(name)}</span>{/if}
-            </span>
-          </label>
+          <div class="wh-check">
+            <label>
+              <input type="checkbox" value={name} bind:group={draft.events} on:change={() => clearError("events")} />
+              <span>
+                <span class="font-mono text-[11.5px]">{name}</span>
+                {#if name === SUMMARY_COMPLETED}
+                  <span class="wh-help block">{summaryCompleted[0]}<strong>{t.event.summary_completed_emphasis()}</strong>{summaryCompleted[1]}</span>
+                {:else if eventDescription(name)}<span class="wh-help block">{eventDescription(name)}</span>{/if}
+              </span>
+            </label>
+            {#if name === SUMMARY_COMPLETED && draft.events.includes(SUMMARY_COMPLETED)}
+              <!-- Only while ticked; the stored reason is kept when unticked. -->
+              <div class="mt-2 mb-1 ml-[21px] flex flex-col gap-1">
+                <label class="op-field-label" for="wh-summary-notice">{t.field_summary_notice()}</label>
+                <input
+                  id="wh-summary-notice"
+                  class="op-input w-full"
+                  class:wh-invalid={errors.summary_notice}
+                  type="text"
+                  placeholder={t.summary_notice_placeholder()}
+                  bind:value={draft.summaryNotice}
+                  on:input={() => clearError("summary_notice")}
+                />
+                {#if errors.summary_notice}<p class="wh-ferr">{errorText(errors.summary_notice)}</p>{/if}
+                {#if previewNotice}<p class="wh-help" data-testid="summary-notice-preview">{t.summary_notice_preview({ notice: previewNotice })}</p>{/if}
+              </div>
+            {/if}
+          </div>
         {/each}
       </div>
       {#if errors.events}<p class="wh-ferr">{errorText(errors.events)}</p>{/if}
@@ -641,13 +670,13 @@
     gap: 6px 18px;
     padding-top: 6px;
   }
-  .wh-checks label {
+  .wh-check > label {
     display: flex;
     align-items: flex-start;
     gap: 8px;
     cursor: pointer;
   }
-  .wh-checks input {
+  .wh-check > label input {
     margin-top: 3px;
   }
   @media (max-width: 560px) {

@@ -525,6 +525,11 @@
       "audio_stereo": "stereo",
       "audio_channels": "{count:number|num} {{kanaal|kanalen}}"
     },
+    "summary_sent": {
+      "chip": "",
+      "panel_label": "",
+      "notice": ""
+    },
     "timing": {
       "passage": "Getimed per passage",
       "word": "Getimed per woord",
