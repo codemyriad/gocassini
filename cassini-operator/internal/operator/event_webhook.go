@@ -25,6 +25,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/oklog/ulid/v2"
@@ -83,6 +84,37 @@ type EventWebhookSettings struct {
 	Events []string `json:"events,omitempty"`
 	// TimeoutSeconds is 1 to 60; zero means the default.
 	TimeoutSeconds int `json:"timeout_seconds,omitempty"`
+	// SummaryNotice is the admin's reason, shown after the summary notice
+	// (#532). Kept while summary.completed is unticked.
+	SummaryNotice string `json:"summary_notice,omitempty"`
+}
+
+const eventWebhookMaxSummaryNoticeLength = 200
+
+// normalizeSummaryNotice trims the reason and collapses its spaces. It
+// refuses what would not show as written on one line (control characters,
+// line breaks, bidi embeddings, overrides and isolates, invisible spaces),
+// a word starting with @ (a mention in Talk), and more than 200 characters.
+// ZWJ, ZWNJ, LRM, RLM and emoji tag sequences are real text and allowed.
+func normalizeSummaryNotice(raw string) (string, error) {
+	if strings.ContainsFunc(raw, func(r rune) bool {
+		return unicode.IsControl(r) || r == '\u2028' || r == '\u2029' ||
+			(r >= '\u202a' && r <= '\u202e') || (r >= '\u2066' && r <= '\u2069') ||
+			r == '\u200b' || (r >= '\u2060' && r <= '\u2064') || r == '\ufeff'
+	}) {
+		return "", eventWebhookSettingsRefusal("webhook_summary_notice_invalid", "summary_notice must be one line of plain text, without line breaks, direction overrides or invisible spaces")
+	}
+	words := strings.Fields(raw)
+	for _, word := range words {
+		if strings.HasPrefix(word, "@") {
+			return "", eventWebhookSettingsRefusal("webhook_summary_notice_mention", "summary_notice must not start a word with @: in Talk that mentions someone")
+		}
+	}
+	notice := strings.Join(words, " ")
+	if utf8.RuneCountInString(notice) > eventWebhookMaxSummaryNoticeLength {
+		return "", eventWebhookSettingsRefusal("webhook_summary_notice_too_long", "summary_notice must be at most %d characters", eventWebhookMaxSummaryNoticeLength)
+	}
+	return notice, nil
 }
 
 // eventReceiverKey tags every queued row with the URL it was queued for; a row
@@ -134,6 +166,11 @@ func normalizeEventWebhookSettings(s EventWebhookSettings) (EventWebhookSettings
 	if s.URL == "" {
 		return EventWebhookSettings{TimeoutSeconds: s.TimeoutSeconds}, nil
 	}
+	notice, err := normalizeSummaryNotice(s.SummaryNotice)
+	if err != nil {
+		return s, err
+	}
+	s.SummaryNotice = notice
 	asked := make([]string, 0, len(s.Events))
 	for _, name := range s.Events {
 		name = strings.TrimSpace(name)
@@ -238,6 +275,8 @@ type eventWebhookConfig struct {
 	Secret  string
 	Events  []string
 	Version string
+	// What a summary.completed row records for the meeting's notice.
+	NoticeHost, NoticeReason string
 	// Test seams.
 	baseRetryDelay time.Duration
 	retryWindow    time.Duration
@@ -306,6 +345,7 @@ func newEventWebhook(store *Store, logger *log.Logger, settings EventWebhookSett
 		store: store,
 		cfg: eventWebhookConfig{
 			URL: settings.URL, Secret: settings.Secret, Events: slices.Clone(settings.Events),
+			NoticeHost: eventNoticeHost(settings.URL), NoticeReason: settings.SummaryNotice,
 			Version: strings.TrimSpace(version), baseRetryDelay: eventWebhookBaseRetryDelay, retryWindow: eventWebhookRetryWindow,
 		},
 		client: newEventWebhookClient(settings.requestTimeout()),
@@ -470,7 +510,12 @@ func (e *eventWebhook) enqueue(ctx context.Context, eventType string, data map[s
 	if err != nil {
 		return fmt.Errorf("marshal event %s: %w", eventType, err)
 	}
-	if err := e.store.insertEvent(ctx, payload.ID, e.cfg.receiver(), eventType, string(raw), payload.At); err != nil {
+	link := eventOutboxLink{}
+	link.JobID, _ = data["job_id"].(string)
+	if eventType == eventSummaryCompleted {
+		link.NoticeHost, link.NoticeReason = e.cfg.NoticeHost, e.cfg.NoticeReason
+	}
+	if err := e.store.insertEventFor(ctx, payload.ID, e.cfg.receiver(), eventType, string(raw), payload.At, link); err != nil {
 		return err
 	}
 	select {
@@ -598,10 +643,18 @@ func eventWebhookRetryDelay(base time.Duration, attempts int) time.Duration {
 	return delay
 }
 
+// eventOutboxLink is the job a row is about and, for summary.completed, what
+// its meeting will say once the receiver accepts it.
+type eventOutboxLink struct{ JobID, NoticeHost, NoticeReason string }
+
 func (s *Store) insertEvent(ctx context.Context, id, receiverID, eventType, payload, at string) error {
+	return s.insertEventFor(ctx, id, receiverID, eventType, payload, at, eventOutboxLink{})
+}
+
+func (s *Store) insertEventFor(ctx context.Context, id, receiverID, eventType, payload, at string, link eventOutboxLink) error {
 	_, err := s.db.ExecContext(ctx, `
-INSERT INTO event_outbox (id, receiver_id, type, payload, created_at, attempts, next_attempt_at)
-VALUES (?, ?, ?, ?, ?, 0, ?)`, id, receiverID, eventType, payload, at, at)
+INSERT INTO event_outbox (id, receiver_id, type, payload, created_at, attempts, next_attempt_at, job_id, notice_host, notice_reason)
+VALUES (?, ?, ?, ?, ?, 0, ?, ?, NULLIF(?, ''), NULLIF(?, ''))`, id, receiverID, eventType, payload, at, at, link.JobID, link.NoticeHost, link.NoticeReason)
 	if err != nil {
 		return fmt.Errorf("insert event outbox: %w", err)
 	}
@@ -644,12 +697,26 @@ LIMIT 1`, append(args, at)...).Scan(&event.ID, &event.Type, &event.Payload, &eve
 
 // markEventDelivered and markEventFailed finish a row and empty its payload. A
 // delivery wins over a give-up, so a row is never both.
+//
+// A delivered summary.completed also marks its job as sent to the row's host
+// (#532), unless the job already holds a newer row's delivery.
 func (s *Store) markEventDelivered(ctx context.Context, id, at string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE event_outbox SET delivered_at = ?, failed_at = NULL, payload = '', last_error = NULL, last_error_at = NULL WHERE id = ?`, at, id)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("mark event delivered: %w", err)
 	}
-	return nil
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `UPDATE event_outbox SET delivered_at = ?, failed_at = NULL, payload = '', last_error = NULL, last_error_at = NULL WHERE id = ?`, at, id); err != nil {
+		return fmt.Errorf("mark event delivered: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+UPDATE jobs SET summary_sent_host = o.notice_host, summary_sent_reason = o.notice_reason, summary_sent_queued_at = o.created_at
+FROM (SELECT job_id, notice_host, notice_reason, created_at FROM event_outbox
+      WHERE id = ? AND type = ? AND job_id <> '' AND COALESCE(notice_host, '') <> '') AS o
+WHERE jobs.id = o.job_id AND (jobs.summary_sent_queued_at IS NULL OR jobs.summary_sent_queued_at <= o.created_at)`, id, eventSummaryCompleted); err != nil {
+		return fmt.Errorf("mark summary sent: %w", err)
+	}
+	return tx.Commit()
 }
 
 func (s *Store) markEventFailed(ctx context.Context, id, at, detail string) error {
@@ -995,6 +1062,7 @@ type eventWebhookSettingsResponse struct {
 	SecretSet      bool     `json:"secret_set"`
 	Events         []string `json:"events"`
 	TimeoutSeconds int      `json:"timeout_seconds"`
+	SummaryNotice  string   `json:"summary_notice"`
 	// Error is why the stored settings were not accepted at startup, when
 	// they were not: delivery is off until a PUT replaces them.
 	Error    string               `json:"error,omitempty"`
@@ -1011,6 +1079,7 @@ type eventWebhookSettingsUpdate struct {
 	Events *[]string `json:"events"`
 	// A float, so 2.5 is refused with a code rather than as a bad body.
 	TimeoutSeconds *float64 `json:"timeout_seconds"`
+	SummaryNotice  *string  `json:"summary_notice"`
 }
 
 // eventWebhookSettingsHandler serves GET and PUT /settings/webhook.
@@ -1061,6 +1130,9 @@ func (rt *Runtime) updateEventWebhookSettings(w http.ResponseWriter, r *http.Req
 		if in.Events != nil {
 			updated.Events = *in.Events
 		}
+		if in.SummaryNotice != nil {
+			updated.SummaryNotice = *in.SummaryNotice
+		}
 		if in.TimeoutSeconds != nil {
 			seconds := *in.TimeoutSeconds
 			if seconds != math.Trunc(seconds) || seconds < 1 || seconds > eventWebhookMaxTimeoutSeconds {
@@ -1072,6 +1144,11 @@ func (rt *Runtime) updateEventWebhookSettings(w http.ResponseWriter, r *http.Req
 		updated, err := normalizeEventWebhookSettings(updated)
 		if err != nil {
 			refuseEventWebhookSettings(w, err)
+			return out, s, false
+		}
+		// On save only, so a stored 0.4.0 address keeps delivering.
+		if updated.URL != "" && eventNoticeHost(updated.URL) == "" {
+			refuseEventWebhookSettings(w, eventWebhookSettingsRefusal("webhook_url_invalid", "use the receiver's plain address (an international name in its xn-- form): meetings name the receiver by its host"))
 			return out, s, false
 		}
 		// A new address must not be signed with the old address's secret.
@@ -1093,7 +1170,7 @@ func (rt *Runtime) updateEventWebhookSettings(w http.ResponseWriter, r *http.Req
 	}
 	return eventWebhookSettingsResponse{
 		URL: s.URL, SecretSet: s.Secret != "", Events: events, TimeoutSeconds: s.timeoutSeconds(),
-		Error: rt.eventWebhookLoadError, Catalog: slices.Clone(eventCatalog),
+		SummaryNotice: s.SummaryNotice, Error: rt.eventWebhookLoadError, Catalog: slices.Clone(eventCatalog),
 	}, s, true
 }
 

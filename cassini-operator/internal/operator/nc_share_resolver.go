@@ -192,6 +192,12 @@ func (c ExAppConfig) directShareSnapshot(ctx context.Context, client *http.Clien
 	if projected, err := metadata.projectRoomNames(ctx, result.entries); err == nil {
 		result.entries = projected
 	}
+	// Where each summary was sent (#532). Best-effort, like the overlays above.
+	if c.lifecycle != nil {
+		if projected, err := c.lifecycle.projectSummaryNotices(ctx, result.entries); err == nil {
+			result.entries = projected
+		}
+	}
 	if c.sharePaths != nil {
 		c.sharePaths.put(caller, result.paths)
 	}

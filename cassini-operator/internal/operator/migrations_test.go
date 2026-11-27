@@ -3,6 +3,7 @@ package operator
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -512,6 +513,7 @@ func TestNewestMigrationHasARollbackTest(t *testing.T) {
 		"job_audience_mode":        true,
 		"event_outbox":             true,
 		"event_outbox_receiver":    true,
+		"summary_webhook_notice":   true,
 	}
 	newest := migrations[len(migrations)-1].Name
 	if !covered[newest] {
@@ -810,7 +812,7 @@ func TestMigrateDownDropsEventOutboxReceiver(t *testing.T) {
 	indexes := func() string {
 		t.Helper()
 		var names sql.NullString
-		if err := store.db.QueryRow(`SELECT group_concat(name) FROM (SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'event_outbox' AND name LIKE 'event_outbox_%' ORDER BY name)`).Scan(&names); err != nil {
+		if err := store.db.QueryRow(`SELECT group_concat(name) FROM (SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'event_outbox' AND name LIKE 'event_outbox_%' AND name <> 'event_outbox_job' ORDER BY name)`).Scan(&names); err != nil {
 			t.Fatal(err)
 		}
 		return names.String
@@ -861,5 +863,47 @@ func TestMigrateDownDropsEventOutboxReceiver(t *testing.T) {
 	summary, err := store.eventDeliverySummary(ctx, settings)
 	if err != nil || summary.LastError != "receiver returned HTTP 500" || summary.LastErrorAt != "" || summary.Waiting != 1 || summary.Delivered != 1 || summary.Failed != 0 {
 		t.Fatalf("summary after adopting = %+v, %v; want one waiting with an untimed error, one delivered", summary, err)
+	}
+}
+
+// A rollback past 0030 forgets where summaries were sent; the jobs and the
+// outbox rows survive, and the re-upgrade brings the columns back empty.
+func TestMigrateDownDropsSummaryWebhookNotice(t *testing.T) {
+	migrations, err := loadMigrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := migrationIndex(migrations, "summary_webhook_notice")
+	store, err := OpenStore(filepath.Join(t.TempDir(), "jobs.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	insertJob(t, store.db, "NOTICE1", nowUTCString())
+	if err := store.insertEventFor(ctx, "evt_1", "rcv_test", eventSummaryCompleted, `{}`, nowUTCString(), eventOutboxLink{JobID: "NOTICE1", NoticeHost: "flows.example.org"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.markEventDelivered(ctx, "evt_1", nowUTCString()); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.migrateDownTo(migrations[at].Version - 1); err != nil {
+		t.Fatal(err)
+	}
+	for _, query := range []string{`SELECT summary_sent_host FROM jobs`, `SELECT job_id FROM event_outbox`} {
+		if _, err := store.db.Exec(query); err == nil {
+			t.Fatalf("%q worked after the down migration", query)
+		}
+	}
+	var rows int
+	if err := store.db.QueryRow(`SELECT (SELECT COUNT(*) FROM jobs) + (SELECT COUNT(*) FROM event_outbox)`).Scan(&rows); err != nil || rows != 2 {
+		t.Fatalf("rows after the down migration = %d, %v; want the job and the event", rows, err)
+	}
+	if err := store.ensureSchema(); err != nil {
+		t.Fatal(err)
+	}
+	projected, err := store.projectSummaryNotices(ctx, []json.RawMessage{json.RawMessage(`{"id":"NOTICE1"}`)})
+	if err != nil || strings.Contains(string(projected[0]), "summarySentTo") {
+		t.Fatalf("after re-upgrade = %s, %v; want no notice", projected, err)
 	}
 }

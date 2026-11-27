@@ -247,3 +247,94 @@ func TestTalkNotificationSkippedInAttendeeMode(t *testing.T) {
 		t.Fatalf("log = %q, want the skip named", logs.String())
 	}
 }
+
+// #532: a summary queued for the current receiver gets a second, silent chat
+// message right after the recording post, once, on the first publish. The
+// recording post is unchanged; a failure of the second message changes nothing.
+func TestTalkNotificationAnnouncesAForwardedSummary(t *testing.T) {
+	const reason = "We keep summaries in our team wiki."
+	for _, mode := range []string{"none", "waiting", "delivered", "delivery-off", "other-receiver", "forward-fails", "share-fails"} {
+		t.Run(mode, func(t *testing.T) {
+			var logs bytes.Buffer
+			rt, cleanup := newBarePublishRuntime(t, log.New(&logs, "", 0))
+			defer cleanup()
+			seedTalkNotificationJob(t, rt.store, "one")
+			ctx := context.Background()
+			hook := newTestEventWebhook(t, rt.store, "https://flows.example.org/hook", "s")
+			if mode != "delivery-off" {
+				rt.eventWebhook.Store(hook)
+			}
+			queuedFor := hook.cfg.receiver()
+			if mode == "other-receiver" {
+				queuedFor = eventReceiverKey("https://old.example/hook")
+			}
+			if mode != "none" {
+				link := eventOutboxLink{JobID: "one", NoticeHost: "flows.example.org", NoticeReason: reason}
+				if err := rt.store.insertEventFor(ctx, "evt_1", queuedFor, eventSummaryCompleted, `{}`, nowUTCString(), link); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if mode == "delivered" {
+				if err := rt.store.markEventDelivered(ctx, "evt_1", nowUTCString()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var shares, messages []string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/ocs/v2.php/apps/spreed/api/v1/chat/room1234/share":
+					shares = append(shares, r.FormValue("objectType"))
+					if mode == "share-fails" {
+						http.Error(w, "no", http.StatusForbidden)
+						return
+					}
+					chatResponse(w, talkChatMessage{ID: 42})
+				case "/ocs/v2.php/apps/spreed/api/v1/chat/room1234":
+					if r.FormValue("silent") != "true" || len(shares) != 1 {
+						t.Errorf("silent=%q after %d share posts", r.FormValue("silent"), len(shares))
+					}
+					messages = append(messages, r.FormValue("message"))
+					if mode == "forward-fails" {
+						http.Error(w, "sensitive upstream text", http.StatusInternalServerError)
+						return
+					}
+					chatResponse(w, talkChatMessage{ID: 43})
+				default:
+					t.Errorf("unexpected request: %s", r.URL.Path)
+				}
+			}))
+			defer server.Close()
+			client := newTalkNotificationClient(ExAppConfig{NextcloudURL: server.URL, AppID: "gocassini", AppSecret: "test-secret", AppVersion: "1"})
+			rt.publishSink = &notifyingTestSink{okPublishSink: okPublishSink{location: "remote"}, client: client}
+			rt.publishJobFn = func(context.Context, publishTask) (string, error) {
+				return filepath.Join(t.TempDir(), "attempt.site"), nil
+			}
+			if err := rt.store.MarkPublishQueued(rt.ctx, "one", "meeting", "meeting", nowUTCString()); err != nil {
+				t.Fatal(err)
+			}
+			task := publishTask{JobID: "one", AttemptNumber: 1}
+			rt.runPublishJob(task)
+			rt.runPublishJob(task) // A republish posts nothing again.
+			if len(shares) != 1 || shares[0] != "highlight" {
+				t.Fatalf("share posts = %v, want the one highlight post", shares)
+			}
+			var want []string
+			switch mode {
+			case "waiting", "delivered", "forward-fails":
+				want = []string{"This meeting's summary will also be sent to flows.example.org. " + reason}
+			}
+			if strings.Join(messages, "|") != strings.Join(want, "|") {
+				t.Fatalf("messages = %q, want %q", messages, want)
+			}
+			if mustGetJob(t, rt.store, "one").State != "succeeded" {
+				t.Fatal("a Talk post changed the publication result")
+			}
+			if mode == "forward-fails" && (!strings.Contains(logs.String(), "Talk summary notice failed") || strings.Contains(logs.String(), "sensitive upstream text")) {
+				t.Fatalf("log = %q, want the failure logged without the upstream body", logs.String())
+			}
+		})
+	}
+	if got := summaryForwardMessage(summaryNotice{Host: "flows.example.org"}); got != "This meeting's summary will also be sent to flows.example.org." {
+		t.Fatalf("without a reason: %q", got)
+	}
+}

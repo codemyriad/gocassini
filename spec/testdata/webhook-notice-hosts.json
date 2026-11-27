@@ -1,0 +1,145 @@
+{
+  "_comment": "How a meeting names a webhook receiver (#532): the URL, and the host the operator (eventNoticeHost) and the Webhooks panel's preview (noticeHost) both give, or \"\" for an address the operator refuses on save. Read by notice_host_test.go and WebhookPanel.test.ts.",
+  "cases": [
+    {
+      "url": "https://flows.example.org/hook",
+      "host": "flows.example.org"
+    },
+    {
+      "url": "https://Flows.Example.ORG/hook?token=x",
+      "host": "flows.example.org"
+    },
+    {
+      "url": "https://user:pw@flows.example.org:8443/a",
+      "host": "flows.example.org"
+    },
+    {
+      "url": "https://flows.example.org./",
+      "host": "flows.example.org."
+    },
+    {
+      "url": "http://n8n:5678/webhook",
+      "host": "n8n"
+    },
+    {
+      "url": "http://my_host.local/",
+      "host": "my_host.local"
+    },
+    {
+      "url": "http://-a-.example/",
+      "host": "-a-.example"
+    },
+    {
+      "url": "http://127.0.0.1:5678/",
+      "host": "127.0.0.1"
+    },
+    {
+      "url": "http://10.0.0.25/",
+      "host": "10.0.0.25"
+    },
+    {
+      "url": "http://255.255.255.255/",
+      "host": "255.255.255.255"
+    },
+    {
+      "url": "http://256.0.0.1/",
+      "host": ""
+    },
+    {
+      "url": "http://01.2.3.4/",
+      "host": ""
+    },
+    {
+      "url": "http://127.1/",
+      "host": ""
+    },
+    {
+      "url": "http://0x7f000001/",
+      "host": ""
+    },
+    {
+      "url": "http://2130706433/",
+      "host": ""
+    },
+    {
+      "url": "http://1.2.3/",
+      "host": ""
+    },
+    {
+      "url": "http://a.1/",
+      "host": ""
+    },
+    {
+      "url": "http://a.0x1/",
+      "host": ""
+    },
+    {
+      "url": "http://a.0x/",
+      "host": ""
+    },
+    {
+      "url": "http://1.-1/",
+      "host": "1.-1"
+    },
+    {
+      "url": "http://[::1]:8080/",
+      "host": "::1"
+    },
+    {
+      "url": "http://[2001:db8::1]/",
+      "host": "2001:db8::1"
+    },
+    {
+      "url": "http://[2001:DB8::1]/",
+      "host": "2001:db8::1"
+    },
+    {
+      "url": "http://[2001:db8:0:0:1:0:0:1]/",
+      "host": ""
+    },
+    {
+      "url": "http://[2001:db8::1:0:0:1]/",
+      "host": "2001:db8::1:0:0:1"
+    },
+    {
+      "url": "http://[::ffff:1.2.3.4]/",
+      "host": ""
+    },
+    {
+      "url": "http://[::ffff:102:304]/",
+      "host": ""
+    },
+    {
+      "url": "http://[fe80::1%25eth0]/",
+      "host": ""
+    },
+    {
+      "url": "https://BÜCHER.example/x",
+      "host": ""
+    },
+    {
+      "url": "https://xn--bcher-kva.example/",
+      "host": "xn--bcher-kva.example"
+    },
+    {
+      "url": "https://a~b.example/",
+      "host": ""
+    },
+    {
+      "url": "https://a!b.example/",
+      "host": ""
+    },
+    {
+      "url": "http://a%41b/",
+      "host": ""
+    },
+    {
+      "url": "http://a..b/",
+      "host": ""
+    },
+    {
+      "url": "http://ab--cd.example/",
+      "host": "ab--cd.example"
+    }
+  ]
+}
