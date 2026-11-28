@@ -805,30 +805,24 @@ func TestBuildMeetingArtifactWithRetiredOrUnknownModelPin(t *testing.T) {
 		return manifest, stdout.String(), requested
 	}
 
-	t.Run("retired v3 int8", func(t *testing.T) {
-		manifest, log, requested := build(t, "parakeet-tdt-0.6b-v3-int8")
-		if len(requested) != 1 || requested[0] != ModelParakeetUltraInt8 {
-			t.Fatalf("loaded %v", requested)
-		}
-		if !strings.Contains(log, "parakeet-tdt-0.6b-v3-int8 is retired; using parakeet-ultra-0.6b-int8-v2") {
-			t.Fatalf("log does not explain the move:\n%s", log)
-		}
-		if p := manifest.Processing; p == nil || p.Transcription.Status != "completed" || p.Transcription.Model != string(ModelParakeetUltraInt8) {
-			t.Fatalf("processing %+v", manifest.Processing)
-		}
-	})
-	t.Run("retired ultra int8 v1", func(t *testing.T) {
-		manifest, log, requested := build(t, "parakeet-ultra-0.6b-int8")
-		if len(requested) != 1 || requested[0] != ModelParakeetUltraInt8 {
-			t.Fatalf("loaded %v", requested)
-		}
-		if !strings.Contains(log, "parakeet-ultra-0.6b-int8 is retired; using parakeet-ultra-0.6b-int8-v2") {
-			t.Fatalf("log does not explain the move:\n%s", log)
-		}
-		if p := manifest.Processing; p == nil || p.Transcription.Status != "completed" || p.Transcription.Model != string(ModelParakeetUltraInt8) {
-			t.Fatalf("processing %+v", manifest.Processing)
-		}
-	})
+	for name, retired := range map[string]string{
+		"retired v3 int8":       "parakeet-tdt-0.6b-v3-int8",
+		"retired ultra int8 v1": "parakeet-ultra-0.6b-int8",
+		"retired ultra int8 v2": "parakeet-ultra-0.6b-int8-v2",
+	} {
+		t.Run(name, func(t *testing.T) {
+			manifest, log, requested := build(t, retired)
+			if len(requested) != 1 || requested[0] != ModelFluidSpeechProInt8 {
+				t.Fatalf("loaded %v", requested)
+			}
+			if !strings.Contains(log, retired+" is retired; using fluid-speech-pro-0.6b-int8") {
+				t.Fatalf("log does not explain the move:\n%s", log)
+			}
+			if p := manifest.Processing; p == nil || p.Transcription.Status != "completed" || p.Transcription.Model != string(ModelFluidSpeechProInt8) {
+				t.Fatalf("processing %+v", manifest.Processing)
+			}
+		})
+	}
 	t.Run("unknown id", func(t *testing.T) {
 		manifest, log, requested := build(t, "no-such-model")
 		if len(requested) != 1 || requested[0] != "no-such-model" {
@@ -854,7 +848,7 @@ func (r *frontendRecognizer) NativeFrontend() string { return r.frontend }
 
 // Each transcript's provenance records its own model's native frontend. An
 // additional model without the boundary policy (the 110M model declares no
-// frontend) must not clear the primary Ultra transcript's nativeFrontend,
+// frontend) must not clear the primary transcript's nativeFrontend,
 // which it did while every pass shared the primary's record.
 func TestAdditionalModelKeepsThePrimaryNativeFrontend(t *testing.T) {
 	requireFFMediaTools(t)
@@ -892,7 +886,7 @@ func TestAdditionalModelKeepsThePrimaryNativeFrontend(t *testing.T) {
 	cfg := BuildConfig{
 		Device:           "cpu",
 		Backend:          backend,
-		ModelID:          ModelParakeetUltraInt8,
+		ModelID:          ModelFluidSpeechProInt8,
 		AdditionalModels: []ModelID{ModelParakeet110M},
 		CacheDir:         t.TempDir(),
 		NumThreads:       1,
@@ -912,11 +906,11 @@ func TestAdditionalModelKeepsThePrimaryNativeFrontend(t *testing.T) {
 	}
 	if manifest.Provenance == nil || manifest.Provenance.SpeechToText == nil ||
 		manifest.Provenance.SpeechToText.NativeFrontend != NativeFrontendNeMoLogGuard {
-		t.Errorf("provenance.speechToText lost the Ultra pass's nativeFrontend: %s", raw)
+		t.Errorf("provenance.speechToText lost the primary pass's nativeFrontend: %s", raw)
 	}
 	want := map[string]string{
-		sanitizeTranscriptID(string(ModelParakeetUltraInt8)): NativeFrontendNeMoLogGuard,
-		sanitizeTranscriptID(string(ModelParakeet110M)):      "",
+		sanitizeTranscriptID(string(ModelFluidSpeechProInt8)): NativeFrontendNeMoLogGuard,
+		sanitizeTranscriptID(string(ModelParakeet110M)):       "",
 	}
 	if len(manifest.Files.Transcripts) != len(want) {
 		t.Fatalf("transcripts %+v, want %d", manifest.Files.Transcripts, len(want))

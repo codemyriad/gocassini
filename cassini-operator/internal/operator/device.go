@@ -23,12 +23,19 @@ const (
 	// every CUDA tier and the CPU "best" tier. fp32 is the only precision the
 	// onnxruntime CUDA EP runs without fragmenting back to CPU.
 	modelParakeetUltraFp32 = "parakeet-ultra-0.6b"
-	// modelParakeetUltraInt8 is its conv-fp32 int8 quantization (v2, D-924;
-	// codemyriad/systems cassini-dist D86), the balanced CPU tier.
+	// modelFluidSpeechProInt8 is FluidVoice Labs' Fluid Speech Pro, a
+	// fine-tune of Parakeet Ultra, in Cassini's conv-fp32 int8 quantization
+	// (the Ultra int8 v2 recipe, D-1092): the balanced CPU tier.
+	modelFluidSpeechProInt8 = "fluid-speech-pro-0.6b-int8"
+	// modelParakeetUltraInt8 is Parakeet Ultra's conv-fp32 int8 quantization
+	// (v2, D-924; codemyriad/systems cassini-dist D86), which Fluid Speech Pro
+	// replaced as the balanced CPU tier (D-1092). Retired: an install that
+	// still has its files transcribes with it while Fluid Speech Pro is not
+	// ready.
 	modelParakeetUltraInt8 = "parakeet-ultra-0.6b-int8-v2"
 	// modelParakeetUltraInt8V1 is the initial int8 quantization of Parakeet
 	// Ultra, which v2 replaced (D-924). Retired: an install that still has its
-	// files transcribes with it while v2 is not ready.
+	// files transcribes with it while Fluid Speech Pro is not ready.
 	modelParakeetUltraInt8V1 = "parakeet-ultra-0.6b-int8"
 	// modelParakeet110M is the small CTC model: fastest on CPU, least accurate.
 	modelParakeet110M = "parakeet-tdt-ctc-110m-en-int8"
@@ -85,13 +92,17 @@ var minRuntimeBase = [3]int{2, 0, 1}
 
 var speechModelSpecs = map[string]speechModelSpec{
 	modelParakeet110M: {buildPeakMB: 512, downloadMB: 100},
-	// Both Ultra precisions load only where the joiner-size TDT detection is.
-	modelParakeetUltraInt8: {runtimeMarkers: []string{parakeetTDTJoinerMarker}, buildPeakMB: 2048, downloadMB: 465},
+	// Fluid Speech Pro's encoder carries FluidVoice's url, which names
+	// parakeet-tdt, so any 2.0.1 runtime detects the TDT joiner: no marker.
+	modelFluidSpeechProInt8: {buildPeakMB: 2048, downloadMB: 467},
+	// Ultra fp32 loads only where the joiner-size TDT detection is.
 	modelParakeetUltraFp32: {cuda: true, runtimeMarkers: []string{parakeetTDTJoinerMarker}, buildPeakMB: 3584, downloadMB: 1485},
-	// Retired Ultra int8 v1 and v3 models are never selected or downloaded; a
-	// build runs one only as a stand-in for the Ultra model replacing it
-	// (admitStandIn). Ultra int8 v1 keeps the plain Moondream url so it still
-	// needs the joiner marker; v3's tdt url loads on any 2.0.1 runtime.
+	// Retired Ultra int8 v2 and v1 and v3 models are never selected or
+	// downloaded; a build runs one only as a stand-in for the model replacing
+	// it (admitStandIn). Both Ultra int8 quantizations keep the plain Moondream
+	// url so they still need the joiner marker; v3's tdt url loads on any
+	// 2.0.1 runtime.
+	modelParakeetUltraInt8:   {runtimeMarkers: []string{parakeetTDTJoinerMarker}, buildPeakMB: 2048},
 	modelParakeetUltraInt8V1: {runtimeMarkers: []string{parakeetTDTJoinerMarker}, buildPeakMB: 2048},
 	modelParakeetV3Int8:      {buildPeakMB: 2048},
 	modelParakeetV3Fp32:      {cuda: true, buildPeakMB: 3584},
@@ -179,7 +190,8 @@ func modelServesQuality(quality, device, model string) bool {
 
 // modelForQuality returns the model an admitted build will load for a quality
 // tier on a resolved device. Every CUDA tier is fp32 Parakeet Ultra; the CPU
-// tiers trade accuracy for speed.
+// tiers trade accuracy for speed: best=Ultra fp32, balanced=Fluid Speech Pro
+// int8 (a fine-tune of Ultra, D-1092), fast=110M CTC.
 func modelForQuality(quality, device string) string {
 	if isCUDA(device) {
 		return modelParakeetUltraFp32
@@ -190,7 +202,7 @@ func modelForQuality(quality, device string) string {
 	case sttQualityFast:
 		return modelParakeet110M
 	default:
-		return modelParakeetUltraInt8
+		return modelFluidSpeechProInt8
 	}
 }
 
@@ -213,11 +225,14 @@ func modelForQuality(quality, device string) string {
 // depthwise and 5 `/pre_encode/` subsampling convolutions in fp32 (+1.0 MiB
 // unpacked, 640.5 vs 639.5 MiB, with unchanged RAM and ~10% faster CPU time on
 // the 28-minute FLEURS `en_us` check under Cassini GNOME's runtime) and keeps
-// the same 2048 charge. Ultra fp32's host RSS in CUDA builds was within 2% of
-// v3 fp32's (2,105 vs 2,146 MiB); its CPU build was not measured, so it is
-// charged v3 fp32's CPU figure above, rounded up to 3584. Retired v1 and v3
-// are still charged for the builds they stand in for while their replacement
-// is not ready: int8 2048 (v1's 1,893 and v3's 1,807 rounded up; before Ultra,
+// the same 2048 charge. `fluid-speech-pro-0.6b-int8` (D-1092), quantized with
+// the same recipe, has the same memory and speed as Ultra int8 v2 (about
+// 1.5 GB RSS at RTF ~0.025 with 8 threads) and keeps the same 2048 charge.
+// Ultra fp32's host RSS in CUDA builds was within 2% of v3 fp32's (2,105 vs
+// 2,146 MiB); its CPU build was not measured, so it is charged v3 fp32's CPU
+// figure above, rounded up to 3584. Retired Ultra int8 v2 and v1 and v3 are
+// still charged for the builds they stand in for while their replacement is
+// not ready: int8 2048 (v1's 1,893 and v3's 1,807 rounded up; before Ultra,
 // v3 int8 was charged 1792 from the D-702 figure), fp32 3584. A stand-in thus
 // never needs less than the model it stands in for, which admission relies on
 // when that model's check waits for memory.

@@ -20,6 +20,15 @@ func LockModelRuntime(ctx context.Context, root string) (func(), error) {
 	return lockModelRuntime(ctx, root)
 }
 
+type inferenceLockBusyKey struct{}
+
+// WithInferenceLockBusy returns a context whose inference-lock acquisitions
+// call busy each time they find the lock held and have to wait. Tests use it to
+// observe that a caller was refused the lock instead of sleeping.
+func WithInferenceLockBusy(ctx context.Context, busy func()) context.Context {
+	return context.WithValue(ctx, inferenceLockBusyKey{}, busy)
+}
+
 // The file lock also serializes terminal imports/probes with operator builds.
 // Downloading and audio-only processing never take this inference lock.
 func lockModelRuntime(ctx context.Context, root string) (func(), error) {
@@ -38,6 +47,9 @@ func lockModelRuntime(ctx context.Context, root string) (func(), error) {
 		if err != syscall.EWOULDBLOCK && err != syscall.EAGAIN {
 			f.Close()
 			return nil, err
+		}
+		if busy, ok := ctx.Value(inferenceLockBusyKey{}).(func()); ok {
+			busy()
 		}
 		select {
 		case <-ctx.Done():

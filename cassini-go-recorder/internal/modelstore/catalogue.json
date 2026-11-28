@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "published_at": "2026-11-10",
+  "published_at": "2026-11-17",
   "base_url": "https://dist.gocassini.com",
   "models": [
     {
@@ -26,27 +26,27 @@
       "vad_revision": "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6"
     },
     {
-      "id": "parakeet-ultra-0.6b-int8-v2",
+      "id": "fluid-speech-pro-0.6b-int8",
       "kind": "speech",
-      "name": "Parakeet Ultra 0.6B \u2014 int8 v2",
-      "description": "Multilingual speech recognition, Parakeet v3 post-trained by Moondream, quantized weights; depthwise and subsampling convolutions kept in fp32",
+      "name": "Fluid Speech Pro 0.6B \u2014 int8",
+      "description": "Multilingual speech recognition, Parakeet Ultra fine-tuned by FluidVoice Labs, quantized weights; depthwise and subsampling convolutions kept in fp32",
       "license": "CC-BY-4.0",
-      "source_url": "https://huggingface.co/moondream/parakeet-ultra",
-      "source_sha256": "50c15b94ea9cb1c2f8dbcdcbc0f15b450169154deeb206923cb5388f60892366",
+      "source_url": "https://huggingface.co/FluidVoice-Labs/fluid-speech-pro",
+      "source_sha256": "366116b549382a16e31cfa571c2e7e442814e950541187b9ab9ab3e6236b4f5b",
       "files": [
         {
           "path": "encoder.int8.onnx",
-          "artifact": "models/files/44060ee9be2ac23ace05d6ea1271dd4cdbb353ac4d822f36c51ce733142d31a0/encoder.int8.onnx.zst",
+          "artifact": "models/files/e671ec2f0779b6cd1fc87bdb83c5775b874f15bb1c60691151f3fe73d83977b8/encoder.int8.onnx.zst",
           "required": true
         },
         {
           "path": "decoder.int8.onnx",
-          "artifact": "models/files/69e2e91d01225bc552f8b0113630562fc52622cb2a3c61ef4445ee779f06b295/decoder.int8.onnx.zst",
+          "artifact": "models/files/8378ebb404b9e97035c6c75e6af69859dc306da7a667c7d6cafdc1c0757fbb30/decoder.int8.onnx.zst",
           "required": true
         },
         {
           "path": "joiner.int8.onnx",
-          "artifact": "models/files/639fda62a71242a8d7cefb6647f2094eb8ac783925ce91cbd047a0de6988f396/joiner.int8.onnx.zst",
+          "artifact": "models/files/d5ca62dc89f2e6af4b821de19042d68f3d2a7d94fbdf56ae71735f2fb64396ce/joiner.int8.onnx.zst",
           "required": true
         },
         {
@@ -57,6 +57,7 @@
       ],
       "vad_revision": "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6",
       "replaces": [
+        "parakeet-ultra-0.6b-int8-v2",
         "parakeet-ultra-0.6b-int8",
         "parakeet-tdt-0.6b-v3-int8"
       ]
@@ -156,6 +157,38 @@
     }
   ],
   "retired_models": [
+    {
+      "id": "parakeet-ultra-0.6b-int8-v2",
+      "kind": "speech",
+      "name": "Parakeet Ultra 0.6B \u2014 int8 v2",
+      "description": "Multilingual speech recognition, Parakeet v3 post-trained by Moondream, quantized weights; depthwise and subsampling convolutions kept in fp32",
+      "license": "CC-BY-4.0",
+      "source_url": "https://huggingface.co/moondream/parakeet-ultra",
+      "source_sha256": "50c15b94ea9cb1c2f8dbcdcbc0f15b450169154deeb206923cb5388f60892366",
+      "files": [
+        {
+          "path": "encoder.int8.onnx",
+          "artifact": "models/files/44060ee9be2ac23ace05d6ea1271dd4cdbb353ac4d822f36c51ce733142d31a0/encoder.int8.onnx.zst",
+          "required": true
+        },
+        {
+          "path": "decoder.int8.onnx",
+          "artifact": "models/files/69e2e91d01225bc552f8b0113630562fc52622cb2a3c61ef4445ee779f06b295/decoder.int8.onnx.zst",
+          "required": true
+        },
+        {
+          "path": "joiner.int8.onnx",
+          "artifact": "models/files/639fda62a71242a8d7cefb6647f2094eb8ac783925ce91cbd047a0de6988f396/joiner.int8.onnx.zst",
+          "required": true
+        },
+        {
+          "path": "tokens.txt",
+          "artifact": "models/files/5b3811f0c23fefc86835981f0a23ecfb817999df272ad744c597e5b669ea1b4a/tokens.txt.zst",
+          "required": true
+        }
+      ],
+      "vad_revision": "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6"
+    },
     {
       "id": "parakeet-ultra-0.6b-int8",
       "kind": "speech",
@@ -264,6 +297,60 @@
     }
   ],
   "artifacts": [
+    {
+      "id": "e671ec2f0779b6cd1fc87bdb83c5775b874f15bb1c60691151f3fe73d83977b8",
+      "key": "models/files/e671ec2f0779b6cd1fc87bdb83c5775b874f15bb1c60691151f3fe73d83977b8/encoder.int8.onnx.zst",
+      "filename": "encoder.int8.onnx.zst",
+      "name": "encoder.int8.onnx",
+      "description": "Seekable Zstandard model file",
+      "url": "https://dist.gocassini.com/models/files/e671ec2f0779b6cd1fc87bdb83c5775b874f15bb1c60691151f3fe73d83977b8/encoder.int8.onnx.zst",
+      "size": 454463587,
+      "sha256": "e671ec2f0779b6cd1fc87bdb83c5775b874f15bb1c60691151f3fe73d83977b8",
+      "uncompressed_size": 655505351,
+      "uncompressed_sha256": "3a71f56725b5025dcd1499506456e7b56d05b7d7414a3c49042562daf59f3d54",
+      "frame_size": 262144,
+      "frame_count": 2501,
+      "seek_table_size": 20025,
+      "compression_level": 6,
+      "encoding": "zstd-seekable",
+      "format_version": "0.1.0"
+    },
+    {
+      "id": "8378ebb404b9e97035c6c75e6af69859dc306da7a667c7d6cafdc1c0757fbb30",
+      "key": "models/files/8378ebb404b9e97035c6c75e6af69859dc306da7a667c7d6cafdc1c0757fbb30/decoder.int8.onnx.zst",
+      "filename": "decoder.int8.onnx.zst",
+      "name": "decoder.int8.onnx",
+      "description": "Seekable Zstandard model file",
+      "url": "https://dist.gocassini.com/models/files/8378ebb404b9e97035c6c75e6af69859dc306da7a667c7d6cafdc1c0757fbb30/decoder.int8.onnx.zst",
+      "size": 8843779,
+      "sha256": "8378ebb404b9e97035c6c75e6af69859dc306da7a667c7d6cafdc1c0757fbb30",
+      "uncompressed_size": 11845274,
+      "uncompressed_sha256": "09e73f5ef2f6e7829972e8a6ad16f64133eec22fb4130be92df4830921188967",
+      "frame_size": 262144,
+      "frame_count": 46,
+      "seek_table_size": 385,
+      "compression_level": 6,
+      "encoding": "zstd-seekable",
+      "format_version": "0.1.0"
+    },
+    {
+      "id": "d5ca62dc89f2e6af4b821de19042d68f3d2a7d94fbdf56ae71735f2fb64396ce",
+      "key": "models/files/d5ca62dc89f2e6af4b821de19042d68f3d2a7d94fbdf56ae71735f2fb64396ce/joiner.int8.onnx.zst",
+      "filename": "joiner.int8.onnx.zst",
+      "name": "joiner.int8.onnx",
+      "description": "Seekable Zstandard model file",
+      "url": "https://dist.gocassini.com/models/files/d5ca62dc89f2e6af4b821de19042d68f3d2a7d94fbdf56ae71735f2fb64396ce/joiner.int8.onnx.zst",
+      "size": 3713493,
+      "sha256": "d5ca62dc89f2e6af4b821de19042d68f3d2a7d94fbdf56ae71735f2fb64396ce",
+      "uncompressed_size": 6355277,
+      "uncompressed_sha256": "231442707e1850d53a7d66dea6a4b5264ae9f38d2468980cfe8ee8b7847097ab",
+      "frame_size": 262144,
+      "frame_count": 25,
+      "seek_table_size": 217,
+      "compression_level": 6,
+      "encoding": "zstd-seekable",
+      "format_version": "0.1.0"
+    },
     {
       "id": "967c3eb817e4160dc45154f7577a4911695488897908278e913ca964c86c221f",
       "key": "models/files/967c3eb817e4160dc45154f7577a4911695488897908278e913ca964c86c221f/model.int8.onnx.zst",

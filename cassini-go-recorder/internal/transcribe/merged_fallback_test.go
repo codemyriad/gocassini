@@ -233,7 +233,7 @@ func TestMergedFallbackDecoderAndProvenance(t *testing.T) {
 }
 
 func TestMergedFallbackDoesNotInventRequestedHints(t *testing.T) {
-	for _, id := range []ModelID{ModelParakeetUltra, ModelParakeetUltraInt8} {
+	for _, id := range []ModelID{ModelParakeetUltra, ModelFluidSpeechProInt8, ModelParakeetUltraInt8} {
 		for _, accepted := range []bool{false, true} {
 			if got := mergedFallbackHints(ModelPaths{ModelID: id}, nil, accepted); got != nil {
 				t.Fatalf("%s accepted=%v: invented hint request: %+v", id, accepted, got)

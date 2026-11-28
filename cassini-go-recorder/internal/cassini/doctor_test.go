@@ -14,7 +14,7 @@ func TestSTTModelCacheChecksMissingIsAudioOnlyAndNeverDownloads(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("CASSINI_CACHE_ROOT", root)
 	t.Setenv("CASSINI_STT_DEVICE", "cpu")
-	t.Setenv("CASSINI_STT_MODEL", string(transcribe.ModelParakeetUltraInt8))
+	t.Setenv("CASSINI_STT_MODEL", string(transcribe.ModelFluidSpeechProInt8))
 	t.Setenv("CASSINI_STT_REVISION", "")
 	t.Setenv("CASSINI_DISALLOW_MODEL_DOWNLOAD", "1")
 
@@ -59,9 +59,11 @@ func TestNativeRuntimeCheck(t *testing.T) {
 		wantAdvice string
 	}{
 		{"110M on stock 2.0.1 passes", transcribe.ModelParakeet110M, stock201, doctorOK, "speech engine runtime 2.0.1", ""},
-		{"Ultra on the Cassini runtime names its frontend", transcribe.ModelParakeetUltraInt8, cassini, doctorOK, SpeechEngineFrontendMarker, ""},
+		{"Fluid Speech Pro on the Cassini runtime names its frontend", transcribe.ModelFluidSpeechProInt8, cassini, doctorOK, SpeechEngineFrontendMarker, ""},
+		{"Fluid Speech Pro on stock 2.0.1 needs no joiner marker", transcribe.ModelFluidSpeechProInt8, stock201, doctorOK, SpeechEngineFrontendMarker, ""},
 		{"Ultra fp32 on the Cassini runtime", transcribe.ModelParakeetUltra, cassini, doctorOK, SpeechEngineFrontendMarker, ""},
-		{"Ultra on stock 2.0.1 warns about the joiner marker", transcribe.ModelParakeetUltraInt8, stock201, doctorWarn, ".parakeet-tdt-joiner-v1", "LD_LIBRARY_PATH"},
+		{"Ultra on stock 2.0.1 warns about the joiner marker", transcribe.ModelParakeetUltra, stock201, doctorWarn, ".parakeet-tdt-joiner-v1", "LD_LIBRARY_PATH"},
+		{"Ultra int8 v2 stand-in on stock 2.0.1 warns about the joiner marker", transcribe.ModelParakeetUltraInt8, stock201, doctorWarn, ".parakeet-tdt-joiner-v1", "LD_LIBRARY_PATH"},
 		{"Ultra on cassini.8 warns about the old C API", transcribe.ModelParakeetUltra, cassini8, doctorWarn, "1.13.7 Cassini runtime", "LD_LIBRARY_PATH"},
 		{"110M on stock 1.13.7 warns about the old C API", transcribe.ModelParakeet110M, stock1137, doctorWarn, SpeechEngineUnsupportedMarker, "LD_LIBRARY_PATH"},
 	}

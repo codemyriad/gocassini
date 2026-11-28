@@ -13,9 +13,9 @@ A GPU is optional: an NVIDIA card with the Container Toolkit, on x86_64, for
 faster transcription.
 
 Transcription runs inside your own infrastructure either way: sherpa-onnx with
-Moondream's Parakeet Ultra (NVIDIA's small Parakeet model on the CPU's Fast
-tier) and Silero VAD, in-process, with no audio and no transcript leaving the
-host.
+Moondream's Parakeet Ultra (FluidVoice's Fluid Speech Pro on the CPU's Balanced
+tier, NVIDIA's small Parakeet model on the CPU's Fast tier) and Silero VAD,
+in-process, with no audio and no transcript leaving the host.
 
 ## Two images, one setting
 
@@ -24,7 +24,7 @@ host.
 | Tag | `X.Y.Z` | `X.Y.Z-cuda` |
 | Architectures | `linux/amd64` and `linux/arm64` | x86_64 only |
 | Needs | any Docker engine | NVIDIA driver + Container Toolkit |
-| Default model | int8 Parakeet Ultra 0.6B | fp32 Parakeet Ultra 0.6B |
+| Default model | int8 Fluid Speech Pro 0.6B | fp32 Parakeet Ultra 0.6B |
 
 You do not pick the tag by hand. **The compute device is a property of the
 deploy daemon**: set its **Compute device** to CUDA and AppAPI tries
@@ -46,7 +46,7 @@ actually running on.
 | Tier | On a CPU | On a GPU |
 |---|---|---|
 | Fast | a small English model (110M CTC) | fp32 Parakeet Ultra 0.6B |
-| **Balanced** (the default) | int8 Parakeet Ultra 0.6B | fp32 Parakeet Ultra 0.6B |
+| **Balanced** (the default) | int8 Fluid Speech Pro 0.6B | fp32 Parakeet Ultra 0.6B |
 | Best | fp32 Parakeet Ultra 0.6B | fp32 Parakeet Ultra 0.6B |
 
 fp32 is the only precision the CUDA execution provider runs without falling back
@@ -61,13 +61,31 @@ languages. It replaced v3 on every tier, and in November 2026 the CPU
 that keeps depthwise and subsampling convolutions in fp32. Ultra matched or beat
 v3 on all eleven public test sets we ran, and on recorded meetings it dropped
 far fewer passages; on a CPU its int8 build was also more accurate than v3's on
-our own meetings, at slightly less CPU time. An install that used an earlier
-model (v3, or the initial `parakeet-ultra-0.6b-int8` build on a CPU) moves to
-the current Ultra model for its tier when it is upgraded (about 465 MB on a CPU,
-1.5 GB on a GPU), and recordings made meanwhile are transcribed with the
-previous model, whose files stay until the new one has passed its check; a host
-without them waits for the download. Such a transcript says which model stood in
-for the new one. Meetings already transcribed keep their existing transcripts.
+our own meetings, at slightly less CPU time.
+
+Later in November 2026 the CPU **Balanced** tier moved again, to
+`fluid-speech-pro-0.6b-int8`:
+[Fluid Speech Pro](https://huggingface.co/FluidVoice-Labs/fluid-speech-pro),
+FluidVoice's fine-tune of Parakeet Ultra, quantized by Cassini the same way as
+`parakeet-ultra-0.6b-int8-v2`. Fluid Speech Pro by FluidVoice. Built on NVIDIA
+Parakeet TDT 0.6B v3 and Moondream Parakeet Ultra. Against
+`parakeet-ultra-0.6b-int8-v2` on a CPU it transcribes English conversation
+better (8.30% against 8.76% word error rate on AMI headset meetings, 2.83%
+against 3.13% on long TED talks) and matches it on German (6.60% on FLEURS for
+both).
+It is worse on French (6.79% against 5.78%) and Spanish (4.72% against 4.21%),
+and slightly worse on Italian (3.72% against 3.38%, a difference within the
+noise). Its speed and memory use are the same. If your meetings are mostly in
+French or Spanish, choose **Best**: it runs fp32 Parakeet Ultra, which is a larger
+download and slower on a CPU.
+
+An install that used an earlier model (v3, or an earlier
+`parakeet-ultra-0.6b-int8` build on a CPU) moves to the current model for its
+tier when it is upgraded (about 465 MB on a CPU, 1.5 GB on a GPU), and
+recordings made meanwhile are transcribed with the previous model, whose files
+stay until the new one has passed its check; a host without them waits for the
+download. Such a transcript says which model stood in for the new one. Meetings
+already transcribed keep their existing transcripts.
 
 Models download into the model cache on the persistent volume when an
 administrator installs them in Settings. On a host with no outbound network
@@ -78,8 +96,9 @@ names the model, rather than starting and failing at the network.
 ## What the GPU buys, and what it does not
 
 - **The device changes the precision as well as the speed.** A GPU runs fp32
-  Parakeet Ultra at every tier; a CPU runs its int8 build at Balanced and fp32
-  at Best. It is the same model, with the same languages.
+  Parakeet Ultra at every tier; a CPU runs an int8 build of Fluid Speech Pro,
+  a fine-tune of Ultra, at Balanced and fp32 Ultra at Best. Both cover the same
+  languages.
 - **It accelerates transcription only.** Live capture is CPU-bound either way,
   so recording a call is not the part a GPU helps with.
 - **arm64 is CPU only.** There is no ARM CUDA image; a 64-bit ARM server runs

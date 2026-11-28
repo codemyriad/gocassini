@@ -188,7 +188,7 @@ it("requires prepared transcription before saving deletion", async () => {
 it("turns transcription on by picking a ready tier, each tier showing its model on its row", async () => {
   let saved: Record<string, unknown> = { quality: "balanced", meeting_format: "opus", transcription_enabled: false };
   const writes: Record<string, unknown>[] = [];
-  const balanced = { id: "parakeet-ultra-0.6b-int8-v2", name: "Parakeet balanced", description: "", revision: "r1",
+  const balanced = { id: "fluid-speech-pro-0.6b-int8", name: "Parakeet balanced", description: "", revision: "r1",
     download_bytes: 700 * 1024 * 1024, installed_bytes: 0, installed: true, ready: true, device: "cpu" };
   const best = { ...balanced, id: "parakeet-ultra-0.6b", name: "Parakeet best", download_bytes: 2.2 * 1024 ** 3, installed: false, ready: false };
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -227,9 +227,9 @@ it("turns transcription on by picking a ready tier, each tier showing its model 
 });
 
 it("shows the saved settings in the status strip and moves only after Save", async () => {
-  let saved: Record<string, unknown> = { quality: "balanced", meeting_format: "opus", transcription_enabled: true, active_model: "parakeet-ultra-0.6b-int8-v2", active_revision: "r1",
+  let saved: Record<string, unknown> = { quality: "balanced", meeting_format: "opus", transcription_enabled: true, active_model: "fluid-speech-pro-0.6b-int8", active_revision: "r1",
     source_retention: "storage-policy", retain_video: false, effective: { device: "cpu", model: "", min_free_memory_mb: 0, note: "" } };
-  const balanced = { id: "parakeet-ultra-0.6b-int8-v2", name: "Parakeet balanced", description: "", revision: "r1",
+  const balanced = { id: "fluid-speech-pro-0.6b-int8", name: "Parakeet balanced", description: "", revision: "r1",
     download_bytes: 1, installed_bytes: 1, installed: true, ready: true, device: "cpu" };
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(String(input), location.href).pathname;
@@ -305,7 +305,7 @@ it("says how long kept media stays from the Recordings policy and follows the re
 it("greys only what needs a transcript while transcription is off, following the draft", async () => {
   let saved: Record<string, unknown> = { quality: "balanced", meeting_format: "opus", transcription_enabled: false };
   const writes: Record<string, unknown>[] = [];
-  const balanced = { id: "parakeet-ultra-0.6b-int8-v2", name: "Parakeet balanced", description: "", revision: "r1",
+  const balanced = { id: "fluid-speech-pro-0.6b-int8", name: "Parakeet balanced", description: "", revision: "r1",
     download_bytes: 1, installed_bytes: 1, installed: true, ready: true, device: "cpu" };
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(String(input), location.href).pathname;
@@ -404,17 +404,17 @@ it("opens the hardware facts under Change and sends Add one to the providers", a
 });
 
 it("says the installed model transcribes until its runtime check has failed, then the previous model", async () => {
-  // Ultra's files are installed but not checked: the operator names no
-  // stand-in (the next build checks Ultra and transcribes with it), then names
-  // v3 once Ultra's check failed.
+  // Fluid Speech Pro's files are installed but not checked: the operator names
+  // no stand-in (the next build checks it and transcribes with it), then names
+  // Ultra int8 v2 once its check failed.
   let standIn: string | undefined;
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
     const path = new URL(String(input), location.href).pathname;
     if (path === "/operator/settings") {
-      return Response.json({ quality: "balanced", meeting_format: "opus", transcription_enabled: true, active_model: "parakeet-ultra-0.6b-int8-v2", active_revision: "r1" });
+      return Response.json({ quality: "balanced", meeting_format: "opus", transcription_enabled: true, active_model: "fluid-speech-pro-0.6b-int8", active_revision: "r1" });
     }
     if (path === "/operator/settings/models") {
-      return Response.json({ models: [{ id: "parakeet-ultra-0.6b-int8-v2", name: "Parakeet Ultra", description: "", revision: "r1", download_bytes: 1, installed_bytes: 1, installed: true, ready: false, device: "cpu", kind: "speech", stand_in: standIn }], jobs: [], downloads_allowed: true, device: "cpu" });
+      return Response.json({ models: [{ id: "fluid-speech-pro-0.6b-int8", name: "Fluid Speech Pro", description: "", revision: "r1", download_bytes: 1, installed_bytes: 1, installed: true, ready: false, device: "cpu", kind: "speech", stand_in: standIn }], jobs: [], downloads_allowed: true, device: "cpu" });
     }
     if (path === "/operator/settings/llm") return Response.json({ providers: [], summary: { enabled: false }, insights: { enabled: false } });
     return Response.json({});
@@ -422,12 +422,12 @@ it("says the installed model transcribes until its runtime check has failed, the
   host = document.createElement("div"); document.body.append(host);
   app = mount(SettingsPanel, { target: host, props: { operatorClient: new OperatorClient("/operator") } });
   const line = () => host.querySelector(".in-use-text")?.textContent?.replace(/\s+/g, " ").trim() ?? "";
-  await expect.poll(line).toContain("Transcribing with Parakeet Ultra on");
+  await expect.poll(line).toContain("Transcribing with Fluid Speech Pro on");
   await unmount(app); app = undefined;
 
-  standIn = "parakeet-tdt-0.6b-v3-int8";
+  standIn = "parakeet-ultra-0.6b-int8-v2";
   app = mount(SettingsPanel, { target: host, props: { operatorClient: new OperatorClient("/operator") } });
-  await expect.poll(line).toContain("Parakeet Ultra is installed but failed its runtime check; the previous model transcribes recordings on");
+  await expect.poll(line).toContain("Fluid Speech Pro is installed but failed its runtime check; the previous model transcribes recordings on");
 });
 
 it("lands on the summary step when another panel's link asks for it", async () => {

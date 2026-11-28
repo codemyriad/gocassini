@@ -814,7 +814,7 @@ func TestStatusHandlerMissingOptionalModelDoesNotBlockAudio(t *testing.T) {
 	rt.cfg.ModelCacheRoot = t.TempDir()
 	t.Setenv(envSTTCUDACapable, "0")
 	stubNVIDIADevice(t, false)
-	rt.setSettings(STTSettings{TranscriptionEnabled: true, ActiveModel: modelParakeetUltraInt8, Quality: sttQualityBalanced, Source: sttSourceUser})
+	rt.setSettings(STTSettings{TranscriptionEnabled: true, ActiveModel: modelFluidSpeechProInt8, Quality: sttQualityBalanced, Source: sttSourceUser})
 	rt.computeProbe = func(device string) (bool, string) { return probeComputeDevice(device) }
 
 	rec := httptest.NewRecorder()
@@ -826,7 +826,7 @@ func TestStatusHandlerMissingOptionalModelDoesNotBlockAudio(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode status response: %v", err)
 	}
-	if !resp.STT.DeviceUsable || resp.STT.ModelID != modelParakeetUltraInt8 {
+	if !resp.STT.DeviceUsable || resp.STT.ModelID != modelFluidSpeechProInt8 {
 		t.Fatalf("unexpected stt status for a downloadable tier: %#v", resp.STT)
 	}
 }

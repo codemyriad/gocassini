@@ -25,23 +25,23 @@ func TestEnsureModelPrefersTheBundledRoot(t *testing.T) {
 	bundledRoot := t.TempDir()
 	cacheRoot := t.TempDir()
 	t.Setenv(envBundledModelRoot, bundledRoot)
-	t.Setenv(envBundledModels, string(ModelParakeetUltraInt8))
+	t.Setenv(envBundledModels, string(ModelFluidSpeechProInt8))
 
-	dir := filepath.Join(bundledRoot, "models", string(ModelParakeetUltraInt8))
+	dir := filepath.Join(bundledRoot, "models", string(ModelFluidSpeechProInt8))
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range RequiredModelFileNames(ModelParakeetUltraInt8) {
+	for _, name := range RequiredModelFileNames(ModelFluidSpeechProInt8) {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	paths, err := EnsureModel(cacheRoot, ModelParakeetUltraInt8, io.Discard)
+	paths, err := EnsureModel(cacheRoot, ModelFluidSpeechProInt8, io.Discard)
 	if err != nil {
 		t.Fatalf("EnsureModel() error = %v", err)
 	}
-	if paths.ModelID != ModelParakeetUltraInt8 {
+	if paths.ModelID != ModelFluidSpeechProInt8 {
 		t.Fatalf("lost model identity: %q", paths.ModelID)
 	}
 	if !strings.HasPrefix(paths.EncoderFile, bundledRoot) {
@@ -74,9 +74,9 @@ func TestEnsureModelRefusesToRepairADeclaredBundledModel(t *testing.T) {
 	// to rebuild.
 	bundledRoot := t.TempDir()
 	t.Setenv(envBundledModelRoot, bundledRoot)
-	t.Setenv(envBundledModels, string(ModelParakeetUltraInt8))
+	t.Setenv(envBundledModels, string(ModelFluidSpeechProInt8))
 
-	_, err := EnsureModel(t.TempDir(), ModelParakeetUltraInt8, io.Discard)
+	_, err := EnsureModel(t.TempDir(), ModelFluidSpeechProInt8, io.Discard)
 	if err == nil {
 		t.Fatal("EnsureModel() error = nil, want a broken-image error")
 	}
@@ -123,18 +123,18 @@ func TestEnsureModelIgnoresAnIncompleteCacheDirectory(t *testing.T) {
 	// completion marker the directory does not count, and EnsureModel goes on
 	// to download (which fails here, with no network in the test).
 	cacheRoot := t.TempDir()
-	dir := filepath.Join(cacheRoot, "models", string(ModelParakeetUltraInt8))
+	dir := filepath.Join(cacheRoot, "models", string(ModelFluidSpeechProInt8))
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range RequiredModelFileNames(ModelParakeetUltraInt8) {
+	for _, name := range RequiredModelFileNames(ModelFluidSpeechProInt8) {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte("truncated"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
 	t.Setenv("CASSINI_DISALLOW_MODEL_DOWNLOAD", "1")
 
-	if _, err := EnsureModel(cacheRoot, ModelParakeetUltraInt8, io.Discard); err == nil {
+	if _, err := EnsureModel(cacheRoot, ModelFluidSpeechProInt8, io.Discard); err == nil {
 		t.Fatal("EnsureModel() accepted a directory with no completion marker")
 	}
 
@@ -142,7 +142,7 @@ func TestEnsureModelIgnoresAnIncompleteCacheDirectory(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, completionMarker), []byte("test\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := EnsureModel(cacheRoot, ModelParakeetUltraInt8, io.Discard); err != nil {
+	if _, err := EnsureModel(cacheRoot, ModelFluidSpeechProInt8, io.Discard); err != nil {
 		t.Fatalf("EnsureModel() error = %v, want the completed cache to be used", err)
 	}
 }
@@ -150,11 +150,11 @@ func TestEnsureModelIgnoresAnIncompleteCacheDirectory(t *testing.T) {
 func TestEnsureModelRejectsAnEmptyCachedFile(t *testing.T) {
 	// A zero-length file is what a download that died mid-write leaves behind.
 	cacheRoot := t.TempDir()
-	dir := filepath.Join(cacheRoot, "models", string(ModelParakeetUltraInt8))
+	dir := filepath.Join(cacheRoot, "models", string(ModelFluidSpeechProInt8))
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range RequiredModelFileNames(ModelParakeetUltraInt8) {
+	for _, name := range RequiredModelFileNames(ModelFluidSpeechProInt8) {
 		if err := os.WriteFile(filepath.Join(dir, name), nil, 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -164,7 +164,7 @@ func TestEnsureModelRejectsAnEmptyCachedFile(t *testing.T) {
 	}
 	t.Setenv("CASSINI_DISALLOW_MODEL_DOWNLOAD", "1")
 
-	if _, err := EnsureModel(cacheRoot, ModelParakeetUltraInt8, io.Discard); err == nil {
+	if _, err := EnsureModel(cacheRoot, ModelFluidSpeechProInt8, io.Discard); err == nil {
 		t.Fatal("EnsureModel() accepted empty model files")
 	}
 }

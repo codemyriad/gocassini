@@ -204,7 +204,13 @@ type Runtime struct {
 	// VRAM headroom probe are not safely reservable between concurrent workers.
 	// Serializing here makes the resource check and ensuing launch atomic with
 	// respect to every other build in this operator process.
-	buildExecutionMu              sync.Mutex
+	buildExecutionMu sync.Mutex
+	// modelGateBusy, when set (tests only), is called each time a model job's
+	// probe finds buildExecutionMu held and has to wait for it.
+	modelGateBusy func()
+	// speechModelCheckFailed, when set (tests only), is called with each failed
+	// startup speech model check of the model worker, before it retries.
+	speechModelCheckFailed        func(error)
 	priorityMu                    sync.Mutex
 	priorityBuildCancel           context.CancelCauseFunc
 	lastRecordFinished            time.Time

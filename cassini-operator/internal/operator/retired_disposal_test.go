@@ -57,7 +57,7 @@ func TestDisposalJobPinnedToV3WaitsForUltraAndKeepsItsMedia(t *testing.T) {
 	rt := modelTestRuntime(t)
 	cpuOnly(t)
 	rt.cfg.WorkRoot = filepath.Join(t.TempDir(), "jobs")
-	setUltraInt8(t, rt, false, false)
+	setFluidInt8(t, rt, false, false)
 	// The global settings moved on (fast tier, 110M installed), so nothing
 	// but this job needs Ultra.
 	rt.setSettings(STTSettings{TranscriptionEnabled: true, ActiveModel: modelParakeet110M, ActiveRevision: strings.Repeat("a", 64), Quality: sttQualityFast, DeviceOverride: deviceCPU, Source: sttSourceUser})
@@ -74,7 +74,7 @@ func TestDisposalJobPinnedToV3WaitsForUltraAndKeepsItsMedia(t *testing.T) {
 	if job.Error == nil || !strings.Contains(*job.Error, "replaces retired "+v3Int8) {
 		t.Fatalf("deferral detail %v", job.Error)
 	}
-	if j := onlyModelJob(t, rt); j.Model != modelParakeetUltraInt8 || j.Revision != ultraInt8Rev || j.Device != deviceCPU || j.State != "queued" {
+	if j := onlyModelJob(t, rt); j.Model != modelFluidSpeechProInt8 || j.Revision != fluidInt8Rev || j.Device != deviceCPU || j.State != "queued" {
 		t.Fatalf("install job %+v", j)
 	}
 	rt.attemptMediaCleanup(job.ID)
@@ -98,16 +98,16 @@ func TestDisposalJobPinnedToV3WaitsForUltraAndKeepsItsMedia(t *testing.T) {
 
 	// Installed and checked: the build runs Ultra at its own revision, and
 	// the child gets that model, not the retired one.
-	setUltraInt8(t, rt, true, true)
+	setFluidInt8(t, rt, true, true)
 	device, admitted, err := rt.admitTranscription(rt.ctx, snapshot, resourceLimitsFromEnv(), true)
-	if err != nil || device != deviceCPU || admitted.ActiveModel != modelParakeetUltraInt8 || admitted.ActiveRevision != ultraInt8Rev {
+	if err != nil || device != deviceCPU || admitted.ActiveModel != modelFluidSpeechProInt8 || admitted.ActiveRevision != fluidInt8Rev {
 		t.Fatalf("admission once installed: %s %+v %v", device, admitted, err)
 	}
 	env := admitted.ChildEnv(nil)
-	if v, _ := envValue(env, envSTTModel); v != modelParakeetUltraInt8 {
+	if v, _ := envValue(env, envSTTModel); v != modelFluidSpeechProInt8 {
 		t.Fatalf("child model %q", v)
 	}
-	if v, _ := envValue(env, "CASSINI_STT_REVISION"); v != ultraInt8Rev {
+	if v, _ := envValue(env, "CASSINI_STT_REVISION"); v != fluidInt8Rev {
 		t.Fatalf("child revision %q", v)
 	}
 }
@@ -118,7 +118,7 @@ func TestDisposalJobPinnedToV3WaitsForUltraAndKeepsItsMedia(t *testing.T) {
 func TestDisposalJobPinnedToV3WithoutADownload(t *testing.T) {
 	rt := modelTestRuntime(t)
 	cpuOnly(t)
-	setUltraInt8(t, rt, false, false)
+	setFluidInt8(t, rt, false, false)
 	snapshot := STTSettings{MeetingFormat: "json", SourceRetention: sourceDeleteAfterProcessing, TranscriptionEnabled: true, ActiveModel: v3Int8, ActiveRevision: retiredV3Rev, Quality: sttQualityBalanced, DeviceOverride: deviceCPU}
 
 	rt.cfg.DisallowModelDownload = true
@@ -131,7 +131,7 @@ func TestDisposalJobPinnedToV3WithoutADownload(t *testing.T) {
 	}
 
 	rt.cfg.DisallowModelDownload = false
-	job, err := rt.enqueueModel(rt.ctx, modelInfo{ID: modelParakeetUltraInt8, Revision: ultraInt8Rev}, deviceCPU)
+	job, err := rt.enqueueModel(rt.ctx, modelInfo{ID: modelFluidSpeechProInt8, Revision: fluidInt8Rev}, deviceCPU)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +191,7 @@ func TestDisposalJobPinnedToAMissingModelWaitsAndKeepsItsMedia(t *testing.T) {
 			rt.cfg.DisallowModelDownload = true
 		}},
 		{name: "install failed", detail: "is not installed; its install ended failed (network down); retry it in Settings", jobState: "failed", setup: func(t *testing.T, rt *Runtime) {
-			job, err := rt.enqueueModel(rt.ctx, modelInfo{ID: modelParakeetUltraInt8, Revision: ultraInt8Rev}, deviceCPU)
+			job, err := rt.enqueueModel(rt.ctx, modelInfo{ID: modelFluidSpeechProInt8, Revision: fluidInt8Rev}, deviceCPU)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -206,10 +206,10 @@ func TestDisposalJobPinnedToAMissingModelWaitsAndKeepsItsMedia(t *testing.T) {
 			rt := modelTestRuntime(t)
 			cpuOnly(t)
 			rt.cfg.WorkRoot = filepath.Join(t.TempDir(), "jobs")
-			setUltraInt8(t, rt, false, false)
-			rt.setSettings(STTSettings{TranscriptionEnabled: true, ActiveModel: modelParakeetUltraInt8, ActiveRevision: ultraInt8Rev, Quality: sttQualityBalanced, DeviceOverride: deviceCPU, Source: sttSourceUser})
+			setFluidInt8(t, rt, false, false)
+			rt.setSettings(STTSettings{TranscriptionEnabled: true, ActiveModel: modelFluidSpeechProInt8, ActiveRevision: fluidInt8Rev, Quality: sttQualityBalanced, DeviceOverride: deviceCPU, Source: sttSourceUser})
 			tc.setup(t, rt)
-			job, run := insertPinnedDisposalJob(t, rt, "dispose-ultra", modelParakeetUltraInt8, ultraInt8Rev, 0)
+			job, run := insertPinnedDisposalJob(t, rt, "dispose-ultra", modelFluidSpeechProInt8, fluidInt8Rev, 0)
 			rt.buildJobFn = rt.executeBuildCLI
 
 			rt.runBuildJob(buildTask{JobID: job.ID, AttemptNumber: 1, ArtifactRunPath: run}, 1)
@@ -218,7 +218,7 @@ func TestDisposalJobPinnedToAMissingModelWaitsAndKeepsItsMedia(t *testing.T) {
 			if job.Stage != "build" || job.State != "queued" {
 				t.Fatalf("job %s/%s (%v), want build/queued (deferred)", job.Stage, job.State, job.Error)
 			}
-			if job.Error == nil || !strings.Contains(*job.Error, "speech model "+modelParakeetUltraInt8+" unavailable: "+tc.detail) {
+			if job.Error == nil || !strings.Contains(*job.Error, "speech model "+modelFluidSpeechProInt8+" unavailable: "+tc.detail) {
 				t.Fatalf("deferral detail %v", job.Error)
 			}
 			jobs, err := rt.modelJobs(rt.ctx)
@@ -251,8 +251,8 @@ func TestDisposalJobPinnedToAMissingModelWaitsAndKeepsItsMedia(t *testing.T) {
 func TestOrdinaryJobDoesNotWaitForAMissingModel(t *testing.T) {
 	rt := modelTestRuntime(t)
 	cpuOnly(t)
-	setUltraInt8(t, rt, false, false)
-	settings := STTSettings{TranscriptionEnabled: true, ActiveModel: modelParakeetUltraInt8, ActiveRevision: ultraInt8Rev, Quality: sttQualityBalanced, DeviceOverride: deviceCPU}
+	setFluidInt8(t, rt, false, false)
+	settings := STTSettings{TranscriptionEnabled: true, ActiveModel: modelFluidSpeechProInt8, ActiveRevision: fluidInt8Rev, Quality: sttQualityBalanced, DeviceOverride: deviceCPU}
 	_, _, err := rt.admitTranscription(rt.ctx, settings, resourceLimitsFromEnv(), false)
 	if err == nil || transientResourceError(err) || !strings.Contains(err.Error(), "is not installed") {
 		t.Fatalf("missing model: %v", err)
@@ -269,12 +269,12 @@ func TestAdmissionRereadsTheInventoryWhenTheInstallJustFinished(t *testing.T) {
 	for _, dispose := range []bool{false, true} {
 		rt := modelTestRuntime(t)
 		cpuOnly(t)
-		setUltraInt8(t, rt, true, true)
+		setFluidInt8(t, rt, true, true)
 		installed, err := os.ReadFile(filepath.Join(rt.cfg.ModelCacheRoot, "inventory.json"))
 		if err != nil {
 			t.Fatal(err)
 		}
-		setUltraInt8(t, rt, false, false)
+		setFluidInt8(t, rt, false, false)
 		// The first listing predates the install; later ones see it.
 		if err := os.WriteFile(filepath.Join(rt.cfg.ModelCacheRoot, "inventory-after.json"), installed, 0o644); err != nil {
 			t.Fatal(err)
@@ -283,7 +283,7 @@ func TestAdmissionRereadsTheInventoryWhenTheInstallJustFinished(t *testing.T) {
 		if err := os.WriteFile(rt.cfg.CassiniBin, []byte(script), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		job, err := rt.enqueueModel(rt.ctx, modelInfo{ID: modelParakeetUltraInt8, Revision: ultraInt8Rev}, deviceCPU)
+		job, err := rt.enqueueModel(rt.ctx, modelInfo{ID: modelFluidSpeechProInt8, Revision: fluidInt8Rev}, deviceCPU)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -291,9 +291,9 @@ func TestAdmissionRereadsTheInventoryWhenTheInstallJustFinished(t *testing.T) {
 		if err := rt.updateModelJob(job); err != nil {
 			t.Fatal(err)
 		}
-		settings := STTSettings{TranscriptionEnabled: true, ActiveModel: modelParakeetUltraInt8, ActiveRevision: ultraInt8Rev, Quality: sttQualityBalanced, DeviceOverride: deviceCPU}
+		settings := STTSettings{TranscriptionEnabled: true, ActiveModel: modelFluidSpeechProInt8, ActiveRevision: fluidInt8Rev, Quality: sttQualityBalanced, DeviceOverride: deviceCPU}
 		device, admitted, err := rt.admitTranscription(rt.ctx, settings, resourceLimitsFromEnv(), dispose)
-		if err != nil || device != deviceCPU || admitted.ActiveModel != modelParakeetUltraInt8 {
+		if err != nil || device != deviceCPU || admitted.ActiveModel != modelFluidSpeechProInt8 {
 			t.Fatalf("dispose=%v: admission after the install finished: %s %+v %v", dispose, device, admitted, err)
 		}
 		if j := onlyModelJob(t, rt); j.State != "ready" {

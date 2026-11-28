@@ -28,12 +28,13 @@ func TestModelForQuality(t *testing.T) {
 		{QualityBest, "cuda", ModelParakeetUltra},
 		{QualityBalanced, "cuda", ModelParakeetUltra},
 		{QualityFast, "cuda", ModelParakeetUltra},
-		// CPU trades accuracy for speed across tiers; v3 is gone from all of them.
+		// CPU trades accuracy for speed across tiers; v3 is gone from all of
+		// them, and Fluid Speech Pro int8 replaced Ultra int8 (D-1092).
 		{QualityBest, "cpu", ModelParakeetUltra},
-		{QualityBalanced, "cpu", ModelParakeetUltraInt8},
+		{QualityBalanced, "cpu", ModelFluidSpeechProInt8},
 		{QualityFast, "cpu", ModelParakeet110M},
 		// Unset quality behaves as balanced.
-		{"", "cpu", ModelParakeetUltraInt8},
+		{"", "cpu", ModelFluidSpeechProInt8},
 	}
 	for _, c := range cases {
 		if got := ModelForQuality(c.q, c.device); got != c.want {

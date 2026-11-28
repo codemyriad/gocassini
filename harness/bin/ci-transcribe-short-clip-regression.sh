@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Targeted regression test for the Parakeet TDT short-clip transcription
-# bug, first seen with Parakeet v3 and kept for Parakeet Ultra, which replaced it. Clean speech clips of ~6–9s without trailing silence return zero
-# tokens — the decoder treats the abrupt end as mid-utterance and emits
+# bug, first seen with Parakeet v3 and kept for the models that replaced it
+# (Parakeet Ultra, then Fluid Speech Pro on the CPU). Clean speech clips of
+# ~6–9s without trailing silence return zero tokens — the decoder treats the abrupt end as mid-utterance and emits
 # nothing. cassini-go-recorder/internal/transcribe pads short chunks with
 # synthetic silence to give the decoder an utterance boundary; this
 # script asserts that the fix is still in place.
@@ -26,7 +27,8 @@
 # (greedy decoding, as the int8 bundle ships without bpe.vocab), and again
 # 2026-10-28 on sherpa-onnx-go-linux/v2 v2.0.1-cassini.1 (upstream NeMo
 # log-guard frontend): the same counts on every row, 24 words at 15s. The
-# script now runs `parakeet-ultra-0.6b-int8-v2` against the `asserts ≥` floor.
+# script now runs `fluid-speech-pro-0.6b-int8` (D-1092) against the
+# `asserts ≥` floor.
 #
 # Without the fix the 6s/8s/9s rows would print "0" and the script
 # would exit non-zero. The 7s row is informational because the model
@@ -98,7 +100,7 @@ fi
 docker cp "$SOURCE_OGG" "$CONTAINER_NAME:/tmp/source.ogg" >/dev/null
 
 # The balanced tier's model on each device: int8 on the CPU, fp32 on CUDA.
-model=parakeet-ultra-0.6b-int8-v2
+model=fluid-speech-pro-0.6b-int8
 if [[ "$DEVICE" == cuda ]]; then model=parakeet-ultra-0.6b; fi
 docker exec "$CONTAINER_NAME" cassini models install "$model" --device "$DEVICE"
 

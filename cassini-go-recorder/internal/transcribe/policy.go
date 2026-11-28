@@ -84,8 +84,8 @@ func ResolveDevice(explicit string) string {
 // fp32 is the only precision the onnxruntime CUDA EP runs without fragmenting
 // the dynamic-int8 ops back to CPU, so every GPU tier uses fp32 Parakeet Ultra:
 // it is both the accuracy ceiling and the fastest real option on a GPU. On CPU
-// the tiers trade accuracy for speed: best=Ultra fp32, balanced=Ultra int8,
-// fast=110M CTC.
+// the tiers trade accuracy for speed: best=Ultra fp32, balanced=Fluid Speech
+// Pro int8 (a fine-tune of Ultra, D-1092), fast=110M CTC.
 //
 // The operator (cassini-operator/internal/operator/device.go) and the app
 // (cassini-app src/speechModels.ts, src/operator/pipelineStatus.ts) keep copies
@@ -100,7 +100,7 @@ func ModelForQuality(q STTQuality, device string) ModelID {
 	case QualityFast:
 		return ModelParakeet110M
 	default: // balanced
-		return ModelParakeetUltraInt8
+		return ModelFluidSpeechProInt8
 	}
 }
 
@@ -118,8 +118,8 @@ type ResolvedModel struct {
 // always wins; otherwise it is derived from the quality tier and device.
 //
 // An explicit id that an earlier version shipped and the catalogue has since
-// retired (Parakeet Ultra int8 v1, Parakeet v3) resolves to the model that
-// replaced it, at the same precision, and its revision pin is dropped: it
+// retired (Parakeet Ultra int8 v2 and v1, Parakeet v3) resolves to the model
+// that replaced it, at the same precision, and its revision pin is dropped: it
 // named the retired model's files. An id the catalogue never knew stays as it
 // is, so the build reports it as unavailable instead of quietly transcribing
 // with something else.
