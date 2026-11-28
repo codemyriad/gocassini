@@ -424,3 +424,21 @@ func TestEnsureModelRejectsADirectoryNamedLikeTheModelFile(t *testing.T) {
 		t.Error("a rejected download was promoted anyway")
 	}
 }
+
+func TestEnsureVADRejectsStaleOfflineCopies(t *testing.T) {
+	cache, bundled := t.TempDir(), t.TempDir()
+	t.Setenv(envBundledModelRoot, bundled)
+	t.Setenv("CASSINI_DISALLOW_MODEL_DOWNLOAD", "1")
+	for _, root := range []string{cache, bundled} {
+		dir := filepath.Join(root, "vad")
+		if err := os.Mkdir(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "silero_vad.onnx"), []byte("stale"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if path, err := EnsureVAD(cache, io.Discard); err == nil {
+		t.Fatalf("accepted stale VAD %q", path)
+	}
+}

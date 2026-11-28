@@ -864,11 +864,14 @@ func TestAdditionalModelKeepsThePrimaryNativeFrontend(t *testing.T) {
 		return ModelPaths{ModelType: string(id), SampleRate: 16000}, nil
 	}
 	ensureVADFn = func(cacheDir string, id ModelID, revision string, progress io.Writer) (string, error) {
-		return "", nil
+		return string(id), nil
 	}
 	t.Cleanup(func() { ensureModelFn, ensureVADFn = prevModel, prevVAD })
 	const backend = "fake-native-frontend"
-	if err := RegisterRecognizerBackend(backend, func(paths ModelPaths, _, _ string, _ int, _ *DecoderConfig) (SpeechRecognizer, error) {
+	if err := RegisterRecognizerBackend(backend, func(paths ModelPaths, vadPath, _ string, _ int, _ *DecoderConfig) (SpeechRecognizer, error) {
+		if vadPath != paths.ModelType {
+			t.Errorf("model %s used VAD for %s", paths.ModelType, vadPath)
+		}
 		rec := &frontendRecognizer{fixedWordsRecognizer: fixedWordsRecognizer{words: fixedTimedWords(12)}}
 		if UsesParakeetBoundaryPolicy(ModelID(paths.ModelType)) {
 			rec.frontend = NativeFrontendNeMoLogGuard

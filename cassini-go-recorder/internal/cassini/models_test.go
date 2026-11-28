@@ -34,6 +34,13 @@ func fakeInstallRetired(t *testing.T, root, id string) modelstore.Model {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if m.VADRevision != "" {
+		v, err := modelstore.Shipped().Model(modelstore.VADModelID, m.VADRevision)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fakeInstall(t, root, v)
+	}
 	return fakeInstall(t, root, m)
 }
 

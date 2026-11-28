@@ -208,8 +208,21 @@ func TestDiarizerNeedsNoVAD(t *testing.T) {
 	if err != nil || identity.Model != m.ID || identity.VADRevision != "" {
 		t.Fatalf("identity = %+v, %v", identity, err)
 	}
-	if raw, _ := os.ReadFile(pack); bytes.Contains(raw, []byte("vad/")) {
-		t.Fatal("pack carries a VAD")
+	raw, err := os.ReadFile(pack)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for tr := tar.NewReader(bytes.NewReader(raw)); ; {
+		h, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.HasPrefix(h.Name, "vad/") {
+			t.Fatalf("pack carries a VAD entry %q", h.Name)
+		}
 	}
 	target := New(t.TempDir())
 	target.Catalogue = s.Catalogue

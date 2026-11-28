@@ -784,10 +784,6 @@ func runAdditionalTranscripts(ctx context.Context, mkvPath, outputDir string, st
 	if len(cfg.AdditionalModels) == 0 {
 		return nil, nil
 	}
-	vadPath, err := ensureVADFn(cfg.CacheDir, cfg.ModelID, cfg.ModelRevision, stdout)
-	if err != nil {
-		return nil, fmt.Errorf("ensure VAD model: %w", err)
-	}
 	out := make([]AdditionalTranscript, 0, len(cfg.AdditionalModels))
 	seen := map[string]bool{sanitizeTranscriptID(string(cfg.ModelID)): true}
 	for _, modelID := range cfg.AdditionalModels {
@@ -804,6 +800,10 @@ func runAdditionalTranscripts(ctx context.Context, mkvPath, outputDir string, st
 		modelPaths, err := ensureModelFn(cfg.CacheDir, modelID, "", stdout)
 		if err != nil {
 			return out, fmt.Errorf("ensure additional model %s: %w", modelID, err)
+		}
+		vadPath, err := ensureVADFn(cfg.CacheDir, modelID, "", stdout)
+		if err != nil {
+			return out, fmt.Errorf("ensure VAD for additional model %s: %w", modelID, err)
 		}
 		extra := primary
 		extra.ModelPaths = modelPaths

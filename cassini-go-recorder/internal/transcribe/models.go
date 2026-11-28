@@ -13,6 +13,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"gocassini/internal/modelstore"
 )
 
 // ModelID identifies a sherpa-onnx model bundle.
@@ -52,9 +54,6 @@ const (
 	ModelParakeetV3     ModelID = "parakeet-tdt-0.6b-v3"
 
 	defaultModelID = ModelParakeetUltraInt8
-
-	// sileroVADURL is the Silero VAD model (single .onnx file, ~630 KB).
-	sileroVADURL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx"
 )
 
 type modelSpec struct {
@@ -441,28 +440,29 @@ func removeOrphanStaging(modelsDir string, progress io.Writer) {
 // neither the image nor the cache has it. Honors
 // CASSINI_DISALLOW_MODEL_DOWNLOAD for an air-gapped install.
 func EnsureVAD(cacheDir string, progress io.Writer) (string, error) {
-	// Every image bakes the VAD, so look in the read-only bundled root first.
-	// Without this the writable cache on the persistent volume would refetch a
-	// file the image already has (D-704).
+	vad, err := modelstore.Shipped().Model(modelstore.VADModelID, "")
+	if err != nil {
+		return "", err
+	}
 	if root := strings.TrimSpace(os.Getenv(envBundledModelRoot)); root != "" {
 		bundled := filepath.Join(root, "vad", "silero_vad.onnx")
-		if fileExists(bundled) {
+		if digest, err := fileSHA256(bundled); err == nil && digest == vad.Revision {
 			return bundled, nil
 		}
 	}
 	vadPath := filepath.Join(cacheDir, "vad", "silero_vad.onnx")
-	if fileExists(vadPath) {
+	if digest, err := fileSHA256(vadPath); err == nil && digest == vad.Revision {
 		return vadPath, nil
 	}
 	if envBool("CASSINI_DISALLOW_MODEL_DOWNLOAD") {
 		return "", fmt.Errorf(
-			"silero VAD missing at %s and CASSINI_DISALLOW_MODEL_DOWNLOAD=1; "+
+			"pinned Silero VAD unavailable at %s and CASSINI_DISALLOW_MODEL_DOWNLOAD=1; "+
 				"rebuild the image with the VAD model bundled", vadPath)
 	}
 	if err := os.MkdirAll(filepath.Dir(vadPath), 0o755); err != nil {
 		return "", fmt.Errorf("create vad dir: %w", err)
 	}
-	fmt.Fprintf(progress, "downloading Silero VAD from %s\n", sileroVADURL)
+	fmt.Fprintf(progress, "downloading Silero VAD from %s\n", vad.SourceURL)
 	// Download beside the target and rename, so an interrupted fetch never
 	// leaves a truncated VAD that later builds would load.
 	tmp, err := os.CreateTemp(filepath.Dir(vadPath), ".silero_vad-*.onnx")
@@ -472,11 +472,15 @@ func EnsureVAD(cacheDir string, progress io.Writer) (string, error) {
 	tmpName := tmp.Name()
 	tmp.Close()
 	defer os.Remove(tmpName)
-	if err := downloadFile(sileroVADURL, tmpName); err != nil {
+	if err := downloadFile(vad.SourceURL, tmpName); err != nil {
 		return "", fmt.Errorf("download VAD: %w", err)
 	}
-	if info, err := os.Stat(tmpName); err != nil || info.Size() == 0 {
-		return "", fmt.Errorf("downloaded VAD from %s is empty", sileroVADURL)
+	digest, err := fileSHA256(tmpName)
+	if err != nil {
+		return "", err
+	}
+	if digest != vad.Revision {
+		return "", fmt.Errorf("downloaded VAD checksum %s, want %s", digest, vad.Revision)
 	}
 	if err := os.Rename(tmpName, vadPath); err != nil {
 		return "", fmt.Errorf("promote VAD into %s: %w", vadPath, err)

@@ -667,12 +667,15 @@ func TestDecoderTailPadSamplesPreservesNonVADWindowPolicy(t *testing.T) {
 
 func TestShortInterjectionVADConfig(t *testing.T) {
 	t.Setenv("CASSINI_VAD_DEVICE", "cpu")
-	cfg := newVADModelConfig("vad.onnx", 16000)
+	if legacy := newVADModelConfig("vad.onnx", "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6", 16000); legacy.SileroVad.Threshold != 0.18 {
+		t.Fatalf("legacy threshold = %g", legacy.SileroVad.Threshold)
+	}
+	cfg := newVADModelConfig("vad.onnx", sileroV63Revision, 16000)
 	if cfg.SileroVad.Model != "vad.onnx" || cfg.SampleRate != 16000 {
 		t.Fatalf("VAD identity config = model %q sample rate %d", cfg.SileroVad.Model, cfg.SampleRate)
 	}
-	if cfg.SileroVad.Threshold != 0.18 || cfg.SileroVad.MinSpeechDuration != 0.10 {
-		t.Fatalf("VAD short-turn config = threshold %g min speech %g; want 0.18 / 0.10", cfg.SileroVad.Threshold, cfg.SileroVad.MinSpeechDuration)
+	if cfg.SileroVad.Threshold != 0.30 || cfg.SileroVad.MinSpeechDuration != 0.10 {
+		t.Fatalf("VAD short-turn config = threshold %g min speech %g; want 0.30 / 0.10", cfg.SileroVad.Threshold, cfg.SileroVad.MinSpeechDuration)
 	}
 	if cfg.SileroVad.WindowSize != vadWindowSamples || cfg.NumThreads != 1 || cfg.Provider != "cpu" {
 		t.Fatalf("VAD runtime config = window %d threads %d provider %q", cfg.SileroVad.WindowSize, cfg.NumThreads, cfg.Provider)

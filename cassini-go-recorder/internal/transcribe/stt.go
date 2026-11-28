@@ -81,12 +81,9 @@ func (r *Recognizer) NativeFrontend() string {
 // follows the upstream detector's intended call shape.
 const vadWindowSamples = 512
 
-// The stock 0.5 Silero threshold missed direct acknowledgements as short as
-// 420-500ms in real per-participant tracks. The lower threshold recovers those
-// turns; the conservative energy gate below prevents newly admitted digital
-// silence and near-silence from becoming attributed ASR hallucinations.
+// The v6.3 calibration was measured on per-participant meeting tracks.
 const (
-	vadSpeechThreshold       = 0.18
+	sileroV63Revision        = "f6f4407b41e05e277e7f5cfd9b9ae957b1dfe763c6076a934734c0b448e09b31"
 	vadMinSpeechDuration     = 0.10
 	vadMinSilenceDurationMS  = 500
 	minimumWordPeakAmplitude = 0.001  // -60 dBFS
@@ -225,10 +222,13 @@ func (r *Recognizer) decodePolicy() vadDecodePolicy {
 	return defaultVADDecodePolicy()
 }
 
-func newVADModelConfig(modelPath string, sampleRate int) sherpa.VadModelConfig {
+func newVADModelConfig(modelPath, revision string, sampleRate int) sherpa.VadModelConfig {
 	cfg := sherpa.VadModelConfig{}
 	cfg.SileroVad.Model = modelPath
-	cfg.SileroVad.Threshold = vadSpeechThreshold
+	cfg.SileroVad.Threshold = 0.18
+	if revision == sileroV63Revision {
+		cfg.SileroVad.Threshold = 0.30
+	}
 	cfg.SileroVad.MinSilenceDuration = float32(vadMinSilenceDurationMS) / 1000
 	cfg.SileroVad.MinSpeechDuration = vadMinSpeechDuration
 	cfg.SileroVad.WindowSize = vadWindowSamples
@@ -317,12 +317,16 @@ func newRecognizerWithProfile(paths ModelPaths, vadModelPath, provider string, n
 	// the silent no-op this pairing exists to prevent.
 	applyDecoderConfig(&cfg, decoder)
 
+	vadRevision, err := fileSHA256(vadModelPath)
+	if err != nil {
+		return nil, fmt.Errorf("identify VAD model: %w", err)
+	}
 	r := sherpa.NewOfflineRecognizer(&cfg)
 	if r == nil {
 		return nil, fmt.Errorf("failed to create sherpa-onnx recognizer (check model paths and provider %q)", provider)
 	}
 
-	vadCfg := newVADModelConfig(vadModelPath, paths.SampleRate)
+	vadCfg := newVADModelConfig(vadModelPath, vadRevision, paths.SampleRate)
 
 	vad := sherpa.NewVoiceActivityDetector(&vadCfg, 60.0)
 	if vad == nil {
